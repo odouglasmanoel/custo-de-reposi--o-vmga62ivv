@@ -30,6 +30,23 @@ export default function Layout({ children }: LayoutProps) {
     location.pathname === '/bolao/historico' ||
     location.pathname.startsWith('/bolao/admin')
 
+  const handleBack = () => {
+    if (location.pathname.startsWith('/bolao/admin/jogos/')) {
+      navigate('/bolao/admin/jogos')
+    } else if (
+      location.pathname === '/bolao/admin/jogos' ||
+      location.pathname === '/bolao/chat' ||
+      location.pathname === '/bolao/palpites' ||
+      location.pathname === '/bolao/historico'
+    ) {
+      navigate('/bolao')
+    } else if (window.history.length > 1) {
+      navigate(-1)
+    } else {
+      navigate('/bolao')
+    }
+  }
+
   const handleLogout = () => {
     logout()
     navigate('/login')
@@ -46,7 +63,7 @@ export default function Layout({ children }: LayoutProps) {
               <Button
                 variant="ghost"
                 size="icon"
-                onClick={() => navigate(-1)}
+                onClick={handleBack}
                 className="mr-1 text-white hover:bg-[#1B3A5C] hover:text-white"
                 title="Voltar"
               >

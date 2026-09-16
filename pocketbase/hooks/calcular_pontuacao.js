@@ -18,29 +18,61 @@ routerAdd('POST', '/backend/v1/calcular-pontuacao', (e) => {
     const temPenaltis = jogo.getBool('tem_penaltis')
     const vencedorPenaltisReal = (jogo.getString('vencedor_penaltis') || '').toUpperCase().trim()
 
-    // Parse real scorers for Team A and Team B
-    let golsTimeA = []
-    try {
-      const rawA = jogo.get('gols_time_a')
-      if (Array.isArray(rawA)) {
-        golsTimeA = rawA
-      } else if (typeof rawA === 'string' && rawA.trim()) {
-        golsTimeA = JSON.parse(rawA)
-      }
-    } catch (_) {
-      golsTimeA = []
+    // Robust parser for JSON / text / byte fields in Goja / PocketBase
+    const parseJsonField = (rec, fieldName) => {
+      try {
+        const raw = rec.get(fieldName)
+        // If PocketBase returns Go byte slice [91, 123, ...]
+        if (Array.isArray(raw) && raw.length > 0 && typeof raw[0] === 'number') {
+          const str = String.fromCharCode.apply(null, raw)
+          const parsed = JSON.parse(str)
+          if (Array.isArray(parsed)) return parsed
+        }
+        // If it's already an array of objects/strings
+        if (Array.isArray(raw)) {
+          return raw
+        }
+        // If string representation exists
+        const strVal = rec.getString(fieldName)
+        if (strVal && strVal.trim()) {
+          const parsed = JSON.parse(strVal)
+          if (Array.isArray(parsed)) return parsed
+        }
+      } catch (_) {}
+
+      // Fallback: check raw string
+      try {
+        const strVal = rec.getString(fieldName)
+        if (strVal && strVal.trim()) {
+          return strVal
+            .split(',')
+            .map((s) => s.trim())
+            .filter(Boolean)
+        }
+      } catch (_) {}
+
+      return []
     }
 
-    let golsTimeB = []
-    try {
-      const rawB = jogo.get('gols_time_b')
-      if (Array.isArray(rawB)) {
-        golsTimeB = rawB
-      } else if (typeof rawB === 'string' && rawB.trim()) {
-        golsTimeB = JSON.parse(rawB)
+    const golsTimeA = parseJsonField(jogo, 'gols_time_a')
+    const golsTimeB = parseJsonField(jogo, 'gols_time_b')
+
+    const stripAccents = (str) => {
+      if (!str) return ''
+      let s = String(str)
+      if (typeof s.normalize === 'function') {
+        try {
+          s = s.normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+        } catch (_) {}
       }
-    } catch (_) {
-      golsTimeB = []
+      return s
+        .replace(/[áàâãä]/gi, 'a')
+        .replace(/[éèêë]/gi, 'e')
+        .replace(/[íìîï]/gi, 'i')
+        .replace(/[óòôõö]/gi, 'o')
+        .replace(/[úùûü]/gi, 'u')
+        .replace(/[ç]/gi, 'c')
+        .replace(/[ñ]/gi, 'n')
     }
 
     // Load normalizations for this bolão
@@ -53,8 +85,12 @@ routerAdd('POST', '/backend/v1/calcular-pontuacao', (e) => {
     )
     const normMap = {}
     for (const n of normalizacoes) {
-      const orig = (n.getString('nome_original') || '').toLowerCase().trim()
-      const corr = (n.getString('nome_correto') || '').toLowerCase().trim()
+      const orig = stripAccents(n.getString('nome_original') || '')
+        .toLowerCase()
+        .trim()
+      const corr = stripAccents(n.getString('nome_correto') || '')
+        .toLowerCase()
+        .trim()
       if (orig && corr) {
         normMap[orig] = corr
       }
@@ -62,11 +98,9 @@ routerAdd('POST', '/backend/v1/calcular-pontuacao', (e) => {
 
     const normalizePlayerName = (name) => {
       if (!name) return ''
-      let clean = String(name).toLowerCase().trim()
-      // Replace accents
-      clean = clean.normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+      let clean = stripAccents(String(name).toLowerCase().trim())
       if (normMap[clean]) {
-        clean = normMap[clean].normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+        clean = stripAccents(normMap[clean])
       }
       return clean
     }
@@ -161,21 +195,8 @@ routerAdd('POST', '/backend/v1/calcular-pontuacao', (e) => {
       }
 
       // Check predicted goal scorers
-      let predScorersA = []
-      let predScorersB = []
-      try {
-        const rawPredA = palpite.get('goleadores_a')
-        if (Array.isArray(rawPredA)) predScorersA = rawPredA
-        else if (typeof rawPredA === 'string' && rawPredA.trim())
-          predScorersA = JSON.parse(rawPredA)
-      } catch (_) {}
-
-      try {
-        const rawPredB = palpite.get('goleadores_b')
-        if (Array.isArray(rawPredB)) predScorersB = rawPredB
-        else if (typeof rawPredB === 'string' && rawPredB.trim())
-          predScorersB = JSON.parse(rawPredB)
-      } catch (_) {}
+      const predScorersA = parseJsonField(palpite, 'goleadores_a')
+      const predScorersB = parseJsonField(palpite, 'goleadores_b')
 
       const allPredNames = []
       for (const p of predScorersA) {
@@ -185,23 +206,30 @@ routerAdd('POST', '/backend/v1/calcular-pontuacao', (e) => {
         if (typeof p === 'string' && p.trim()) allPredNames.push(p.trim())
       }
 
-      // Match predicted names against real scorers pool
-      // A participant can get points for each goal scored by a player they predicted
-      // (e.g. if real scorer scored 2 goals and participant named that player)
-      // To match fairly, copy real scorers and match
+      // Multiset (1-to-1) matching between predicted names and real scorer goals:
+      // Each predicted goal can match at most one available real goal by that player.
+      const availableRealScorers = allRealScorers.map((rs) => ({
+        ...rs,
+        used: false,
+      }))
       const matchedScorers = []
+
       for (const predName of allPredNames) {
         const normPred = normalizePlayerName(predName)
         if (!normPred) continue
 
-        // Find matches in real scorers that haven't been credited for this specific predicted item
-        for (const realScorer of allRealScorers) {
-          if (realScorer.normalizedName === normPred) {
-            pontos += realScorer.points
-            matchedScorers.push(
-              `${realScorer.displayName} (+${realScorer.points} pts - ${realScorer.position})`,
-            )
-          }
+        // Find first unused real scorer matching this predicted player
+        const matchIndex = availableRealScorers.findIndex(
+          (rs) => !rs.used && rs.normalizedName === normPred,
+        )
+
+        if (matchIndex >= 0) {
+          const matchedRealScorer = availableRealScorers[matchIndex]
+          matchedRealScorer.used = true
+          pontos += matchedRealScorer.points
+          matchedScorers.push(
+            `${matchedRealScorer.displayName} (+${matchedRealScorer.points} pt${matchedRealScorer.points > 1 ? 's' : ''} - ${matchedRealScorer.position})`,
+          )
         }
       }
 
@@ -251,7 +279,6 @@ routerAdd('POST', '/backend/v1/calcular-pontuacao', (e) => {
 
       let totalPoints = 0
       for (const p of partPalpites) {
-        // verify if the game of this palpite is finalizado
         const pJogoId = p.getString('jogo')
         try {
           const gameRec = $app.findRecordById('jogos', pJogoId)
