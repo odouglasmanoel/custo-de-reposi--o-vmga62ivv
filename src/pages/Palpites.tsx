@@ -305,91 +305,108 @@ export default function Palpites() {
       const numA = Number(currentForm.placar_a)
       const numB = Number(currentForm.placar_b)
 
-      // Only save scorers if goals > 0; trim empty values
-      // Note: Supports repeated player names (e.g. ["Pedro Raul", "Pedro Raul"] or ["Pedro Raul", "Gui Negão"])
+      // Regras de marcadores:
+      // Se gols > 0: lista de marcadores (suporta repetidos, ex: "Pedro Raul, Pedro Raul")
+      // Se gols == 0: string vazia "" ou null (nunca lista de objetos vazios)
       const gA =
         numA > 0 ? (currentForm.goleadores_a || []).map((s) => s.trim()).filter(Boolean) : []
       const gB =
         numB > 0 ? (currentForm.goleadores_b || []).map((s) => s.trim()).filter(Boolean) : []
 
-      // Step 1: UPSERT Check - Always verify if a record already exists for this bolão + game + participant
-      let existingRecordId: string | null = palpites[jogo.id]?.id || null
+      const marcadoresTimeA = numA > 0 ? gA.join(', ') : ''
+      const marcadoresTimeB = numB > 0 ? gB.join(', ') : ''
+      const vencedorPenaltis = currentForm.vencedor_penaltis || 'N'
 
-      if (!existingRecordId) {
-        try {
-          const remoteRecords = await pb.collection('palpites').getList<Palpite>(1, 1, {
-            filter: `bolao = '${activeBolaoId}' && jogo = '${jogo.id}' && participante = '${participanteToUse.id}'`,
-          })
-          if (remoteRecords.items.length > 0) {
-            existingRecordId = remoteRecords.items[0].id
-          }
-        } catch (_) {
-          // not found or error querying, proceed to creation check
-        }
-      }
+      // Payload explícito conforme requisitos do usuário:
+      // - jogo_id (ID do jogo atual)
+      // - usuario_email ou usuario_id (identificador do usuário logado)
+      // - gols_time_a (inteiro)
+      // - gols_time_b (inteiro)
+      // - marcadores_time_a (string/texto simples unindo as linhas, ex: "Pedro Raul, Gui Negão")
+      // - marcadores_time_b (string/texto simples, ou null se não houver gols)
+      // - vencedor_penaltis (texto)
+      const userEmail = (user?.email as string) || ''
+      const userId = (user?.id as string) || ''
 
-      const payload = {
-        bolao: activeBolaoId,
-        jogo: jogo.id,
-        participante: participanteToUse.id,
-        placar_a: numA,
-        placar_b: numB,
-        goleadores_a: gA, // JSON array of player names (supports repeats e.g. ["Pedro Raul", "Pedro Raul"])
-        goleadores_b: gB,
-        vencedor_penaltis: currentForm.vencedor_penaltis || 'N',
-      }
+      // Tenta salvar prioritariamente pelo endpoint /backend/v1/salvar-palpite (UPSERT / delete prévio + insert)
+      let backendSuccess = false
+      let backendErrorMessage = ''
 
-      if (existingRecordId) {
-        // Step 1a: Update existing record
-        try {
-          await pb.collection('palpites').update(existingRecordId, {
-            placar_a: numA,
-            placar_b: numB,
-            goleadores_a: gA,
-            goleadores_b: gB,
-            vencedor_penaltis: currentForm.vencedor_penaltis || 'N',
-          })
-        } catch (updateErr: any) {
-          // If record was deleted remotely in between or ID mismatch, fallback to create
-          if (updateErr?.status === 404) {
-            await pb.collection('palpites').create({
-              ...payload,
-              pontuacao_jogo: 0,
-              detalhamento: [],
-            })
-          } else {
-            throw updateErr
-          }
-        }
-      } else {
-        // Step 1b: Create new record
-        try {
-          await pb.collection('palpites').create({
-            ...payload,
-            pontuacao_jogo: 0,
-            detalhamento: [],
-          })
-        } catch (createErr: any) {
-          // If a duplicate constraint occurred because someone/another tab inserted it, try update
-          const duplicateCheck = await pb
-            .collection('palpites')
-            .getFirstListItem<Palpite>(
-              `bolao = '${activeBolaoId}' && jogo = '${jogo.id}' && participante = '${participanteToUse.id}'`,
-            )
-            .catch(() => null)
-
-          if (duplicateCheck) {
-            await pb.collection('palpites').update(duplicateCheck.id, {
+      try {
+        const response = await fetch(
+          `${import.meta.env.VITE_POCKETBASE_URL}/backend/v1/salvar-palpite`,
+          {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: pb.authStore.token,
+            },
+            body: JSON.stringify({
+              jogo_id: jogo.id,
+              bolao_id: activeBolaoId,
+              participante_id: participanteToUse.id,
+              usuario_email: userEmail,
+              usuario_id: userId,
+              gols_time_a: numA,
+              gols_time_b: numB,
+              marcadores_time_a: marcadoresTimeA,
+              marcadores_time_b: numB > 0 ? marcadoresTimeB : null,
+              vencedor_penaltis: vencedorPenaltis,
+              // Campos adicionais compatíveis com a coleção
               placar_a: numA,
               placar_b: numB,
               goleadores_a: gA,
               goleadores_b: gB,
-              vencedor_penaltis: currentForm.vencedor_penaltis || 'N',
-            })
-          } else {
-            throw createErr
-          }
+            }),
+          },
+        )
+
+        if (response.ok) {
+          backendSuccess = true
+        } else {
+          const resJson = await response.json().catch(() => ({}))
+          backendErrorMessage = resJson.error || 'Erro ao processar palpite no servidor'
         }
+      } catch (endpointErr) {
+        // Fallback para PocketBase SDK direto caso ocorra erro de rede com a rota customizada
+        backendSuccess = false
+      }
+
+      // Se o endpoint não foi usado ou falhou por rede, executar a lógica direta no PocketBase SDK:
+      // DELETE prévio do palpite anterior para este jogo + INSERT
+      if (!backendSuccess) {
+        if (backendErrorMessage) {
+          throw new Error(backendErrorMessage)
+        }
+
+        // Buscar e excluir palpite anterior deste participante neste jogo
+        const existingList = await pb
+          .collection('palpites')
+          .getFullList<Palpite>({
+            filter: `jogo = '${jogo.id}' && participante = '${participanteToUse.id}'`,
+          })
+          .catch(() => [])
+
+        for (const oldRec of existingList) {
+          await pb
+            .collection('palpites')
+            .delete(oldRec.id)
+            .catch(() => {})
+        }
+
+        // Inserir novo palpite com dados limpos
+        await pb.collection('palpites').create({
+          bolao: activeBolaoId,
+          jogo: jogo.id,
+          participante: participanteToUse.id,
+          placar_a: numA,
+          placar_b: numB,
+          goleadores_a: gA,
+          goleadores_b: gB,
+          vencedor_penaltis: vencedorPenaltis,
+          pontuacao_jogo: 0,
+          detalhamento: [],
+        })
       }
 
       toast({

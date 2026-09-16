@@ -9,32 +9,36 @@ routerAdd('POST', '/backend/v1/salvar-palpite', (e) => {
     const jogoId = body.jogo_id || body.jogo
     const userEmail = body.usuario_email || authRecord.email
     const userId = body.usuario_id || authRecord.id
-    const userName = authRecord.getString('name') || ''
+    const userName = (authRecord.getString('name') || '').trim()
 
     if (!jogoId) {
       return e.badRequestError('jogo_id é obrigatório')
     }
 
-    const jogo = $app.findRecordById('jogos', jogoId)
-    if (!jogo) {
+    let jogo = null
+    try {
+      jogo = $app.findRecordById('jogos', jogoId)
+    } catch (_) {
       return e.notFoundError('Jogo não encontrado')
     }
 
     const bolaoId = body.bolao_id || body.bolao || jogo.getString('bolao')
 
-    // Placar
-    const placarA = parseInt(body.gols_time_a !== undefined ? body.gols_time_a : body.placar_a, 10)
-    const placarB = parseInt(body.gols_time_b !== undefined ? body.gols_time_b : body.placar_b, 10)
+    // Parse gols
+    const rawGolsA = body.gols_time_a !== undefined ? body.gols_time_a : body.placar_a
+    const rawGolsB = body.gols_time_b !== undefined ? body.gols_time_b : body.placar_b
 
-    if (isNaN(placarA) || isNaN(placarB) || placarA < 0 || placarB < 0) {
+    const golsA = parseInt(rawGolsA, 10)
+    const golsB = parseInt(rawGolsB, 10)
+
+    if (isNaN(golsA) || isNaN(golsB) || golsA < 0 || golsB < 0) {
       return e.badRequestError('gols_time_a e gols_time_b devem ser inteiros não-negativos')
     }
 
-    // Resolving participante
+    // Resolvendo participante correspondente
     let participanteId = body.participante_id || body.participante || ''
 
     if (!participanteId) {
-      // Find participante by user name or email prefix in this bolao
       const searchTerms = [userName, userEmail ? userEmail.split('@')[0] : ''].filter(Boolean)
 
       const bolaoParts = $app.findRecordsByFilter(
@@ -56,7 +60,6 @@ routerAdd('POST', '/backend/v1/salvar-palpite', (e) => {
         }
       }
 
-      // If not exact match, try contains match
       if (!participanteId) {
         for (const term of searchTerms) {
           const found = bolaoParts.find((p) => {
@@ -77,90 +80,103 @@ routerAdd('POST', '/backend/v1/salvar-palpite', (e) => {
       return e.badRequestError('Participante não identificado para este bolão')
     }
 
-    // Parse marcadores_time_a
-    // If placarA === 0, must be [] or null, empty string ""
-    let marcadoresA = []
-    if (placarA > 0) {
+    // Tratamento dos marcadores:
+    // Se o time fez 0 gols -> marcadores_time_a = "" ou null (no banco salva array vazio [] ou null)
+    // Se fez > 0 gols -> string de nomes separados por vírgula ("Pedro Raul, Gui Negão") ou array
+    let marcadoresArrA = []
+    let marcadoresStrA = ''
+    if (golsA > 0) {
       const rawA = body.marcadores_time_a !== undefined ? body.marcadores_time_a : body.goleadores_a
       if (Array.isArray(rawA)) {
-        marcadoresA = rawA.map((s) => String(s || '').trim()).filter(Boolean)
+        marcadoresArrA = rawA.map((s) => String(s || '').trim()).filter(Boolean)
       } else if (typeof rawA === 'string' && rawA.trim()) {
-        marcadoresA = rawA
+        marcadoresArrA = rawA
           .split(',')
           .map((s) => s.trim())
           .filter(Boolean)
       }
+      marcadoresStrA = marcadoresArrA.join(', ')
     }
 
-    // Parse marcadores_time_b
-    // If placarB === 0, must be [] or null, empty string ""
-    let marcadoresB = []
-    if (placarB > 0) {
+    let marcadoresArrB = []
+    let marcadoresStrB = ''
+    if (golsB > 0) {
       const rawB = body.marcadores_time_b !== undefined ? body.marcadores_time_b : body.goleadores_b
       if (Array.isArray(rawB)) {
-        marcadoresB = rawB.map((s) => String(s || '').trim()).filter(Boolean)
+        marcadoresArrB = rawB.map((s) => String(s || '').trim()).filter(Boolean)
       } else if (typeof rawB === 'string' && rawB.trim()) {
-        marcadoresB = rawB
+        marcadoresArrB = rawB
           .split(',')
           .map((s) => s.trim())
           .filter(Boolean)
       }
+      marcadoresStrB = marcadoresArrB.join(', ')
     }
 
     const vencedorPenaltis =
-      body.vencedor_penaltis !== undefined ? String(body.vencedor_penaltis) : 'N'
+      body.vencedor_penaltis !== undefined && body.vencedor_penaltis !== null
+        ? String(body.vencedor_penaltis).trim()
+        : 'N'
 
-    // Lógica de gravação: DELETE prévio de palpites anteriores do participante para este jogo + INSERT
-    // Isso garante idempotência e remove qualquer risco de conflito de chave única ou erro de update
-    const existingPalpites = $app.findRecordsByFilter(
+    // Lógica de gravação robusta e simplificada:
+    // DELETE prévio do palpite anterior do usuário para este jogo antes de inserir o novo
+    // (DELETE WHERE jogo = ? AND participante = ? -> INSERT)
+    // Isso evita qualquer falha de índice único ou problema de lock/patch
+    const existing = $app.findRecordsByFilter(
       'palpites',
       `jogo = '${jogoId}' && participante = '${participanteId}'`,
       '',
-      50,
+      20,
       0,
     )
 
-    for (const oldRec of existingPalpites) {
-      $app.delete(oldRec)
+    for (const oldRec of existing) {
+      try {
+        $app.delete(oldRec)
+      } catch (_) {}
     }
 
-    // Criar novo registro de palpite
+    // Criação do novo registro
     const palpitesCol = $app.findCollectionByNameOrId('palpites')
-    const newRecord = new Record(palpitesCol)
-    newRecord.set('bolao', bolaoId)
-    newRecord.set('jogo', jogoId)
-    newRecord.set('participante', participanteId)
-    newRecord.set('placar_a', placarA)
-    newRecord.set('placar_b', placarB)
-    newRecord.set('goleadores_a', marcadoresA)
-    newRecord.set('goleadores_b', marcadoresB)
-    newRecord.set('vencedor_penaltis', vencedorPenaltis)
-    newRecord.set('pontuacao_jogo', 0)
-    newRecord.set('detalhamento', [])
+    const record = new Record(palpitesCol)
+    record.set('bolao', bolaoId)
+    record.set('jogo', jogoId)
+    record.set('participante', participanteId)
+    record.set('placar_a', golsA)
+    record.set('placar_b', golsB)
+    record.set('goleadores_a', marcadoresArrA)
+    record.set('goleadores_b', marcadoresArrB)
+    record.set('vencedor_penaltis', vencedorPenaltis || 'N')
+    record.set('pontuacao_jogo', 0)
+    record.set('detalhamento', [])
 
-    $app.save(newRecord)
+    $app.save(record)
 
     return e.json(200, {
       success: true,
-      message: 'Palpite registrado com sucesso',
+      message: 'Palpite salvo com sucesso!',
       palpite: {
-        id: newRecord.id,
+        id: record.id,
         bolao: bolaoId,
         jogo: jogoId,
         participante: participanteId,
-        placar_a: placarA,
-        placar_b: placarB,
-        goleadores_a: marcadoresA,
-        goleadores_b: marcadoresB,
-        marcadores_time_a: marcadoresA.join(', '),
-        marcadores_time_b: marcadoresB.join(', '),
+        usuario_email: userEmail,
+        usuario_id: userId,
+        gols_time_a: golsA,
+        gols_time_b: golsB,
+        placar_a: golsA,
+        placar_b: golsB,
+        marcadores_time_a: marcadoresStrA,
+        marcadores_time_b: marcadoresStrB,
+        goleadores_a: marcadoresArrA,
+        goleadores_b: marcadoresArrB,
         vencedor_penaltis: vencedorPenaltis,
       },
     })
   } catch (err) {
     return e.json(500, {
       success: false,
-      error: err ? err.message : 'Erro ao salvar palpite',
+      error: err ? err.message : 'Falha ao processar salvamento do palpite',
     })
   }
 })
