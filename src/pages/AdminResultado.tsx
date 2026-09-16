@@ -219,7 +219,7 @@ export default function AdminResultado() {
     setSaving(true)
     try {
       // 1. Update game in PocketBase
-      const updatedGame = await pb.collection('jogos').update<Jogo>(jogo.id, {
+      const gamePayload: Record<string, unknown> = {
         placar_a: Number(placarA),
         placar_b: Number(placarB),
         resultado_finalizado: true,
@@ -227,18 +227,24 @@ export default function AdminResultado() {
         gols_time_b: golsB.filter((g) => g.nome.trim()),
         tem_penaltis: temPenaltis,
         vencedor_penaltis: temPenaltis ? vencedorPenaltis : '',
-      })
+      }
+      await pb.collection('jogos').update<Jogo>(jogo.id, gamePayload)
 
       // 2. Trigger automatic scoring calculation via custom backend hook
+      const reqHeaders: Record<string, string> = {
+        'Content-Type': 'application/json',
+      }
+      if (pb.authStore.token) {
+        reqHeaders['Authorization'] = pb.authStore.token
+      }
+      const calcPayload = { jogo_id: jogo.id }
+
       const calcResponse = await fetch(
         `${import.meta.env.VITE_POCKETBASE_URL}/backend/v1/calcular-pontuacao`,
         {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: pb.authStore.token,
-          },
-          body: JSON.stringify({ jogo_id: jogo.id }),
+          headers: reqHeaders,
+          body: JSON.stringify(calcPayload),
         },
       )
 

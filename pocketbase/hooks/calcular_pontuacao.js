@@ -208,10 +208,15 @@ routerAdd('POST', '/backend/v1/calcular-pontuacao', (e) => {
 
       // Multiset (1-to-1) matching between predicted names and real scorer goals:
       // Each predicted goal can match at most one available real goal by that player.
-      const availableRealScorers = allRealScorers.map((rs) => ({
-        ...rs,
-        used: false,
-      }))
+      const availableRealScorers = allRealScorers.map((rs) => {
+        return {
+          displayName: rs.displayName,
+          normalizedName: rs.normalizedName,
+          points: rs.points,
+          position: rs.position,
+          used: false,
+        }
+      })
       const matchedScorers = []
 
       for (const predName of allPredNames) {
