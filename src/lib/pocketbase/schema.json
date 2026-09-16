@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-09-16T14:17:22.802Z",
+  "generatedAt": "2026-09-16T14:23:10.335Z",
   "collections": [
     {
       "name": "users",
@@ -176,6 +176,12 @@
           "required": false,
           "system": false,
           "autodateTriggers": ["onCreate", "onUpdate"]
+        },
+        {
+          "name": "pontos_importados",
+          "type": "number",
+          "required": false,
+          "system": false
         }
       ],
       "indexes": [

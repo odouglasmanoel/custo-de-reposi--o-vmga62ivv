@@ -188,10 +188,28 @@ export async function importBolaoSpreadsheet(
   let participantesAtualizados = 0
   const participantesNomes: string[] = []
 
-  // 1. Fetch current participants of this bolão
-  const existingParts = await pb.collection('participantes').getFullList({
-    filter: `bolao = '${bolaoId}'`,
-  })
+  // 1. Fetch current participants and palpites of this bolão
+  const [existingParts, existingPalpites, existingJogos] = await Promise.all([
+    pb.collection('participantes').getFullList<any>({
+      filter: `bolao = '${bolaoId}'`,
+    }),
+    pb.collection('palpites').getFullList<any>({
+      filter: `bolao = '${bolaoId}'`,
+    }),
+    pb.collection('jogos').getFullList<any>({
+      filter: `bolao = '${bolaoId}'`,
+    }),
+  ])
+
+  const finishedGameIds = new Set(
+    existingJogos.filter((j) => j.resultado_finalizado).map((j) => j.id),
+  )
+
+  const calcPalpitesTotalForPart = (partId: string): number => {
+    return existingPalpites
+      .filter((p) => p.participante === partId && finishedGameIds.has(p.jogo))
+      .reduce((acc, cur) => acc + (Number(cur.pontuacao_jogo) || 0), 0)
+  }
 
   // Ensure default 4 members exist if not present
   for (const member of BOLAO_MEMBERS) {
@@ -201,6 +219,7 @@ export async function importBolaoSpreadsheet(
         const created = await pb.collection('participantes').create({
           bolao: bolaoId,
           nome: member,
+          pontos_importados: 0,
           pontuacao_total: 0,
         })
         existingParts.push(created as any)
@@ -214,19 +233,25 @@ export async function importBolaoSpreadsheet(
   for (const item of scores) {
     const matched = existingParts.find((p) => cleanKey(p.nome) === cleanKey(item.nome))
     if (matched) {
+      const livePalpitesPoints = calcPalpitesTotalForPart(matched.id)
+      const importedScore = Number(item.pontuacao) || 0
       await pb.collection('participantes').update(matched.id, {
-        pontuacao_total: item.pontuacao,
+        pontos_importados: importedScore,
+        pontuacao_total: importedScore + livePalpitesPoints,
       })
       participantesAtualizados++
       participantesNomes.push(`${matched.nome}: ${item.pontuacao} pts`)
     } else {
       // Create new participant for this bolao
       try {
-        await pb.collection('participantes').create({
+        const importedScore = Number(item.pontuacao) || 0
+        const created = await pb.collection('participantes').create({
           bolao: bolaoId,
           nome: item.nome,
-          pontuacao_total: item.pontuacao,
+          pontos_importados: importedScore,
+          pontuacao_total: importedScore,
         })
+        existingParts.push(created as any)
         participantesAtualizados++
         participantesNomes.push(`${item.nome} (Novo): ${item.pontuacao} pts`)
       } catch (err: any) {

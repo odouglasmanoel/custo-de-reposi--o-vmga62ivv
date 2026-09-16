@@ -262,12 +262,12 @@ routerAdd('POST', '/backend/v1/calcular-pontuacao', (e) => {
     }
 
     // Now re-calculate cumulative total for all participants of this bolao
-    // 100% IDEMPOTENT: sum all pontuacao_jogo of all finished games for each participant
+    // 100% IDEMPOTENT: sum pontos_importados + all pontuacao_jogo of all existing finished games for each participant
     const participantes = $app.findRecordsByFilter(
       'participantes',
       `bolao = '${bolaoId}'`,
       '',
-      100,
+      200,
       0,
     )
 
@@ -293,7 +293,8 @@ routerAdd('POST', '/backend/v1/calcular-pontuacao', (e) => {
         } catch (_) {}
       }
 
-      part.set('pontuacao_total', totalPoints)
+      const importedPts = part.getInt('pontos_importados') || 0
+      part.set('pontuacao_total', importedPts + totalPoints)
       $app.save(part)
     }
 

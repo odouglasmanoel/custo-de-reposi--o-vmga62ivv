@@ -15,7 +15,7 @@ import pb from '@/lib/pocketbase/client'
 import { useAuth } from '@/context/AuthContext'
 import { useActivePool } from '@/context/ActivePoolContext'
 import { useRealtime } from '@/hooks/use-realtime'
-import type { Participante, Jogo } from '@/types/bolao'
+import type { Participante, Jogo, Palpite } from '@/types/bolao'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -27,6 +27,7 @@ export default function BolaoDashboard() {
 
   const [participantes, setParticipantes] = useState<Participante[]>([])
   const [jogos, setJogos] = useState<Jogo[]>([])
+  const [palpites, setPalpites] = useState<Palpite[]>([])
   const [loading, setLoading] = useState(true)
 
   // Real-time updates
@@ -38,21 +39,29 @@ export default function BolaoDashboard() {
     loadData()
   })
 
+  useRealtime<Palpite>('palpites', () => {
+    loadData()
+  })
+
   const loadData = async () => {
     if (!activeBolaoId) return
     try {
-      const [partList, jogosList] = await Promise.all([
+      const [partList, jogosList, palpitesList] = await Promise.all([
         pb.collection('participantes').getFullList<Participante>({
           filter: `bolao = '${activeBolaoId}'`,
-          sort: '-pontuacao_total,nome',
+          sort: 'nome',
         }),
         pb.collection('jogos').getFullList<Jogo>({
           filter: `bolao = '${activeBolaoId}'`,
           sort: 'data,hora',
         }),
+        pb.collection('palpites').getFullList<Palpite>({
+          filter: `bolao = '${activeBolaoId}'`,
+        }),
       ])
       setParticipantes(partList)
       setJogos(jogosList)
+      setPalpites(palpitesList)
     } catch (err) {
       console.error('Erro ao carregar dados do dashboard:', err)
     } finally {
@@ -66,6 +75,33 @@ export default function BolaoDashboard() {
       loadData()
     }
   }, [activeBolaoId])
+
+  // Dynamic leaderboard calculation (SUM of valid finished games + imported points)
+  const rankingParticipantes = useMemo(() => {
+    const finishedGameIds = new Set(jogos.filter((j) => j.resultado_finalizado).map((j) => j.id))
+
+    return participantes
+      .map((part) => {
+        // Sum only palpites whose game still exists in this bolao and is finalized
+        const sumPalpites = palpites
+          .filter((p) => p.participante === part.id && finishedGameIds.has(p.jogo))
+          .reduce((acc, p) => acc + (Number(p.pontuacao_jogo) || 0), 0)
+
+        const importedPts = Number(part.pontos_importados) || 0
+        const pontuacaoDinamica = importedPts + sumPalpites
+
+        return {
+          ...part,
+          pontuacao_total: pontuacaoDinamica,
+        }
+      })
+      .sort((a, b) => {
+        if (b.pontuacao_total !== a.pontuacao_total) {
+          return b.pontuacao_total - a.pontuacao_total
+        }
+        return a.nome.localeCompare(b.nome)
+      })
+  }, [participantes, jogos, palpites])
 
   // Quick stats
   const stats = useMemo(() => {
@@ -230,13 +266,13 @@ export default function BolaoDashboard() {
                 <div className="py-12 text-center text-xs text-[#64748B]">
                   Carregando classificação...
                 </div>
-              ) : participantes.length === 0 ? (
+              ) : rankingParticipantes.length === 0 ? (
                 <div className="rounded-lg bg-slate-50 py-10 text-center text-xs text-slate-500">
                   Nenhum participante registrado para esta competição.
                 </div>
               ) : (
                 <div className="divide-y divide-slate-100 overflow-hidden rounded-xl border border-slate-200">
-                  {participantes.map((part, index) => {
+                  {rankingParticipantes.map((part, index) => {
                     const badge = getPositionBadge(index)
                     const isCurrentUser =
                       participantName &&

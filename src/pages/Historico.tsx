@@ -58,7 +58,7 @@ export default function Historico() {
         const [parts, games, bets] = await Promise.all([
           pb.collection('participantes').getFullList<Participante>({
             filter: `bolao = '${selectedBolao.id}'`,
-            sort: '-pontuacao_total,nome',
+            sort: 'nome',
           }),
           pb.collection('jogos').getFullList<Jogo>({
             filter: `bolao = '${selectedBolao.id}'`,
@@ -68,7 +68,36 @@ export default function Historico() {
             filter: `bolao = '${selectedBolao.id}'`,
           }),
         ])
-        setParticipantes(parts)
+
+        // Dynamically calculate ranking: sum valid finished games + pontos_importados (or existing pontuacao_total if no imported field)
+        const finishedGameIds = new Set(
+          games.filter((g) => g.resultado_finalizado).map((g) => g.id),
+        )
+
+        const calculatedParts = parts
+          .map((part) => {
+            const sumPalpites = bets
+              .filter((p) => p.participante === part.id && finishedGameIds.has(p.jogo))
+              .reduce((acc, p) => acc + (Number(p.pontuacao_jogo) || 0), 0)
+
+            const importedPts =
+              part.pontos_importados !== undefined && part.pontos_importados !== null
+                ? Number(part.pontos_importados)
+                : Number(part.pontuacao_total) || 0
+
+            return {
+              ...part,
+              pontuacao_total: importedPts + sumPalpites,
+            }
+          })
+          .sort((a, b) => {
+            if (b.pontuacao_total !== a.pontuacao_total) {
+              return b.pontuacao_total - a.pontuacao_total
+            }
+            return a.nome.localeCompare(b.nome)
+          })
+
+        setParticipantes(calculatedParts)
         setJogos(games)
         setPalpites(bets)
       } catch (err) {

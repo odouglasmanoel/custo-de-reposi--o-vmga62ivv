@@ -30,6 +30,7 @@ export interface Jogo extends RecordModel {
 export interface Participante extends RecordModel {
   bolao: string
   nome: string
+  pontos_importados?: number
   pontuacao_total: number
 }
 

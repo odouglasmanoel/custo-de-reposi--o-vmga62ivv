@@ -156,10 +156,78 @@ export default function AdminJogos() {
     if (!gameToDelete) return
     setDeleting(true)
     try {
-      await pb.collection('jogos').delete(gameToDelete.id)
+      const deletedGameId = gameToDelete.id
+      const bolaoId = gameToDelete.bolao
+
+      // 1. Explicit cascade: delete all palpites linked to this game
+      try {
+        const palpitesToDelete = await pb.collection('palpites').getFullList({
+          filter: `jogo = '${deletedGameId}'`,
+        })
+        for (const p of palpitesToDelete) {
+          try {
+            await pb.collection('palpites').delete(p.id)
+          } catch {
+            /* intentionally ignored */
+          }
+        }
+      } catch {
+        /* intentionally ignored */
+      }
+
+      // 2. Delete game itself
+      await pb.collection('jogos').delete(deletedGameId)
+
+      // 3. Immediately recalculate leaderboard points for all participants of this bolão
+      try {
+        const [remainingGames, remainingPalpites, participants] = await Promise.all([
+          pb.collection('jogos').getFullList<Jogo>({
+            filter: `bolao = '${bolaoId}'`,
+          }),
+          pb.collection('palpites').getFullList({
+            filter: `bolao = '${bolaoId}'`,
+          }),
+          pb.collection('participantes').getFullList<any>({
+            filter: `bolao = '${bolaoId}'`,
+          }),
+        ])
+
+        const finishedGameIds = new Set(
+          remainingGames
+            .filter((j) => j.id !== deletedGameId && j.resultado_finalizado)
+            .map((j) => j.id),
+        )
+
+        for (const part of participants) {
+          const sumPalpites = remainingPalpites
+            .filter(
+              (p) =>
+                p.participante === part.id &&
+                p.jogo !== deletedGameId &&
+                finishedGameIds.has(p.jogo),
+            )
+            .reduce((acc, p) => acc + (Number(p.pontuacao_jogo) || 0), 0)
+
+          const importedPts = Number(part.pontos_importados) || 0
+          const updatedTotal = importedPts + sumPalpites
+
+          await pb.collection('participantes').update(part.id, {
+            pontuacao_total: updatedTotal,
+          })
+        }
+
+        // Update bolao timestamp
+        await pb.collection('boloes').update(bolaoId, {
+          ultima_atualizacao: new Date().toISOString(),
+        })
+      } catch (recalcErr) {
+        console.error('Aviso ao recalcular pontuações na exclusão:', recalcErr)
+      }
+
       toast({
-        title: 'Jogo excluído',
-        description: 'A partida foi removida do bolão.',
+        title: 'Jogo excluído com sucesso',
+        description:
+          'A partida e palpites foram removidos e o ranking foi recalculado imediatamente.',
       })
       setGameToDelete(null)
       loadJogos()
@@ -197,6 +265,7 @@ export default function AdminJogos() {
           await pb.collection('participantes').create({
             bolao: created.id,
             nome: m,
+            pontos_importados: 0,
             pontuacao_total: 0,
           })
         } catch {
