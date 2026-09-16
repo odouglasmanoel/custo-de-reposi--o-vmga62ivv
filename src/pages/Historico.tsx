@@ -15,6 +15,7 @@ import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { formatDataBR, formatHoraBR, formatDateTimeBR } from '@/lib/dateUtils'
 
 export default function Historico() {
   const [boloes, setBoloes] = useState<Bolao[]>([])
@@ -145,16 +146,14 @@ export default function Historico() {
                       <h3 className="text-base font-bold text-[#0F172A]">{b.nome}</h3>
                       <p className="mt-1 text-[11px] text-[#64748B]">
                         {b.ultima_atualizacao
-                          ? `Atualizado em: ${new Date(b.ultima_atualizacao).toLocaleDateString('pt-BR')}`
+                          ? `Atualizado em: ${formatDateTimeBR(b.ultima_atualizacao)}`
                           : 'Sem data de atualização'}
                       </p>
                     </div>
 
-                    {b.ativo && (
-                      <Badge className="bg-emerald-100 text-[10px] font-bold text-emerald-800 hover:bg-emerald-100">
-                        Ativo
-                      </Badge>
-                    )}
+                    <Badge className="bg-emerald-100 text-[10px] font-bold text-emerald-800 hover:bg-emerald-100">
+                      Ativo
+                    </Badge>
                   </div>
 
                   <div className="mt-4 flex items-center justify-between pt-3 border-t border-slate-100">
@@ -283,7 +282,7 @@ export default function Historico() {
                             </div>
 
                             <span className="text-[11px] text-slate-500">
-                              {jogo.data ? jogo.data.split('T')[0] : ''} às {jogo.hora}
+                              {formatDataBR(jogo.data)} às {formatHoraBR(jogo.hora)}
                             </span>
                           </div>
 

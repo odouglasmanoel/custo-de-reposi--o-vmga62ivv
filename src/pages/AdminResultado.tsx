@@ -20,6 +20,7 @@ import { Label } from '@/components/ui/label'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { useToast } from '@/hooks/use-toast'
+import { formatDataBR, formatHoraBR } from '@/lib/dateUtils'
 
 export default function AdminResultado() {
   const { id } = useParams<{ id: string }>()
@@ -318,7 +319,7 @@ export default function AdminResultado() {
               </h1>
             </div>
             <p className="mt-0.5 text-xs text-[#64748B]">
-              Data: {jogo.data ? jogo.data.split('T')[0] : '—'} às {jogo.hora}
+              Data: {formatDataBR(jogo.data)} às {formatHoraBR(jogo.hora)}
             </p>
           </div>
         </div>

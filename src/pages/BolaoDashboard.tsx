@@ -19,6 +19,7 @@ import type { Participante, Jogo } from '@/types/bolao'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
+import { formatDataBR, formatHoraBR, formatDateTimeBR } from '@/lib/dateUtils'
 
 export default function BolaoDashboard() {
   const { user, isAdmin, participantName } = useAuth()
@@ -75,7 +76,7 @@ export default function BolaoDashboard() {
       registrados,
       pendentes,
       proximo: proximo
-        ? `${proximo.time_a} x ${proximo.time_b} (${proximo.data.split('T')[0]} ${proximo.hora})`
+        ? `${proximo.time_a} x ${proximo.time_b} (${formatDataBR(proximo.data)} às ${formatHoraBR(proximo.hora)})`
         : '—',
     }
   }, [jogos])
@@ -130,8 +131,7 @@ export default function BolaoDashboard() {
                 </span>
                 {activeBolao?.ultima_atualizacao && (
                   <span className="ml-2 text-[11px] text-slate-400">
-                    • Atualizado em:{' '}
-                    {new Date(activeBolao.ultima_atualizacao).toLocaleString('pt-BR')}
+                    • Atualizado em: {formatDateTimeBR(activeBolao.ultima_atualizacao)}
                   </span>
                 )}
               </p>
@@ -152,7 +152,7 @@ export default function BolaoDashboard() {
           >
             {boloes.map((b) => (
               <option key={b.id} value={b.id}>
-                {b.nome} {b.ativo ? '(Ativo)' : ''}
+                {b.nome} (Ativo)
               </option>
             ))}
           </select>

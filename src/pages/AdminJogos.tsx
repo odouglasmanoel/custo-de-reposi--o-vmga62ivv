@@ -1,10 +1,30 @@
 import { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
-import { Shield, Plus, Trash2, Calendar, Clock, Edit3, Loader2, AlertCircle } from 'lucide-react'
+import { useRef } from 'react'
+import {
+  Shield,
+  Plus,
+  Trash2,
+  Calendar,
+  Clock,
+  Edit3,
+  Loader2,
+  AlertCircle,
+  Upload,
+  Trophy,
+  CheckCircle2,
+  FileSpreadsheet,
+} from 'lucide-react'
 import pb from '@/lib/pocketbase/client'
 import { useActivePool } from '@/context/ActivePoolContext'
 import { useRealtime } from '@/hooks/use-realtime'
 import type { Jogo } from '@/types/bolao'
+import { formatDataBR, formatHoraBR } from '@/lib/dateUtils'
+import {
+  parseSpreadsheet,
+  importBolaoSpreadsheet,
+  type ParsedParticipantScore,
+} from '@/lib/spreadsheetParser'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -21,12 +41,29 @@ import {
 import { useToast } from '@/hooks/use-toast'
 
 export default function AdminJogos() {
-  const { boloes, activeBolao, activeBolaoId, setActiveBolaoId } = useActivePool()
+  const { boloes, activeBolao, activeBolaoId, setActiveBolaoId, refreshBoloes } = useActivePool()
   const { toast } = useToast()
 
+  const fileInputRef = useRef<HTMLInputElement>(null)
   const [jogos, setJogos] = useState<Jogo[]>([])
   const [loading, setLoading] = useState(true)
   const [submitting, setSubmitting] = useState(false)
+
+  // Modal Novo Bolão
+  const [modalNovoBolao, setModalNovoBolao] = useState(false)
+  const [novoBolaoNome, setNovoBolaoNome] = useState('')
+  const [novoBolaoAtivo, setNovoBolaoAtivo] = useState(true)
+  const [salvandoBolao, setSalvandoBolao] = useState(false)
+  const [erroNovoBolao, setErroNovoBolao] = useState<string | null>(null)
+
+  // Upload Planilha states
+  const [modalUpload, setModalUpload] = useState(false)
+  const [parsedScores, setParsedScores] = useState<ParsedParticipantScore[]>([])
+  const [uploadFileName, setUploadFileName] = useState('')
+  const [parsingSpreadsheet, setParsingSpreadsheet] = useState(false)
+  const [importingSpreadsheet, setImportingSpreadsheet] = useState(false)
+  const [uploadError, setUploadError] = useState<string | null>(null)
+  const [uploadAvisos, setUploadAvisos] = useState<string[]>([])
 
   // Form fields
   const [timeA, setTimeA] = useState('')
@@ -137,6 +174,106 @@ export default function AdminJogos() {
     }
   }
 
+  // Create new Bolão
+  const handleCreateBolao = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setErroNovoBolao(null)
+    if (!novoBolaoNome.trim()) {
+      setErroNovoBolao('Informe o nome da competição.')
+      return
+    }
+
+    setSalvandoBolao(true)
+    try {
+      const created = await pb.collection('boloes').create({
+        nome: novoBolaoNome.trim(),
+        ativo: novoBolaoAtivo,
+      })
+
+      // Seed 4 standard participants with 0 points
+      const defaultMembers = ['Douglas', 'Gabriel', 'Bruno', 'Davi']
+      for (const m of defaultMembers) {
+        try {
+          await pb.collection('participantes').create({
+            bolao: created.id,
+            nome: m,
+            pontuacao_total: 0,
+          })
+        } catch {
+          /* intentionally ignored */
+        }
+      }
+
+      toast({
+        title: 'Bolão criado com sucesso!',
+        description: `Competição "${novoBolaoNome.trim()}" cadastrada.`,
+      })
+
+      await refreshBoloes()
+      setActiveBolaoId(created.id)
+      setNovoBolaoNome('')
+      setModalNovoBolao(false)
+    } catch (err: unknown) {
+      console.error('Erro ao criar bolão:', err)
+      const msg = err instanceof Error ? err.message : 'Falha ao cadastrar o bolão'
+      setErroNovoBolao(msg)
+    } finally {
+      setSalvandoBolao(false)
+    }
+  }
+
+  // Handle file select for spreadsheet
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+
+    setUploadFileName(file.name)
+    setParsingSpreadsheet(true)
+    setUploadError(null)
+    setUploadAvisos([])
+    try {
+      const { scores, avisos } = await parseSpreadsheet(file)
+      setParsedScores(scores)
+      setUploadAvisos(avisos)
+      if (scores.length === 0) {
+        setUploadError('Nenhuma pontuação identificada. Verifique os cabeçalhos da planilha.')
+      }
+    } catch (err: unknown) {
+      console.error('Erro ao processar planilha:', err)
+      setUploadError(err instanceof Error ? err.message : 'Erro ao ler o arquivo')
+    } finally {
+      setParsingSpreadsheet(false)
+    }
+  }
+
+  // Confirm import into active bolão
+  const handleConfirmImport = async () => {
+    if (!activeBolaoId || parsedScores.length === 0) return
+
+    setImportingSpreadsheet(true)
+    try {
+      const result = await importBolaoSpreadsheet(activeBolaoId, parsedScores)
+      toast({
+        title: 'Importação concluída com sucesso!',
+        description: `${result.participantesAtualizados} participante(s) com pontuação atualizada. O histórico foi preservado.`,
+      })
+      setModalUpload(false)
+      setParsedScores([])
+      setUploadFileName('')
+      if (fileInputRef.current) fileInputRef.current.value = ''
+      await refreshBoloes()
+    } catch (err: unknown) {
+      console.error('Erro ao importar planilha:', err)
+      toast({
+        title: 'Erro ao importar dados',
+        description: err instanceof Error ? err.message : 'Falha ao gravar no banco',
+        variant: 'destructive',
+      })
+    } finally {
+      setImportingSpreadsheet(false)
+    }
+  }
+
   return (
     <div className="space-y-6">
       {/* Header with pool selector */}
@@ -155,22 +292,53 @@ export default function AdminJogos() {
           </div>
         </div>
 
-        <div className="flex items-center gap-2">
-          <label htmlFor="admin-pool-select" className="text-xs font-semibold text-slate-500">
-            Bolão Selecionado:
-          </label>
-          <select
-            id="admin-pool-select"
-            value={activeBolaoId || ''}
-            onChange={(e) => setActiveBolaoId(e.target.value)}
-            className="rounded-lg border border-[#CBD5E1] bg-white px-3 py-1.5 text-xs font-medium text-[#0F2A43] shadow-xs focus:border-[#10B981] focus:outline-none"
+        <div className="flex flex-wrap items-center gap-2">
+          {/* Bolão selector with (Ativo) label */}
+          <div className="flex items-center gap-1.5">
+            <label htmlFor="admin-pool-select" className="text-xs font-semibold text-slate-500">
+              Bolão:
+            </label>
+            <select
+              id="admin-pool-select"
+              value={activeBolaoId || ''}
+              onChange={(e) => setActiveBolaoId(e.target.value)}
+              className="rounded-lg border border-[#CBD5E1] bg-white px-3 py-1.5 text-xs font-medium text-[#0F2A43] shadow-xs focus:border-[#10B981] focus:outline-none"
+            >
+              {boloes.map((b) => (
+                <option key={b.id} value={b.id}>
+                  {b.nome} (Ativo)
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {/* Criar Novo Bolão Button */}
+          <Button
+            type="button"
+            onClick={() => setModalNovoBolao(true)}
+            size="sm"
+            className="h-8 rounded-lg bg-emerald-600 px-3 text-xs font-semibold text-white shadow-xs hover:bg-emerald-700"
           >
-            {boloes.map((b) => (
-              <option key={b.id} value={b.id}>
-                {b.nome} {b.ativo ? '(Ativo)' : ''}
-              </option>
-            ))}
-          </select>
+            <Plus className="mr-1 h-3.5 w-3.5" />
+            Criar Novo Bolão
+          </Button>
+
+          {/* Upload Planilha individual por bolão */}
+          <Button
+            type="button"
+            onClick={() => {
+              setUploadError(null)
+              setParsedScores([])
+              setUploadFileName('')
+              setModalUpload(true)
+            }}
+            variant="outline"
+            size="sm"
+            className="h-8 rounded-lg border-indigo-300 bg-indigo-50 px-3 text-xs font-semibold text-indigo-900 shadow-xs hover:bg-indigo-100"
+          >
+            <Upload className="mr-1 h-3.5 w-3.5 text-indigo-600" />
+            Upload de Planilha ({activeBolao?.nome || 'Bolão'})
+          </Button>
         </div>
       </div>
 
@@ -311,7 +479,6 @@ export default function AdminJogos() {
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {jogos.map((jogo) => {
-                  const dataFormatada = jogo.data ? jogo.data.split('T')[0] : '—'
                   const finalizado = jogo.resultado_finalizado
 
                   return (
@@ -329,9 +496,9 @@ export default function AdminJogos() {
                       <td className="px-4 py-3.5 text-slate-600">
                         <div className="flex items-center gap-1.5">
                           <Calendar className="h-3.5 w-3.5 text-slate-400" />
-                          <span>{dataFormatada}</span>
+                          <span>{formatDataBR(jogo.data)}</span>
                           <Clock className="ml-1 h-3.5 w-3.5 text-slate-400" />
-                          <span>{jogo.hora}</span>
+                          <span>{formatHoraBR(jogo.hora)}</span>
                         </div>
                       </td>
                       <td className="px-4 py-3.5 text-center">
@@ -429,6 +596,217 @@ export default function AdminJogos() {
               {deleting ? 'Excluindo...' : 'Sim, excluir'}
             </Button>
           </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Modal Criar Novo Bolão */}
+      <Dialog open={modalNovoBolao} onOpenChange={setModalNovoBolao}>
+        <DialogContent className="rounded-xl bg-white sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-base font-bold text-[#0F172A]">
+              <Trophy className="h-5 w-5 text-amber-500" />
+              Criar Novo Bolão
+            </DialogTitle>
+            <DialogDescription className="text-xs text-[#64748B]">
+              Cadastre uma nova competição oficial. Os participantes oficiais serão vinculados
+              automaticamente.
+            </DialogDescription>
+          </DialogHeader>
+
+          {erroNovoBolao && (
+            <div className="flex items-center gap-2 rounded-lg border border-red-200 bg-red-50 p-3 text-xs text-red-700">
+              <AlertCircle className="h-4 w-4 shrink-0 text-red-600" />
+              <span>{erroNovoBolao}</span>
+            </div>
+          )}
+
+          <form onSubmit={handleCreateBolao} className="space-y-4 pt-2">
+            <div>
+              <Label htmlFor="nome-bolao" className="text-xs font-bold text-slate-700">
+                Nome da Competição
+              </Label>
+              <Input
+                id="nome-bolao"
+                placeholder="Ex: Copa Libertadores 2026"
+                value={novoBolaoNome}
+                onChange={(e) => setNovoBolaoNome(e.target.value)}
+                className="mt-1 h-10 border-[#CBD5E1] text-xs focus-visible:border-[#10B981] focus-visible:ring-[#10B981]"
+                autoFocus
+              />
+            </div>
+
+            <div className="flex items-center gap-2 pt-1">
+              <input
+                id="chk-ativo"
+                type="checkbox"
+                checked={novoBolaoAtivo}
+                onChange={(e) => setNovoBolaoAtivo(e.target.checked)}
+                className="h-4 w-4 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
+              />
+              <Label
+                htmlFor="chk-ativo"
+                className="cursor-pointer text-xs font-medium text-slate-700"
+              >
+                Definir como bolão ativo (visível no seletor)
+              </Label>
+            </div>
+
+            <DialogFooter className="mt-4 flex gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={salvandoBolao}
+                onClick={() => setModalNovoBolao(false)}
+                className="text-xs"
+              >
+                Cancelar
+              </Button>
+              <Button
+                type="submit"
+                size="sm"
+                disabled={salvandoBolao}
+                className="bg-[#0F2A43] text-xs font-semibold text-white hover:bg-[#1B3A5C]"
+              >
+                {salvandoBolao ? (
+                  <>
+                    <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                    Salvando...
+                  </>
+                ) : (
+                  'Salvar Bolão'
+                )}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* Modal Upload de Planilha por Bolão */}
+      <Dialog open={modalUpload} onOpenChange={setModalUpload}>
+        <DialogContent className="rounded-xl bg-white sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-base font-bold text-[#0F172A]">
+              <FileSpreadsheet className="h-5 w-5 text-indigo-600" />
+              Upload de Planilha — {activeBolao?.nome}
+            </DialogTitle>
+            <DialogDescription className="text-xs text-[#64748B]">
+              Importe pontuações e classificações já acumuladas em planilha Excel (.xlsx, .xls) ou
+              CSV. A pontuação acumulada do arquivo será mantida e preservada sem recálculo por
+              posição.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4 pt-2">
+            {/* File picker */}
+            <div className="rounded-xl border-2 border-dashed border-indigo-200 bg-indigo-50/40 p-6 text-center">
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept=".xlsx, .xls, .csv"
+                onChange={handleFileChange}
+                className="hidden"
+                id="file-spreadsheet-upload"
+              />
+              <label
+                htmlFor="file-spreadsheet-upload"
+                className="flex flex-col items-center justify-center cursor-pointer"
+              >
+                <Upload className="h-8 w-8 text-indigo-500 mb-2" />
+                <span className="text-xs font-bold text-indigo-900">
+                  {uploadFileName
+                    ? uploadFileName
+                    : 'Clique para selecionar a planilha Excel / CSV'}
+                </span>
+                <span className="mt-1 text-[11px] text-slate-500">
+                  Formatos aceitos: .xlsx, .xls, .csv
+                </span>
+              </label>
+            </div>
+
+            {parsingSpreadsheet && (
+              <div className="flex items-center justify-center gap-2 py-4 text-xs text-indigo-800">
+                <Loader2 className="h-4 w-4 animate-spin" />
+                Lendo e processando colunas do arquivo...
+              </div>
+            )}
+
+            {uploadError && (
+              <div className="flex items-center gap-2 rounded-lg border border-red-200 bg-red-50 p-3 text-xs text-red-700">
+                <AlertCircle className="h-4 w-4 shrink-0 text-red-600" />
+                <span>{uploadError}</span>
+              </div>
+            )}
+
+            {uploadAvisos.length > 0 && (
+              <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
+                {uploadAvisos.map((aviso, i) => (
+                  <p key={i}>• {aviso}</p>
+                ))}
+              </div>
+            )}
+
+            {/* Preview of detected scores */}
+            {parsedScores.length > 0 && (
+              <div className="rounded-lg border border-slate-200 bg-white p-3">
+                <div className="flex items-center justify-between pb-2 border-b border-slate-100">
+                  <span className="text-xs font-bold text-slate-800">
+                    Pontuações Detectadas ({parsedScores.length} participantes):
+                  </span>
+                  <Badge
+                    variant="outline"
+                    className="border-emerald-300 bg-emerald-50 text-[10px] text-emerald-800"
+                  >
+                    Pronto para gravar
+                  </Badge>
+                </div>
+                <div className="mt-2 divide-y divide-slate-100 max-h-48 overflow-y-auto">
+                  {parsedScores.map((item, idx) => (
+                    <div key={idx} className="flex items-center justify-between py-1.5 text-xs">
+                      <span className="font-semibold text-slate-700">{item.nome}</span>
+                      <span className="font-black text-[#0F2A43]">{item.pontuacao} pts</span>
+                    </div>
+                  ))}
+                </div>
+                <p className="mt-2 text-[10px] text-slate-500 border-t border-slate-100 pt-1.5">
+                  Esta base acumulada será gravada no bolão <strong>{activeBolao?.nome}</strong>.
+                  Novos palpites e jogos futuros utilizarão o cálculo automático normalmente.
+                </p>
+              </div>
+            )}
+
+            <DialogFooter className="mt-4 flex gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={importingSpreadsheet}
+                onClick={() => setModalUpload(false)}
+                className="text-xs"
+              >
+                Cancelar
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                disabled={importingSpreadsheet || parsedScores.length === 0}
+                onClick={handleConfirmImport}
+                className="bg-emerald-600 text-xs font-semibold text-white hover:bg-emerald-700"
+              >
+                {importingSpreadsheet ? (
+                  <>
+                    <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                    Gravando histórico...
+                  </>
+                ) : (
+                  <>
+                    <CheckCircle2 className="mr-1.5 h-3.5 w-3.5" />
+                    Confirmar e Importar
+                  </>
+                )}
+              </Button>
+            </DialogFooter>
+          </div>
         </DialogContent>
       </Dialog>
     </div>

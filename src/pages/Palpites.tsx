@@ -21,13 +21,29 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Badge } from '@/components/ui/badge'
 import { useToast } from '@/hooks/use-toast'
+import { formatDataBR, formatHoraBR } from '@/lib/dateUtils'
 
 interface PalpiteFormData {
   placar_a: number | string
   placar_b: number | string
-  goleadores_a: string
-  goleadores_b: string
+  goleadores_a: string[]
+  goleadores_b: string[]
   vencedor_penaltis: 'A' | 'B' | 'N' | string
+}
+
+function normalizeScorersArray(raw: any, goalCount: number): string[] {
+  const currentList = Array.isArray(raw)
+    ? raw.map((x) => String(x || ''))
+    : typeof raw === 'string' && raw.trim()
+      ? raw.split(',').map((s) => s.trim())
+      : []
+
+  if (goalCount <= 0) return []
+  const result: string[] = []
+  for (let i = 0; i < goalCount; i++) {
+    result.push(currentList[i] ?? '')
+  }
+  return result
 }
 
 export default function Palpites() {
@@ -70,11 +86,13 @@ export default function Palpites() {
 
       for (const p of myPalpites) {
         mapPalpites[p.jogo] = p
+        const gA = p.placar_a !== null && p.placar_a !== undefined ? Number(p.placar_a) : 0
+        const gB = p.placar_b !== null && p.placar_b !== undefined ? Number(p.placar_b) : 0
         forms[p.jogo] = {
           placar_a: p.placar_a ?? '',
           placar_b: p.placar_b ?? '',
-          goleadores_a: Array.isArray(p.goleadores_a) ? p.goleadores_a.join(', ') : '',
-          goleadores_b: Array.isArray(p.goleadores_b) ? p.goleadores_b.join(', ') : '',
+          goleadores_a: normalizeScorersArray(p.goleadores_a, gA),
+          goleadores_b: normalizeScorersArray(p.goleadores_b, gB),
           vencedor_penaltis: p.vencedor_penaltis || 'N',
         }
       }
@@ -97,18 +115,94 @@ export default function Palpites() {
     }
   }, [activeBolaoId, currentParticipante])
 
-  const handleFieldChange = (jogoId: string, field: keyof PalpiteFormData, value: any) => {
+  const handleScoreChange = (jogoId: string, team: 'a' | 'b', rawVal: string) => {
+    const valNum = rawVal === '' ? '' : Math.max(0, parseInt(rawVal, 10) || 0)
+    setFormData((prev) => {
+      const cur = prev[jogoId] || {
+        placar_a: '',
+        placar_b: '',
+        goleadores_a: [],
+        goleadores_b: [],
+        vencedor_penaltis: 'N',
+      }
+
+      if (team === 'a') {
+        const goalCount = typeof valNum === 'number' ? valNum : 0
+        const updatedList = normalizeScorersArray(cur.goleadores_a, goalCount)
+        return {
+          ...prev,
+          [jogoId]: {
+            ...cur,
+            placar_a: valNum,
+            goleadores_a: updatedList,
+          },
+        }
+      } else {
+        const goalCount = typeof valNum === 'number' ? valNum : 0
+        const updatedList = normalizeScorersArray(cur.goleadores_b, goalCount)
+        return {
+          ...prev,
+          [jogoId]: {
+            ...cur,
+            placar_b: valNum,
+            goleadores_b: updatedList,
+          },
+        }
+      }
+    })
+  }
+
+  const handleScorerLineChange = (
+    jogoId: string,
+    team: 'a' | 'b',
+    index: number,
+    nameValue: string,
+  ) => {
+    setFormData((prev) => {
+      const cur = prev[jogoId] || {
+        placar_a: '',
+        placar_b: '',
+        goleadores_a: [],
+        goleadores_b: [],
+        vencedor_penaltis: 'N',
+      }
+
+      if (team === 'a') {
+        const list = [...(cur.goleadores_a || [])]
+        list[index] = nameValue
+        return {
+          ...prev,
+          [jogoId]: {
+            ...cur,
+            goleadores_a: list,
+          },
+        }
+      } else {
+        const list = [...(cur.goleadores_b || [])]
+        list[index] = nameValue
+        return {
+          ...prev,
+          [jogoId]: {
+            ...cur,
+            goleadores_b: list,
+          },
+        }
+      }
+    })
+  }
+
+  const handlePenaltisChange = (jogoId: string, value: string) => {
     setFormData((prev) => ({
       ...prev,
       [jogoId]: {
         ...(prev[jogoId] || {
           placar_a: '',
           placar_b: '',
-          goleadores_a: '',
-          goleadores_b: '',
+          goleadores_a: [],
+          goleadores_b: [],
           vencedor_penaltis: 'N',
         }),
-        [field]: value,
+        vencedor_penaltis: value,
       },
     }))
   }
@@ -133,22 +227,37 @@ export default function Palpites() {
 
     setSavingGameId(jogo.id)
     try {
-      const gA = currentForm.goleadores_a
-        .split(',')
-        .map((s) => s.trim())
-        .filter(Boolean)
+      const numA = Number(currentForm.placar_a)
+      const numB = Number(currentForm.placar_b)
 
-      const gB = currentForm.goleadores_b
-        .split(',')
-        .map((s) => s.trim())
-        .filter(Boolean)
+      // Only save scorers if goals > 0; trim empty values
+      const gA =
+        numA > 0 ? (currentForm.goleadores_a || []).map((s) => s.trim()).filter(Boolean) : []
+      const gB =
+        numB > 0 ? (currentForm.goleadores_b || []).map((s) => s.trim()).filter(Boolean) : []
 
-      const existing = palpites[jogo.id]
+      // UPSERT robust check: check memory state or query PB for an existing bet
+      let existingRecordId: string | null = palpites[jogo.id]?.id || null
 
-      if (existing) {
-        await pb.collection('palpites').update(existing.id, {
-          placar_a: Number(currentForm.placar_a),
-          placar_b: Number(currentForm.placar_b),
+      if (!existingRecordId) {
+        try {
+          const remoteCheck = await pb
+            .collection('palpites')
+            .getFirstListItem<Palpite>(
+              `bolao = '${activeBolaoId}' && jogo = '${jogo.id}' && participante = '${currentParticipante.id}'`,
+            )
+          if (remoteCheck) {
+            existingRecordId = remoteCheck.id
+          }
+        } catch (_) {
+          // not found, proceed to create
+        }
+      }
+
+      if (existingRecordId) {
+        await pb.collection('palpites').update(existingRecordId, {
+          placar_a: numA,
+          placar_b: numB,
           goleadores_a: gA,
           goleadores_b: gB,
           vencedor_penaltis: currentForm.vencedor_penaltis || 'N',
@@ -158,8 +267,8 @@ export default function Palpites() {
           bolao: activeBolaoId,
           jogo: jogo.id,
           participante: currentParticipante.id,
-          placar_a: Number(currentForm.placar_a),
-          placar_b: Number(currentForm.placar_b),
+          placar_a: numA,
+          placar_b: numB,
           goleadores_a: gA,
           goleadores_b: gB,
           vencedor_penaltis: currentForm.vencedor_penaltis || 'N',
@@ -247,10 +356,10 @@ export default function Palpites() {
                 <div className="flex flex-wrap items-center justify-between border-b border-slate-100 bg-slate-50/70 px-6 py-3">
                   <div className="flex items-center gap-2 text-xs text-slate-600">
                     <Calendar className="h-3.5 w-3.5 text-slate-400" />
-                    <span>{jogo.data ? jogo.data.split('T')[0] : '—'}</span>
+                    <span>{formatDataBR(jogo.data)}</span>
                     <span>•</span>
                     <Clock className="h-3.5 w-3.5 text-slate-400" />
-                    <span>{jogo.hora}</span>
+                    <span>{formatHoraBR(jogo.hora)}</span>
                   </div>
 
                   {finalizado ? (
@@ -383,8 +492,8 @@ export default function Palpites() {
                             type="number"
                             min="0"
                             placeholder="0"
-                            value={form.placar_a}
-                            onChange={(e) => handleFieldChange(jogo.id, 'placar_a', e.target.value)}
+                            value={form.placar_a ?? ''}
+                            onChange={(e) => handleScoreChange(jogo.id, 'a', e.target.value)}
                             className="mt-1 h-12 text-center text-xl font-black text-[#0F2A43] focus-visible:border-[#10B981] focus-visible:ring-[#10B981]"
                           />
                         </div>
@@ -399,49 +508,126 @@ export default function Palpites() {
                             type="number"
                             min="0"
                             placeholder="0"
-                            value={form.placar_b}
-                            onChange={(e) => handleFieldChange(jogo.id, 'placar_b', e.target.value)}
+                            value={form.placar_b ?? ''}
+                            onChange={(e) => handleScoreChange(jogo.id, 'b', e.target.value)}
                             className="mt-1 h-12 text-center text-xl font-black text-[#0F2A43] focus-visible:border-[#10B981] focus-visible:ring-[#10B981]"
                           />
                         </div>
                       </div>
 
-                      {/* Goal scorers prediction inputs */}
-                      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                        <div>
-                          <Label className="text-xs font-semibold text-slate-700">
-                            Jogadores que farão gol — {jogo.time_a}
-                          </Label>
-                          <Input
-                            placeholder="Nomes separados por vírgula (ex: Pedro, Gabigol)"
-                            value={form.goleadores_a}
-                            onChange={(e) =>
-                              handleFieldChange(jogo.id, 'goleadores_a', e.target.value)
-                            }
-                            className="mt-1 h-9 border-[#CBD5E1] text-xs focus-visible:border-[#10B981] focus-visible:ring-[#10B981]"
-                          />
-                          <p className="mt-0.5 text-[10px] text-slate-400">
-                            Atacante/Meia +1 | Zagueiro/Lat +3 | Goleiro +10
-                          </p>
-                        </div>
+                      {/* Goal scorers dynamic line inputs: 1 input per goal entered in score */}
+                      {(() => {
+                        const numGolsA =
+                          form.placar_a === '' || form.placar_a === undefined
+                            ? 0
+                            : Math.max(0, Number(form.placar_a) || 0)
+                        const numGolsB =
+                          form.placar_b === '' || form.placar_b === undefined
+                            ? 0
+                            : Math.max(0, Number(form.placar_b) || 0)
+                        const isZeroA = numGolsA === 0
+                        const isZeroB = numGolsB === 0
 
-                        <div>
-                          <Label className="text-xs font-semibold text-slate-700">
-                            Jogadores que farão gol — {jogo.time_b}
-                          </Label>
-                          <Input
-                            placeholder="Nomes separados por vírgula (ex: Veiga, Rony)"
-                            value={form.goleadores_b}
-                            onChange={(e) =>
-                              handleFieldChange(jogo.id, 'goleadores_b', e.target.value)
-                            }
-                            className="mt-1 h-9 border-[#CBD5E1] text-xs focus-visible:border-[#10B981] focus-visible:ring-[#10B981]"
-                          />
-                          <p className="mt-0.5 text-[10px] text-slate-400">
-                            Atacante/Meia +1 | Zagueiro/Lat +3 | Goleiro +10
-                          </p>
-                        </div>
-                      </div>
+                        return (
+                          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                            {/* Team A Scorers */}
+                            <div className="rounded-lg border border-slate-200 bg-slate-50/50 p-3">
+                              <div className="flex items-center justify-between pb-1.5 border-b border-slate-200/60 mb-2">
+                                <Label className="text-xs font-bold text-slate-800">
+                                  Marcadores de gols — {jogo.time_a}
+                                </Label>
+                                <Badge
+                                  variant="outline"
+                                  className={`text-[10px] ${
+                                    isZeroA
+                                      ? 'border-slate-300 text-slate-400 bg-slate-100'
+                                      : 'border-emerald-300 text-emerald-800 bg-emerald-50'
+                                  }`}
+                                >
+                                  {isZeroA
+                                    ? '0 gols (bloqueado)'
+                                    : `${numGolsA} gol${numGolsA > 1 ? 's' : ''} previsto${numGolsA > 1 ? 's' : ''}`}
+                                </Badge>
+                              </div>
+
+                              {isZeroA ? (
+                                <p className="py-3 text-center text-xs italic text-slate-400">
+                                  Placar zero (0): campo de marcadores bloqueado.
+                                </p>
+                              ) : (
+                                <div className="space-y-2">
+                                  {Array.from({ length: numGolsA }).map((_, idx) => (
+                                    <div key={idx} className="flex items-center gap-2">
+                                      <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-slate-200 text-[10px] font-bold text-slate-700">
+                                        {idx + 1}º
+                                      </span>
+                                      <Input
+                                        placeholder={`Nome do autor do ${idx + 1}º gol (ex: Pedro Raul)`}
+                                        value={form.goleadores_a?.[idx] || ''}
+                                        onChange={(e) =>
+                                          handleScorerLineChange(jogo.id, 'a', idx, e.target.value)
+                                        }
+                                        className="h-8 border-[#CBD5E1] bg-white text-xs focus-visible:border-[#10B981] focus-visible:ring-[#10B981]"
+                                      />
+                                    </div>
+                                  ))}
+                                  <p className="mt-1 text-[10px] text-slate-500">
+                                    Pode repetir o mesmo jogador caso aposte em múltiplos gols dele.
+                                  </p>
+                                </div>
+                              )}
+                            </div>
+
+                            {/* Team B Scorers */}
+                            <div className="rounded-lg border border-slate-200 bg-slate-50/50 p-3">
+                              <div className="flex items-center justify-between pb-1.5 border-b border-slate-200/60 mb-2">
+                                <Label className="text-xs font-bold text-slate-800">
+                                  Marcadores de gols — {jogo.time_b}
+                                </Label>
+                                <Badge
+                                  variant="outline"
+                                  className={`text-[10px] ${
+                                    isZeroB
+                                      ? 'border-slate-300 text-slate-400 bg-slate-100'
+                                      : 'border-emerald-300 text-emerald-800 bg-emerald-50'
+                                  }`}
+                                >
+                                  {isZeroB
+                                    ? '0 gols (bloqueado)'
+                                    : `${numGolsB} gol${numGolsB > 1 ? 's' : ''} previsto${numGolsB > 1 ? 's' : ''}`}
+                                </Badge>
+                              </div>
+
+                              {isZeroB ? (
+                                <p className="py-3 text-center text-xs italic text-slate-400">
+                                  Placar zero (0): campo de marcadores bloqueado.
+                                </p>
+                              ) : (
+                                <div className="space-y-2">
+                                  {Array.from({ length: numGolsB }).map((_, idx) => (
+                                    <div key={idx} className="flex items-center gap-2">
+                                      <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-slate-200 text-[10px] font-bold text-slate-700">
+                                        {idx + 1}º
+                                      </span>
+                                      <Input
+                                        placeholder={`Nome do autor do ${idx + 1}º gol (ex: Veiga)`}
+                                        value={form.goleadores_b?.[idx] || ''}
+                                        onChange={(e) =>
+                                          handleScorerLineChange(jogo.id, 'b', idx, e.target.value)
+                                        }
+                                        className="h-8 border-[#CBD5E1] bg-white text-xs focus-visible:border-[#10B981] focus-visible:ring-[#10B981]"
+                                      />
+                                    </div>
+                                  ))}
+                                  <p className="mt-1 text-[10px] text-slate-500">
+                                    Pode repetir o mesmo jogador caso aposte em múltiplos gols dele.
+                                  </p>
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        )
+                      })()}
 
                       {/* Penalties select (when game has tem_penaltis) */}
                       {jogo.tem_penaltis && (
@@ -450,10 +636,8 @@ export default function Palpites() {
                             Vencedor nos pênaltis (+2 pontos caso haja disputa):
                           </Label>
                           <select
-                            value={form.vencedor_penaltis}
-                            onChange={(e) =>
-                              handleFieldChange(jogo.id, 'vencedor_penaltis', e.target.value)
-                            }
+                            value={form.vencedor_penaltis || 'N'}
+                            onChange={(e) => handlePenaltisChange(jogo.id, e.target.value)}
                             className="mt-1.5 h-8 w-full sm:w-64 rounded-md border border-amber-300 bg-white px-2 text-xs font-medium text-slate-800"
                           >
                             <option value="N">Não haverá pênaltis (vitória no tempo normal)</option>
