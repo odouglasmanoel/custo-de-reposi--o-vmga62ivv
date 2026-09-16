@@ -312,5 +312,95 @@ describe('apiFootballMatcher', () => {
       const match = matchGameWithApiFixtures('Vasco', 'Palmeiras', [])
       expect(match).toBeNull()
     })
+
+    it('extrai marcadores a partir de events do tipo Goal se scorers não veio preenchido', () => {
+      const fixtures: ApiFootballFixture[] = [
+        {
+          provider: 'api_football',
+          fixture: {
+            id: 888,
+            date: '2026-09-16T22:30:00Z',
+            status: { short: '1H', long: 'First Half', elapsed: 35 },
+          },
+          teams: {
+            home: { id: 10, name: 'LDU Quito' },
+            away: { id: 20, name: 'Palmeiras' },
+          },
+          goals: { home: 1, away: 0 },
+          events: [
+            {
+              type: 'Goal',
+              detail: 'Normal Goal',
+              player: { name: 'Alex Arce' },
+              time: { elapsed: 28 },
+              team: { id: 10, name: 'LDU Quito' },
+            },
+            {
+              type: 'Card',
+              player: { name: 'Gustavo Gómez' },
+              time: { elapsed: 32 },
+            },
+          ],
+        },
+      ]
+
+      const matched = matchGameWithApiFixtures('LDU', 'Palmeiras', fixtures)
+      expect(matched).not.toBeNull()
+      expect(matched?.placarA).toBe(1)
+      expect(matched?.placarB).toBe(0)
+      expect(matched?.scorers).toHaveLength(1)
+      expect(matched?.scorers[0].name).toBe('Alex Arce')
+      expect(matched?.scorers[0].minute).toBe(28)
+      expect(matched?.golsSummary).toBe("Gols: Alex Arce 28'")
+    })
+
+    it('faz match de Atlético-MG vs Atletico Mineiro com acentuação e traço', () => {
+      const fixtures: ApiFootballFixture[] = [
+        {
+          provider: 'api_football',
+          fixture: {
+            id: 991,
+            date: '2026-09-16T21:30:00Z',
+            status: { short: '2H', long: 'Second Half', elapsed: 80 },
+          },
+          teams: {
+            home: { name: 'Atletico Mineiro' },
+            away: { name: 'Fluminense' },
+          },
+          goals: { home: 2, away: 0 },
+          scorers: [
+            { name: 'Hulk', minute: 30 },
+            { name: 'Paulinho', minute: 75 },
+          ],
+        },
+      ]
+
+      const matched = matchGameWithApiFixtures('Atlético-MG', 'Fluminense', fixtures)
+      expect(matched).not.toBeNull()
+      expect(matched?.placarA).toBe(2)
+      expect(matched?.placarB).toBe(0)
+      expect(matched?.scorers[0].name).toBe('Hulk')
+    })
+
+    it('quando o jogo não for encontrado, retorna null permitindo fallback sem forçar 0 x 0 falso', () => {
+      const fixtures: ApiFootballFixture[] = [
+        {
+          provider: 'api_football',
+          fixture: {
+            id: 999,
+            date: '2026-09-16T22:30:00Z',
+            status: { short: '1H', long: 'First Half', elapsed: 10 },
+          },
+          teams: {
+            home: { name: 'Chelsea' },
+            away: { name: 'Arsenal' },
+          },
+          goals: { home: 1, away: 0 },
+        },
+      ]
+
+      const matched = matchGameWithApiFixtures('Flamengo', 'Corinthians', fixtures)
+      expect(matched).toBeNull()
+    })
   })
 })

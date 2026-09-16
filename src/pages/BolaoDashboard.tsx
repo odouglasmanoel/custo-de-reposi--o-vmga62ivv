@@ -97,7 +97,7 @@ export default function BolaoDashboard() {
   }, [])
 
   // Polling de placar ao vivo da API-Football a cada 60s
-  // Passa ?date=YYYY-MM-DD (America/Sao_Paulo) para cobrir jogos ao vivo E partidas do dia (em andamento ou encerradas)
+  // Consulta partidas ao vivo (live=all) e partidas do dia (date=YYYY-MM-DD)
   const fetchLiveScores = useCallback(async () => {
     try {
       const headers: Record<string, string> = {}
@@ -105,7 +105,8 @@ export default function BolaoDashboard() {
         headers['Authorization'] = pb.authStore.token
       }
       const hojeSP = getHojeDataSaoPaulo(Date.now())
-      const url = `${import.meta.env.VITE_POCKETBASE_URL}/backend/v1/placar-ao-vivo?date=${encodeURIComponent(hojeSP)}`
+      const baseUrl = `${import.meta.env.VITE_POCKETBASE_URL}/backend/v1/placar-ao-vivo`
+      const url = `${baseUrl}?date=${encodeURIComponent(hojeSP)}`
       const res = await fetch(url, { headers })
       if (res.ok) {
         const data = await res.json()
@@ -613,12 +614,12 @@ export default function BolaoDashboard() {
                   jogo.time_a,
                   jogo.time_b,
                   apiFixtures,
-                  0.6,
+                  0.55,
                   jogoDataISO,
                 )
 
-                // Verifica se há placar real lançado na tabela de jogos do banco de dados
-                const temPlacarBanco =
+                // Verifica se há placar real salvo manualmente pelo Admin no banco de dados
+                const temPlacarManualBanco =
                   jogo.placar_a != null &&
                   jogo.placar_b != null &&
                   !isNaN(Number(jogo.placar_a)) &&
@@ -627,15 +628,33 @@ export default function BolaoDashboard() {
                     Number(jogo.placar_b) > 0 ||
                     jogo.resultado_finalizado)
 
-                // 1. Título do confronto:
-                // Prioridade 1: Dados em tempo real da API (ex: LDU 1 x 1 Palmeiras)
-                // Prioridade 2 (Fallback): Placar real já inserido na tabela de jogos (ex: LDU 1 x 1 Palmeiras)
-                // Prioridade 3: Formato estático (LDU x Palmeiras) se não houver placar no banco nem na API
+                // Marcadores salvos manualmente no banco (se houver)
+                const marcadoresBanco =
+                  Array.isArray(jogo.marcadores) && jogo.marcadores.length > 0
+                    ? jogo.marcadores
+                        .map((m) => (typeof m === 'string' ? m : m.nome))
+                        .filter(Boolean)
+                        .join(', ')
+                    : ''
+
+                // 1. Título do confronto e Placar:
+                // REGRA OBRIGATÓRIA (sem 0 x 0 falso):
+                // Se a API encontrou a partida: exibe o placar real (matchedLive.placarA x matchedLive.placarB)
+                // Se NÃO encontrou na API:
+                //   - Se há placar salvo pelo Admin no banco: exibe esse placar manual
+                //   - Se NÃO há placar no banco: NUNCA força 0 x 0! Exibe apenas "Time A x Time B"
                 let tituloConfronto = `${jogo.time_a} x ${jogo.time_b}`
+                let placarExibido: string | null = null
+                let tipoFontePlacar: 'api' | 'manual' | 'aguardando' = 'aguardando'
+
                 if (matchedLive) {
+                  placarExibido = `${matchedLive.placarA} x ${matchedLive.placarB}`
                   tituloConfronto = `${jogo.time_a} ${matchedLive.placarA} x ${matchedLive.placarB} ${jogo.time_b}`
-                } else if (temPlacarBanco) {
+                  tipoFontePlacar = 'api'
+                } else if (temPlacarManualBanco) {
+                  placarExibido = `${Number(jogo.placar_a)} x ${Number(jogo.placar_b)}`
                   tituloConfronto = `${jogo.time_a} ${Number(jogo.placar_a)} x ${Number(jogo.placar_b)} ${jogo.time_b}`
+                  tipoFontePlacar = 'manual'
                 }
 
                 const providerLabel =
@@ -650,6 +669,14 @@ export default function BolaoDashboard() {
                 const isStatusEncerrado = Boolean(
                   (matchedLive && matchedLive.isFinished) || jogo.resultado_finalizado,
                 )
+
+                // Marcadores para exibir abaixo do placar no card
+                const marcadoresParaExibir =
+                  matchedLive && matchedLive.scorers && matchedLive.scorers.length > 0
+                    ? matchedLive.scorers
+                        .map((s) => (s.minute ? `${s.name} ${s.minute}'` : s.name))
+                        .join(', ')
+                    : marcadoresBanco
 
                 return (
                   <div
@@ -683,7 +710,7 @@ export default function BolaoDashboard() {
                             {formatDataBR(jogo.data)} às {formatHoraBR(jogo.hora)}
                           </span>
 
-                          {/* Badge de status da partida (Ao Vivo ou Encerrado) vinda da API ou fallback */}
+                          {/* Badge de status da partida (Ao Vivo, Encerrado ou Aguardando API) */}
                           {isStatusAoVivo && (
                             <Badge
                               variant="secondary"
@@ -710,6 +737,17 @@ export default function BolaoDashboard() {
                             </Badge>
                           )}
 
+                          {!isStatusAoVivo && !isStatusEncerrado && !matchedLive && (
+                            <Badge
+                              variant="secondary"
+                              className="border border-amber-200 bg-amber-50 text-amber-800 text-[10px] font-semibold shadow-2xs flex items-center gap-1"
+                              title="Aguardando atualização de placar ao vivo da API externa"
+                            >
+                              <Clock className="h-3 w-3 text-amber-600" />
+                              <span>Aguardando atualização</span>
+                            </Badge>
+                          )}
+
                           <Badge
                             variant="outline"
                             className="border-rose-300 bg-rose-50 text-[10px] font-semibold text-rose-800"
@@ -719,20 +757,22 @@ export default function BolaoDashboard() {
                         </div>
                       </div>
 
-                      {/* 2. Linha de autores dos gols reais retornados pela API logo abaixo do cabeçalho */}
-                      {matchedLive && matchedLive.scorers && matchedLive.scorers.length > 0 && (
+                      {/* 2. Linha de autores dos gols reais retornados pela API (ou do banco manual) logo abaixo do cabeçalho */}
+                      {marcadoresParaExibir ? (
                         <div className="mt-2 flex items-center gap-1.5 text-[11px] font-semibold text-emerald-950 bg-emerald-50/90 border border-emerald-200/90 rounded-md px-2.5 py-1 w-fit">
                           <span className="text-emerald-700">⚽</span>
                           <span>
                             Gols da partida:{' '}
                             <span className="font-normal text-emerald-900">
-                              {matchedLive.scorers
-                                .map((s) => (s.minute ? `${s.name} ${s.minute}'` : s.name))
-                                .join(', ')}
+                              {marcadoresParaExibir}
                             </span>
                           </span>
                         </div>
-                      )}
+                      ) : !matchedLive && !temPlacarManualBanco ? (
+                        <div className="mt-1.5 text-[10px] text-slate-400 italic">
+                          Aguardando início do placar / marcadores da API...
+                        </div>
+                      ) : null}
                     </div>
 
                     {/* Cards dos palpites de cada participante */}

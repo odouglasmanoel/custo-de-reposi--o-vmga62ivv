@@ -475,6 +475,46 @@ routerAdd('GET', '/backend/v1/placar-ao-vivo', (e) => {
       }
     }
 
+    // Helper interno para converter fixtures da API-Football extraindo marcadores de eventos
+    var mapApiFootballItem = function (item) {
+      var scorersList = []
+      // 1. Extrai de item.events
+      if (Array.isArray(item.events)) {
+        for (var ei = 0; ei < item.events.length; ei++) {
+          var ev = item.events[ei]
+          if (ev && ev.type === 'Goal' && ev.player && ev.player.name) {
+            var isOwnGoal = ev.detail && ev.detail.toLowerCase().indexOf('own') !== -1
+            var scorerNameStr = String(ev.player.name).trim()
+            if (isOwnGoal) {
+              scorerNameStr += ' (contra)'
+            }
+            scorersList.push({
+              name: scorerNameStr,
+              minute: ev.time ? ev.time.elapsed : null,
+              teamId: ev.team ? ev.team.id : null,
+              teamName: ev.team ? ev.team.name : null,
+              teamSide:
+                item.teams && item.teams.home && ev.team && ev.team.id === item.teams.home.id
+                  ? 'home'
+                  : item.teams && item.teams.away && ev.team && ev.team.id === item.teams.away.id
+                    ? 'away'
+                    : null,
+            })
+          }
+        }
+      }
+
+      return {
+        provider: 'api_football',
+        fixture: item.fixture,
+        teams: item.teams,
+        goals: item.goals,
+        score: item.score,
+        events: item.events,
+        scorers: scorersList,
+      }
+    }
+
     let liveFixtures = []
     try {
       const resLive = $http.send({
@@ -484,31 +524,7 @@ routerAdd('GET', '/backend/v1/placar-ao-vivo', (e) => {
         timeout: 10,
       })
       if (resLive.statusCode === 200 && resLive.json && Array.isArray(resLive.json.response)) {
-        liveFixtures = resLive.json.response.map(function (item) {
-          var scorersList = []
-          if (Array.isArray(item.events)) {
-            for (var ei = 0; ei < item.events.length; ei++) {
-              var ev = item.events[ei]
-              if (ev && ev.type === 'Goal' && ev.player && ev.player.name) {
-                scorersList.push({
-                  name: ev.player.name,
-                  minute: ev.time ? ev.time.elapsed : null,
-                  teamId: ev.team ? ev.team.id : null,
-                  teamName: ev.team ? ev.team.name : null,
-                })
-              }
-            }
-          }
-          return {
-            provider: 'api_football',
-            fixture: item.fixture,
-            teams: item.teams,
-            goals: item.goals,
-            score: item.score,
-            events: item.events,
-            scorers: scorersList,
-          }
-        })
+        liveFixtures = resLive.json.response.map(mapApiFootballItem)
       }
     } catch (errLive) {
       console.log(
@@ -518,6 +534,7 @@ routerAdd('GET', '/backend/v1/placar-ao-vivo', (e) => {
     }
 
     let dateFixtures = []
+    // Sempre consulta data de hoje se informada (ou query date)
     if (dateQuery && /^\d{4}-\d{2}-\d{2}$/.test(dateQuery)) {
       let urlDate =
         'https://v3.football.api-sports.io/fixtures?date=' + encodeURIComponent(dateQuery)
@@ -533,31 +550,7 @@ routerAdd('GET', '/backend/v1/placar-ao-vivo', (e) => {
           timeout: 10,
         })
         if (resDate.statusCode === 200 && resDate.json && Array.isArray(resDate.json.response)) {
-          dateFixtures = resDate.json.response.map(function (item) {
-            var scorersList = []
-            if (Array.isArray(item.events)) {
-              for (var ei = 0; ei < item.events.length; ei++) {
-                var ev = item.events[ei]
-                if (ev && ev.type === 'Goal' && ev.player && ev.player.name) {
-                  scorersList.push({
-                    name: ev.player.name,
-                    minute: ev.time ? ev.time.elapsed : null,
-                    teamId: ev.team ? ev.team.id : null,
-                    teamName: ev.team ? ev.team.name : null,
-                  })
-                }
-              }
-            }
-            return {
-              provider: 'api_football',
-              fixture: item.fixture,
-              teams: item.teams,
-              goals: item.goals,
-              score: item.score,
-              events: item.events,
-              scorers: scorersList,
-            }
-          })
+          dateFixtures = resDate.json.response.map(mapApiFootballItem)
         }
       } catch (errDate) {
         console.log(

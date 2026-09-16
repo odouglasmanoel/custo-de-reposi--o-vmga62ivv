@@ -87,6 +87,7 @@ const TEAM_SYNONYMS: Record<string, string> = {
   'liga de quito': 'ldu quito',
   'liga deportiva universitaria': 'ldu quito',
   'liga deportiva universitaria de quito': 'ldu quito',
+  'u de quito': 'ldu quito',
   // Independiente del Valle
   idv: 'independiente del valle',
   'independiente valle': 'independiente del valle',
@@ -105,18 +106,83 @@ const TEAM_SYNONYMS: Record<string, string> = {
   'athletico pr': 'athletico paranaense',
   'atletico pr': 'athletico paranaense',
   'atletico paranaense': 'athletico paranaense',
+  cap: 'athletico paranaense',
   // Atlético Mineiro
   'atletico mg': 'atletico mineiro',
   'atletico mineiro': 'atletico mineiro',
+  galo: 'atletico mineiro',
+  cam: 'atletico mineiro',
   // América Mineiro
   'america mg': 'america mineiro',
   'america mineiro': 'america mineiro',
+  coelho: 'america mineiro',
   // Botafogo
   'botafogo rj': 'botafogo',
   'botafogo fr': 'botafogo',
+  bfr: 'botafogo',
   // Vasco
   'vasco da gama': 'vasco',
   'cr vasco da gama': 'vasco',
+  crvg: 'vasco',
+  // Palmeiras
+  'se palmeiras': 'palmeiras',
+  'palmeiras sp': 'palmeiras',
+  'sociedade esportiva palmeiras': 'palmeiras',
+  // Flamengo
+  'cr flamengo': 'flamengo',
+  'flamengo rj': 'flamengo',
+  'clube de regatas do flamengo': 'flamengo',
+  fla: 'flamengo',
+  // Fluminense
+  'fluminense fc': 'fluminense',
+  'fluminense rj': 'fluminense',
+  flu: 'fluminense',
+  // Corinthians
+  'sc corinthians': 'corinthians',
+  'corinthians sp': 'corinthians',
+  'sport club corinthians paulista': 'corinthians',
+  timao: 'corinthians',
+  // São Paulo
+  'sao paulo fc': 'sao paulo',
+  'sao paulo sp': 'sao paulo',
+  spfc: 'sao paulo',
+  // Santos
+  'santos fc': 'santos',
+  'santos sp': 'santos',
+  // Grêmio
+  'gremio fbpa': 'gremio',
+  'gremio rs': 'gremio',
+  'gremio porto alegrense': 'gremio',
+  // Internacional
+  'sc internacional': 'internacional',
+  'internacional rs': 'internacional',
+  'inter rs': 'internacional',
+  inter: 'internacional',
+  // Cruzeiro
+  'cruzeiro ec': 'cruzeiro',
+  'cruzeiro mg': 'cruzeiro',
+  // Bahia
+  'ec bahia': 'bahia',
+  'bahia ba': 'bahia',
+  // Fortaleza
+  'fortaleza ec': 'fortaleza',
+  'fortaleza ce': 'fortaleza',
+  // River Plate
+  'ca river plate': 'river plate',
+  river: 'river plate',
+  // Boca Juniors
+  'ca boca juniors': 'boca juniors',
+  boca: 'boca juniors',
+  // Peñarol
+  'ca penarol': 'penarol',
+  'penarol uru': 'penarol',
+  // Nacional
+  'club nacional de football': 'nacional',
+  'nacional uru': 'nacional',
+  // Colo-Colo
+  'csd colo colo': 'colo colo',
+  'colo colo': 'colo colo',
+  colocolo: 'colo colo',
 }
 
 /**
@@ -379,11 +445,28 @@ export function matchGameWithApiFixtures(
   }
 
   const { fixture, isHomeA } = bestMatch
-  const goalsHome = fixture.goals?.home ?? 0
-  const goalsAway = fixture.goals?.away ?? 0
+  // Extrai goals reais atualizados. Se fixture.goals.home/away for null ou undefined,
+  // tenta obter de score.fulltime ou score.halftime antes de recorrer a 0.
+  const rawHome =
+    fixture.goals?.home != null && !isNaN(Number(fixture.goals.home))
+      ? Number(fixture.goals.home)
+      : fixture.score?.fulltime?.home != null && !isNaN(Number(fixture.score.fulltime.home))
+        ? Number(fixture.score.fulltime.home)
+        : fixture.score?.halftime?.home != null && !isNaN(Number(fixture.score.halftime.home))
+          ? Number(fixture.score.halftime.home)
+          : 0
 
-  const placarA = isHomeA ? goalsHome : goalsAway
-  const placarB = isHomeA ? goalsAway : goalsHome
+  const rawAway =
+    fixture.goals?.away != null && !isNaN(Number(fixture.goals.away))
+      ? Number(fixture.goals.away)
+      : fixture.score?.fulltime?.away != null && !isNaN(Number(fixture.score.fulltime.away))
+        ? Number(fixture.score.fulltime.away)
+        : fixture.score?.halftime?.away != null && !isNaN(Number(fixture.score.halftime.away))
+          ? Number(fixture.score.halftime.away)
+          : 0
+
+  const placarA = isHomeA ? rawHome : rawAway
+  const placarB = isHomeA ? rawAway : rawHome
 
   const statusShort = fixture.fixture?.status?.short || ''
   const statusLong = fixture.fixture?.status?.long || ''
@@ -402,18 +485,43 @@ export function matchGameWithApiFixtures(
   }
 
   // Processamento e formatação de autores dos gols
-  const rawScorers = Array.isArray(fixture.scorers) ? fixture.scorers : []
+  // Prioridade 1: se fixture.scorers já veio pré-processado do backend
+  // Prioridade 2: se fixture.events contiver eventos do tipo Goal
   const scorers: LiveScorerItem[] = []
 
-  for (const s of rawScorers) {
-    if (s && s.name && s.name.trim()) {
-      scorers.push({
-        name: s.name.trim(),
-        minute: s.minute != null && !isNaN(Number(s.minute)) ? Number(s.minute) : null,
-        teamId: s.teamId ?? null,
-        teamName: s.teamName ?? null,
-        teamSide: s.teamSide ?? null,
-      })
+  if (Array.isArray(fixture.scorers) && fixture.scorers.length > 0) {
+    for (const s of fixture.scorers) {
+      if (s && s.name && s.name.trim()) {
+        scorers.push({
+          name: s.name.trim(),
+          minute: s.minute != null && !isNaN(Number(s.minute)) ? Number(s.minute) : null,
+          teamId: s.teamId ?? null,
+          teamName: s.teamName ?? null,
+          teamSide: s.teamSide ?? null,
+        })
+      }
+    }
+  } else if (Array.isArray(fixture.events) && fixture.events.length > 0) {
+    for (const ev of fixture.events) {
+      if (ev && ev.type === 'Goal' && ev.player && ev.player.name) {
+        const isOwnGoal = ev.detail && ev.detail.toLowerCase().includes('own')
+        let scorerNameStr = String(ev.player.name).trim()
+        if (isOwnGoal) {
+          scorerNameStr += ' (contra)'
+        }
+        scorers.push({
+          name: scorerNameStr,
+          minute: ev.time?.elapsed != null ? Number(ev.time.elapsed) : null,
+          teamId: ev.team?.id ?? null,
+          teamName: ev.team?.name ?? null,
+          teamSide:
+            fixture.teams?.home && ev.team && ev.team.id === fixture.teams.home.id
+              ? 'home'
+              : fixture.teams?.away && ev.team && ev.team.id === fixture.teams.away.id
+                ? 'away'
+                : null,
+        })
+      }
     }
   }
 
