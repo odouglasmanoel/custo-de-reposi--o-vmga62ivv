@@ -14,6 +14,7 @@ export interface ParsedPrediction {
   goleadores_a?: string[]
   goleadores_b?: string[]
   pontos?: number
+  detalhamento?: string[]
 }
 
 export interface ParsedGame {
@@ -64,21 +65,32 @@ export function matchParticipantName(rawName: string): string {
 }
 
 /**
- * Parses score string like "2 x 1", "2x1", "2-1", "2 - 1", "2 a 1"
+ * Parses score string like "2 x 1", "2x1", "2-1", "2 - 1", "2 a 1",
+ * or with extra text like "1x2 (Carbonero...)"
  */
-function parseScoreString(val: any): { placarA: number; placarB: number } | null {
+export function parseScoreString(val: any): { placarA: number; placarB: number } | null {
   if (val === null || val === undefined) return null
   const str = String(val).trim()
   if (!str) return null
 
-  // Check pattern like "2 x 1" or "2-1" or "2:1" or "2 a 1"
-  const match = str.match(/^(\d+)\s*(?:x|[-:]|a)\s*(\d+)$/i)
-  if (match) {
+  // 1. Exact match like "2 x 1" or "2-1" or "2:1" or "2 a 1"
+  const exactMatch = str.match(/^(\d+)\s*(?:x|[-:]|a)\s*(\d+)$/i)
+  if (exactMatch) {
     return {
-      placarA: parseInt(match[1], 10),
-      placarB: parseInt(match[2], 10),
+      placarA: parseInt(exactMatch[1], 10),
+      placarB: parseInt(exactMatch[2], 10),
     }
   }
+
+  // 2. Score at start of text, e.g. "1x2 (Carbonero...)" or "1 x 2 - gols..."
+  const prefixMatch = str.match(/^(\d+)\s*(?:x|[-:]|a)\s*(\d+)(?:\s*[(/\-:,a-zA-Z].*)?$/i)
+  if (prefixMatch) {
+    return {
+      placarA: parseInt(prefixMatch[1], 10),
+      placarB: parseInt(prefixMatch[2], 10),
+    }
+  }
+
   return null
 }
 
@@ -288,7 +300,8 @@ export async function parseSpreadsheet(file: File): Promise<{
   const avisos: string[] = []
 
   const scoresMap = new Map<string, number>()
-  const gamesList: ParsedGame[] = []
+  // Key: confrontation identifier (e.g. cleanKey(timeA) + 'x' + cleanKey(timeB))
+  const gamesByConfronto = new Map<string, ParsedGame>()
 
   // Iterate over all sheets in workbook
   for (const sheetName of workbook.SheetNames) {
@@ -297,6 +310,13 @@ export async function parseSpreadsheet(file: File): Promise<{
 
     const rows = XLSX.utils.sheet_to_json<any>(sheet, { header: 1, defval: '' })
     if (!rows || rows.length === 0) continue
+
+    // Check if sheet itself is named after one of the participants (Douglas, Gabriel, Bruno, Davi)
+    const sheetMatchedMember = matchParticipantName(sheetName)
+    const isParticipantSheet = BOLAO_MEMBERS.some(
+      (m) => cleanKey(m) === cleanKey(sheetMatchedMember) || cleanKey(m) === cleanKey(sheetName),
+    )
+    const activeSheetParticipant = isParticipantSheet ? sheetMatchedMember : null
 
     // 1. LOOK FOR PARTICIPANT TOTALS / RANKING TABLE
     // Columns: "Participante", "Nome", "Apostador" AND "Total", "Pontos", "Pontuação", "Pts"
@@ -386,13 +406,12 @@ export async function parseSpreadsheet(file: File): Promise<{
     }
 
     // 2. PARSE MATCHES / JOGOS AND PREDICTIONS
-    // Look for match tables with columns like:
-    // "Mandante" / "Time A", "Visitante" / "Time B", "Placar", "Data", "Hora", "Rodada",
-    // and participant prediction columns: "Douglas", "Gabriel", "Bruno", "Davi", etc.
+    // Can be a general matches sheet OR a participant sheet (e.g. Douglas, Gabriel, Bruno, Davi)
+    // containing columns: Jogos / Confronto, Placar Final, Palpites, Pontuação, Detalhamento da Pontuação
     let gameHeaderRow = -1
     let colTimeA = -1
     let colTimeB = -1
-    let colPlacar = -1
+    let colPlacarFinal = -1
     let colPlacarA = -1
     let colPlacarB = -1
     let colData = -1
@@ -400,13 +419,22 @@ export async function parseSpreadsheet(file: File): Promise<{
     let colRodada = -1
     let colGolsA = -1
     let colGolsB = -1
-    const memberCols = new Map<string, { colPred: number; colPts?: number; colScorers?: number }>()
+
+    // Single participant sheet columns:
+    let colPalpite = -1
+    let colPontuacao = -1
+    let colDetalhamento = -1
+
+    // Multi-participant columns (when a single sheet has Douglas, Gabriel, Bruno, Davi columns):
+    const memberCols = new Map<
+      string,
+      { colPred: number; colPts?: number; colDetalhamento?: number; colScorers?: number }
+    >()
 
     for (let r = 0; r < rows.length; r++) {
       const row = rows[r] as any[]
       if (!Array.isArray(row)) continue
 
-      let foundTeamMarker = false
       let tempColA = -1
       let tempColB = -1
 
@@ -431,7 +459,14 @@ export async function parseSpreadsheet(file: File): Promise<{
         ) {
           tempColB = c
         }
-        if (cell === 'confronto' || cell === 'jogo' || cell === 'partida') {
+        if (
+          cell === 'confronto' ||
+          cell === 'confrontos' ||
+          cell === 'jogo' ||
+          cell === 'jogos' ||
+          cell === 'partida' ||
+          cell === 'partidas'
+        ) {
           // Single confrontation column like "Flamengo x Palmeiras"
           if (tempColA === -1) tempColA = c
         }
@@ -443,13 +478,22 @@ export async function parseSpreadsheet(file: File): Promise<{
         colTimeA = tempColA
         colTimeB = tempColB
 
-        // Scan row headers for data, hora, placar, gols, and member predictions
+        // Scan row headers for data, hora, placar final, palpites, pontuacao, detalhamento
         for (let c = 0; c < row.length; c++) {
           const rawCell = String(row[c] || '').trim()
           const cell = cleanKey(rawCell)
 
-          if (cell === 'placar' || cell === 'resultado' || cell === 'placarfinal') {
-            colPlacar = c
+          // Placar Final / Resultado tolerance
+          if (
+            cell === 'placarfinal' ||
+            cell === 'placar' ||
+            cell === 'resultado' ||
+            cell === 'resultadofinal' ||
+            cell === 'placaroficial' ||
+            cell.includes('placarfinal') ||
+            cell.includes('resultadofinal')
+          ) {
+            colPlacarFinal = c
           } else if (cell === 'placara' || cell === 'golstimea' || cell === 'golsa') {
             colPlacarA = c
           } else if (cell === 'placarb' || cell === 'golstimeb' || cell === 'golsb') {
@@ -464,6 +508,29 @@ export async function parseSpreadsheet(file: File): Promise<{
             colGolsA = c
           } else if (cell === 'autoresb' || cell === 'marcadorestimeb' || cell === 'goleadoresb') {
             colGolsB = c
+          } else if (
+            cell === 'palpite' ||
+            cell === 'palpites' ||
+            cell === 'aposta' ||
+            cell === 'apostas' ||
+            cell.includes('palpite')
+          ) {
+            colPalpite = c
+          } else if (
+            cell === 'pontuacao' ||
+            cell === 'pontos' ||
+            cell === 'pts' ||
+            cell === 'pontuacaodojogo'
+          ) {
+            colPontuacao = c
+          } else if (
+            cell === 'detalhamentodapontuacao' ||
+            cell === 'detalhamento' ||
+            cell === 'detalhe' ||
+            cell === 'detalhes' ||
+            cell.includes('detalhamento')
+          ) {
+            colDetalhamento = c
           }
 
           // Check if column matches known member (Douglas, Gabriel, Bruno, Davi)
@@ -512,9 +579,10 @@ export async function parseSpreadsheet(file: File): Promise<{
           (rawA.includes(' x ') ||
             rawA.includes(' X ') ||
             rawA.includes(' - ') ||
-            rawA.includes(' vs '))
+            rawA.includes(' vs ') ||
+            rawA.includes(' VS '))
         ) {
-          const parts = rawA.split(/\s*(?:x|X|-|vs)\s*/)
+          const parts = rawA.split(/\s*(?:x|X|-|vs|VS)\s*/)
           if (parts.length >= 2) {
             rawA = parts[0].trim()
             rawB = parts[1].trim()
@@ -527,20 +595,27 @@ export async function parseSpreadsheet(file: File): Promise<{
           cleanA === 'total' ||
           cleanA === 'mandante' ||
           cleanA === 'time' ||
-          cleanA === 'confronto'
+          cleanA === 'confronto' ||
+          cleanA === 'jogos' ||
+          cleanA === 'partida'
         ) {
           continue
         }
 
         if (!rawA || !rawB) continue
 
-        // Placar
+        // Placar Final: Tolerant to "1x2 (Carbonero...)", "1x2", "1 x 2", "1-2"
         let placarA: number | undefined
         let placarB: number | undefined
         let finalizado = false
 
-        if (colPlacar !== -1 && row[colPlacar] !== '') {
-          const parsed = parseScoreString(row[colPlacar])
+        if (
+          colPlacarFinal !== -1 &&
+          row[colPlacarFinal] !== '' &&
+          row[colPlacarFinal] !== null &&
+          row[colPlacarFinal] !== undefined
+        ) {
+          const parsed = parseScoreString(row[colPlacarFinal])
           if (parsed) {
             placarA = parsed.placarA
             placarB = parsed.placarB
@@ -580,54 +655,138 @@ export async function parseSpreadsheet(file: File): Promise<{
         const golsTimeA = colGolsA !== -1 ? parseScorersString(row[colGolsA]) : []
         const golsTimeB = colGolsB !== -1 ? parseScorersString(row[colGolsB]) : []
 
-        // Member predictions
+        // Predictions for this row
         const palpites: ParsedPrediction[] = []
+
+        // Case A: The sheet is a participant sheet (activeSheetParticipant is set)
+        if (activeSheetParticipant && colPalpite !== -1) {
+          const predCell = row[colPalpite]
+          if (predCell !== '' && predCell !== null && predCell !== undefined) {
+            const parsedPred = parseScoreString(predCell)
+            if (parsedPred) {
+              let pts: number | undefined
+              if (
+                colPontuacao !== -1 &&
+                row[colPontuacao] !== '' &&
+                row[colPontuacao] !== null &&
+                row[colPontuacao] !== undefined
+              ) {
+                const numPts = parseFloat(String(row[colPontuacao]).replace(',', '.'))
+                if (!isNaN(numPts)) pts = numPts
+              }
+
+              let detList: string[] | undefined
+              if (
+                colDetalhamento !== -1 &&
+                row[colDetalhamento] !== '' &&
+                row[colDetalhamento] !== null &&
+                row[colDetalhamento] !== undefined
+              ) {
+                const detStr = String(row[colDetalhamento]).trim()
+                if (detStr) {
+                  detList = detStr
+                    .split(/[\n;]+/)
+                    .map((s) => s.trim())
+                    .filter(Boolean)
+                }
+              }
+
+              palpites.push({
+                participanteNome: activeSheetParticipant,
+                placar_a: parsedPred.placarA,
+                placar_b: parsedPred.placarB,
+                pontos: pts,
+                detalhamento: detList,
+              })
+            }
+          }
+        }
+
+        // Case B: Sheet has member columns (Douglas, Gabriel, Bruno, Davi)
         for (const [member, info] of memberCols.entries()) {
           const predCell = row[info.colPred]
           if (predCell === '' || predCell === null || predCell === undefined) continue
 
-          let pA: number | null = null
-          let pB: number | null = null
-
           const parsedPred = parseScoreString(predCell)
           if (parsedPred) {
-            pA = parsedPred.placarA
-            pB = parsedPred.placarB
-          }
-
-          if (pA !== null && pB !== null) {
             let pts: number | undefined
-            if (info.colPts !== undefined && row[info.colPts] !== '') {
+            if (info.colPts !== undefined && row[info.colPts] !== '' && row[info.colPts] !== null) {
               const numPts = parseFloat(String(row[info.colPts]).replace(',', '.'))
               if (!isNaN(numPts)) pts = numPts
             }
 
             palpites.push({
               participanteNome: member,
-              placar_a: pA,
-              placar_b: pB,
+              placar_a: parsedPred.placarA,
+              placar_b: parsedPred.placarB,
               pontos: pts,
             })
           }
         }
 
-        gamesList.push({
-          time_a: rawA,
-          time_b: rawB,
-          placar_a: placarA,
-          placar_b: placarB,
-          data: dataStr || new Date().toISOString(),
-          hora: horaStr || '16:00',
-          rodada,
-          finalizado,
-          gols_time_a: golsTimeA,
-          gols_time_b: golsTimeB,
-          palpites,
-        })
+        // Match unification across participant tabs
+        const matchKey = `${cleanKey(rawA)}_x_${cleanKey(rawB)}`
+        const existingGame = gamesByConfronto.get(matchKey)
+
+        if (existingGame) {
+          // Update real score if not present
+          if (!existingGame.finalizado && finalizado) {
+            existingGame.placar_a = placarA
+            existingGame.placar_b = placarB
+            existingGame.finalizado = true
+          }
+          if (
+            golsTimeA.length > 0 &&
+            (!existingGame.gols_time_a || existingGame.gols_time_a.length === 0)
+          ) {
+            existingGame.gols_time_a = golsTimeA
+          }
+          if (
+            golsTimeB.length > 0 &&
+            (!existingGame.gols_time_b || existingGame.gols_time_b.length === 0)
+          ) {
+            existingGame.gols_time_b = golsTimeB
+          }
+          if (dataStr && !existingGame.data) existingGame.data = dataStr
+          if (horaStr && !existingGame.hora) existingGame.hora = horaStr
+          if (rodada && !existingGame.rodada) existingGame.rodada = rodada
+
+          // Merge predictions
+          for (const p of palpites) {
+            const pIdx = existingGame.palpites?.findIndex(
+              (ep) => cleanKey(ep.participanteNome) === cleanKey(p.participanteNome),
+            )
+            if (pIdx !== undefined && pIdx >= 0) {
+              // Update existing prediction with more detailed data
+              existingGame.palpites![pIdx] = {
+                ...existingGame.palpites![pIdx],
+                ...p,
+              }
+            } else {
+              existingGame.palpites = existingGame.palpites || []
+              existingGame.palpites.push(p)
+            }
+          }
+        } else {
+          gamesByConfronto.set(matchKey, {
+            time_a: rawA,
+            time_b: rawB,
+            placar_a: placarA,
+            placar_b: placarB,
+            data: dataStr || new Date().toISOString(),
+            hora: horaStr || '16:00',
+            rodada,
+            finalizado,
+            gols_time_a: golsTimeA,
+            gols_time_b: golsTimeB,
+            palpites,
+          })
+        }
       }
     }
   }
 
+  const gamesList: ParsedGame[] = Array.from(gamesByConfronto.values())
   // 3. Fallback game search if gamesList is empty: search line-by-line for confrontation pattern
   if (gamesList.length === 0) {
     for (const sheetName of workbook.SheetNames) {
@@ -862,8 +1021,15 @@ export async function importBolaoSpreadsheet(
           let pontuacaoJogo = pred.pontos !== undefined ? pred.pontos : 0
           let detalhamento: string[] = []
 
-          // If final match score exists and points not explicitly provided, calculate score
-          if (isFinalizado && placarA !== null && placarB !== null && pred.pontos === undefined) {
+          if (Array.isArray(pred.detalhamento) && pred.detalhamento.length > 0) {
+            detalhamento = pred.detalhamento
+          } else if (
+            isFinalizado &&
+            placarA !== null &&
+            placarB !== null &&
+            pred.pontos === undefined
+          ) {
+            // If final match score exists and points not explicitly provided in sheet, calculate score
             const calc = calculateMatchScore(
               pred.placar_a,
               pred.placar_b,
