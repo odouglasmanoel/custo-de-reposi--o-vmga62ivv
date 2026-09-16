@@ -19,6 +19,7 @@ import pb from '@/lib/pocketbase/client'
 import { useActivePool } from '@/context/ActivePoolContext'
 import { useRealtime } from '@/hooks/use-realtime'
 import type { Jogo } from '@/types/bolao'
+import { formatBolaoLabel } from '@/types/bolao'
 import { formatDataBR, formatHoraBR } from '@/lib/dateUtils'
 import {
   parseSpreadsheet,
@@ -400,7 +401,7 @@ export default function AdminJogos() {
             >
               {boloes.map((b) => (
                 <option key={b.id} value={b.id}>
-                  {b.nome} {b.foco ? `(${b.foco})` : '(Ativo)'}
+                  {formatBolaoLabel(b)}
                 </option>
               ))}
             </select>

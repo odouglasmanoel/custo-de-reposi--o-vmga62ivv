@@ -1,15 +1,10 @@
 import { useState, useEffect } from 'react'
-import {
-  History,
-  Trophy,
-  Calendar,
-  AlertCircle,
-  Loader2,
-  Sparkles,
-  ChevronRight,
-} from 'lucide-react'
+import { History, Calendar, AlertCircle, Loader2, Power, RotateCcw } from 'lucide-react'
 import pb from '@/lib/pocketbase/client'
 import type { Bolao, Participante, Jogo, Palpite } from '@/types/bolao'
+import { useAuth } from '@/context/AuthContext'
+import { useActivePool } from '@/context/ActivePoolContext'
+import { toast } from '@/hooks/use-toast'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -18,6 +13,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { formatDataBR, formatHoraBR, formatDateTimeBR } from '@/lib/dateUtils'
 
 export default function Historico() {
+  const { isAdmin } = useAuth()
+  const { refreshBoloes: refreshGlobalBoloes } = useActivePool()
   const [boloes, setBoloes] = useState<Bolao[]>([])
   const [selectedBolao, setSelectedBolao] = useState<Bolao | null>(null)
 
@@ -27,6 +24,7 @@ export default function Historico() {
 
   const [loadingBoloes, setLoadingBoloes] = useState(true)
   const [loadingDetails, setLoadingDetails] = useState(false)
+  const [updatingStatusId, setUpdatingStatusId] = useState<string | null>(null)
 
   // Load all available boloes
   useEffect(() => {
@@ -110,6 +108,44 @@ export default function Historico() {
     loadPoolData()
   }, [selectedBolao])
 
+  const handleToggleStatus = async (bolaoToToggle: Bolao, e: React.MouseEvent) => {
+    e.stopPropagation()
+    const novoStatus = !bolaoToToggle.ativo
+    setUpdatingStatusId(bolaoToToggle.id)
+    try {
+      const updated = await pb.collection('boloes').update<Bolao>(bolaoToToggle.id, {
+        ativo: novoStatus,
+      })
+
+      // Atualiza estado local de bolões
+      setBoloes((prev) =>
+        prev.map((b) => (b.id === bolaoToToggle.id ? { ...b, ativo: updated.ativo } : b)),
+      )
+
+      // Se o bolão selecionado for o mesmo, atualiza também
+      if (selectedBolao?.id === bolaoToToggle.id) {
+        setSelectedBolao((prev) => (prev ? { ...prev, ativo: updated.ativo } : null))
+      }
+
+      // Sincroniza o contexto global de bolões para o dropdown refletir a mudança
+      await refreshGlobalBoloes()
+
+      toast({
+        title: novoStatus ? 'Bolão Reativado' : 'Bolão Encerrado',
+        description: `O status da competição "${bolaoToToggle.nome}" foi alterado com sucesso para ${novoStatus ? 'Ativo' : 'Encerrado'}.`,
+      })
+    } catch (err) {
+      console.error('Erro ao alternar status do bolão:', err)
+      toast({
+        title: 'Erro ao alterar status',
+        description: 'Não foi possível atualizar o status do bolão. Tente novamente.',
+        variant: 'destructive',
+      })
+    } finally {
+      setUpdatingStatusId(null)
+    }
+  }
+
   const getPositionBadge = (index: number) => {
     if (index === 0) return { bg: 'bg-[#F59E0B] text-slate-950', text: '1º', trophy: '🏆' }
     if (index === 1) return { bg: 'bg-[#94A3B8] text-white', text: '2º', trophy: '🥈' }
@@ -187,26 +223,65 @@ export default function Historico() {
                       </p>
                     </div>
 
-                    <Badge className="bg-emerald-100 text-[10px] font-bold text-emerald-800 hover:bg-emerald-100">
-                      Ativo
-                    </Badge>
+                    {b.ativo ? (
+                      <Badge className="bg-emerald-100 text-[10px] font-bold text-emerald-800 hover:bg-emerald-100">
+                        Ativo
+                      </Badge>
+                    ) : (
+                      <Badge className="bg-slate-200 text-[10px] font-bold text-slate-700 hover:bg-slate-200">
+                        Encerrado
+                      </Badge>
+                    )}
                   </div>
 
-                  <div className="mt-4 flex items-center justify-between pt-3 border-t border-slate-100">
+                  <div className="mt-4 flex flex-wrap items-center justify-between gap-2 pt-3 border-t border-slate-100">
                     <span className="text-xs font-semibold text-slate-500">
                       {isSelected ? 'Visualizando' : 'Clique para ver'}
                     </span>
-                    <Button
-                      size="sm"
-                      variant={isSelected ? 'default' : 'outline'}
-                      className={`h-7 px-2.5 text-xs font-semibold ${
-                        isSelected
-                          ? 'bg-[#0F2A43] text-white hover:bg-[#1B3A5C]'
-                          : 'border-slate-300 text-slate-700'
-                      }`}
-                    >
-                      Ver Detalhes
-                    </Button>
+
+                    <div className="flex items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
+                      {isAdmin && (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          disabled={updatingStatusId === b.id}
+                          onClick={(e) => handleToggleStatus(b, e)}
+                          className={`h-7 px-2 text-[11px] font-semibold transition ${
+                            b.ativo
+                              ? 'border-red-200 bg-red-50 text-red-700 hover:bg-red-100 hover:text-red-800'
+                              : 'border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 hover:text-emerald-800'
+                          }`}
+                          title={b.ativo ? 'Encerrar Bolão' : 'Reativar Bolão'}
+                        >
+                          {updatingStatusId === b.id ? (
+                            <Loader2 className="h-3 w-3 animate-spin" />
+                          ) : b.ativo ? (
+                            <>
+                              <Power className="mr-1 h-3 w-3" />
+                              Encerrar Bolão
+                            </>
+                          ) : (
+                            <>
+                              <RotateCcw className="mr-1 h-3 w-3" />
+                              Reativar Bolão
+                            </>
+                          )}
+                        </Button>
+                      )}
+
+                      <Button
+                        size="sm"
+                        variant={isSelected ? 'default' : 'outline'}
+                        onClick={() => setSelectedBolao(b)}
+                        className={`h-7 px-2.5 text-xs font-semibold ${
+                          isSelected
+                            ? 'bg-[#0F2A43] text-white hover:bg-[#1B3A5C]'
+                            : 'border-slate-300 text-slate-700'
+                        }`}
+                      >
+                        Ver Detalhes
+                      </Button>
+                    </div>
                   </div>
                 </Card>
               )
@@ -222,6 +297,15 @@ export default function Historico() {
             <div>
               <div className="flex flex-wrap items-center gap-2">
                 <h2 className="text-xl font-bold text-[#0F172A]">Detalhes: {selectedBolao.nome}</h2>
+                {selectedBolao.ativo ? (
+                  <Badge className="bg-emerald-100 text-[10px] font-bold text-emerald-800 hover:bg-emerald-100">
+                    Ativo
+                  </Badge>
+                ) : (
+                  <Badge className="bg-slate-200 text-[10px] font-bold text-slate-700 hover:bg-slate-200">
+                    Encerrado
+                  </Badge>
+                )}
                 {selectedBolao.foco && (
                   <Badge
                     variant="secondary"

@@ -16,6 +16,7 @@ import { useAuth } from '@/context/AuthContext'
 import { useActivePool } from '@/context/ActivePoolContext'
 import { useRealtime } from '@/hooks/use-realtime'
 import type { Participante, Jogo, Palpite } from '@/types/bolao'
+import { formatBolaoLabel } from '@/types/bolao'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -198,7 +199,7 @@ export default function BolaoDashboard() {
           >
             {boloes.map((b) => (
               <option key={b.id} value={b.id}>
-                {b.nome} {b.foco ? `(${b.foco})` : '(Ativo)'}
+                {formatBolaoLabel(b)}
               </option>
             ))}
           </select>

@@ -7,6 +7,17 @@ export interface Bolao extends RecordModel {
   ultima_atualizacao?: string
 }
 
+export function formatBolaoLabel(bolao: { nome: string; foco?: string; ativo?: boolean }): string {
+  let label = bolao.nome
+  if (bolao.foco && bolao.foco.trim()) {
+    label += ` (${bolao.foco.trim()})`
+  }
+  if (bolao.ativo === false) {
+    label += ' (Encerrado)'
+  }
+  return label
+}
+
 export interface ScorerItem {
   nome: string
   posicao: 'Atacante/Meia' | 'Zagueiro/Lateral' | 'Goleiro' | 'Gol Contra' | string

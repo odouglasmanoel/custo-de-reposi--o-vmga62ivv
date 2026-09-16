@@ -158,9 +158,6 @@ export default function Layout({ children }: LayoutProps) {
                   <div className="text-xs font-bold leading-tight text-white sm:text-sm">
                     {user.name || user.username || 'Colaborador'}
                   </div>
-                  <div className="hidden text-[11px] leading-tight text-slate-300 sm:block">
-                    {user.email}
-                  </div>
                 </div>
 
                 <Button
