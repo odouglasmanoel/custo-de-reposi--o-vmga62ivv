@@ -78,22 +78,15 @@ export function parseScoreString(val: any): { placarA: number; placarB: number }
     return null
   }
 
-  // 1. Exact match like "2 x 1" or "2-1" or "2:1" or "2 a 1"
-  const exactMatch = str.match(/^(\d+)\s*(?:x|[-:]|a)\s*(\d+)$/i)
-  if (exactMatch) {
+  // 1. Check for NxN pattern anywhere at the beginning or as full/prefix score:
+  // Accepts "0x0", "1x0", "3x1", "2 x 2", "1-2", "2:1", "2 a 1",
+  // and with or without complementary text: "1x2 (Carbonero...)", "0x0 (pênaltis 4x2)", "3x1 - final", etc.
+  // Regra obrigatória: se a célula contém o padrão de dígitos NxN (0x0, 3x1 etc.), o status do jogo DEVE ser "Encerrado" com aquele placar — nunca Pendente.
+  const match = str.match(/^(\d+)\s*(?:x|[-:]|a)\s*(\d+)(?:\s*.*)?$/i)
+  if (match) {
     return {
-      placarA: parseInt(exactMatch[1], 10),
-      placarB: parseInt(exactMatch[2], 10),
-    }
-  }
-
-  // 2. Score at start of text, e.g. "1x2 (Carbonero...)" or "1 x 2 - gols..."
-  // Must have a real separator: "x", ":", or "-" between digits.
-  const prefixMatch = str.match(/^(\d+)\s*(?:x|[-:]|a)\s*(\d+)(?:\s*[(/\-:,a-zA-Z].*)?$/i)
-  if (prefixMatch) {
-    return {
-      placarA: parseInt(prefixMatch[1], 10),
-      placarB: parseInt(prefixMatch[2], 10),
+      placarA: parseInt(match[1], 10),
+      placarB: parseInt(match[2], 10),
     }
   }
 
@@ -602,7 +595,9 @@ export async function parseSpreadsheet(file: File): Promise<{
           lowerRaw.includes('abertura') ||
           lowerRaw.includes('encerramento') ||
           lowerRaw.includes('premiacao') ||
-          lowerRaw.includes('cerimonia')
+          lowerRaw.includes('premiacão') ||
+          lowerRaw.includes('cerimonia') ||
+          lowerRaw.includes('cerimônia')
         ) {
           continue
         }
@@ -842,7 +837,11 @@ export async function parseSpreadsheet(file: File): Promise<{
             if (
               lowerFallback.includes('sorteio') ||
               lowerFallback.includes('abertura') ||
-              lowerFallback.includes('encerramento')
+              lowerFallback.includes('encerramento') ||
+              lowerFallback.includes('premiacao') ||
+              lowerFallback.includes('premiacão') ||
+              lowerFallback.includes('cerimonia') ||
+              lowerFallback.includes('cerimônia')
             ) {
               continue
             }
