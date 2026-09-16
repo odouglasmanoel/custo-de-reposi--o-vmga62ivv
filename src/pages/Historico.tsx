@@ -10,6 +10,7 @@ import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { formatDataBR, formatHoraBR, formatDateTimeBR } from '@/lib/dateUtils'
+import { formatPalpiteMarcadoresSummary } from '@/lib/scorerUtils'
 
 export default function Historico() {
   const { isAdmin } = useAuth()
@@ -446,6 +447,9 @@ export default function Historico() {
                                     </div>
                                     <div className="text-[11px] text-slate-600">
                                       Palpite: {bet.placar_a} x {bet.placar_b}
+                                    </div>
+                                    <div className="mt-0.5 text-[10px] text-slate-600 font-medium">
+                                      {formatPalpiteMarcadoresSummary(bet)}
                                     </div>
                                     <div className="mt-1 font-semibold text-emerald-700">
                                       +{bet.pontuacao_jogo} pts

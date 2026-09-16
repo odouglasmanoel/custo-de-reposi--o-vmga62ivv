@@ -15,6 +15,7 @@ import {
   Globe,
   Filter,
   ArrowLeft,
+  Users,
 } from 'lucide-react'
 import pb from '@/lib/pocketbase/client'
 import { useAuth } from '@/context/AuthContext'
@@ -34,6 +35,7 @@ import {
   isPalpiteEncerrado,
   formatHoraEncerramento,
 } from '@/lib/dateUtils'
+import { formatPalpiteMarcadoresSummary } from '@/lib/scorerUtils'
 
 interface PalpiteFormData {
   placar_a: number | string
@@ -83,6 +85,8 @@ export default function Palpites() {
 
   const [jogos, setJogos] = useState<Jogo[]>([])
   const [allBoloes, setAllBoloes] = useState<Bolao[]>([])
+  const [participantesList, setParticipantesList] = useState<Participante[]>([])
+  const [allGroupPalpites, setAllGroupPalpites] = useState<Palpite[]>([])
   const [userParticipantsMap, setUserParticipantsMap] = useState<Record<string, Participante>>({})
   const [palpites, setPalpites] = useState<Record<string, Palpite>>({})
   const [formData, setFormData] = useState<Record<string, PalpiteFormData>>({})
@@ -133,15 +137,19 @@ export default function Palpites() {
       setAllBoloes(loadedBoloes)
 
       if (isGeralParam) {
-        // MODO GERAL: Carregar jogos e participantes em paralelo
-        const [allGames, allParts] = await Promise.all([
+        // MODO GERAL: Carregar jogos, participantes e palpites de todas as copas
+        const [allGames, allParts, allGroupBets] = await Promise.all([
           pb.collection('jogos').getFullList<Jogo>({
             sort: 'data,hora',
           }),
           pb.collection('participantes').getFullList<Participante>({
             sort: 'nome',
           }),
+          pb.collection('palpites').getFullList<Palpite>(),
         ])
+
+        setParticipantesList(allParts)
+        setAllGroupPalpites(allGroupBets)
 
         // Encontrar os registros de participante do usuário para cada bolão
         const myParts = allParts.filter(
@@ -156,16 +164,10 @@ export default function Palpites() {
         }
         setUserParticipantsMap(myPartMapByBolao)
 
-        const myPartIds = myParts.map((p) => p.id)
+        const myPartIds = new Set(myParts.map((p) => p.id))
 
-        // Buscar palpites do usuário em todas as copas com filtro no backend se houver IDs
-        let myPalpites: Palpite[] = []
-        if (myPartIds.length > 0) {
-          const filterQuery = myPartIds.map((id) => `participante = '${id}'`).join(' || ')
-          myPalpites = await pb.collection('palpites').getFullList<Palpite>({
-            filter: filterQuery,
-          })
-        }
+        // Filtrar palpites do próprio usuário para o formulário
+        const myPalpites = allGroupBets.filter((p) => myPartIds.has(p.participante))
 
         setJogos(allGames)
 
@@ -225,17 +227,26 @@ export default function Palpites() {
           setUserParticipantsMap({ [currentTargetBolaoId]: currentParticipante })
         }
 
-        const [gamesList, myPalpites] = await Promise.all([
+        const [gamesList, allPoolParticipants, allPoolPalpites] = await Promise.all([
           pb.collection('jogos').getFullList<Jogo>({
             filter: `bolao = '${currentTargetBolaoId}'`,
             sort: 'data,hora',
           }),
-          participanteId
-            ? pb.collection('palpites').getFullList<Palpite>({
-                filter: `bolao = '${currentTargetBolaoId}' && participante = '${participanteId}'`,
-              })
-            : Promise.resolve([] as Palpite[]),
+          pb.collection('participantes').getFullList<Participante>({
+            filter: `bolao = '${currentTargetBolaoId}'`,
+            sort: 'nome',
+          }),
+          pb.collection('palpites').getFullList<Palpite>({
+            filter: `bolao = '${currentTargetBolaoId}'`,
+          }),
         ])
+
+        setParticipantesList(allPoolParticipants)
+        setAllGroupPalpites(allPoolPalpites)
+
+        const myPalpites = participanteId
+          ? allPoolPalpites.filter((p) => p.participante === participanteId)
+          : []
 
         setJogos(gamesList)
 
@@ -534,6 +545,15 @@ export default function Palpites() {
     return map
   }, [allBoloes])
 
+  // Mapear id do participante para o objeto Participante
+  const participanteMap = useMemo(() => {
+    const map = new Map<string, Participante>()
+    for (const p of participantesList) {
+      map.set(p.id, p)
+    }
+    return map
+  }, [participantesList])
+
   // Lista de jogos filtrada se pendentes estiver ativo
   const displayedJogos = useMemo(() => {
     if (!filterPendentes) return jogos
@@ -785,9 +805,98 @@ export default function Palpites() {
                       </Badge>
                     )}
                   </div>
+                  {/* Grupo de palpites liberados para partidas encerradas ou com horário de kickoff atingido */}
+                  {(() => {
+                    const isExpiredOrFinalized =
+                      finalizado || isPalpiteEncerrado(jogo.data, jogo.hora, nowMs)
+                    if (!isExpiredOrFinalized) return null
+
+                    const betsForGame = allGroupPalpites.filter((p) => p.jogo === jogo.id)
+
+                    return (
+                      <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50/80 p-4">
+                        <div className="flex items-center justify-between pb-2 mb-3 border-b border-slate-200">
+                          <div className="flex items-center gap-1.5">
+                            <Users className="h-4 w-4 text-[#0F2A43]" />
+                            <span className="text-xs font-bold text-[#0F172A]">
+                              Palpites do Grupo Liberados
+                            </span>
+                          </div>
+                          <Badge
+                            variant="outline"
+                            className="border-slate-300 bg-white text-[10px] font-semibold text-slate-700"
+                          >
+                            {betsForGame.length} palpite(s)
+                          </Badge>
+                        </div>
+
+                        {betsForGame.length === 0 ? (
+                          <p className="text-center py-2 text-xs italic text-slate-400">
+                            Nenhum participante registrou palpite para esta partida antes do
+                            encerramento.
+                          </p>
+                        ) : (
+                          <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2 lg:grid-cols-4">
+                            {betsForGame.map((bet) => {
+                              const part = participanteMap.get(bet.participante)
+                              const nomeParticipante = part?.nome || 'Participante'
+                              const isCurrentUser =
+                                participantName &&
+                                nomeParticipante.trim().toLowerCase() ===
+                                  participantName.trim().toLowerCase()
+
+                              return (
+                                <div
+                                  key={bet.id}
+                                  className={`rounded-lg border p-3 text-xs transition duration-150 shadow-2xs ${
+                                    isCurrentUser
+                                      ? 'border-emerald-300 bg-emerald-50/80 ring-1 ring-emerald-300'
+                                      : 'border-slate-200 bg-white'
+                                  }`}
+                                >
+                                  <div className="flex items-center justify-between gap-1">
+                                    <span className="font-bold text-[#0F172A] truncate">
+                                      {nomeParticipante}
+                                    </span>
+                                    {isCurrentUser && (
+                                      <Badge className="bg-[#10B981] px-1 py-0 text-[9px] font-bold text-white hover:bg-[#10B981] shrink-0">
+                                        Você
+                                      </Badge>
+                                    )}
+                                  </div>
+                                  <div className="mt-1 text-xs font-semibold text-slate-800">
+                                    Palpite:{' '}
+                                    <strong className="text-sm font-black text-[#0F2A43]">
+                                      {bet.placar_a} x {bet.placar_b}
+                                    </strong>
+                                  </div>
+                                  <div className="mt-1 text-[11px] text-slate-600 font-medium leading-snug">
+                                    {formatPalpiteMarcadoresSummary(bet)}
+                                  </div>
+                                  {finalizado && (
+                                    <div className="mt-1.5 pt-1.5 border-t border-slate-100 flex items-center justify-between text-[11px]">
+                                      <span className="text-slate-500 font-medium">Pontos:</span>
+                                      <span
+                                        className={`font-bold ${
+                                          bet.pontuacao_jogo > 0
+                                            ? 'text-emerald-700'
+                                            : 'text-slate-500'
+                                        }`}
+                                      >
+                                        +{bet.pontuacao_jogo} pts
+                                      </span>
+                                    </div>
+                                  )}
+                                </div>
+                              )
+                            })}
+                          </div>
+                        )}
+                      </div>
+                    )
+                  })()}
                   {/* Form or Read-only view */}
-                  {finalizado ? (
-                    /* Finalized game: show participant's bet and points detail toggle */
+                  {finalizado /* Finalized game: show participant's bet and points detail toggle */ ? (
                     <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-4">
                       <div className="flex flex-wrap items-center justify-between gap-2">
                         <div className="text-xs text-slate-700">
