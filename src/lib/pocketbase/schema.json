@@ -1,0 +1,436 @@
+{
+  "generatedAt": "2026-09-16T12:51:26.491Z",
+  "collections": [
+    {
+      "name": "users",
+      "type": "auth",
+      "apiRules": {
+        "list": "id = @request.auth.id",
+        "view": "id = @request.auth.id",
+        "create": "",
+        "update": "id = @request.auth.id",
+        "delete": "id = @request.auth.id"
+      },
+      "fields": [
+        {
+          "name": "name",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "avatar",
+          "type": "file",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "created",
+          "type": "autodate",
+          "required": false,
+          "system": false,
+          "autodateTriggers": ["onCreate"]
+        },
+        {
+          "name": "updated",
+          "type": "autodate",
+          "required": false,
+          "system": false,
+          "autodateTriggers": ["onCreate", "onUpdate"]
+        }
+      ],
+      "indexes": [
+        "CREATE UNIQUE INDEX `idx_tokenKey__pb_users_auth_` ON `users` (`tokenKey`)",
+        "CREATE UNIQUE INDEX `idx_email__pb_users_auth_` ON `users` (`email`) WHERE `email` != ''"
+      ]
+    },
+    {
+      "name": "boloes",
+      "type": "base",
+      "apiRules": {
+        "list": "@request.auth.id != ''",
+        "view": "@request.auth.id != ''",
+        "create": "@request.auth.name = 'Douglas'",
+        "update": "@request.auth.name = 'Douglas'",
+        "delete": "@request.auth.name = 'Douglas'"
+      },
+      "fields": [
+        {
+          "name": "nome",
+          "type": "text",
+          "required": true,
+          "system": false
+        },
+        {
+          "name": "ativo",
+          "type": "bool",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "ultima_atualizacao",
+          "type": "date",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "created",
+          "type": "autodate",
+          "required": false,
+          "system": false,
+          "autodateTriggers": ["onCreate"]
+        },
+        {
+          "name": "updated",
+          "type": "autodate",
+          "required": false,
+          "system": false,
+          "autodateTriggers": ["onCreate", "onUpdate"]
+        }
+      ],
+      "indexes": [
+        "CREATE UNIQUE INDEX idx_boloes_nome ON boloes (nome)",
+        "CREATE INDEX idx_boloes_ativo ON boloes (ativo)"
+      ]
+    },
+    {
+      "name": "regras",
+      "type": "base",
+      "apiRules": {
+        "list": "@request.auth.id != ''",
+        "view": "@request.auth.id != ''",
+        "create": null,
+        "update": null,
+        "delete": null
+      },
+      "fields": [
+        {
+          "name": "titulo",
+          "type": "text",
+          "required": true,
+          "system": false
+        },
+        {
+          "name": "conteudo",
+          "type": "text",
+          "required": true,
+          "system": false
+        },
+        {
+          "name": "created",
+          "type": "autodate",
+          "required": false,
+          "system": false,
+          "autodateTriggers": ["onCreate"]
+        },
+        {
+          "name": "updated",
+          "type": "autodate",
+          "required": false,
+          "system": false,
+          "autodateTriggers": ["onCreate", "onUpdate"]
+        }
+      ],
+      "indexes": []
+    },
+    {
+      "name": "participantes",
+      "type": "base",
+      "apiRules": {
+        "list": "@request.auth.id != ''",
+        "view": "@request.auth.id != ''",
+        "create": "@request.auth.name = 'Douglas'",
+        "update": "@request.auth.name = 'Douglas'",
+        "delete": "@request.auth.name = 'Douglas'"
+      },
+      "fields": [
+        {
+          "name": "bolao",
+          "type": "relation",
+          "required": true,
+          "system": false,
+          "collectionRef": "boloes"
+        },
+        {
+          "name": "nome",
+          "type": "text",
+          "required": true,
+          "system": false
+        },
+        {
+          "name": "pontuacao_total",
+          "type": "number",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "created",
+          "type": "autodate",
+          "required": false,
+          "system": false,
+          "autodateTriggers": ["onCreate"]
+        },
+        {
+          "name": "updated",
+          "type": "autodate",
+          "required": false,
+          "system": false,
+          "autodateTriggers": ["onCreate", "onUpdate"]
+        }
+      ],
+      "indexes": [
+        "CREATE UNIQUE INDEX idx_participantes_bolao_nome ON participantes (bolao, nome)",
+        "CREATE INDEX idx_participantes_bolao ON participantes (bolao)",
+        "CREATE INDEX idx_participantes_pontuacao ON participantes (pontuacao_total)"
+      ]
+    },
+    {
+      "name": "jogos",
+      "type": "base",
+      "apiRules": {
+        "list": "@request.auth.id != ''",
+        "view": "@request.auth.id != ''",
+        "create": "@request.auth.name = 'Douglas'",
+        "update": "@request.auth.name = 'Douglas'",
+        "delete": "@request.auth.name = 'Douglas'"
+      },
+      "fields": [
+        {
+          "name": "bolao",
+          "type": "relation",
+          "required": true,
+          "system": false,
+          "collectionRef": "boloes"
+        },
+        {
+          "name": "time_a",
+          "type": "text",
+          "required": true,
+          "system": false
+        },
+        {
+          "name": "time_b",
+          "type": "text",
+          "required": true,
+          "system": false
+        },
+        {
+          "name": "data",
+          "type": "date",
+          "required": true,
+          "system": false
+        },
+        {
+          "name": "hora",
+          "type": "text",
+          "required": true,
+          "system": false
+        },
+        {
+          "name": "placar_a",
+          "type": "number",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "placar_b",
+          "type": "number",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "resultado_finalizado",
+          "type": "bool",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "gols_time_a",
+          "type": "json",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "gols_time_b",
+          "type": "json",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "tem_penaltis",
+          "type": "bool",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "vencedor_penaltis",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "created",
+          "type": "autodate",
+          "required": false,
+          "system": false,
+          "autodateTriggers": ["onCreate"]
+        },
+        {
+          "name": "updated",
+          "type": "autodate",
+          "required": false,
+          "system": false,
+          "autodateTriggers": ["onCreate", "onUpdate"]
+        }
+      ],
+      "indexes": [
+        "CREATE INDEX idx_jogos_bolao ON jogos (bolao)",
+        "CREATE INDEX idx_jogos_data ON jogos (data)",
+        "CREATE INDEX idx_jogos_resultado ON jogos (resultado_finalizado)"
+      ]
+    },
+    {
+      "name": "palpites",
+      "type": "base",
+      "apiRules": {
+        "list": "@request.auth.id != ''",
+        "view": "@request.auth.id != ''",
+        "create": "@request.auth.id != ''",
+        "update": "@request.auth.id != ''",
+        "delete": null
+      },
+      "fields": [
+        {
+          "name": "bolao",
+          "type": "relation",
+          "required": true,
+          "system": false,
+          "collectionRef": "boloes"
+        },
+        {
+          "name": "jogo",
+          "type": "relation",
+          "required": true,
+          "system": false,
+          "collectionRef": "jogos"
+        },
+        {
+          "name": "participante",
+          "type": "relation",
+          "required": true,
+          "system": false,
+          "collectionRef": "participantes"
+        },
+        {
+          "name": "placar_a",
+          "type": "number",
+          "required": true,
+          "system": false
+        },
+        {
+          "name": "placar_b",
+          "type": "number",
+          "required": true,
+          "system": false
+        },
+        {
+          "name": "goleadores_a",
+          "type": "json",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "goleadores_b",
+          "type": "json",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "vencedor_penaltis",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "pontuacao_jogo",
+          "type": "number",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "detalhamento",
+          "type": "json",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "created",
+          "type": "autodate",
+          "required": false,
+          "system": false,
+          "autodateTriggers": ["onCreate"]
+        },
+        {
+          "name": "updated",
+          "type": "autodate",
+          "required": false,
+          "system": false,
+          "autodateTriggers": ["onCreate", "onUpdate"]
+        }
+      ],
+      "indexes": [
+        "CREATE UNIQUE INDEX idx_palpites_jogo_participante ON palpites (jogo, participante)",
+        "CREATE INDEX idx_palpites_bolao ON palpites (bolao)",
+        "CREATE INDEX idx_palpites_jogo ON palpites (jogo)",
+        "CREATE INDEX idx_palpites_participante ON palpites (participante)"
+      ]
+    },
+    {
+      "name": "normalizacoes",
+      "type": "base",
+      "apiRules": {
+        "list": "@request.auth.id != ''",
+        "view": "@request.auth.id != ''",
+        "create": "@request.auth.name = 'Douglas'",
+        "update": "@request.auth.name = 'Douglas'",
+        "delete": "@request.auth.name = 'Douglas'"
+      },
+      "fields": [
+        {
+          "name": "bolao",
+          "type": "relation",
+          "required": true,
+          "system": false,
+          "collectionRef": "boloes"
+        },
+        {
+          "name": "nome_original",
+          "type": "text",
+          "required": true,
+          "system": false
+        },
+        {
+          "name": "nome_correto",
+          "type": "text",
+          "required": true,
+          "system": false
+        },
+        {
+          "name": "created",
+          "type": "autodate",
+          "required": false,
+          "system": false,
+          "autodateTriggers": ["onCreate"]
+        },
+        {
+          "name": "updated",
+          "type": "autodate",
+          "required": false,
+          "system": false,
+          "autodateTriggers": ["onCreate", "onUpdate"]
+        }
+      ],
+      "indexes": ["CREATE UNIQUE INDEX idx_norm_bolao_orig ON normalizacoes (bolao, nome_original)"]
+    }
+  ]
+}
