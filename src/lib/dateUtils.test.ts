@@ -5,8 +5,10 @@ import {
   getJogoKickoffTimestamp,
   isPalpiteEncerrado,
   getHojeDataSaoPaulo,
+  getTodayDateString,
   normalizeDataISO,
   isJogoHoje,
+  isJogoHojeNaoIniciado,
 } from './dateUtils'
 
 describe('dateUtils - Jogos de Hoje e Fuso de Brasília', () => {
@@ -18,6 +20,7 @@ describe('dateUtils - Jogos de Hoje e Fuso de Brasília', () => {
     // 2026-06-16 01:00:00 UTC -> 2026-06-15 22:00:00 America/Sao_Paulo (ainda dia 15 em SP)
     const lateUtc = Date.UTC(2026, 5, 16, 1, 0, 0)
     expect(getHojeDataSaoPaulo(lateUtc)).toBe('2026-06-15')
+    expect(getTodayDateString(lateUtc)).toBe('2026-06-15')
   })
 
   it('normaliza datas de diferentes formatos para YYYY-MM-DD', () => {
@@ -50,5 +53,23 @@ describe('dateUtils - Jogos de Hoje e Fuso de Brasília', () => {
     // 16:05 em Brasília
     const afterKickoff = Date.UTC(2026, 5, 15, 19, 5, 0)
     expect(isPalpiteEncerrado('15/06/2026', '16:00', afterKickoff)).toBe(true)
+  })
+
+  it('determina corretamente isJogoHojeNaoIniciado para jogos do dia', () => {
+    // 15/06/2026 às 19h00 em Brasília (UTC-3 => 22h00 UTC)
+    // Se agora for 18h59 em Brasília (21h59 UTC)
+    const beforeKickoff = Date.UTC(2026, 5, 15, 21, 59, 0)
+    expect(isJogoHojeNaoIniciado('2026-06-15', '19h00', beforeKickoff)).toBe(true)
+
+    // Se agora for 19h00 em Brasília (22h00 UTC)
+    const atKickoff = Date.UTC(2026, 5, 15, 22, 0, 0)
+    expect(isJogoHojeNaoIniciado('2026-06-15', '19h00', atKickoff)).toBe(false)
+
+    // Se agora for 19h01 em Brasília (22h01 UTC)
+    const afterKickoff = Date.UTC(2026, 5, 15, 22, 1, 0)
+    expect(isJogoHojeNaoIniciado('2026-06-15', '19h00', afterKickoff)).toBe(false)
+
+    // Jogo de outro dia (amanhã)
+    expect(isJogoHojeNaoIniciado('2026-06-16', '19h00', beforeKickoff)).toBe(false)
   })
 })

@@ -265,6 +265,13 @@ export function normalizeDataISO(dataValue?: string | Date | null): string | nul
 }
 
 /**
+ * Alias helper for today's date string in America/Sao_Paulo (e.g. "YYYY-MM-DD")
+ */
+export function getTodayDateString(nowMs: number = Date.now()): string {
+  return getHojeDataSaoPaulo(nowMs)
+}
+
+/**
  * Checks if a game date is today in the America/Sao_Paulo timezone.
  */
 export function isJogoHoje(dataValue?: string | Date | null, nowMs: number = Date.now()): boolean {
@@ -272,4 +279,19 @@ export function isJogoHoje(dataValue?: string | Date | null, nowMs: number = Dat
   if (!normalizedGameDate) return false
   const hojeSaoPaulo = getHojeDataSaoPaulo(nowMs)
   return normalizedGameDate === hojeSaoPaulo
+}
+
+/**
+ * Checks if a game is scheduled for today AND has not started yet
+ * (dataHoraJogo > dataHoraAtual in America/Sao_Paulo).
+ */
+export function isJogoHojeNaoIniciado(
+  dataValue?: string | Date | null,
+  horaValue?: string | null,
+  nowMs: number = Date.now(),
+): boolean {
+  if (!isJogoHoje(dataValue, nowMs)) return false
+  const kickoffMs = getJogoKickoffTimestamp(dataValue, horaValue)
+  if (!kickoffMs) return false
+  return kickoffMs > nowMs
 }

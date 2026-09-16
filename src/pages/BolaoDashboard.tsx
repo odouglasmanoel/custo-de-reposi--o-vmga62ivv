@@ -28,6 +28,8 @@ import {
   formatDateTimeBR,
   isPalpiteEncerrado,
   isJogoHoje,
+  isJogoHojeNaoIniciado,
+  getJogoKickoffTimestamp,
 } from '@/lib/dateUtils'
 import { formatPalpiteMarcadoresSummary } from '@/lib/scorerUtils'
 import { Users } from 'lucide-react'
@@ -239,25 +241,29 @@ export default function BolaoDashboard() {
   }, [allParticipantes])
 
   // Jogos cujos palpites foram liberados:
-  // SOMENTE jogos pendentes (não finalizados) cujo horário de início já passou
+  // SOMENTE jogos pendentes (não finalizados) cujo horário de início já passou (dataHoraAtual >= dataHoraJogo)
   const jogosLiberados = useMemo(() => {
     const targetGames = isGeral ? allJogos : jogos
     return targetGames
       .filter((j) => !j.resultado_finalizado && isPalpiteEncerrado(j.data, j.hora, nowMs))
       .sort((a, b) => {
-        // Mais recentes/futuros primeiro
-        const timeA = new Date(a.data).getTime()
-        const timeB = new Date(b.data).getTime()
-        return timeB - timeA
+        // Ordenar por horário de kickoff decrescente (mais recentes primeiro)
+        const kickA = getJogoKickoffTimestamp(a.data, a.hora) ?? new Date(a.data).getTime()
+        const kickB = getJogoKickoffTimestamp(b.data, b.hora) ?? new Date(b.data).getTime()
+        return kickB - kickA
       })
   }, [isGeral, allJogos, jogos, nowMs])
 
   // Jogos de Hoje (fuso America/Sao_Paulo)
+  // Regra dinâmica: APENAS jogos do dia atual que ainda NÃO iniciaram (dataHoraJogo > dataHoraAtual)
   const jogosDeHoje = useMemo(() => {
     const gamesToUse = isGeral ? allJogos : jogos
     return gamesToUse
-      .filter((j) => isJogoHoje(j.data, nowMs))
+      .filter((j) => isJogoHojeNaoIniciado(j.data, j.hora, nowMs))
       .sort((a, b) => {
+        const kickA = getJogoKickoffTimestamp(a.data, a.hora) ?? 0
+        const kickB = getJogoKickoffTimestamp(b.data, b.hora) ?? 0
+        if (kickA !== kickB) return kickA - kickB
         const horaA = a.hora || ''
         const horaB = b.hora || ''
         return horaA.localeCompare(horaB)
@@ -458,18 +464,34 @@ export default function BolaoDashboard() {
                 </p>
               ) : (
                 <div className="mt-1.5 space-y-1.5 max-h-24 overflow-y-auto pr-1">
-                  {jogosDeHoje.map((jogo) => (
-                    <div key={jogo.id} className="flex items-center justify-between gap-2 text-xs">
-                      <span className="font-bold text-[#0F172A] truncate">
-                        {jogo.time_a} x {jogo.time_b}
-                      </span>
-                      <span className="shrink-0 font-semibold text-[#0F2A43] bg-slate-100 px-1.5 py-0.5 rounded text-[11px]">
-                        {formatHoraBR(jogo.hora) || '—'}
-                      </span>
-                    </div>
-                  ))}
+                  {jogosDeHoje.map((jogo) => {
+                    const bolaoOrigem = isGeral ? bolaoMap.get(jogo.bolao) : null
+                    return (
+                      <div
+                        key={jogo.id}
+                        className="flex items-center justify-between gap-2 text-xs"
+                      >
+                        <div className="flex items-center gap-1.5 min-w-0">
+                          {bolaoOrigem && (
+                            <Badge
+                              variant="secondary"
+                              className="border border-[#CBD5E1] bg-slate-100 text-[#0F2A43] font-semibold text-[9px] px-1 py-0 shrink-0"
+                            >
+                              {bolaoOrigem.nome.replace('Copa ', '')}
+                            </Badge>
+                          )}
+                          <span className="font-bold text-[#0F172A] truncate">
+                            {jogo.time_a} x {jogo.time_b}
+                          </span>
+                        </div>
+                        <span className="shrink-0 font-semibold text-[#0F2A43] bg-slate-100 px-1.5 py-0.5 rounded text-[11px]">
+                          {formatHoraBR(jogo.hora) || '—'}
+                        </span>
+                      </div>
+                    )
+                  })}
                 </div>
-              )}
+              )}{' '}
             </div>
             <div className="ml-2 rounded-lg bg-blue-50 p-2.5 text-[#0F2A43] shrink-0 self-start">
               <Calendar className="h-5 w-5" />
