@@ -1,0 +1,698 @@
+import { useState, useEffect, useMemo } from 'react'
+import { Link } from 'react-router-dom'
+import {
+  Trophy,
+  Target,
+  CheckCircle,
+  Flame,
+  Award,
+  Filter,
+  TrendingUp,
+  Info,
+  Loader2,
+  Calendar,
+  Sparkles,
+} from 'lucide-react'
+import {
+  LineChart,
+  Line,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip as RechartsTooltip,
+  ResponsiveContainer,
+  Legend as RechartsLegend,
+} from 'recharts'
+import pb from '@/lib/pocketbase/client'
+import { useAuth } from '@/context/AuthContext'
+import { useRealtime } from '@/hooks/use-realtime'
+import type { Bolao, Jogo, Palpite, Participante } from '@/types/bolao'
+import { calculateStatistics } from '@/lib/statsCalculator'
+import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
+import { Badge } from '@/components/ui/badge'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
+
+// Cores temáticas para cada um dos 4 participantes no gráfico
+const PARTICIPANT_COLORS: Record<string, { stroke: string; bg: string; border: string }> = {
+  Douglas: {
+    stroke: '#2563EB', // Blue 600
+    bg: 'bg-blue-50',
+    border: 'border-blue-200',
+  },
+  Gabriel: {
+    stroke: '#10B981', // Emerald 500
+    bg: 'bg-emerald-50',
+    border: 'border-emerald-200',
+  },
+  Bruno: {
+    stroke: '#F59E0B', // Amber 500
+    bg: 'bg-amber-50',
+    border: 'border-amber-200',
+  },
+  Davi: {
+    stroke: '#8B5CF6', // Purple 500
+    bg: 'bg-purple-50',
+    border: 'border-purple-200',
+  },
+}
+
+export default function Estatisticas() {
+  const { participantName } = useAuth()
+
+  const [boloes, setBoloes] = useState<Bolao[]>([])
+  const [participantes, setParticipantes] = useState<Participante[]>([])
+  const [jogos, setJogos] = useState<Jogo[]>([])
+  const [palpites, setPalpites] = useState<Palpite[]>([])
+  const [loading, setLoading] = useState(true)
+
+  // Filtro de competição: 'todas' | id do bolão
+  const [selectedCompetitionId, setSelectedCompetitionId] = useState<string>('todas')
+
+  // Real-time synchronization
+  useRealtime<Participante>('participantes', () => {
+    loadData()
+  })
+  useRealtime<Jogo>('jogos', () => {
+    loadData()
+  })
+  useRealtime<Palpite>('palpites', () => {
+    loadData()
+  })
+  useRealtime<Bolao>('boloes', () => {
+    loadData()
+  })
+
+  const loadData = async () => {
+    try {
+      const [boloesList, partList, jogosList, palpitesList] = await Promise.all([
+        pb.collection('boloes').getFullList<Bolao>({
+          sort: 'nome',
+        }),
+        pb.collection('participantes').getFullList<Participante>({
+          sort: 'nome',
+        }),
+        pb.collection('jogos').getFullList<Jogo>({
+          sort: 'data,hora',
+        }),
+        pb.collection('palpites').getFullList<Palpite>(),
+      ])
+
+      setBoloes(boloesList)
+      setParticipantes(partList)
+      setJogos(jogosList)
+      setPalpites(palpitesList)
+    } catch (err) {
+      console.error('Erro ao carregar dados de estatísticas:', err)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    loadData()
+  }, [])
+
+  // Estatísticas calculadas dinamicamente com filtro
+  const stats = useMemo(() => {
+    return calculateStatistics({
+      boloes,
+      participantes,
+      jogos,
+      palpites,
+      filtroBolaoId: selectedCompetitionId,
+    })
+  }, [boloes, participantes, jogos, palpites, selectedCompetitionId])
+
+  const { tabela, recordes, evolucao, totalJogosEncerrados, totalPalpitesValidos } = stats
+
+  const getPositionBadge = (pos: number) => {
+    if (pos === 1) return { bg: 'bg-[#F59E0B] text-slate-950 font-black', text: '1º', trophy: '🏆' }
+    if (pos === 2) return { bg: 'bg-[#94A3B8] text-white font-black', text: '2º', trophy: '🥈' }
+    if (pos === 3) return { bg: 'bg-[#B45309] text-white font-black', text: '3º', trophy: '🥉' }
+    return { bg: 'bg-[#0F2A43] text-white font-bold', text: `${pos}º`, trophy: '' }
+  }
+
+  // Nome do bolão selecionado para exibir no título / badge
+  const selectedBolaoName = useMemo(() => {
+    if (selectedCompetitionId === 'todas') return 'Geral (Todas as Copas)'
+    const b = boloes.find((item) => item.id === selectedCompetitionId)
+    return b ? b.nome : 'Competição Selecionada'
+  }, [boloes, selectedCompetitionId])
+
+  return (
+    <div className="space-y-6">
+      {/* Header Section com Título e Filtro por Competição */}
+      <div className="flex flex-col justify-between gap-4 rounded-[14px] border border-[#E2E8F0] bg-white p-6 shadow-xs sm:flex-row sm:items-center">
+        <div>
+          <div className="flex items-center gap-3">
+            <span className="rounded-xl bg-[#0F2A43] p-2.5 text-[#F59E0B] shadow-sm">
+              <Trophy className="h-6 w-6" />
+            </span>
+            <div>
+              <div className="flex flex-wrap items-center gap-2">
+                <h1 className="text-2xl font-black tracking-tight text-[#0F172A] sm:text-3xl">
+                  Estatísticas
+                </h1>
+                <Badge className="border-amber-300 bg-amber-50 text-xs font-bold text-amber-900 shadow-xs">
+                  <Sparkles className="mr-1 h-3 w-3 text-amber-600" />
+                  Hall da Fama
+                </Badge>
+              </div>
+              <p className="mt-0.5 text-xs text-[#64748B]">
+                Dados consolidados, recordes históricos e métricas de desempenho dos participantes.
+              </p>
+            </div>
+          </div>
+        </div>
+
+        {/* Filtro por Competição */}
+        <div className="flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 p-2 shadow-xs">
+          <Filter className="h-4 w-4 text-slate-500" />
+          <label
+            htmlFor="comp-select"
+            className="text-xs font-bold text-slate-700 whitespace-nowrap"
+          >
+            Competição:
+          </label>
+          <select
+            id="comp-select"
+            value={selectedCompetitionId}
+            onChange={(e) => setSelectedCompetitionId(e.target.value)}
+            className="rounded-lg border border-[#CBD5E1] bg-white px-3 py-1.5 text-xs font-semibold text-[#0F2A43] shadow-xs transition hover:border-slate-400 focus:border-[#10B981] focus:outline-none"
+          >
+            <option value="todas">Geral (Todas as Copas)</option>
+            {boloes.map((b) => (
+              <option key={b.id} value={b.id}>
+                {b.nome} {b.foco ? `(${b.foco})` : ''} {b.ativo ? '' : '• Encerrado'}
+              </option>
+            ))}
+          </select>
+        </div>
+      </div>
+
+      {loading ? (
+        <div className="flex min-h-[300px] items-center justify-center rounded-[14px] border border-[#E2E8F0] bg-white p-12">
+          <div className="flex flex-col items-center gap-3">
+            <Loader2 className="h-8 w-8 animate-spin text-[#0F2A43]" />
+            <p className="text-xs font-medium text-slate-500">Calculando métricas e recordes...</p>
+          </div>
+        </div>
+      ) : (
+        <>
+          {/* Subheader Informativo */}
+          <div className="flex flex-wrap items-center justify-between gap-2 px-1 text-xs text-slate-500">
+            <div className="flex items-center gap-2">
+              <span className="font-semibold text-slate-700">Visualizando:</span>
+              <Badge variant="outline" className="border-slate-300 font-bold text-[#0F2A43]">
+                {selectedBolaoName}
+              </Badge>
+            </div>
+            <div className="flex items-center gap-4">
+              <span>
+                <strong className="text-slate-800">{totalJogosEncerrados}</strong> jogos encerrados
+              </span>
+              <span>•</span>
+              <span>
+                <strong className="text-slate-800">{totalPalpitesValidos}</strong> palpites
+                analisados
+              </span>
+            </div>
+          </div>
+
+          {/* 1. Cards Principais de Recordes (Destaques) */}
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            {/* Card 1: Rei da Cravada */}
+            <Card className="relative overflow-hidden rounded-[14px] border-l-4 border-l-[#F59E0B] border-t border-r border-b border-[#E2E8F0] bg-white p-5 shadow-xs transition duration-200 hover:-translate-y-1 hover:shadow-md">
+              <div className="flex items-start justify-between">
+                <div>
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-xs font-black uppercase tracking-wider text-amber-700">
+                      Rei da Cravada
+                    </span>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Info className="h-3.5 w-3.5 cursor-pointer text-slate-400 hover:text-slate-600" />
+                      </TooltipTrigger>
+                      <TooltipContent className="max-w-xs text-xs">
+                        Participante com o maior número de placares exatos acertados (8 pontos
+                        cada).
+                      </TooltipContent>
+                    </Tooltip>
+                  </div>
+                  <h3 className="mt-2 text-xl font-black text-[#0F172A]">
+                    {recordes.reiDaCravada.participante}
+                  </h3>
+                  <p className="mt-1 flex items-baseline gap-1 text-xs text-slate-600">
+                    <span className="text-2xl font-black text-[#0F2A43]">
+                      {recordes.reiDaCravada.valor}
+                    </span>
+                    <span className="font-semibold text-slate-500">cravada(s) exata(s)</span>
+                  </p>
+                  {recordes.reiDaCravada.empate && (
+                    <p className="mt-1 text-[11px] font-medium text-amber-700">
+                      Empate: {recordes.reiDaCravada.empate.join(', ')}
+                    </p>
+                  )}
+                </div>
+                <div className="rounded-xl bg-amber-50 p-3 text-[#F59E0B]">
+                  <Target className="h-6 w-6" />
+                </div>
+              </div>
+            </Card>
+
+            {/* Card 2: Mestre do Vencedor/Empate */}
+            <Card className="relative overflow-hidden rounded-[14px] border-l-4 border-l-[#10B981] border-t border-r border-b border-[#E2E8F0] bg-white p-5 shadow-xs transition duration-200 hover:-translate-y-1 hover:shadow-md">
+              <div className="flex items-start justify-between">
+                <div>
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-xs font-black uppercase tracking-wider text-emerald-700">
+                      Mestre do Resultado
+                    </span>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Info className="h-3.5 w-3.5 cursor-pointer text-slate-400 hover:text-slate-600" />
+                      </TooltipTrigger>
+                      <TooltipContent className="max-w-xs text-xs">
+                        Participante com a maior quantidade de acertos de resultado final (vencedor
+                        do jogo ou empate).
+                      </TooltipContent>
+                    </Tooltip>
+                  </div>
+                  <h3 className="mt-2 text-xl font-black text-[#0F172A]">
+                    {recordes.mestreDoResultado.participante}
+                  </h3>
+                  <p className="mt-1 flex items-baseline gap-1 text-xs text-slate-600">
+                    <span className="text-2xl font-black text-[#0F2A43]">
+                      {recordes.mestreDoResultado.valor}
+                    </span>
+                    <span className="font-semibold text-slate-500">resultado(s) acertado(s)</span>
+                  </p>
+                  {recordes.mestreDoResultado.empate && (
+                    <p className="mt-1 text-[11px] font-medium text-emerald-700">
+                      Empate: {recordes.mestreDoResultado.empate.join(', ')}
+                    </p>
+                  )}
+                </div>
+                <div className="rounded-xl bg-emerald-50 p-3 text-[#10B981]">
+                  <CheckCircle className="h-6 w-6" />
+                </div>
+              </div>
+            </Card>
+
+            {/* Card 3: Matador de Aposta (Gols) */}
+            <Card className="relative overflow-hidden rounded-[14px] border-l-4 border-l-rose-500 border-t border-r border-b border-[#E2E8F0] bg-white p-5 shadow-xs transition duration-200 hover:-translate-y-1 hover:shadow-md">
+              <div className="flex items-start justify-between">
+                <div>
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-xs font-black uppercase tracking-wider text-rose-700">
+                      Matador de Aposta (Gols)
+                    </span>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Info className="h-3.5 w-3.5 cursor-pointer text-slate-400 hover:text-slate-600" />
+                      </TooltipTrigger>
+                      <TooltipContent className="max-w-xs text-xs">
+                        Participante que mais somou pontos acertando os marcadores de gols das
+                        partidas.
+                      </TooltipContent>
+                    </Tooltip>
+                  </div>
+                  <h3 className="mt-2 text-xl font-black text-[#0F172A]">
+                    {recordes.matadorDeAposta.participante}
+                  </h3>
+                  <p className="mt-1 flex items-baseline gap-1 text-xs text-slate-600">
+                    <span className="text-2xl font-black text-[#0F2A43]">
+                      {recordes.matadorDeAposta.valor}
+                    </span>
+                    <span className="font-semibold text-slate-500">pts de marcadores</span>
+                  </p>
+                  {recordes.matadorDeAposta.empate && (
+                    <p className="mt-1 text-[11px] font-medium text-rose-700">
+                      Empate: {recordes.matadorDeAposta.empate.join(', ')}
+                    </p>
+                  )}
+                </div>
+                <div className="rounded-xl bg-rose-50 p-3 text-rose-600">
+                  <Flame className="h-6 w-6" />
+                </div>
+              </div>
+            </Card>
+
+            {/* Card 4: Maior Pontuador de Rodada */}
+            <Card className="relative overflow-hidden rounded-[14px] border-l-4 border-l-indigo-600 border-t border-r border-b border-[#E2E8F0] bg-white p-5 shadow-xs transition duration-200 hover:-translate-y-1 hover:shadow-md">
+              <div className="flex items-start justify-between">
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-xs font-black uppercase tracking-wider text-indigo-700">
+                      Maior em Rodada
+                    </span>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Info className="h-3.5 w-3.5 cursor-pointer text-slate-400 hover:text-slate-600" />
+                      </TooltipTrigger>
+                      <TooltipContent className="max-w-xs text-xs">
+                        A maior pontuação atingida por um único usuário em um único
+                        confronto/rodada.
+                      </TooltipContent>
+                    </Tooltip>
+                  </div>
+                  <h3 className="mt-2 text-xl font-black text-[#0F172A] truncate">
+                    {recordes.maiorPontuadorRodada.participante}
+                  </h3>
+                  <p className="mt-1 flex items-baseline gap-1 text-xs text-slate-600">
+                    <span className="text-2xl font-black text-[#0F2A43]">
+                      {recordes.maiorPontuadorRodada.pontos}
+                    </span>
+                    <span className="font-semibold text-slate-500">pontos no confronto</span>
+                  </p>
+                  <p
+                    className="mt-1 truncate text-[11px] font-medium text-slate-500"
+                    title={recordes.maiorPontuadorRodada.jogoLabel}
+                  >
+                    {recordes.maiorPontuadorRodada.rodadaLabel ||
+                      recordes.maiorPontuadorRodada.jogoLabel}
+                  </p>
+                </div>
+                <div className="ml-2 rounded-xl bg-indigo-50 p-3 text-indigo-600">
+                  <Award className="h-6 w-6" />
+                </div>
+              </div>
+            </Card>
+          </div>
+
+          {/* 2. Módulos Visuais e Comparativos: Tabela Detalhada */}
+          <Card className="rounded-[14px] border-[#E2E8F0] bg-white p-6 shadow-xs">
+            <CardHeader className="p-0 pb-4">
+              <div className="flex flex-col justify-between gap-2 sm:flex-row sm:items-center">
+                <div>
+                  <CardTitle className="flex items-center gap-2 text-lg font-bold text-[#0F172A]">
+                    <Trophy className="h-5 w-5 text-[#F59E0B]" />
+                    Tabela de Desempenho Detalhada
+                  </CardTitle>
+                  <p className="mt-0.5 text-xs text-[#64748B]">
+                    Comparativo oficial dos 4 participantes: pontos consolidados, precisão e
+                    aproveitamento.
+                  </p>
+                </div>
+                <Badge
+                  variant="outline"
+                  className="border-slate-300 text-xs font-semibold text-slate-700"
+                >
+                  {selectedBolaoName}
+                </Badge>
+              </div>
+            </CardHeader>
+
+            <CardContent className="p-0">
+              <div className="overflow-x-auto rounded-xl border border-slate-200">
+                <table className="w-full text-left text-xs">
+                  <thead className="border-b border-slate-200 bg-[#0F2A43] text-white">
+                    <tr>
+                      <th className="py-3 px-4 font-bold uppercase tracking-wider text-center w-16">
+                        Posição
+                      </th>
+                      <th className="py-3 px-4 font-bold uppercase tracking-wider">Participante</th>
+                      <th className="py-3 px-4 font-bold uppercase tracking-wider text-right">
+                        Total de Pontos
+                      </th>
+                      <th className="py-3 px-4 font-bold uppercase tracking-wider text-center">
+                        Cravadas Exatas
+                      </th>
+                      <th className="py-3 px-4 font-bold uppercase tracking-wider text-center">
+                        Resultados Acertados
+                      </th>
+                      <th className="py-3 px-4 font-bold uppercase tracking-wider text-center">
+                        Gols Acertados
+                      </th>
+                      <th className="py-3 px-4 font-bold uppercase tracking-wider text-right">
+                        <div className="inline-flex items-center gap-1 justify-end">
+                          <span>Aproveitamento (%)</span>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <Info className="h-3 w-3 cursor-pointer text-slate-300 hover:text-white" />
+                            </TooltipTrigger>
+                            <TooltipContent className="max-w-xs text-xs">
+                              Calculado sobre os pontos máximos possíveis dos jogos em que o
+                              participante deu palpite (referência base: 8 pontos/jogo).
+                            </TooltipContent>
+                          </Tooltip>
+                        </div>
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100 bg-white">
+                    {tabela.map((row) => {
+                      const posBadge = getPositionBadge(row.posicao || 1)
+                      const isCurrentUser =
+                        participantName &&
+                        row.nome.trim().toLowerCase() === participantName.trim().toLowerCase()
+
+                      return (
+                        <tr
+                          key={row.nome}
+                          className={`transition duration-150 ${
+                            isCurrentUser ? 'bg-emerald-50/70 font-semibold' : 'hover:bg-slate-50'
+                          }`}
+                        >
+                          {/* Posição */}
+                          <td className="py-3.5 px-4 text-center">
+                            <div
+                              className={`mx-auto flex h-7 w-7 items-center justify-center rounded-full text-xs shadow-xs ${posBadge.bg}`}
+                            >
+                              {posBadge.text}
+                            </div>
+                          </td>
+
+                          {/* Participante */}
+                          <td className="py-3.5 px-4">
+                            <div className="flex items-center gap-2">
+                              <span className="text-sm font-bold text-[#0F172A]">{row.nome}</span>
+                              {row.posicao === 1 && <span>🏆</span>}
+                              {isCurrentUser && (
+                                <Badge className="bg-[#10B981] px-1.5 py-0 text-[10px] font-bold text-white hover:bg-[#10B981]">
+                                  Você
+                                </Badge>
+                              )}
+                            </div>
+                            {row.pontosImportados > 0 && (
+                              <p className="text-[11px] text-slate-500">
+                                Inclui {row.pontosImportados} pts importados de planilhas
+                              </p>
+                            )}
+                          </td>
+
+                          {/* Total de Pontos */}
+                          <td className="py-3.5 px-4 text-right">
+                            <span className="text-base font-black text-[#0F2A43]">
+                              {row.totalPontos}
+                            </span>
+                            <span className="ml-1 text-[11px] font-medium text-slate-500">pts</span>
+                          </td>
+
+                          {/* Cravadas Exatas */}
+                          <td className="py-3.5 px-4 text-center">
+                            <Badge
+                              variant="secondary"
+                              className={`font-black ${
+                                row.cravadasExatas > 0
+                                  ? 'bg-amber-100 text-amber-900 border border-amber-200'
+                                  : 'bg-slate-100 text-slate-600'
+                              }`}
+                            >
+                              {row.cravadasExatas}
+                            </Badge>
+                          </td>
+
+                          {/* Resultados Acertados */}
+                          <td className="py-3.5 px-4 text-center">
+                            <Badge
+                              variant="secondary"
+                              className={`font-black ${
+                                row.resultadosAcertados > 0
+                                  ? 'bg-emerald-100 text-emerald-900 border border-emerald-200'
+                                  : 'bg-slate-100 text-slate-600'
+                              }`}
+                            >
+                              {row.resultadosAcertados}
+                            </Badge>
+                          </td>
+
+                          {/* Gols Acertados */}
+                          <td className="py-3.5 px-4 text-center">
+                            <Badge
+                              variant="secondary"
+                              className={`font-black ${
+                                row.golsAcertados > 0
+                                  ? 'bg-rose-100 text-rose-900 border border-rose-200'
+                                  : 'bg-slate-100 text-slate-600'
+                              }`}
+                            >
+                              +{row.golsAcertados} pts
+                            </Badge>
+                          </td>
+
+                          {/* Aproveitamento (%) */}
+                          <td className="py-3.5 px-4 text-right">
+                            <div className="flex flex-col items-end">
+                              <span className="text-sm font-black text-[#0F2A43]">
+                                {row.aproveitamento}%
+                              </span>
+                              <div className="mt-1 h-1.5 w-20 overflow-hidden rounded-full bg-slate-200">
+                                <div
+                                  className="h-full rounded-full bg-[#10B981] transition-all duration-500"
+                                  style={{ width: `${Math.min(100, row.aproveitamento)}%` }}
+                                />
+                              </div>
+                            </div>
+                          </td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* 3. Gráfico de Evolução dos Pontos */}
+          <Card className="rounded-[14px] border-[#E2E8F0] bg-white p-6 shadow-xs">
+            <CardHeader className="p-0 pb-4">
+              <div className="flex flex-col justify-between gap-2 sm:flex-row sm:items-center">
+                <div>
+                  <CardTitle className="flex items-center gap-2 text-lg font-bold text-[#0F172A]">
+                    <TrendingUp className="h-5 w-5 text-indigo-600" />
+                    Gráfico de Evolução de Pontos
+                  </CardTitle>
+                  <p className="mt-0.5 text-xs text-[#64748B]">
+                    Variação dos pontos acumulados entre os 4 participantes ao longo dos jogos da
+                    competição.
+                  </p>
+                </div>
+                <div className="flex flex-wrap items-center gap-3">
+                  {Object.entries(PARTICIPANT_COLORS).map(([name, conf]) => (
+                    <div
+                      key={name}
+                      className="flex items-center gap-1.5 text-xs font-semibold text-slate-700"
+                    >
+                      <span
+                        className="h-3 w-3 rounded-full border shadow-2xs"
+                        style={{ backgroundColor: conf.stroke, borderColor: conf.stroke }}
+                      />
+                      <span>{name}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </CardHeader>
+
+            <CardContent className="p-0 pt-2">
+              {evolucao.length <= 1 ? (
+                <div className="rounded-xl border border-dashed border-slate-300 bg-slate-50 py-12 text-center text-xs text-slate-500">
+                  Não há jogos finalizados suficientes nesta competição para renderizar a curva de
+                  evolução.
+                </div>
+              ) : (
+                <div className="h-72 w-full pt-2">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <LineChart
+                      data={evolucao}
+                      margin={{ top: 10, right: 20, left: -10, bottom: 0 }}
+                    >
+                      <CartesianGrid strokeDasharray="3 3" stroke="#E2E8F0" />
+                      <XAxis
+                        dataKey="rodadaLabel"
+                        stroke="#64748B"
+                        fontSize={11}
+                        tickLine={false}
+                        axisLine={{ stroke: '#CBD5E1' }}
+                      />
+                      <YAxis
+                        stroke="#64748B"
+                        fontSize={11}
+                        tickLine={false}
+                        axisLine={{ stroke: '#CBD5E1' }}
+                        domain={['dataMin', 'auto']}
+                      />
+                      <RechartsTooltip
+                        content={({ active, payload, label }) => {
+                          if (!active || !payload || !payload.length) return null
+                          const currentPoint = payload[0]?.payload
+                          return (
+                            <div className="rounded-xl border border-slate-200 bg-white p-3 shadow-lg text-xs">
+                              <p className="font-bold text-slate-900 border-b border-slate-100 pb-1 mb-2">
+                                {label}{' '}
+                                {currentPoint?.jogoLabel ? `• ${currentPoint.jogoLabel}` : ''}
+                              </p>
+                              <div className="space-y-1.5">
+                                {payload.map((entry) => (
+                                  <div
+                                    key={entry.name}
+                                    className="flex items-center justify-between gap-4"
+                                  >
+                                    <div className="flex items-center gap-1.5">
+                                      <span
+                                        className="h-2.5 w-2.5 rounded-full"
+                                        style={{ backgroundColor: entry.color }}
+                                      />
+                                      <span className="font-semibold text-slate-700">
+                                        {entry.name}:
+                                      </span>
+                                    </div>
+                                    <span className="font-black text-slate-950">
+                                      {entry.value} pts
+                                    </span>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          )
+                        }}
+                      />
+                      <RechartsLegend verticalAlign="bottom" height={36} />
+                      <Line
+                        type="monotone"
+                        dataKey="Douglas"
+                        name="Douglas"
+                        stroke={PARTICIPANT_COLORS.Douglas.stroke}
+                        strokeWidth={2.5}
+                        dot={{ r: 3, fill: PARTICIPANT_COLORS.Douglas.stroke }}
+                        activeDot={{ r: 5 }}
+                      />
+                      <Line
+                        type="monotone"
+                        dataKey="Gabriel"
+                        name="Gabriel"
+                        stroke={PARTICIPANT_COLORS.Gabriel.stroke}
+                        strokeWidth={2.5}
+                        dot={{ r: 3, fill: PARTICIPANT_COLORS.Gabriel.stroke }}
+                        activeDot={{ r: 5 }}
+                      />
+                      <Line
+                        type="monotone"
+                        dataKey="Bruno"
+                        name="Bruno"
+                        stroke={PARTICIPANT_COLORS.Bruno.stroke}
+                        strokeWidth={2.5}
+                        dot={{ r: 3, fill: PARTICIPANT_COLORS.Bruno.stroke }}
+                        activeDot={{ r: 5 }}
+                      />
+                      <Line
+                        type="monotone"
+                        dataKey="Davi"
+                        name="Davi"
+                        stroke={PARTICIPANT_COLORS.Davi.stroke}
+                        strokeWidth={2.5}
+                        dot={{ r: 3, fill: PARTICIPANT_COLORS.Davi.stroke }}
+                        activeDot={{ r: 5 }}
+                      />
+                    </LineChart>
+                  </ResponsiveContainer>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </>
+      )}
+    </div>
+  )
+}

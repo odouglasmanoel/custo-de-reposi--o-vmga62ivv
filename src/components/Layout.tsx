@@ -1,6 +1,15 @@
 import { useState } from 'react'
 import { Link, useNavigate, useLocation } from 'react-router-dom'
-import { Trophy, LogOut, ArrowLeft, MessageSquare, Shield, KeyRound, User } from 'lucide-react'
+import {
+  Trophy,
+  LogOut,
+  ArrowLeft,
+  MessageSquare,
+  Shield,
+  KeyRound,
+  User,
+  BarChart2,
+} from 'lucide-react'
 import { useAuth } from '@/context/AuthContext'
 import { useActivePool } from '@/context/ActivePoolContext'
 import { Button } from '@/components/ui/button'
@@ -29,6 +38,7 @@ export default function Layout({ children }: LayoutProps) {
     location.pathname === '/bolao/chat' ||
     location.pathname === '/bolao/palpites' ||
     location.pathname === '/bolao/historico' ||
+    location.pathname === '/bolao/estatisticas' ||
     location.pathname.startsWith('/bolao/admin')
 
   const handleBack = () => {
@@ -38,7 +48,8 @@ export default function Layout({ children }: LayoutProps) {
       location.pathname === '/bolao/admin/jogos' ||
       location.pathname === '/bolao/chat' ||
       location.pathname === '/bolao/palpites' ||
-      location.pathname === '/bolao/historico'
+      location.pathname === '/bolao/historico' ||
+      location.pathname === '/bolao/estatisticas'
     ) {
       navigate('/bolao')
     } else if (window.history.length > 1) {
@@ -131,6 +142,17 @@ export default function Layout({ children }: LayoutProps) {
                       }`}
                     >
                       Histórico
+                    </Link>
+                    <Link
+                      to="/bolao/estatisticas"
+                      className={`inline-flex items-center gap-1 rounded-md px-2.5 py-1 text-xs font-medium transition ${
+                        location.pathname === '/bolao/estatisticas'
+                          ? 'bg-[#1B3A5C] text-white'
+                          : 'text-slate-300 hover:text-white'
+                      }`}
+                    >
+                      <BarChart2 className="h-3.5 w-3.5 text-amber-400" />
+                      Estatísticas
                     </Link>
                     <Link
                       to="/bolao/chat"

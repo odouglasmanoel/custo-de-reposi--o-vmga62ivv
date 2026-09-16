@@ -14,6 +14,7 @@ import AdminJogos from './pages/AdminJogos'
 import AdminResultado from './pages/AdminResultado'
 import Palpites from './pages/Palpites'
 import Historico from './pages/Historico'
+import Estatisticas from './pages/Estatisticas'
 import Chat from './pages/Chat'
 import NotFound from './pages/NotFound'
 
@@ -69,6 +70,17 @@ const App = () => (
                 <BolaoRoute>
                   <Layout>
                     <Historico />
+                  </Layout>
+                </BolaoRoute>
+              }
+            />
+
+            <Route
+              path="/bolao/estatisticas"
+              element={
+                <BolaoRoute>
+                  <Layout>
+                    <Estatisticas />
                   </Layout>
                 </BolaoRoute>
               }

@@ -10,6 +10,7 @@ import {
   Shield,
   ArrowRight,
   Sparkles,
+  BarChart2,
 } from 'lucide-react'
 import pb from '@/lib/pocketbase/client'
 import { useAuth } from '@/context/AuthContext'
@@ -346,6 +347,16 @@ export default function BolaoDashboard() {
             </p>
 
             <div className="mt-5 space-y-3">
+              <Link to="/bolao/estatisticas" className="block">
+                <Button className="h-11 w-full justify-between rounded-lg bg-[#F59E0B] text-sm font-bold text-slate-950 shadow-xs hover:bg-amber-400">
+                  <span className="flex items-center gap-2">
+                    <BarChart2 className="h-4 w-4" />
+                    Estatísticas (Hall da Fama)
+                  </span>
+                  <ArrowRight className="h-4 w-4" />
+                </Button>
+              </Link>
+
               <Link to="/bolao/palpites" className="block">
                 <Button className="h-11 w-full justify-between rounded-lg bg-[#0F2A43] text-sm font-semibold text-white shadow-xs hover:bg-[#1B3A5C]">
                   <span>Meus Palpites</span>
