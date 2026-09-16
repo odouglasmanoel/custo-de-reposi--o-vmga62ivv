@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useSearchParams } from 'react-router-dom'
 import {
   Trophy,
   Target,
@@ -12,6 +12,7 @@ import {
   Loader2,
   Calendar,
   Sparkles,
+  Globe,
 } from 'lucide-react'
 import {
   LineChart,
@@ -25,8 +26,10 @@ import {
 } from 'recharts'
 import pb from '@/lib/pocketbase/client'
 import { useAuth } from '@/context/AuthContext'
+import { useActivePool } from '@/context/ActivePoolContext'
 import { useRealtime } from '@/hooks/use-realtime'
 import type { Bolao, Jogo, Palpite, Participante } from '@/types/bolao'
+import { formatBolaoLabel, GERAL_BOLAO_ID } from '@/types/bolao'
 import { calculateStatistics } from '@/lib/statsCalculator'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
@@ -58,6 +61,8 @@ const PARTICIPANT_COLORS: Record<string, { stroke: string; bg: string; border: s
 
 export default function Estatisticas() {
   const { participantName } = useAuth()
+  const { activeBolaoId, setActiveBolaoId } = useActivePool()
+  const [searchParams, setSearchParams] = useSearchParams()
 
   const [boloes, setBoloes] = useState<Bolao[]>([])
   const [participantes, setParticipantes] = useState<Participante[]>([])
@@ -65,42 +70,86 @@ export default function Estatisticas() {
   const [palpites, setPalpites] = useState<Palpite[]>([])
   const [loading, setLoading] = useState(true)
 
-  // Filtro de competição: 'todas' | id do bolão
-  const [selectedCompetitionId, setSelectedCompetitionId] = useState<string>('todas')
+  // Filtro de competição: 'geral' | 'todas' | id do bolão
+  // Inicializado a partir da URL (?bolao=...), ou do contexto ativo do app, ou 'geral'
+  const initialCompetitionId = useMemo(() => {
+    const fromParam = searchParams.get('bolao')
+    if (fromParam) return fromParam
+    if (activeBolaoId) return activeBolaoId
+    return GERAL_BOLAO_ID
+  }, [])
+
+  const [selectedCompetitionId, setSelectedCompetitionId] = useState<string>(initialCompetitionId)
 
   // Real-time synchronization
   useRealtime<Participante>('participantes', () => {
-    loadData()
+    loadData(selectedCompetitionId)
   })
   useRealtime<Jogo>('jogos', () => {
-    loadData()
+    loadData(selectedCompetitionId)
   })
   useRealtime<Palpite>('palpites', () => {
-    loadData()
+    loadData(selectedCompetitionId)
   })
   useRealtime<Bolao>('boloes', () => {
-    loadData()
+    loadData(selectedCompetitionId)
   })
 
-  const loadData = async () => {
-    try {
-      const [boloesList, partList, jogosList, palpitesList] = await Promise.all([
-        pb.collection('boloes').getFullList<Bolao>({
-          sort: 'nome',
-        }),
-        pb.collection('participantes').getFullList<Participante>({
-          sort: 'nome',
-        }),
-        pb.collection('jogos').getFullList<Jogo>({
-          sort: 'data,hora',
-        }),
-        pb.collection('palpites').getFullList<Palpite>(),
-      ])
+  // Sincronizar caso o query param da URL mude externamente
+  useEffect(() => {
+    const fromParam = searchParams.get('bolao')
+    if (fromParam && fromParam !== selectedCompetitionId) {
+      setSelectedCompetitionId(fromParam)
+    }
+  }, [searchParams])
 
+  const loadData = async (compFilter: string = selectedCompetitionId) => {
+    try {
+      const isGeralSelection =
+        !compFilter || compFilter === GERAL_BOLAO_ID || compFilter === 'todas'
+
+      // 1. Sempre buscar todos os bolões para o seletor de competição e mapeamento de nomes
+      const boloesList = await pb.collection('boloes').getFullList<Bolao>({
+        sort: '-ativo,nome',
+      })
       setBoloes(boloesList)
-      setParticipantes(partList)
-      setJogos(jogosList)
-      setPalpites(palpitesList)
+
+      // 2. Se for visão Geral ('geral' ou 'todas'), buscar SEM filtro de bolão (agrega todas as copas)
+      // Se for copa específica, buscar dados direcionados para aquela copa (com fallback global se necessário)
+      if (isGeralSelection) {
+        const [partList, jogosList, palpitesList] = await Promise.all([
+          pb.collection('participantes').getFullList<Participante>({
+            sort: 'nome',
+          }),
+          pb.collection('jogos').getFullList<Jogo>({
+            sort: 'data,hora',
+          }),
+          pb.collection('palpites').getFullList<Palpite>(),
+        ])
+
+        setParticipantes(partList)
+        setJogos(jogosList)
+        setPalpites(palpitesList)
+      } else {
+        // Copa específica: busca jogos, participantes e palpites da copa selecionada
+        const [partList, jogosList, palpitesList] = await Promise.all([
+          pb.collection('participantes').getFullList<Participante>({
+            filter: `bolao = '${compFilter}'`,
+            sort: 'nome',
+          }),
+          pb.collection('jogos').getFullList<Jogo>({
+            filter: `bolao = '${compFilter}'`,
+            sort: 'data,hora',
+          }),
+          pb.collection('palpites').getFullList<Palpite>({
+            filter: `bolao = '${compFilter}'`,
+          }),
+        ])
+
+        setParticipantes(partList)
+        setJogos(jogosList)
+        setPalpites(palpitesList)
+      }
     } catch (err) {
       console.error('Erro ao carregar dados de estatísticas:', err)
     } finally {
@@ -109,8 +158,28 @@ export default function Estatisticas() {
   }
 
   useEffect(() => {
-    loadData()
-  }, [])
+    setLoading(true)
+    loadData(selectedCompetitionId)
+  }, [selectedCompetitionId])
+
+  const handleSelectCompetition = (newCompId: string) => {
+    setSelectedCompetitionId(newCompId)
+    setSearchParams((prev) => {
+      const updated = new URLSearchParams(prev)
+      if (newCompId === GERAL_BOLAO_ID || newCompId === 'todas') {
+        updated.delete('bolao')
+      } else {
+        updated.set('bolao', newCompId)
+      }
+      return updated
+    })
+    // Sincroniza com o contexto ativo se for uma troca intencional
+    if (newCompId === GERAL_BOLAO_ID || newCompId === 'todas') {
+      setActiveBolaoId(GERAL_BOLAO_ID)
+    } else {
+      setActiveBolaoId(newCompId)
+    }
+  }
 
   // Estatísticas calculadas dinamicamente com filtro
   const stats = useMemo(() => {
@@ -132,12 +201,17 @@ export default function Estatisticas() {
     return { bg: 'bg-[#0F2A43] text-white font-bold', text: `${pos}º`, trophy: '' }
   }
 
+  const isGeralSelected =
+    !selectedCompetitionId ||
+    selectedCompetitionId === GERAL_BOLAO_ID ||
+    selectedCompetitionId === 'todas'
+
   // Nome do bolão selecionado para exibir no título / badge
   const selectedBolaoName = useMemo(() => {
-    if (selectedCompetitionId === 'todas') return 'Geral (Todas as Copas)'
+    if (isGeralSelected) return 'Geral (Todas as Copas)'
     const b = boloes.find((item) => item.id === selectedCompetitionId)
-    return b ? b.nome : 'Competição Selecionada'
-  }, [boloes, selectedCompetitionId])
+    return b ? formatBolaoLabel(b) : 'Competição Selecionada'
+  }, [boloes, selectedCompetitionId, isGeralSelected])
 
   return (
     <div className="space-y-6">
@@ -176,14 +250,14 @@ export default function Estatisticas() {
           </label>
           <select
             id="comp-select"
-            value={selectedCompetitionId}
-            onChange={(e) => setSelectedCompetitionId(e.target.value)}
+            value={isGeralSelected ? GERAL_BOLAO_ID : selectedCompetitionId}
+            onChange={(e) => handleSelectCompetition(e.target.value)}
             className="rounded-lg border border-[#CBD5E1] bg-white px-3 py-1.5 text-xs font-semibold text-[#0F2A43] shadow-xs transition hover:border-slate-400 focus:border-[#10B981] focus:outline-none"
           >
-            <option value="todas">Geral (Todas as Copas)</option>
+            <option value={GERAL_BOLAO_ID}>Geral (Todas as Copas)</option>
             {boloes.map((b) => (
               <option key={b.id} value={b.id}>
-                {b.nome} {b.foco ? `(${b.foco})` : ''} {b.ativo ? '' : '• Encerrado'}
+                {formatBolaoLabel(b)}
               </option>
             ))}
           </select>
@@ -203,7 +277,15 @@ export default function Estatisticas() {
           <div className="flex flex-wrap items-center justify-between gap-2 px-1 text-xs text-slate-500">
             <div className="flex items-center gap-2">
               <span className="font-semibold text-slate-700">Visualizando:</span>
-              <Badge variant="outline" className="border-slate-300 font-bold text-[#0F2A43]">
+              <Badge
+                variant="outline"
+                className={`font-bold ${
+                  isGeralSelected
+                    ? 'border-amber-300 bg-amber-50 text-amber-900'
+                    : 'border-slate-300 text-[#0F2A43]'
+                }`}
+              >
+                {isGeralSelected && <Globe className="mr-1 h-3 w-3 text-amber-600 inline" />}
                 {selectedBolaoName}
               </Badge>
             </div>

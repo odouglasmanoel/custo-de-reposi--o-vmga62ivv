@@ -214,16 +214,20 @@ export function calculateStatistics(params: {
   participantes: Participante[]
   jogos: Jogo[]
   palpites: Palpite[]
-  filtroBolaoId?: string // 'todas' | bolao.id
+  filtroBolaoId?: string // 'todas' | 'geral' | bolao.id
 }): StatsCalculationResult {
   const { boloes, participantes, jogos, palpites, filtroBolaoId } = params
 
-  const isGeral = !filtroBolaoId || filtroBolaoId === 'todas'
+  const isGeral =
+    !filtroBolaoId || filtroBolaoId === 'todas' || filtroBolaoId === 'geral' || filtroBolaoId === ''
 
   // Mapear bolões válidos
+  // Na visão Geral, se boloes estiver vazio por algum motivo, aceitamos os bolões presentes em jogos ou participantes
   const bolaoIdsValidos = new Set(
     isGeral
-      ? boloes.map((b) => b.id)
+      ? boloes.length > 0
+        ? boloes.map((b) => b.id)
+        : Array.from(new Set([...jogos.map((j) => j.bolao), ...participantes.map((p) => p.bolao)]))
       : boloes.filter((b) => b.id === filtroBolaoId).map((b) => b.id),
   )
 
@@ -392,64 +396,64 @@ export function calculateStatistics(params: {
   // 1. Cards Principais de Recordes (Destaques)
   // Rei da Cravada
   let topCravadas = -1
-  let reiNome = '—'
-  const empateCravadas: string[] = []
+  const topCravadasList: string[] = []
   for (const t of tabela) {
     if (t.cravadasExatas > topCravadas) {
       topCravadas = t.cravadasExatas
-      reiNome = t.nome
-      empateCravadas.length = 0
-      empateCravadas.push(t.nome)
+      topCravadasList.length = 0
+      if (topCravadas > 0) {
+        topCravadasList.push(t.nome)
+      }
     } else if (t.cravadasExatas === topCravadas && topCravadas > 0) {
-      empateCravadas.push(t.nome)
+      topCravadasList.push(t.nome)
     }
   }
 
   // Mestre do Resultado
   let topResultados = -1
-  let mestreNome = '—'
-  const empateResultados: string[] = []
+  const topResultadosList: string[] = []
   for (const t of tabela) {
     if (t.resultadosAcertados > topResultados) {
       topResultados = t.resultadosAcertados
-      mestreNome = t.nome
-      empateResultados.length = 0
-      empateResultados.push(t.nome)
+      topResultadosList.length = 0
+      if (topResultados > 0) {
+        topResultadosList.push(t.nome)
+      }
     } else if (t.resultadosAcertados === topResultados && topResultados > 0) {
-      empateResultados.push(t.nome)
+      topResultadosList.push(t.nome)
     }
   }
 
   // Matador de Aposta (Gols)
   let topGols = -1
-  let matadorNome = '—'
-  const empateGols: string[] = []
+  const topGolsList: string[] = []
   for (const t of tabela) {
     if (t.golsAcertados > topGols) {
       topGols = t.golsAcertados
-      matadorNome = t.nome
-      empateGols.length = 0
-      empateGols.push(t.nome)
+      topGolsList.length = 0
+      if (topGols > 0) {
+        topGolsList.push(t.nome)
+      }
     } else if (t.golsAcertados === topGols && topGols > 0) {
-      empateGols.push(t.nome)
+      topGolsList.push(t.nome)
     }
   }
 
   const recordes: RecordHolders = {
     reiDaCravada: {
-      participante: reiNome,
+      participante: topCravadasList.length > 0 ? topCravadasList[0] : '—',
       valor: Math.max(0, topCravadas),
-      empate: empateCravadas.length > 1 ? empateCravadas : undefined,
+      empate: topCravadasList.length > 1 ? topCravadasList : undefined,
     },
     mestreDoResultado: {
-      participante: mestreNome,
+      participante: topResultadosList.length > 0 ? topResultadosList[0] : '—',
       valor: Math.max(0, topResultados),
-      empate: empateResultados.length > 1 ? empateResultados : undefined,
+      empate: topResultadosList.length > 1 ? topResultadosList : undefined,
     },
     matadorDeAposta: {
-      participante: matadorNome,
+      participante: topGolsList.length > 0 ? topGolsList[0] : '—',
       valor: Math.max(0, topGols),
-      empate: empateGols.length > 1 ? empateGols : undefined,
+      empate: topGolsList.length > 1 ? topGolsList : undefined,
     },
     maiorPontuadorRodada: maxRodada,
   }

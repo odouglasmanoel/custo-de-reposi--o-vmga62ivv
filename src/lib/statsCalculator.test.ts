@@ -295,4 +295,222 @@ describe('statsCalculator', () => {
     expect(stats.recordes.maiorPontuadorRodada.participante).toBe('Douglas')
     expect(stats.recordes.maiorPontuadorRodada.pontos).toBe(8)
   })
+
+  it('aggregates multiple competitions properly when filtroBolaoId is "geral"', () => {
+    const boloes: Bolao[] = [
+      {
+        id: 'copa_coni',
+        nome: 'Copa Coni',
+        ativo: true,
+        created: '',
+        updated: '',
+        collectionId: '',
+        collectionName: '',
+      },
+      {
+        id: 'copa_genilton',
+        nome: 'Copa Genilton',
+        ativo: true,
+        created: '',
+        updated: '',
+        collectionId: '',
+        collectionName: '',
+      },
+    ]
+
+    const participantes: Participante[] = [
+      // Douglas em duas copas
+      {
+        id: 'p_doug_coni',
+        bolao: 'copa_coni',
+        nome: 'Douglas',
+        pontos_importados: 20,
+        pontuacao_total: 20,
+        created: '',
+        updated: '',
+        collectionId: '',
+        collectionName: '',
+      },
+      {
+        id: 'p_doug_gen',
+        bolao: 'copa_genilton',
+        nome: 'Douglas',
+        pontos_importados: 15,
+        pontuacao_total: 15,
+        created: '',
+        updated: '',
+        collectionId: '',
+        collectionName: '',
+      },
+      // Gabriel em duas copas
+      {
+        id: 'p_gab_coni',
+        bolao: 'copa_coni',
+        nome: 'Gabriel',
+        pontos_importados: 10,
+        pontuacao_total: 10,
+        created: '',
+        updated: '',
+        collectionId: '',
+        collectionName: '',
+      },
+      {
+        id: 'p_gab_gen',
+        bolao: 'copa_genilton',
+        nome: 'Gabriel',
+        pontos_importados: 5,
+        pontuacao_total: 5,
+        created: '',
+        updated: '',
+        collectionId: '',
+        collectionName: '',
+      },
+    ]
+
+    const jogos: Jogo[] = [
+      {
+        id: 'j_coni_1',
+        bolao: 'copa_coni',
+        time_a: 'Time A1',
+        time_b: 'Time B1',
+        data: '2026-06-01',
+        hora: '16:00',
+        placar_a: 2,
+        placar_b: 1,
+        resultado_finalizado: true,
+        tem_penaltis: false,
+        competicao: 'Copa Coni Rodada 1',
+        created: '',
+        updated: '',
+        collectionId: '',
+        collectionName: '',
+      },
+      {
+        id: 'j_gen_1',
+        bolao: 'copa_genilton',
+        time_a: 'Time C1',
+        time_b: 'Time D1',
+        data: '2026-06-02',
+        hora: '18:00',
+        placar_a: 0,
+        placar_b: 0,
+        resultado_finalizado: true,
+        tem_penaltis: false,
+        competicao: 'Copa Genilton Rodada 1',
+        created: '',
+        updated: '',
+        collectionId: '',
+        collectionName: '',
+      },
+    ]
+
+    const palpites: Palpite[] = [
+      {
+        id: 'palp_1',
+        bolao: 'copa_coni',
+        jogo: 'j_coni_1',
+        participante: 'p_doug_coni',
+        placar_a: 2,
+        placar_b: 1, // Cravada exata no jogo da Coni
+        pontuacao_jogo: 8,
+        detalhamento: ['Placar Exato (+8 pts)'],
+        created: '',
+        updated: '',
+        collectionId: '',
+        collectionName: '',
+      },
+      {
+        id: 'palp_2',
+        bolao: 'copa_genilton',
+        jogo: 'j_gen_1',
+        participante: 'p_doug_gen',
+        placar_a: 0,
+        placar_b: 0, // Cravada exata no jogo da Genilton
+        pontuacao_jogo: 8,
+        detalhamento: ['Placar Exato (+8 pts)'],
+        created: '',
+        updated: '',
+        collectionId: '',
+        collectionName: '',
+      },
+      {
+        id: 'palp_3',
+        bolao: 'copa_coni',
+        jogo: 'j_coni_1',
+        participante: 'p_gab_coni',
+        placar_a: 1,
+        placar_b: 0, // Vencedor
+        pontuacao_jogo: 2,
+        detalhamento: ['Vencedor (+2 pts)'],
+        created: '',
+        updated: '',
+        collectionId: '',
+        collectionName: '',
+      },
+    ]
+
+    // Chamando com filtro 'geral'
+    const statsGeral = calculateStatistics({
+      boloes,
+      participantes,
+      jogos,
+      palpites,
+      filtroBolaoId: 'geral',
+    })
+
+    // Confere contadores de topo
+    expect(statsGeral.totalJogosEncerrados).toBe(2)
+    expect(statsGeral.totalPalpitesValidos).toBe(3)
+
+    // Douglas na Geral:
+    // Importados: 20 (Coni) + 15 (Genilton) = 35
+    // Palpites: 8 (Coni) + 8 (Genilton) = 16
+    // Total de pontos: 35 + 16 = 51 pts
+    // Cravadas: 2
+    const douglasGeral = statsGeral.tabela.find((t) => t.nome === 'Douglas')
+    expect(douglasGeral?.totalPontos).toBe(51)
+    expect(douglasGeral?.cravadasExatas).toBe(2)
+    expect(douglasGeral?.resultadosAcertados).toBe(2)
+    expect(douglasGeral?.pontosImportados).toBe(35)
+    expect(douglasGeral?.pontosPalpites).toBe(16)
+
+    // Gabriel na Geral:
+    // Importados: 10 + 5 = 15
+    // Palpites: 2
+    // Total: 17
+    const gabrielGeral = statsGeral.tabela.find((t) => t.nome === 'Gabriel')
+    expect(gabrielGeral?.totalPontos).toBe(17)
+    expect(gabrielGeral?.cravadasExatas).toBe(0)
+    expect(gabrielGeral?.resultadosAcertados).toBe(1)
+
+    // Destaques e recordes
+    expect(statsGeral.recordes.reiDaCravada.participante).toBe('Douglas')
+    expect(statsGeral.recordes.reiDaCravada.valor).toBe(2)
+    expect(statsGeral.recordes.mestreDoResultado.participante).toBe('Douglas')
+    expect(statsGeral.recordes.mestreDoResultado.valor).toBe(2)
+    expect(statsGeral.recordes.maiorPontuadorRodada.pontos).toBe(8)
+
+    // Evolução: ponto inicial + 2 jogos = 3 pontos
+    expect(statsGeral.evolucao.length).toBe(3)
+    // No ponto inicial, Douglas começa com 35 (importados das 2 copas)
+    expect(statsGeral.evolucao[0].Douglas).toBe(35)
+    // No último ponto, Douglas termina com 51
+    expect(statsGeral.evolucao[2].Douglas).toBe(51)
+
+    // Testar filtro em copa específica (ex: copa_coni)
+    const statsConi = calculateStatistics({
+      boloes,
+      participantes,
+      jogos,
+      palpites,
+      filtroBolaoId: 'copa_coni',
+    })
+
+    expect(statsConi.totalJogosEncerrados).toBe(1)
+    expect(statsConi.totalPalpitesValidos).toBe(2)
+    const douglasConi = statsConi.tabela.find((t) => t.nome === 'Douglas')
+    // Na Coni: 20 importados + 8 = 28 pts, 1 cravada
+    expect(douglasConi?.totalPontos).toBe(28)
+    expect(douglasConi?.cravadasExatas).toBe(1)
+  })
 })
