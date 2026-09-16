@@ -1,17 +1,18 @@
 import { useState } from 'react'
 import { Link, useNavigate, useLocation } from 'react-router-dom'
-import {
-  Trophy,
-  LogOut,
-  ArrowLeft,
-  MessageSquare,
-  History,
-  ListOrdered,
-  Shield,
-} from 'lucide-react'
+import { Trophy, LogOut, ArrowLeft, MessageSquare, Shield, KeyRound, User } from 'lucide-react'
 import { useAuth } from '@/context/AuthContext'
 import { useActivePool } from '@/context/ActivePoolContext'
 import { Button } from '@/components/ui/button'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
+import { ChangePasswordModal } from '@/components/ChangePasswordModal'
 
 interface LayoutProps {
   children?: React.ReactNode
@@ -47,10 +48,14 @@ export default function Layout({ children }: LayoutProps) {
     }
   }
 
+  const [changePasswordOpen, setChangePasswordOpen] = useState(false)
+
   const handleLogout = () => {
     logout()
     navigate('/login')
   }
+
+  const userNameDisplay = user?.name || user?.username || 'Colaborador'
 
   return (
     <div className="flex min-h-screen flex-col bg-[#F3F6F9] text-[#0F172A]">
@@ -154,17 +159,63 @@ export default function Layout({ children }: LayoutProps) {
                   </nav>
                 )}
 
-                <div className="text-right">
-                  <div className="text-xs font-bold leading-tight text-white sm:text-sm">
-                    {user.name || user.username || 'Colaborador'}
-                  </div>
-                </div>
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <button
+                      type="button"
+                      className="group flex items-center gap-1.5 rounded-lg border border-transparent px-2 py-1 text-right transition hover:border-slate-600 hover:bg-[#143452] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-emerald-400"
+                      title="Opções da conta"
+                    >
+                      <div className="flex h-7 w-7 items-center justify-center rounded-full bg-[#1B3A5C] text-xs font-bold text-white ring-1 ring-slate-600 group-hover:ring-emerald-400">
+                        {userNameDisplay.charAt(0).toUpperCase()}
+                      </div>
+                      <div className="text-left">
+                        <div className="text-xs font-bold leading-tight text-white group-hover:text-emerald-300 sm:text-sm">
+                          {userNameDisplay}
+                        </div>
+                        <div className="hidden text-[10px] text-slate-300 sm:block">
+                          Alterar senha
+                        </div>
+                      </div>
+                    </button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent
+                    align="end"
+                    className="w-56 border-slate-200 bg-white shadow-lg"
+                  >
+                    <DropdownMenuLabel className="font-normal">
+                      <div className="flex flex-col space-y-1">
+                        <p className="text-xs font-bold text-[#0F172A]">{userNameDisplay}</p>
+                        <p className="text-[11px] text-[#64748B] truncate">
+                          {user.email || `${user.username || 'usuario'}@repress.com.br`}
+                        </p>
+                      </div>
+                    </DropdownMenuLabel>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem
+                      onClick={() => setChangePasswordOpen(true)}
+                      className="cursor-pointer gap-2 text-xs font-medium text-[#0F172A] hover:bg-slate-100 focus:bg-slate-100"
+                    >
+                      <KeyRound className="h-4 w-4 text-[#10B981]" />
+                      <span>Alterar Senha</span>
+                    </DropdownMenuItem>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem
+                      onClick={handleLogout}
+                      className="cursor-pointer gap-2 text-xs font-medium text-rose-600 hover:bg-rose-50 focus:bg-rose-50"
+                    >
+                      <LogOut className="h-4 w-4 text-rose-600" />
+                      <span>Sair</span>
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
 
                 <Button
                   variant="outline"
                   size="sm"
                   onClick={handleLogout}
                   className="h-8 border-slate-600 bg-[#143452] px-2.5 text-xs font-medium text-white hover:bg-rose-950 hover:text-rose-200"
+                  title="Sair do sistema"
                 >
                   <LogOut className="h-3.5 w-3.5 sm:mr-1" />
                   <span className="hidden sm:inline">Sair</span>
@@ -195,6 +246,9 @@ export default function Layout({ children }: LayoutProps) {
           Repress — Custo de Reposição &copy; {new Date().getFullYear()}
         </footer>
       )}
+
+      {/* Modal de Alteração de Senha */}
+      <ChangePasswordModal open={changePasswordOpen} onOpenChange={setChangePasswordOpen} />
     </div>
   )
 }
