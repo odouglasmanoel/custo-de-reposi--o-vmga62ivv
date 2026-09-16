@@ -80,6 +80,30 @@ export default function BolaoDashboard() {
   const [apiConfigured, setApiConfigured] = useState<boolean | null>(null)
   const [apiProvider, setApiProvider] = useState<string>('football_data')
 
+  // Sobrescritas manuais de partidas em andamento salvas pelo Admin Douglas
+  const [sobrescritasAdmin, setSobrescritasAdmin] = useState<
+    Record<
+      string,
+      {
+        jogo_id: string
+        placar_a: number
+        placar_b: number
+        marcadores: string[]
+        status?: string
+        updated_at?: string
+      }
+    >
+  >({})
+
+  // Modal de sobrescrita manual de partida em andamento pelo Admin Douglas
+  const [adminSobrescritaJogo, setAdminSobrescritaJogo] = useState<{
+    jogo: Jogo
+    placarA: number | string
+    placarB: number | string
+    marcadoresText: string
+    isSaving?: boolean
+  } | null>(null)
+
   // Edição de marcadores pelo Admin
   const [adminEditingPalpite, setAdminEditingPalpite] = useState<{
     palpite: Palpite
@@ -113,6 +137,9 @@ export default function BolaoDashboard() {
         setApiConfigured(Boolean(data.configured))
         if (data.provider) {
           setApiProvider(data.provider)
+        }
+        if (data.sobrescritas && typeof data.sobrescritas === 'object') {
+          setSobrescritasAdmin(data.sobrescritas)
         }
 
         // Combina fixtures ao vivo e fixtures da data sem duplicatas por ID
@@ -149,6 +176,148 @@ export default function BolaoDashboard() {
 
   const isGeral = activeBolaoId === GERAL_BOLAO_ID
 
+  const handleSalvarSobrescritaAdmin = async () => {
+    if (!adminSobrescritaJogo) return
+    const { jogo, placarA, placarB, marcadoresText } = adminSobrescritaJogo
+    setAdminSobrescritaJogo((prev) => (prev ? { ...prev, isSaving: true } : null))
+
+    try {
+      const parsedA = placarA === '' ? 0 : Number(placarA)
+      const parsedB = placarB === '' ? 0 : Number(placarB)
+      const marcList = marcadoresText
+        .split(',')
+        .map((m) => m.trim())
+        .filter(Boolean)
+
+      // Atualiza estado local de imediato
+      const novaSobrescrita = {
+        jogo_id: jogo.id,
+        placar_a: parsedA,
+        placar_b: parsedB,
+        marcadores: marcList,
+        status: 'Ao Vivo (Manual)',
+        updated_at: new Date().toISOString(),
+      }
+
+      setSobrescritasAdmin((prev) => ({
+        ...prev,
+        [jogo.id]: novaSobrescrita,
+      }))
+
+      // Persiste via endpoint autenticado ou direto no PocketBase
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+      }
+      if (pb.authStore.token) {
+        headers['Authorization'] = pb.authStore.token
+      }
+
+      const res = await fetch(
+        `${import.meta.env.VITE_POCKETBASE_URL}/backend/v1/placar-ao-vivo/sobrescrever`,
+        {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({
+            jogo_id: jogo.id,
+            placar_a: parsedA,
+            placar_b: parsedB,
+            marcadores: marcList,
+            status: 'Ao Vivo (Manual)',
+          }),
+        },
+      )
+
+      if (!res.ok) {
+        // Fallback direto via SDK do PocketBase
+        let rec
+        try {
+          rec = await pb
+            .collection('config_integracoes')
+            .getFirstListItem("chave = 'sobrescrita_jogos'")
+        } catch {
+          rec = null
+        }
+
+        let map: Record<string, unknown> = {}
+        if (rec && rec.api_key) {
+          try {
+            map = JSON.parse(rec.api_key)
+          } catch {
+            map = {}
+          }
+        }
+        map[jogo.id] = novaSobrescrita
+
+        if (rec) {
+          await pb.collection('config_integracoes').update(rec.id, {
+            api_key: JSON.stringify(map),
+          })
+        } else {
+          await pb.collection('config_integracoes').create({
+            chave: 'sobrescrita_jogos',
+            provedor: 'api_football',
+            ativo: true,
+            api_key: JSON.stringify(map),
+          })
+        }
+      }
+
+      setAdminSobrescritaJogo(null)
+    } catch (err) {
+      console.error('Erro ao salvar sobrescrita manual:', err)
+      alert('Erro ao salvar sobrescrita manual. Verifique sua conexão.')
+      setAdminSobrescritaJogo((prev) => (prev ? { ...prev, isSaving: false } : null))
+    }
+  }
+
+  const handleRemoverSobrescritaAdmin = async (jogoId: string) => {
+    if (!confirm('Deseja remover a sobrescrita manual e voltar para a API / banco?')) {
+      return
+    }
+
+    setSobrescritasAdmin((prev) => {
+      const copy = { ...prev }
+      delete copy[jogoId]
+      return copy
+    })
+
+    try {
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+      }
+      if (pb.authStore.token) {
+        headers['Authorization'] = pb.authStore.token
+      }
+
+      const res = await fetch(
+        `${import.meta.env.VITE_POCKETBASE_URL}/backend/v1/placar-ao-vivo/sobrescrever`,
+        {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({
+            jogo_id: jogoId,
+            remover: true,
+          }),
+        },
+      )
+
+      if (!res.ok) {
+        const rec = await pb
+          .collection('config_integracoes')
+          .getFirstListItem("chave = 'sobrescrita_jogos'")
+        if (rec && rec.api_key) {
+          const map = JSON.parse(rec.api_key)
+          delete map[jogoId]
+          await pb.collection('config_integracoes').update(rec.id, {
+            api_key: JSON.stringify(map),
+          })
+        }
+      }
+    } catch (err) {
+      console.error('Erro ao remover sobrescrita:', err)
+    }
+  }
+
   // Real-time updates
   useRealtime<Participante>('participantes', () => {
     loadData()
@@ -161,6 +330,27 @@ export default function BolaoDashboard() {
   useRealtime<Palpite>('palpites', () => {
     loadData()
   })
+
+  // Carrega sobrescritas também do banco como fallback direto
+  const loadSobrescritasFromDb = async () => {
+    try {
+      const rec = await pb
+        .collection('config_integracoes')
+        .getFirstListItem("chave = 'sobrescrita_jogos'")
+      if (rec && rec.api_key) {
+        const parsed = JSON.parse(rec.api_key)
+        if (parsed && typeof parsed === 'object') {
+          setSobrescritasAdmin(parsed)
+        }
+      }
+    } catch {
+      /* fallback sem erro */
+    }
+  }
+
+  useEffect(() => {
+    loadSobrescritasFromDb()
+  }, [])
 
   const loadData = async () => {
     if (!activeBolaoId) return
@@ -618,7 +808,17 @@ export default function BolaoDashboard() {
                   jogoDataISO,
                 )
 
-                // Verifica se há placar real salvo manualmente pelo Admin no banco de dados
+                // -------------------------------------------------------------
+                // ORDEM DE PRIORIDADE RIGOROSA (solicitada pelo usuário):
+                // (a) Sobrescrita manual digitada pelo Admin para partida em andamento — SEMPRE vence
+                // (b) Dados reais da API (goals.home/away + eventos Goal com scorers)
+                // (c) Placar manual já salvo no banco (se maior que zero ou se jogo finalizado)
+                // (d) Nenhum dado → título estático "Time A x Time B" com badge "Aguardando atualização"
+                // É PROIBIDO exibir 0 x 0 que não venha comprovadamente da API ou do Admin/banco!
+                // -------------------------------------------------------------
+                const sobrescritaJogo = sobrescritasAdmin[jogo.id]
+
+                // Verifica se há placar real salvo manualmente no banco de dados
                 const temPlacarManualBanco =
                   jogo.placar_a != null &&
                   jogo.placar_b != null &&
@@ -637,46 +837,59 @@ export default function BolaoDashboard() {
                         .join(', ')
                     : ''
 
-                // 1. Título do confronto e Placar:
-                // REGRA OBRIGATÓRIA (sem 0 x 0 falso):
-                // Se a API encontrou a partida: exibe o placar real (matchedLive.placarA x matchedLive.placarB)
-                // Se NÃO encontrou na API:
-                //   - Se há placar salvo pelo Admin no banco: exibe esse placar manual
-                //   - Se NÃO há placar no banco: NUNCA força 0 x 0! Exibe apenas "Time A x Time B"
                 let tituloConfronto = `${jogo.time_a} x ${jogo.time_b}`
                 let placarExibido: string | null = null
-                let tipoFontePlacar: 'api' | 'manual' | 'aguardando' = 'aguardando'
+                let tipoFontePlacar: 'sobrescrita' | 'api' | 'manual' | 'aguardando' = 'aguardando'
+                let marcadoresParaExibir = ''
 
-                if (matchedLive) {
+                if (sobrescritaJogo) {
+                  // (a) Sobrescrita manual do Admin (Douglas)
+                  placarExibido = `${sobrescritaJogo.placar_a} x ${sobrescritaJogo.placar_b}`
+                  tituloConfronto = `${jogo.time_a} ${sobrescritaJogo.placar_a} x ${sobrescritaJogo.placar_b} ${jogo.time_b}`
+                  tipoFontePlacar = 'sobrescrita'
+                  marcadoresParaExibir = Array.isArray(sobrescritaJogo.marcadores)
+                    ? sobrescritaJogo.marcadores.join(', ')
+                    : ''
+                } else if (matchedLive) {
+                  // (b) Dados reais da API
                   placarExibido = `${matchedLive.placarA} x ${matchedLive.placarB}`
                   tituloConfronto = `${jogo.time_a} ${matchedLive.placarA} x ${matchedLive.placarB} ${jogo.time_b}`
                   tipoFontePlacar = 'api'
+                  marcadoresParaExibir =
+                    matchedLive.scorers && matchedLive.scorers.length > 0
+                      ? matchedLive.scorers
+                          .map((s) => (s.minute ? `${s.name} ${s.minute}'` : s.name))
+                          .join(', ')
+                      : marcadoresBanco
                 } else if (temPlacarManualBanco) {
+                  // (c) Placar manual já salvo no banco
                   placarExibido = `${Number(jogo.placar_a)} x ${Number(jogo.placar_b)}`
                   tituloConfronto = `${jogo.time_a} ${Number(jogo.placar_a)} x ${Number(jogo.placar_b)} ${jogo.time_b}`
                   tipoFontePlacar = 'manual'
+                  marcadoresParaExibir = marcadoresBanco
+                } else {
+                  // (d) Nenhum dado: Permanece título estático sem "0 x 0" e sem placar falso
+                  placarExibido = null
+                  tituloConfronto = `${jogo.time_a} x ${jogo.time_b}`
+                  tipoFontePlacar = 'aguardando'
+                  marcadoresParaExibir = ''
                 }
 
                 const providerLabel =
-                  matchedLive?.provider === 'thesportsdb'
-                    ? 'TheSportsDB'
-                    : matchedLive?.provider === 'football_data'
-                      ? 'Football-Data.org'
-                      : 'API-Football'
+                  tipoFontePlacar === 'sobrescrita'
+                    ? 'Admin (Douglas)'
+                    : matchedLive?.provider === 'thesportsdb'
+                      ? 'TheSportsDB'
+                      : matchedLive?.provider === 'football_data'
+                        ? 'Football-Data.org'
+                        : 'API-Football'
 
-                // Status badge: Ao Vivo (API em andamento) ou Encerrado (API finalizada ou resultado confirmado no banco)
-                const isStatusAoVivo = Boolean(matchedLive?.isLive)
+                // Status badge: Ao Vivo (API em andamento ou Sobrescrita manual do Admin) ou Encerrado
+                const isStatusAoVivo =
+                  tipoFontePlacar === 'sobrescrita' || Boolean(matchedLive?.isLive)
                 const isStatusEncerrado = Boolean(
                   (matchedLive && matchedLive.isFinished) || jogo.resultado_finalizado,
                 )
-
-                // Marcadores para exibir abaixo do placar no card
-                const marcadoresParaExibir =
-                  matchedLive && matchedLive.scorers && matchedLive.scorers.length > 0
-                    ? matchedLive.scorers
-                        .map((s) => (s.minute ? `${s.name} ${s.minute}'` : s.name))
-                        .join(', ')
-                    : marcadoresBanco
 
                 return (
                   <div
@@ -748,6 +961,53 @@ export default function BolaoDashboard() {
                             </Badge>
                           )}
 
+                          {/* Botão de Sobrescrita Manual exclusivo para o Admin (Douglas) */}
+                          {isAdmin && (
+                            <div className="flex items-center gap-1">
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() =>
+                                  setAdminSobrescritaJogo({
+                                    jogo,
+                                    placarA:
+                                      sobrescritaJogo != null
+                                        ? sobrescritaJogo.placar_a
+                                        : (matchedLive?.placarA ??
+                                          (jogo.placar_a != null ? Number(jogo.placar_a) : '')),
+                                    placarB:
+                                      sobrescritaJogo != null
+                                        ? sobrescritaJogo.placar_b
+                                        : (matchedLive?.placarB ??
+                                          (jogo.placar_b != null ? Number(jogo.placar_b) : '')),
+                                    marcadoresText:
+                                      sobrescritaJogo != null
+                                        ? sobrescritaJogo.marcadores.join(', ')
+                                        : marcadoresParaExibir,
+                                  })
+                                }
+                                className="h-6 px-2 text-[10px] font-bold border-amber-300 bg-amber-50 text-amber-900 hover:bg-amber-100 flex items-center gap-1"
+                                title="Digitar placar e marcadores manualmente para esta partida em andamento (Admin)"
+                              >
+                                <Edit3 className="h-3 w-3 text-amber-700" />
+                                <span>
+                                  {sobrescritaJogo ? 'Editar Sobrescrita' : 'Sobrescrever Placar'}
+                                </span>
+                              </Button>
+
+                              {sobrescritaJogo && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleRemoverSobrescritaAdmin(jogo.id)}
+                                  className="h-6 px-1.5 text-[10px] font-medium text-rose-600 hover:text-rose-800 hover:bg-rose-50 rounded border border-rose-200 transition"
+                                  title="Remover sobrescrita manual e voltar para o placar da API"
+                                >
+                                  Remover
+                                </button>
+                              )}
+                            </div>
+                          )}
+
                           <Badge
                             variant="outline"
                             className="border-rose-300 bg-rose-50 text-[10px] font-semibold text-rose-800"
@@ -757,7 +1017,7 @@ export default function BolaoDashboard() {
                         </div>
                       </div>
 
-                      {/* 2. Linha de autores dos gols reais retornados pela API (ou do banco manual) logo abaixo do cabeçalho */}
+                      {/* 2. Linha de autores dos gols reais retornados pela API (ou do banco manual/sobrescrita) logo abaixo do cabeçalho */}
                       {marcadoresParaExibir ? (
                         <div className="mt-2 flex items-center gap-1.5 text-[11px] font-semibold text-emerald-950 bg-emerald-50/90 border border-emerald-200/90 rounded-md px-2.5 py-1 w-fit">
                           <span className="text-emerald-700">⚽</span>
@@ -767,8 +1027,13 @@ export default function BolaoDashboard() {
                               {marcadoresParaExibir}
                             </span>
                           </span>
+                          {tipoFontePlacar === 'sobrescrita' && (
+                            <span className="text-[10px] text-amber-700 bg-amber-100 px-1 py-0.2 rounded font-bold ml-1">
+                              (Admin)
+                            </span>
+                          )}
                         </div>
-                      ) : !matchedLive && !temPlacarManualBanco ? (
+                      ) : !matchedLive && !temPlacarManualBanco && !sobrescritaJogo ? (
                         <div className="mt-1.5 text-[10px] text-slate-400 italic">
                           Aguardando início do placar / marcadores da API...
                         </div>
@@ -1034,6 +1299,123 @@ export default function BolaoDashboard() {
           </Card>
         </div>
       </div>
+
+      {/* Modal de Sobrescrita Manual do Admin Douglas (Partida em Andamento) */}
+      {adminSobrescritaJogo && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 animate-in fade-in">
+          <div className="w-full max-w-md rounded-xl border border-slate-200 bg-white p-6 shadow-xl">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <div className="flex items-center gap-2">
+                <span className="rounded-md bg-amber-100 p-1.5 text-amber-800">
+                  <Edit3 className="h-4 w-4" />
+                </span>
+                <div>
+                  <h3 className="text-sm font-bold text-[#0F172A]">Sobrescrever Placar Ao Vivo</h3>
+                  <p className="text-[11px] text-slate-500">
+                    Prioridade sobre a API para exibição aos participantes
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setAdminSobrescritaJogo(null)}
+                className="rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="mt-4 space-y-4">
+              <div className="rounded-lg bg-slate-50 p-3 text-center text-xs font-semibold text-slate-700">
+                {adminSobrescritaJogo.jogo.time_a} x {adminSobrescritaJogo.jogo.time_b}
+              </div>
+
+              {/* Placar */}
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-medium text-slate-600 mb-1">
+                    Gols {adminSobrescritaJogo.jogo.time_a}
+                  </label>
+                  <input
+                    type="number"
+                    min="0"
+                    value={adminSobrescritaJogo.placarA}
+                    onChange={(e) =>
+                      setAdminSobrescritaJogo((prev) =>
+                        prev ? { ...prev, placarA: e.target.value } : null,
+                      )
+                    }
+                    className="w-full rounded-md border border-slate-300 px-3 py-2 text-center text-base font-bold text-[#0F2A43] focus:border-amber-500 focus:outline-none"
+                    placeholder="0"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-slate-600 mb-1">
+                    Gols {adminSobrescritaJogo.jogo.time_b}
+                  </label>
+                  <input
+                    type="number"
+                    min="0"
+                    value={adminSobrescritaJogo.placarB}
+                    onChange={(e) =>
+                      setAdminSobrescritaJogo((prev) =>
+                        prev ? { ...prev, placarB: e.target.value } : null,
+                      )
+                    }
+                    className="w-full rounded-md border border-slate-300 px-3 py-2 text-center text-base font-bold text-[#0F2A43] focus:border-amber-500 focus:outline-none"
+                    placeholder="0"
+                  />
+                </div>
+              </div>
+
+              {/* Autores dos Gols */}
+              <div>
+                <label className="block text-xs font-medium text-slate-600 mb-1">
+                  Autores dos gols (separados por vírgula)
+                </label>
+                <input
+                  type="text"
+                  value={adminSobrescritaJogo.marcadoresText}
+                  onChange={(e) =>
+                    setAdminSobrescritaJogo((prev) =>
+                      prev ? { ...prev, marcadoresText: e.target.value } : null,
+                    )
+                  }
+                  placeholder="Ex: Hulk 22', Paulinho 45'"
+                  className="w-full rounded-md border border-slate-300 px-3 py-2 text-xs text-slate-800 focus:border-amber-500 focus:outline-none"
+                />
+                <p className="mt-1 text-[10px] text-slate-400">
+                  Dica: digite os nomes separados por vírgula. Exibido no card do confronto.
+                </p>
+              </div>
+
+              <div className="rounded-md bg-amber-50/80 p-2.5 text-[11px] text-amber-900 border border-amber-200">
+                ℹ️ Esta sobrescrita tem prioridade visual máxima no card. Ela <strong>não</strong>{' '}
+                altera regras de apuração oficial nem finaliza a partida.
+              </div>
+            </div>
+
+            <div className="mt-5 flex items-center justify-end gap-2 border-t border-slate-100 pt-3">
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setAdminSobrescritaJogo(null)}
+                className="text-xs text-slate-500"
+              >
+                Cancelar
+              </Button>
+              <Button
+                size="sm"
+                onClick={handleSalvarSobrescritaAdmin}
+                disabled={adminSobrescritaJogo.isSaving}
+                className="bg-[#F59E0B] hover:bg-amber-500 text-slate-950 font-bold text-xs"
+              >
+                {adminSobrescritaJogo.isSaving ? 'Salvando...' : 'Salvar Sobrescrita'}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Modal de Edição de Marcadores do Admin */}
       <AdminEditMarcadoresModal

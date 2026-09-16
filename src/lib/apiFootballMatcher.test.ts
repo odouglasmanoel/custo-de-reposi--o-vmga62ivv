@@ -402,5 +402,96 @@ describe('apiFootballMatcher', () => {
       const matched = matchGameWithApiFixtures('Flamengo', 'Corinthians', fixtures)
       expect(matched).toBeNull()
     })
+
+    it('faz matching por substring para nomes com variações como LDU vs LDU Quito e Atletico-MG vs Club Atletico Mineiro', () => {
+      const fixtures: ApiFootballFixture[] = [
+        {
+          provider: 'api_football',
+          fixture: {
+            id: 1001,
+            date: '2026-09-17T00:30:00Z',
+            status: { short: '2H', long: 'Second Half', elapsed: 72 },
+          },
+          teams: {
+            home: { name: 'Club Atletico Mineiro' },
+            away: { name: 'LDU Quito' },
+          },
+          goals: { home: 3, away: 1 },
+          events: [
+            {
+              type: 'Goal',
+              detail: 'Normal Goal',
+              player: { name: 'Hulk' },
+              time: { elapsed: 15 },
+            },
+            {
+              type: 'Goal',
+              detail: 'Normal Goal',
+              player: { name: 'Alex Arce' },
+              time: { elapsed: 35 },
+            },
+            {
+              type: 'Goal',
+              detail: 'Normal Goal',
+              player: { name: 'Gustavo Scarpa' },
+              time: { elapsed: 60 },
+            },
+            {
+              type: 'Goal',
+              detail: 'Normal Goal',
+              player: { name: 'Paulinho' },
+              time: { elapsed: 70 },
+            },
+          ],
+        },
+      ]
+
+      // Busca usando "Atlético-MG" e "LDU"
+      const matched = matchGameWithApiFixtures('Atlético-MG', 'LDU', fixtures)
+      expect(matched).not.toBeNull()
+      expect(matched?.placarA).toBe(3)
+      expect(matched?.placarB).toBe(1)
+      expect(matched?.scorers).toHaveLength(4)
+      expect(matched?.scorers.map((s) => s.name)).toEqual([
+        'Hulk',
+        'Alex Arce',
+        'Gustavo Scarpa',
+        'Paulinho',
+      ])
+      expect(matched?.golsSummary).toBe(
+        "Gols: Hulk 15', Alex Arce 35', Gustavo Scarpa 60', Paulinho 70'",
+      )
+    })
+
+    it('extrai corretamente gols contra com sufixo (contra)', () => {
+      const fixtures: ApiFootballFixture[] = [
+        {
+          provider: 'api_football',
+          fixture: {
+            id: 1002,
+            date: '2026-09-17T02:00:00Z',
+            status: { short: '1H', long: 'First Half', elapsed: 40 },
+          },
+          teams: {
+            home: { id: 100, name: 'Flamengo' },
+            away: { id: 200, name: 'Palmeiras' },
+          },
+          goals: { home: 1, away: 0 },
+          events: [
+            {
+              type: 'Goal',
+              detail: 'Own Goal',
+              player: { name: 'Gustavo Gómez' },
+              time: { elapsed: 22 },
+              team: { id: 100, name: 'Flamengo' },
+            },
+          ],
+        },
+      ]
+
+      const matched = matchGameWithApiFixtures('Flamengo', 'Palmeiras', fixtures)
+      expect(matched).not.toBeNull()
+      expect(matched?.scorers[0].name).toBe('Gustavo Gómez (contra)')
+    })
   })
 })

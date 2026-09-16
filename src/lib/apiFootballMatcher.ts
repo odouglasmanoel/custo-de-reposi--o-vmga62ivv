@@ -106,10 +106,13 @@ const TEAM_SYNONYMS: Record<string, string> = {
   'athletico pr': 'athletico paranaense',
   'atletico pr': 'athletico paranaense',
   'atletico paranaense': 'athletico paranaense',
+  'club athletico paranaense': 'athletico paranaense',
   cap: 'athletico paranaense',
   // Atlético Mineiro
   'atletico mg': 'atletico mineiro',
   'atletico mineiro': 'atletico mineiro',
+  'club atletico mineiro': 'atletico mineiro',
+  'clube atletico mineiro': 'atletico mineiro',
   galo: 'atletico mineiro',
   cam: 'atletico mineiro',
   // América Mineiro
@@ -230,6 +233,7 @@ export function cleanTeamName(name: string): string {
     'do',
     'dos',
     'das',
+    'del',
     'esporte',
     'futebol',
     'futbol',
@@ -294,11 +298,18 @@ export function stringSimilarity(strA: string, strB: string): number {
   if (!cleanA || !cleanB) return 0
   if (cleanA === cleanB) return 1
 
-  // Contém subpalavra exata (ex: "Palmeiras" dentro de "SE Palmeiras")
+  // Substring / Subpalavra exata (ex: "LDU" dentro de "LDU Quito", "Atlético-MG" vs "Atletico-MG")
   if (cleanA.includes(cleanB) || cleanB.includes(cleanA)) {
-    const minLen = Math.min(cleanA.length, cleanB.length)
-    const maxLen = Math.max(cleanA.length, cleanB.length)
-    return Math.max(0.8, minLen / maxLen)
+    return 0.92
+  }
+
+  // Token matching: se qualquer palavra significativa coincide
+  // Ex: "atletico mg" vs "atletico", ou "ldu" vs "ldu quito"
+  const tokensA = cleanA.split(/\s+/).filter((t) => t.length >= 3)
+  const tokensB = cleanB.split(/\s+/).filter((t) => t.length >= 3)
+  const hasCommonToken = tokensA.some((tA) => tokensB.includes(tA))
+  if (hasCommonToken && (tokensA.length <= 2 || tokensB.length <= 2)) {
+    return 0.85
   }
 
   const maxLen = Math.max(cleanA.length, cleanB.length)

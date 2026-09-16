@@ -99,6 +99,18 @@ routerAdd('GET', '/backend/v1/placar-ao-vivo', (e) => {
       apiKey = '3'
     }
 
+    // Lê também a sobrescrita manual de partidas salva pelo Admin Douglas (se houver)
+    var sobrescritasMap = {}
+    try {
+      var sobRec = $app.findFirstRecordByData('config_integracoes', 'chave', 'sobrescrita_jogos')
+      if (sobRec) {
+        var rawJson = sobRec.getString('api_key') || ''
+        if (rawJson && rawJson.trim()) {
+          sobrescritasMap = JSON.parse(rawJson)
+        }
+      }
+    } catch (_) {}
+
     if (!ativo) {
       return e.json(200, {
         configured: false,
@@ -107,6 +119,7 @@ routerAdd('GET', '/backend/v1/placar-ao-vivo', (e) => {
         message: 'Integração de placar ao vivo desativada nas configurações.',
         live: [],
         dateFixtures: [],
+        sobrescritas: sobrescritasMap,
       })
     }
 
@@ -117,6 +130,7 @@ routerAdd('GET', '/backend/v1/placar-ao-vivo', (e) => {
         message: 'Chave da API de futebol não configurada.',
         live: [],
         dateFixtures: [],
+        sobrescritas: sobrescritasMap,
       })
     }
 
@@ -197,11 +211,27 @@ routerAdd('GET', '/backend/v1/placar-ao-vivo', (e) => {
         )
       }
 
-      // 1.2 Partidas da data atual/especificada
+      // 1.2 Partidas da data atual/especificada (com margem de fuso dateFrom / dateTo)
       try {
         let urlDate = 'https://api.football-data.org/v4/matches'
         if (dateQuery && /^\d{4}-\d{2}-\d{2}$/.test(dateQuery)) {
-          urlDate += '?date=' + encodeURIComponent(dateQuery)
+          var pFD = dateQuery.split('-')
+          var yFD = parseInt(pFD[0], 10)
+          var mFD = parseInt(pFD[1], 10) - 1
+          var dFD = parseInt(pFD[2], 10)
+
+          var prevFD = new Date(Date.UTC(yFD, mFD, dFD - 1))
+          var prevFDM = ('0' + (prevFD.getUTCMonth() + 1)).slice(-2)
+          var prevFDD = ('0' + prevFD.getUTCDate()).slice(-2)
+          var dateFrom = prevFD.getUTCFullYear() + '-' + prevFDM + '-' + prevFDD
+
+          var nextFD = new Date(Date.UTC(yFD, mFD, dFD + 1))
+          var nextFDM = ('0' + (nextFD.getUTCMonth() + 1)).slice(-2)
+          var nextFDD = ('0' + nextFD.getUTCDate()).slice(-2)
+          var dateTo = nextFD.getUTCFullYear() + '-' + nextFDM + '-' + nextFDD
+
+          urlDate +=
+            '?dateFrom=' + encodeURIComponent(dateFrom) + '&dateTo=' + encodeURIComponent(dateTo)
         }
 
         const resDate = $http.send({
@@ -212,7 +242,6 @@ routerAdd('GET', '/backend/v1/placar-ao-vivo', (e) => {
           },
           timeout: 10,
         })
-
         if (resDate.statusCode === 200 && resDate.json && Array.isArray(resDate.json.matches)) {
           dateFixtures = resDate.json.matches.map(function (m) {
             const homeScore = m.score && m.score.fullTime ? m.score.fullTime.home : null
@@ -275,6 +304,7 @@ routerAdd('GET', '/backend/v1/placar-ao-vivo', (e) => {
         provider: 'football_data',
         live: liveFixtures,
         dateFixtures: dateFixtures,
+        sobrescritas: sobrescritasMap,
       })
     }
 
@@ -365,84 +395,113 @@ routerAdd('GET', '/backend/v1/placar-ao-vivo', (e) => {
         console.log('Aviso ao consultar live TheSportsDB:', errLive ? errLive.message : errLive)
       }
 
-      // 2.2 Se solicitou data específica ou para complementar com eventos do dia
+      // 2.2 Se solicitou data específica ou para complementar com eventos do dia (-1/+1 dia)
       if (dateQuery && /^\d{4}-\d{2}-\d{2}$/.test(dateQuery)) {
+        var tsdbDates = [dateQuery]
         try {
-          const resDay = $http.send({
-            url:
-              'https://www.thesportsdb.com/api/v1/json/' +
-              encodeURIComponent(apiKey) +
-              '/eventsday.php?d=' +
-              encodeURIComponent(dateQuery) +
-              '&s=Soccer',
-            method: 'GET',
-            timeout: 10,
-          })
+          var pTS = dateQuery.split('-')
+          var yTS = parseInt(pTS[0], 10)
+          var mTS = parseInt(pTS[1], 10) - 1
+          var dTS = parseInt(pTS[2], 10)
 
-          if (resDay.statusCode === 200 && resDay.json && Array.isArray(resDay.json.events)) {
-            dateFixtures = resDay.json.events.map(function (item) {
-              const hScore = parseInt(item.intHomeScore, 10)
-              const aScore = parseInt(item.intAwayScore, 10)
-              const st = (item.strStatus || '').toUpperCase()
+          var prevTS = new Date(Date.UTC(yTS, mTS, dTS - 1))
+          var prevTSM = ('0' + (prevTS.getUTCMonth() + 1)).slice(-2)
+          var prevTSD = ('0' + prevTS.getUTCDate()).slice(-2)
+          tsdbDates.push(prevTS.getUTCFullYear() + '-' + prevTSM + '-' + prevTSD)
 
-              var scorersList = []
-              var parseTsdbDetails = function (detailStr, teamSide) {
-                if (typeof detailStr !== 'string' || !detailStr.trim()) return
-                var parts = detailStr.split(';')
-                for (var pi = 0; pi < parts.length; pi++) {
-                  var rawPart = parts[pi].trim()
-                  if (!rawPart) continue
-                  var minMatch = rawPart.match(/(\d+)'?/)
-                  var extractedMin = minMatch ? parseInt(minMatch[1], 10) : null
-                  var nameClean = rawPart
-                    .replace(/^\d+'?:?/, '')
-                    .replace(/\s*\d+'?$/, '')
-                    .trim()
-                  if (nameClean) {
-                    scorersList.push({
-                      name: nameClean,
-                      minute: extractedMin,
-                      teamSide: teamSide,
-                    })
+          var nextTS = new Date(Date.UTC(yTS, mTS, dTS + 1))
+          var nextTSM = ('0' + (nextTS.getUTCMonth() + 1)).slice(-2)
+          var nextTSD = ('0' + nextTS.getUTCDate()).slice(-2)
+          tsdbDates.push(nextTS.getUTCFullYear() + '-' + nextTSM + '-' + nextTSD)
+        } catch (_) {}
+
+        var seenTsdbIds = {}
+        for (var ti = 0; ti < tsdbDates.length; ti++) {
+          var currentTsdbDate = tsdbDates[ti]
+          try {
+            const resDay = $http.send({
+              url:
+                'https://www.thesportsdb.com/api/v1/json/' +
+                encodeURIComponent(apiKey) +
+                '/eventsday.php?d=' +
+                encodeURIComponent(currentTsdbDate) +
+                '&s=Soccer',
+              method: 'GET',
+              timeout: 10,
+            })
+            if (resDay.statusCode === 200 && resDay.json && Array.isArray(resDay.json.events)) {
+              for (var evi = 0; evi < resDay.json.events.length; evi++) {
+                var item = resDay.json.events[evi]
+                var evId = item.idEvent || currentTsdbDate + '_' + evi
+                if (seenTsdbIds[evId]) continue
+                seenTsdbIds[evId] = true
+
+                const hScore = parseInt(item.intHomeScore, 10)
+                const aScore = parseInt(item.intAwayScore, 10)
+                const st = (item.strStatus || '').toUpperCase()
+
+                var scorersList = []
+                var parseTsdbDetails = function (detailStr, teamSide) {
+                  if (typeof detailStr !== 'string' || !detailStr.trim()) return
+                  var parts = detailStr.split(';')
+                  for (var pi = 0; pi < parts.length; pi++) {
+                    var rawPart = parts[pi].trim()
+                    if (!rawPart) continue
+                    var minMatch = rawPart.match(/(\d+)'?/)
+                    var extractedMin = minMatch ? parseInt(minMatch[1], 10) : null
+                    var nameClean = rawPart
+                      .replace(/^\d+'?:?/, '')
+                      .replace(/\s*\d+'?$/, '')
+                      .trim()
+                    if (nameClean) {
+                      scorersList.push({
+                        name: nameClean,
+                        minute: extractedMin,
+                        teamSide: teamSide,
+                      })
+                    }
                   }
                 }
-              }
-              parseTsdbDetails(item.strHomeGoalDetails, 'home')
-              parseTsdbDetails(item.strAwayGoalDetails, 'away')
+                parseTsdbDetails(item.strHomeGoalDetails, 'home')
+                parseTsdbDetails(item.strAwayGoalDetails, 'away')
 
-              return {
-                provider: 'thesportsdb',
-                fixture: {
-                  id: item.idEvent,
-                  date: item.strTimestamp || item.dateEvent,
-                  status: {
-                    short: st,
-                    long: item.strStatus || '',
-                    elapsed: null,
+                dateFixtures.push({
+                  provider: 'thesportsdb',
+                  fixture: {
+                    id: item.idEvent,
+                    date: item.strTimestamp || item.dateEvent,
+                    status: {
+                      short: st,
+                      long: item.strStatus || '',
+                      elapsed: null,
+                    },
                   },
-                },
-                teams: {
-                  home: {
-                    id: item.idHomeTeam,
-                    name: item.strHomeTeam || '',
-                    logo: item.strHomeTeamBadge || '',
+                  teams: {
+                    home: {
+                      id: item.idHomeTeam,
+                      name: item.strHomeTeam || '',
+                      logo: item.strHomeTeamBadge || '',
+                    },
+                    away: {
+                      id: item.idAwayTeam,
+                      name: item.strAwayTeam || '',
+                      logo: item.strAwayTeamBadge || '',
+                    },
                   },
-                  away: {
-                    id: item.idAwayTeam,
-                    name: item.strAwayTeam || '',
-                    logo: item.strAwayTeamBadge || '',
+                  goals: {
+                    home: isNaN(hScore) ? 0 : hScore,
+                    away: isNaN(aScore) ? 0 : aScore,
                   },
-                },
-                goals: {
-                  home: isNaN(hScore) ? 0 : hScore,
-                  away: isNaN(aScore) ? 0 : aScore,
-                },
-                scorers: scorersList,
+                  scorers: scorersList,
+                })
               }
-            })
+            }
+          } catch (errDay) {
+            console.log(
+              'Aviso ao consultar eventsday TheSportsDB:',
+              errDay ? errDay.message : errDay,
+            )
           }
-        } catch (errDay) {
-          console.log('Aviso ao consultar eventsday TheSportsDB:', errDay ? errDay.message : errDay)
         }
       }
 
@@ -451,6 +510,7 @@ routerAdd('GET', '/backend/v1/placar-ao-vivo', (e) => {
         provider: 'thesportsdb',
         live: liveFixtures,
         dateFixtures: dateFixtures,
+        sobrescritas: sobrescritasMap,
       })
     }
 
@@ -534,29 +594,66 @@ routerAdd('GET', '/backend/v1/placar-ao-vivo', (e) => {
     }
 
     let dateFixtures = []
-    // Sempre consulta data de hoje se informada (ou query date)
+    // Sempre consulta data informada (ou hoje) considerando margem de fuso (-1 dia e +1 dia)
+    // e com o parâmetro timezone=America/Sao_Paulo
     if (dateQuery && /^\d{4}-\d{2}-\d{2}$/.test(dateQuery)) {
-      let urlDate =
-        'https://v3.football.api-sports.io/fixtures?date=' + encodeURIComponent(dateQuery)
-      if (isRapidApi) {
-        urlDate =
-          'https://api-football-v1.p.rapidapi.com/v3/fixtures?date=' + encodeURIComponent(dateQuery)
+      var computeNeighborDates = function (baseDateStr) {
+        var dates = [baseDateStr]
+        try {
+          var p = baseDateStr.split('-')
+          var y = parseInt(p[0], 10)
+          var m = parseInt(p[1], 10) - 1
+          var d = parseInt(p[2], 10)
+
+          // -1 dia
+          var prev = new Date(Date.UTC(y, m, d - 1))
+          var prevM = ('0' + (prev.getUTCMonth() + 1)).slice(-2)
+          var prevD = ('0' + prev.getUTCDate()).slice(-2)
+          dates.push(prev.getUTCFullYear() + '-' + prevM + '-' + prevD)
+
+          // +1 dia
+          var next = new Date(Date.UTC(y, m, d + 1))
+          var nextM = ('0' + (next.getUTCMonth() + 1)).slice(-2)
+          var nextD = ('0' + next.getUTCDate()).slice(-2)
+          dates.push(next.getUTCFullYear() + '-' + nextM + '-' + nextD)
+        } catch (_) {}
+        return dates
       }
-      try {
-        const resDate = $http.send({
-          url: urlDate,
-          method: 'GET',
-          headers: headers,
-          timeout: 10,
-        })
-        if (resDate.statusCode === 200 && resDate.json && Array.isArray(resDate.json.response)) {
-          dateFixtures = resDate.json.response.map(mapApiFootballItem)
+
+      var datesToFetch = computeNeighborDates(dateQuery)
+      var seenFixtureIds = {}
+
+      for (var di = 0; di < datesToFetch.length; di++) {
+        var dStr = datesToFetch[di]
+        var baseUrlDate = isRapidApi
+          ? 'https://api-football-v1.p.rapidapi.com/v3/fixtures'
+          : 'https://v3.football.api-sports.io/fixtures'
+        var urlDate =
+          baseUrlDate + '?date=' + encodeURIComponent(dStr) + '&timezone=America%2FSao_Paulo'
+
+        try {
+          var resDate = $http.send({
+            url: urlDate,
+            method: 'GET',
+            headers: headers,
+            timeout: 10,
+          })
+          if (resDate.statusCode === 200 && resDate.json && Array.isArray(resDate.json.response)) {
+            for (var ri = 0; ri < resDate.json.response.length; ri++) {
+              var rawItem = resDate.json.response[ri]
+              var fId = (rawItem.fixture && rawItem.fixture.id) || ri
+              if (!seenFixtureIds[fId]) {
+                seenFixtureIds[fId] = true
+                dateFixtures.push(mapApiFootballItem(rawItem))
+              }
+            }
+          }
+        } catch (errDate) {
+          console.log(
+            'Aviso ao consultar date fixtures API-Football para ' + dStr + ':',
+            errDate ? errDate.message : errDate,
+          )
         }
-      } catch (errDate) {
-        console.log(
-          'Aviso ao consultar date fixtures API-Football:',
-          errDate ? errDate.message : errDate,
-        )
       }
     }
 
@@ -565,6 +662,7 @@ routerAdd('GET', '/backend/v1/placar-ao-vivo', (e) => {
       provider: 'api_football',
       live: liveFixtures,
       dateFixtures: dateFixtures,
+      sobrescritas: sobrescritasMap,
     })
   } catch (err) {
     return e.json(500, {
@@ -910,6 +1008,99 @@ routerAdd('POST', '/backend/v1/placar-ao-vivo/test', (e) => {
     return e.json(500, {
       success: false,
       error: err ? err.message : 'Erro inesperado no teste de conexão',
+    })
+  }
+})
+
+/**
+ * POST /backend/v1/placar-ao-vivo/sobrescrever
+ * Salva ou limpa sobrescrita manual de placar e marcadores feita pelo Admin Douglas
+ * para partidas em andamento.
+ * Body esperado: { jogo_id: string, placar_a?: number, placar_b?: number, marcadores?: string[] | string, ativo?: boolean }
+ */
+routerAdd('POST', '/backend/v1/placar-ao-vivo/sobrescrever', (e) => {
+  try {
+    const authRecord = e.auth
+    if (!authRecord) {
+      return e.unauthorizedError('Usuário não autenticado')
+    }
+
+    const userName = (authRecord.getString('name') || authRecord.getString('username') || '')
+      .trim()
+      .toLowerCase()
+    if (userName !== 'douglas') {
+      return e.forbiddenError('Acesso restrito ao administrador Douglas.')
+    }
+
+    const body = e.requestInfo().body || {}
+    const jogoId = (body.jogo_id || '').trim()
+    if (!jogoId) {
+      return e.badRequestError('jogo_id é obrigatório.')
+    }
+
+    const col = $app.findCollectionByNameOrId('config_integracoes')
+    let record
+    try {
+      record = $app.findFirstRecordByData('config_integracoes', 'chave', 'sobrescrita_jogos')
+    } catch (_) {
+      record = new Record(col)
+      record.set('chave', 'sobrescrita_jogos')
+      record.set('provedor', 'api_football')
+      record.set('ativo', true)
+    }
+
+    let map = {}
+    try {
+      const raw = record.getString('api_key') || ''
+      if (raw && raw.trim()) {
+        map = JSON.parse(raw)
+      }
+    } catch (_) {}
+
+    // Se remover ou limpar
+    if (body.remover === true) {
+      delete map[jogoId]
+    } else {
+      let marcadoresList = []
+      if (Array.isArray(body.marcadores)) {
+        marcadoresList = body.marcadores
+          .map(function (m) {
+            return String(m || '').trim()
+          })
+          .filter(Boolean)
+      } else if (typeof body.marcadores === 'string') {
+        marcadoresList = body.marcadores
+          .split(',')
+          .map(function (m) {
+            return m.trim()
+          })
+          .filter(Boolean)
+      }
+
+      map[jogoId] = {
+        jogo_id: jogoId,
+        placar_a:
+          typeof body.placar_a === 'number' ? body.placar_a : parseInt(body.placar_a, 10) || 0,
+        placar_b:
+          typeof body.placar_b === 'number' ? body.placar_b : parseInt(body.placar_b, 10) || 0,
+        marcadores: marcadoresList,
+        status: (body.status || 'Ao Vivo').trim(),
+        updated_at: new Date().toISOString(),
+      }
+    }
+
+    record.set('api_key', JSON.stringify(map))
+    $app.save(record)
+
+    return e.json(200, {
+      success: true,
+      message: 'Sobrescrita manual salva com sucesso pelo administrador.',
+      sobrescritas: map,
+    })
+  } catch (err) {
+    return e.json(500, {
+      success: false,
+      error: err ? err.message : 'Erro ao salvar sobrescrita manual',
     })
   }
 })
