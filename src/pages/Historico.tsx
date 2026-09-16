@@ -173,7 +173,14 @@ export default function Historico() {
                   <div className="flex items-start justify-between">
                     <div>
                       <h3 className="text-base font-bold text-[#0F172A]">{b.nome}</h3>
-                      <p className="mt-1 text-[11px] text-[#64748B]">
+                      {b.foco && (
+                        <div className="mt-1">
+                          <span className="inline-block rounded-md border border-indigo-200 bg-indigo-50 px-2 py-0.5 text-[10px] font-bold text-indigo-800">
+                            {b.foco}
+                          </span>
+                        </div>
+                      )}
+                      <p className="mt-1.5 text-[11px] text-[#64748B]">
                         {b.ultima_atualizacao
                           ? `Atualizado em: ${formatDateTimeBR(b.ultima_atualizacao)}`
                           : 'Sem data de atualização'}
@@ -213,7 +220,17 @@ export default function Historico() {
         <Card className="rounded-[14px] border-[#E2E8F0] bg-white p-6 shadow-xs">
           <div className="mb-6 flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-4">
             <div>
-              <h2 className="text-xl font-bold text-[#0F172A]">Detalhes: {selectedBolao.nome}</h2>
+              <div className="flex flex-wrap items-center gap-2">
+                <h2 className="text-xl font-bold text-[#0F172A]">Detalhes: {selectedBolao.nome}</h2>
+                {selectedBolao.foco && (
+                  <Badge
+                    variant="secondary"
+                    className="border border-indigo-200 bg-indigo-50 font-bold text-indigo-800 text-xs px-2.5 py-0.5"
+                  >
+                    Tema: {selectedBolao.foco}
+                  </Badge>
+                )}
+              </div>
               <p className="text-xs text-[#64748B]">
                 Dados consolidados no banco de dados da Skip Cloud (somente leitura).
               </p>
@@ -296,7 +313,7 @@ export default function Historico() {
                       return (
                         <div key={jogo.id} className="p-4 bg-white hover:bg-slate-50/70">
                           <div className="flex flex-wrap items-center justify-between gap-2">
-                            <div className="flex items-center gap-2">
+                            <div className="flex flex-wrap items-center gap-2">
                               <span className="font-bold text-sm text-[#0F172A]">
                                 {jogo.time_a}
                               </span>
@@ -308,6 +325,14 @@ export default function Historico() {
                               <span className="font-bold text-sm text-[#0F172A]">
                                 {jogo.time_b}
                               </span>
+                              {jogo.competicao && (
+                                <Badge
+                                  variant="secondary"
+                                  className="border border-indigo-200 bg-indigo-50 text-[11px] font-semibold text-indigo-700 px-2 py-0.5"
+                                >
+                                  {jogo.competicao}
+                                </Badge>
+                              )}
                             </div>
 
                             <span className="text-[11px] text-slate-500">

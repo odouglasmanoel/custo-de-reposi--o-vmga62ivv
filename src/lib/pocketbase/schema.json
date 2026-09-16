@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-09-16T16:30:13.367Z",
+  "generatedAt": "2026-09-16T16:46:44.657Z",
   "collections": [
     {
       "name": "users",
@@ -86,6 +86,12 @@
           "required": false,
           "system": false,
           "autodateTriggers": ["onCreate", "onUpdate"]
+        },
+        {
+          "name": "foco",
+          "type": "text",
+          "required": false,
+          "system": false
         }
       ],
       "indexes": [
@@ -287,6 +293,12 @@
           "required": false,
           "system": false,
           "autodateTriggers": ["onCreate", "onUpdate"]
+        },
+        {
+          "name": "competicao",
+          "type": "text",
+          "required": false,
+          "system": false
         }
       ],
       "indexes": [

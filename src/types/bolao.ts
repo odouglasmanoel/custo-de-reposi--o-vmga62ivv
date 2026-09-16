@@ -3,6 +3,7 @@ import type { RecordModel } from 'pocketbase'
 export interface Bolao extends RecordModel {
   nome: string
   ativo: boolean
+  foco?: string
   ultima_atualizacao?: string
 }
 
@@ -16,6 +17,7 @@ export interface Jogo extends RecordModel {
   bolao: string
   time_a: string
   time_b: string
+  competicao?: string
   data: string
   hora: string
   placar_a?: number | null

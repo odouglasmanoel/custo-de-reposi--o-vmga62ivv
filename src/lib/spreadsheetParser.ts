@@ -20,6 +20,7 @@ export interface ParsedPrediction {
 export interface ParsedGame {
   time_a: string
   time_b: string
+  competicao?: string
   placar_a?: number
   placar_b?: number
   data?: string
@@ -445,6 +446,7 @@ export async function parseSpreadsheet(file: File): Promise<{
     let colPlacarFinal = -1
     let colPlacarA = -1
     let colPlacarB = -1
+    let colCompeticao = -1
     let colData = -1
     let colHora = -1
     let colRodada = -1
@@ -516,6 +518,15 @@ export async function parseSpreadsheet(file: File): Promise<{
 
           // Placar Final / Resultado tolerance
           if (
+            cell === 'competicao' ||
+            cell === 'competicoes' ||
+            cell === 'torneio' ||
+            cell === 'campeonato' ||
+            cell.includes('competicao') ||
+            cell.includes('torneio')
+          ) {
+            colCompeticao = c
+          } else if (
             cell === 'placarfinal' ||
             cell === 'placar' ||
             cell === 'resultado' ||
@@ -713,6 +724,9 @@ export async function parseSpreadsheet(file: File): Promise<{
           }
         }
 
+        const competicao =
+          colCompeticao !== -1 && row[colCompeticao] ? String(row[colCompeticao]).trim() : undefined
+
         const rodada =
           colRodada !== -1 && row[colRodada] ? String(row[colRodada]).trim() : undefined
 
@@ -812,6 +826,7 @@ export async function parseSpreadsheet(file: File): Promise<{
           ) {
             existingGame.gols_time_b = golsTimeB
           }
+          if (competicao && !existingGame.competicao) existingGame.competicao = competicao
           if (dataStr && !existingGame.data) existingGame.data = dataStr
           if (horaStr && !existingGame.hora) existingGame.hora = horaStr
           if (rodada && !existingGame.rodada) existingGame.rodada = rodada
@@ -836,6 +851,7 @@ export async function parseSpreadsheet(file: File): Promise<{
           gamesByConfronto.set(matchKey, {
             time_a: rawA,
             time_b: rawB,
+            competicao: competicao || '',
             placar_a: placarA,
             placar_b: placarB,
             data: dataStr || new Date().toISOString(),
@@ -917,6 +933,7 @@ export async function parseSpreadsheet(file: File): Promise<{
             gamesList.push({
               time_a: timeA,
               time_b: timeB,
+              competicao: '',
               placar_a: placarA,
               placar_b: placarB,
               data: new Date().toISOString(),
@@ -1087,6 +1104,7 @@ export async function importBolaoSpreadsheet(
         bolao: bolaoId,
         time_a: gameData.time_a,
         time_b: gameData.time_b,
+        competicao: gameData.competicao || '',
         data: gameData.data || new Date().toISOString(),
         hora: gameData.hora || '16:00',
         placar_a: placarA,

@@ -320,9 +320,19 @@ export default function AdminResultado() {
               <span className="rounded-lg bg-amber-100 p-1.5 text-amber-700">
                 <Shield className="h-5 w-5" />
               </span>
-              <h1 className="text-xl font-bold tracking-tight text-[#0F172A] sm:text-2xl">
-                {jogo.time_a} x {jogo.time_b}
-              </h1>
+              <div className="flex flex-wrap items-center gap-2">
+                <h1 className="text-xl font-bold tracking-tight text-[#0F172A] sm:text-2xl">
+                  {jogo.time_a} x {jogo.time_b}
+                </h1>
+                {jogo.competicao && (
+                  <Badge
+                    variant="secondary"
+                    className="border border-indigo-200 bg-indigo-50 font-semibold text-indigo-800 text-xs px-2 py-0.5"
+                  >
+                    {jogo.competicao}
+                  </Badge>
+                )}
+              </div>
             </div>
             <p className="mt-0.5 text-xs text-[#64748B]">
               Data: {formatDataBR(jogo.data)} às {formatHoraBR(jogo.hora)}

@@ -401,9 +401,19 @@ export default function Palpites() {
       {/* Header */}
       <div className="flex flex-col justify-between gap-2 rounded-[14px] border border-[#E2E8F0] bg-white p-6 shadow-xs sm:flex-row sm:items-center">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight text-[#0F172A]">
-            Meus Palpites — {participantName || 'Participante'}
-          </h1>
+          <div className="flex flex-wrap items-center gap-2">
+            <h1 className="text-2xl font-bold tracking-tight text-[#0F172A]">
+              Meus Palpites — {participantName || 'Participante'}
+            </h1>
+            {activeBolao?.foco && (
+              <Badge
+                variant="secondary"
+                className="border border-indigo-200 bg-indigo-50 font-bold text-indigo-800 shadow-xs text-xs px-2.5 py-0.5"
+              >
+                Tema: {activeBolao.foco}
+              </Badge>
+            )}
+          </div>
           <p className="text-xs text-[#64748B]">
             Competição:{' '}
             <span className="font-semibold text-[#0F2A43]">
@@ -499,14 +509,24 @@ export default function Palpites() {
 
                 <div className="p-6">
                   {/* Teams vs block */}
-                  <div className="flex items-center justify-center gap-6 py-2">
-                    <span className="text-base font-bold text-[#0F172A] sm:text-lg">
-                      {jogo.time_a}
-                    </span>
-                    <span className="text-xs font-bold uppercase text-slate-400">VS</span>
-                    <span className="text-base font-bold text-[#0F172A] sm:text-lg">
-                      {jogo.time_b}
-                    </span>
+                  <div className="flex flex-col items-center justify-center gap-1.5 py-2">
+                    <div className="flex items-center justify-center gap-6">
+                      <span className="text-base font-bold text-[#0F172A] sm:text-lg">
+                        {jogo.time_a}
+                      </span>
+                      <span className="text-xs font-bold uppercase text-slate-400">VS</span>
+                      <span className="text-base font-bold text-[#0F172A] sm:text-lg">
+                        {jogo.time_b}
+                      </span>
+                    </div>
+                    {jogo.competicao && (
+                      <Badge
+                        variant="secondary"
+                        className="border border-indigo-200 bg-indigo-50 text-[11px] font-semibold text-indigo-700 px-2 py-0.5"
+                      >
+                        {jogo.competicao}
+                      </Badge>
+                    )}
                   </div>
                   {/* Form or Read-only view */}
                   {finalizado ? (

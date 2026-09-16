@@ -157,9 +157,19 @@ export default function BolaoDashboard() {
               <Trophy className="h-6 w-6" />
             </span>
             <div>
-              <h1 className="text-2xl font-bold tracking-tight text-[#0F172A] sm:text-3xl">
-                Bolão do Grupo
-              </h1>
+              <div className="flex flex-wrap items-center gap-2">
+                <h1 className="text-2xl font-bold tracking-tight text-[#0F172A] sm:text-3xl">
+                  Bolão do Grupo
+                </h1>
+                {activeBolao?.foco && (
+                  <Badge
+                    variant="secondary"
+                    className="border border-indigo-200 bg-indigo-50 font-bold text-indigo-800 shadow-xs text-xs px-2.5 py-0.5"
+                  >
+                    Tema: {activeBolao.foco}
+                  </Badge>
+                )}
+              </div>
               <p className="text-xs text-[#64748B]">
                 Competição ativa:{' '}
                 <span className="font-semibold text-[#0F2A43]">
@@ -188,7 +198,7 @@ export default function BolaoDashboard() {
           >
             {boloes.map((b) => (
               <option key={b.id} value={b.id}>
-                {b.nome} (Ativo)
+                {b.nome} {b.foco ? `(${b.foco})` : '(Ativo)'}
               </option>
             ))}
           </select>

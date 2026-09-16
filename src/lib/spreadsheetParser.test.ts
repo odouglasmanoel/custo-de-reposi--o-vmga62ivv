@@ -386,4 +386,68 @@ describe('parseSpreadsheet with Copa Genilton structure', () => {
     expect(result.scores[0].nome).toBe('Bruno')
     expect(result.scores[0].pontuacao).toBe(2)
   })
+
+  it('correctly extracts "Competição" column into parsed games and tolerates missing column', async () => {
+    // Sheet with Competição column (e.g. Copa Coni spreadsheet)
+    const rowsWithCompeticao = [
+      ['Jogos', 'Competição', 'Placar Final', 'Palpites', 'Pontuação'],
+      ['Real Madrid x Barcelona', 'La Liga - 11ª rodada', '0x4', '1x2', '2'],
+      ['Liverpool x Manchester City', 'Premier League', '2x0', '2x1', '2'],
+      ['Bayern x Dortmund', 'Bundesliga - Clássico', '1x1', '0x0', '2'],
+    ]
+
+    const wb1 = XLSX.utils.book_new()
+    XLSX.utils.book_append_sheet(wb1, XLSX.utils.aoa_to_sheet(rowsWithCompeticao), 'Douglas')
+    const buf1 = XLSX.write(wb1, { type: 'array', bookType: 'xlsx' })
+    const file1 = new File([buf1], 'copa-coni.xlsx', {
+      type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    })
+
+    const result1 = await parseSpreadsheet(file1)
+    expect(result1.games.length).toBe(3)
+
+    const game1 = result1.games.find((g) => g.time_a === 'Real Madrid' && g.time_b === 'Barcelona')
+    expect(game1).toBeDefined()
+    expect(game1?.competicao).toBe('La Liga - 11ª rodada')
+    expect(game1?.finalizado).toBe(true)
+    expect(game1?.placar_a).toBe(0)
+    expect(game1?.placar_b).toBe(4)
+
+    const game2 = result1.games.find(
+      (g) => g.time_a === 'Liverpool' && g.time_b === 'Manchester City',
+    )
+    expect(game2?.competicao).toBe('Premier League')
+
+    // Also test header variation "Torneio"
+    const rowsWithTorneio = [
+      ['Confronto', 'Torneio', 'Placar Final'],
+      ['PSG x Chelsea', 'Champions League', '1x1'],
+    ]
+    const wb2 = XLSX.utils.book_new()
+    XLSX.utils.book_append_sheet(wb2, XLSX.utils.aoa_to_sheet(rowsWithTorneio), 'Jogos')
+    const buf2 = XLSX.write(wb2, { type: 'array', bookType: 'xlsx' })
+    const file2 = new File([buf2], 'copa-torneio.xlsx', {
+      type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    })
+
+    const result2 = await parseSpreadsheet(file2)
+    expect(result2.games.length).toBe(1)
+    expect(result2.games[0].competicao).toBe('Champions League')
+
+    // Sheet WITHOUT Competição column (e.g. Copa Genilton) - should remain empty/undefined without breaking
+    const rowsWithoutCompeticao = [
+      ['Jogos', 'Placar Final', 'Palpites'],
+      ['Flamengo x Palmeiras', '1x1', '0x0'],
+    ]
+    const wb3 = XLSX.utils.book_new()
+    XLSX.utils.book_append_sheet(wb3, XLSX.utils.aoa_to_sheet(rowsWithoutCompeticao), 'Sheet1')
+    const buf3 = XLSX.write(wb3, { type: 'array', bookType: 'xlsx' })
+    const file3 = new File([buf3], 'sem-competicao.xlsx', {
+      type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    })
+
+    const result3 = await parseSpreadsheet(file3)
+    expect(result3.games.length).toBe(1)
+    expect(result3.games[0].competicao || '').toBe('')
+  })
 })

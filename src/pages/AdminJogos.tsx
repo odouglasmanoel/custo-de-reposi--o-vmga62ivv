@@ -53,6 +53,7 @@ export default function AdminJogos() {
   // Modal Novo Bolão
   const [modalNovoBolao, setModalNovoBolao] = useState(false)
   const [novoBolaoNome, setNovoBolaoNome] = useState('')
+  const [novoBolaoFoco, setNovoBolaoFoco] = useState('')
   const [novoBolaoAtivo, setNovoBolaoAtivo] = useState(true)
   const [salvandoBolao, setSalvandoBolao] = useState(false)
   const [erroNovoBolao, setErroNovoBolao] = useState<string | null>(null)
@@ -70,6 +71,7 @@ export default function AdminJogos() {
   // Form fields
   const [timeA, setTimeA] = useState('')
   const [timeB, setTimeB] = useState('')
+  const [competicao, setCompeticao] = useState('')
   const [dataJogo, setDataJogo] = useState('')
   const [horaJogo, setHoraJogo] = useState('')
   const [temPenaltis, setTemPenaltis] = useState(false)
@@ -125,6 +127,7 @@ export default function AdminJogos() {
         bolao: activeBolaoId,
         time_a: timeA.trim(),
         time_b: timeB.trim(),
+        competicao: competicao.trim() || '',
         data: new Date(dataJogo).toISOString(),
         hora: horaJogo.trim(),
         resultado_finalizado: false,
@@ -141,6 +144,7 @@ export default function AdminJogos() {
       // Reset form
       setTimeA('')
       setTimeB('')
+      setCompeticao('')
       setDataJogo('')
       setHoraJogo('')
       setTemPenaltis(false)
@@ -257,6 +261,7 @@ export default function AdminJogos() {
     try {
       const created = await pb.collection('boloes').create({
         nome: novoBolaoNome.trim(),
+        foco: novoBolaoFoco.trim() || '',
         ativo: novoBolaoAtivo,
       })
 
@@ -283,6 +288,7 @@ export default function AdminJogos() {
       await refreshBoloes()
       setActiveBolaoId(created.id)
       setNovoBolaoNome('')
+      setNovoBolaoFoco('')
       setModalNovoBolao(false)
     } catch (err: unknown) {
       console.error('Erro ao criar bolão:', err)
@@ -360,7 +366,19 @@ export default function AdminJogos() {
               <Shield className="h-6 w-6" />
             </span>
             <div>
-              <h1 className="text-2xl font-bold tracking-tight text-[#0F172A]">Gestão de Jogos</h1>
+              <div className="flex flex-wrap items-center gap-2">
+                <h1 className="text-2xl font-bold tracking-tight text-[#0F172A]">
+                  Gestão de Jogos
+                </h1>
+                {activeBolao?.foco && (
+                  <Badge
+                    variant="secondary"
+                    className="border border-indigo-200 bg-indigo-50 font-bold text-indigo-800 shadow-xs text-xs px-2.5 py-0.5"
+                  >
+                    Tema: {activeBolao.foco}
+                  </Badge>
+                )}
+              </div>
               <p className="text-xs text-[#64748B]">
                 Módulo exclusivo do Administrador (Douglas) para agendamento e controle de partidas.
               </p>
@@ -382,7 +400,7 @@ export default function AdminJogos() {
             >
               {boloes.map((b) => (
                 <option key={b.id} value={b.id}>
-                  {b.nome} (Ativo)
+                  {b.nome} {b.foco ? `(${b.foco})` : '(Ativo)'}
                 </option>
               ))}
             </select>
@@ -440,7 +458,7 @@ export default function AdminJogos() {
           )}
 
           <form onSubmit={handleCreateJogo} className="space-y-4">
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-5">
               <div>
                 <Label htmlFor="time-a" className="text-xs font-semibold text-[#0F172A]">
                   Time A (Mandante)
@@ -463,6 +481,19 @@ export default function AdminJogos() {
                   placeholder="Ex: Palmeiras"
                   value={timeB}
                   onChange={(e) => setTimeB(e.target.value)}
+                  className="mt-1 h-10 border-[#CBD5E1] text-xs focus-visible:border-[#10B981] focus-visible:ring-[#10B981]"
+                />
+              </div>
+
+              <div>
+                <Label htmlFor="competicao-jogo" className="text-xs font-semibold text-[#0F172A]">
+                  Competição (Opcional)
+                </Label>
+                <Input
+                  id="competicao-jogo"
+                  placeholder="Ex: Brasileirão - 20ª rodada"
+                  value={competicao}
+                  onChange={(e) => setCompeticao(e.target.value)}
                   className="mt-1 h-10 border-[#CBD5E1] text-xs focus-visible:border-[#10B981] focus-visible:ring-[#10B981]"
                 />
               </div>
@@ -561,14 +592,21 @@ export default function AdminJogos() {
                   return (
                     <tr key={jogo.id} className="hover:bg-slate-50/80">
                       <td className="px-4 py-3.5">
-                        <span className="font-bold text-[#0F172A]">
-                          {jogo.time_a} x {jogo.time_b}
-                        </span>
-                        {jogo.tem_penaltis && (
-                          <span className="ml-2 rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-800">
-                            Pênaltis possíveis
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <span className="font-bold text-[#0F172A]">
+                            {jogo.time_a} x {jogo.time_b}
                           </span>
-                        )}
+                          {jogo.competicao && (
+                            <span className="rounded bg-indigo-50 border border-indigo-200 px-1.5 py-0.5 text-[10px] font-semibold text-indigo-700">
+                              {jogo.competicao}
+                            </span>
+                          )}
+                          {jogo.tem_penaltis && (
+                            <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-800">
+                              Pênaltis possíveis
+                            </span>
+                          )}
+                        </div>
                       </td>
                       <td className="px-4 py-3.5 text-slate-600">
                         <div className="flex items-center gap-1.5">
@@ -710,6 +748,22 @@ export default function AdminJogos() {
                 className="mt-1 h-10 border-[#CBD5E1] text-xs focus-visible:border-[#10B981] focus-visible:ring-[#10B981]"
                 autoFocus
               />
+            </div>
+
+            <div>
+              <Label htmlFor="foco-bolao" className="text-xs font-bold text-slate-700">
+                Foco / Descrição do Bolão
+              </Label>
+              <Input
+                id="foco-bolao"
+                placeholder="Ex: Jogos Aleatórios, Copa do Brasil, Libertadores"
+                value={novoBolaoFoco}
+                onChange={(e) => setNovoBolaoFoco(e.target.value)}
+                className="mt-1 h-10 border-[#CBD5E1] text-xs focus-visible:border-[#10B981] focus-visible:ring-[#10B981]"
+              />
+              <p className="mt-1 text-[11px] text-slate-500">
+                Define a categoria ou tema exibido no badge oficial do bolão.
+              </p>
             </div>
 
             <div className="flex items-center gap-2 pt-1">
@@ -874,9 +928,16 @@ export default function AdminJogos() {
                     <div className="mt-2 divide-y divide-slate-100 max-h-40 overflow-y-auto">
                       {parsedGames.slice(0, 15).map((game, idx) => (
                         <div key={idx} className="flex items-center justify-between py-1 text-xs">
-                          <span className="font-semibold text-slate-700 truncate max-w-[200px]">
-                            {game.time_a} x {game.time_b}
-                          </span>
+                          <div className="flex flex-col truncate max-w-[220px]">
+                            <span className="font-semibold text-slate-700 truncate">
+                              {game.time_a} x {game.time_b}
+                            </span>
+                            {game.competicao && (
+                              <span className="text-[10px] text-indigo-600 font-medium truncate">
+                                {game.competicao}
+                              </span>
+                            )}
+                          </div>
                           <span className="font-bold text-[#0F2A43]">
                             {game.placar_a !== undefined && game.placar_b !== undefined
                               ? `${game.placar_a} x ${game.placar_b}`
