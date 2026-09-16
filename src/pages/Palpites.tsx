@@ -313,100 +313,50 @@ export default function Palpites() {
       const gB =
         numB > 0 ? (currentForm.goleadores_b || []).map((s) => s.trim()).filter(Boolean) : []
 
+      // Marcadores time A e B: texto simples separado por vírgulas ("" ou null quando o time fez 0 gols, incluindo o caso 0x0)
       const marcadoresTimeA = numA > 0 ? gA.join(', ') : ''
       const marcadoresTimeB = numB > 0 ? gB.join(', ') : ''
       const vencedorPenaltis = currentForm.vencedor_penaltis || 'N'
 
-      // Payload explícito conforme requisitos do usuário:
-      // - jogo_id (ID do jogo atual)
-      // - usuario_email ou usuario_id (identificador do usuário logado)
-      // - gols_time_a (inteiro)
-      // - gols_time_b (inteiro)
-      // - marcadores_time_a (string/texto simples unindo as linhas, ex: "Pedro Raul, Gui Negão")
-      // - marcadores_time_b (string/texto simples, ou null se não houver gols)
-      // - vencedor_penaltis (texto)
+      // Payload explícito enviado para o endpoint server-side /backend/v1/salvar-palpite:
+      // - jogo_id (ID do jogo)
+      // - usuario_email ou usuario_id (identificação do usuário)
+      // - gols_time_a e gols_time_b (inteiros)
+      // - marcadores_time_a e marcadores_time_b (texto simples separado por vírgulas, "" ou null para 0 gols)
+      // - vencedor_penaltis
       const userEmail = (user?.email as string) || ''
       const userId = (user?.id as string) || ''
 
-      // Tenta salvar prioritariamente pelo endpoint /backend/v1/salvar-palpite (UPSERT / delete prévio + insert)
-      let backendSuccess = false
-      let backendErrorMessage = ''
-
-      try {
-        const response = await fetch(
-          `${import.meta.env.VITE_POCKETBASE_URL}/backend/v1/salvar-palpite`,
-          {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              Authorization: pb.authStore.token,
-            },
-            body: JSON.stringify({
-              jogo_id: jogo.id,
-              bolao_id: activeBolaoId,
-              participante_id: participanteToUse.id,
-              usuario_email: userEmail,
-              usuario_id: userId,
-              gols_time_a: numA,
-              gols_time_b: numB,
-              marcadores_time_a: marcadoresTimeA,
-              marcadores_time_b: numB > 0 ? marcadoresTimeB : null,
-              vencedor_penaltis: vencedorPenaltis,
-              // Campos adicionais compatíveis com a coleção
-              placar_a: numA,
-              placar_b: numB,
-              goleadores_a: gA,
-              goleadores_b: gB,
-            }),
+      const response = await fetch(
+        `${import.meta.env.VITE_POCKETBASE_URL}/backend/v1/salvar-palpite`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: pb.authStore.token,
           },
-        )
+          body: JSON.stringify({
+            jogo_id: jogo.id,
+            bolao_id: activeBolaoId,
+            participante_id: participanteToUse.id,
+            usuario_email: userEmail,
+            usuario_id: userId,
+            gols_time_a: numA,
+            gols_time_b: numB,
+            marcadores_time_a: numA > 0 ? marcadoresTimeA : '',
+            marcadores_time_b: numB > 0 ? marcadoresTimeB : '',
+            vencedor_penaltis: vencedorPenaltis,
+            placar_a: numA,
+            placar_b: numB,
+            goleadores_a: gA,
+            goleadores_b: gB,
+          }),
+        },
+      )
 
-        if (response.ok) {
-          backendSuccess = true
-        } else {
-          const resJson = await response.json().catch(() => ({}))
-          backendErrorMessage = resJson.error || 'Erro ao processar palpite no servidor'
-        }
-      } catch (endpointErr) {
-        // Fallback para PocketBase SDK direto caso ocorra erro de rede com a rota customizada
-        backendSuccess = false
-      }
-
-      // Se o endpoint não foi usado ou falhou por rede, executar a lógica direta no PocketBase SDK:
-      // DELETE prévio do palpite anterior para este jogo + INSERT
-      if (!backendSuccess) {
-        if (backendErrorMessage) {
-          throw new Error(backendErrorMessage)
-        }
-
-        // Buscar e excluir palpite anterior deste participante neste jogo
-        const existingList = await pb
-          .collection('palpites')
-          .getFullList<Palpite>({
-            filter: `jogo = '${jogo.id}' && participante = '${participanteToUse.id}'`,
-          })
-          .catch(() => [])
-
-        for (const oldRec of existingList) {
-          await pb
-            .collection('palpites')
-            .delete(oldRec.id)
-            .catch(() => {})
-        }
-
-        // Inserir novo palpite com dados limpos
-        await pb.collection('palpites').create({
-          bolao: activeBolaoId,
-          jogo: jogo.id,
-          participante: participanteToUse.id,
-          placar_a: numA,
-          placar_b: numB,
-          goleadores_a: gA,
-          goleadores_b: gB,
-          vencedor_penaltis: vencedorPenaltis,
-          pontuacao_jogo: 0,
-          detalhamento: [],
-        })
+      if (!response.ok) {
+        const resJson = await response.json().catch(() => ({}))
+        throw new Error(resJson.error || 'Erro ao salvar palpite no servidor')
       }
 
       toast({

@@ -130,6 +130,18 @@ routerAdd('POST', '/backend/v1/salvar-palpite', (e) => {
       0,
     )
 
+    let existingPontuacao = 0
+    let existingDetalhamento = []
+    if (existing.length > 0) {
+      existingPontuacao = existing[0].getInt('pontuacao_jogo') || 0
+      try {
+        const rawDet = existing[0].get('detalhamento')
+        if (Array.isArray(rawDet)) {
+          existingDetalhamento = rawDet
+        }
+      } catch (_) {}
+    }
+
     for (const oldRec of existing) {
       try {
         $app.delete(oldRec)
@@ -147,8 +159,8 @@ routerAdd('POST', '/backend/v1/salvar-palpite', (e) => {
     record.set('goleadores_a', marcadoresArrA)
     record.set('goleadores_b', marcadoresArrB)
     record.set('vencedor_penaltis', vencedorPenaltis || 'N')
-    record.set('pontuacao_jogo', 0)
-    record.set('detalhamento', [])
+    record.set('pontuacao_jogo', existingPontuacao)
+    record.set('detalhamento', existingDetalhamento)
 
     $app.save(record)
 
