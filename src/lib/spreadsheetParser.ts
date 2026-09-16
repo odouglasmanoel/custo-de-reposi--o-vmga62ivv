@@ -73,6 +73,11 @@ export function parseScoreString(val: any): { placarA: number; placarB: number }
   const str = String(val).trim()
   if (!str) return null
 
+  // 0. Strings with dates like "01/11 -", "08/11 -", "01/11/2024" are match dates, not scores
+  if (/\d{1,2}\/\d{1,2}/.test(str)) {
+    return null
+  }
+
   // 1. Exact match like "2 x 1" or "2-1" or "2:1" or "2 a 1"
   const exactMatch = str.match(/^(\d+)\s*(?:x|[-:]|a)\s*(\d+)$/i)
   if (exactMatch) {
@@ -83,6 +88,7 @@ export function parseScoreString(val: any): { placarA: number; placarB: number }
   }
 
   // 2. Score at start of text, e.g. "1x2 (Carbonero...)" or "1 x 2 - gols..."
+  // Must have a real separator: "x", ":", or "-" between digits.
   const prefixMatch = str.match(/^(\d+)\s*(?:x|[-:]|a)\s*(\d+)(?:\s*[(/\-:,a-zA-Z].*)?$/i)
   if (prefixMatch) {
     return {
@@ -589,15 +595,30 @@ export async function parseSpreadsheet(file: File): Promise<{
           }
         }
 
+        // Skip administrative events / non-matches (e.g. "Sorteio das Quartas de Final")
+        const lowerRaw = `${rawA} ${rawB}`.toLowerCase()
+        if (
+          lowerRaw.includes('sorteio') ||
+          lowerRaw.includes('abertura') ||
+          lowerRaw.includes('encerramento') ||
+          lowerRaw.includes('premiacao') ||
+          lowerRaw.includes('cerimonia')
+        ) {
+          continue
+        }
+
         // Skip headers or summary rows
         const cleanA = cleanKey(rawA)
+        const cleanB = cleanKey(rawB)
         if (
           cleanA === 'total' ||
           cleanA === 'mandante' ||
           cleanA === 'time' ||
           cleanA === 'confronto' ||
           cleanA === 'jogos' ||
-          cleanA === 'partida'
+          cleanA === 'partida' ||
+          cleanA === 'pontuacaototal' ||
+          cleanB === 'pontuacaototal'
         ) {
           continue
         }
@@ -645,6 +666,16 @@ export async function parseSpreadsheet(file: File): Promise<{
           else {
             const hStr = String(row[colHora]).trim()
             if (hStr) horaStr = hStr
+          }
+        }
+
+        // Check if Placar Final column contains date info for pending games (e.g. "01/11 -", "08/11 -")
+        if (!dataStr && colPlacarFinal !== -1 && row[colPlacarFinal]) {
+          const rawPF = String(row[colPlacarFinal]).trim()
+          if (/\d{1,2}\/\d{1,2}/.test(rawPF)) {
+            const dtFromPF = parseDateTimeCell(rawPF)
+            if (dtFromPF.data) dataStr = dtFromPF.data
+            if (dtFromPF.hora) horaStr = dtFromPF.hora
           }
         }
 
@@ -806,6 +837,15 @@ export async function parseSpreadsheet(file: File): Promise<{
           if (matchX && matchX[1].trim() && matchX[2].trim()) {
             const timeA = matchX[1].trim()
             const timeB = matchX[2].trim()
+
+            const lowerFallback = `${timeA} ${timeB}`.toLowerCase()
+            if (
+              lowerFallback.includes('sorteio') ||
+              lowerFallback.includes('abertura') ||
+              lowerFallback.includes('encerramento')
+            ) {
+              continue
+            }
 
             // Skip if this is a subheader
             if (cleanKey(timeA) === 'time' || cleanKey(timeB) === 'time') continue
