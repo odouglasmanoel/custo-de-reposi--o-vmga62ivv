@@ -173,9 +173,6 @@ export default function Layout({ children }: LayoutProps) {
                         <div className="text-xs font-bold leading-tight text-white group-hover:text-emerald-300 sm:text-sm">
                           {userNameDisplay}
                         </div>
-                        <div className="hidden text-[10px] text-slate-300 sm:block">
-                          Alterar senha
-                        </div>
                       </div>
                     </button>
                   </DropdownMenuTrigger>
@@ -186,9 +183,6 @@ export default function Layout({ children }: LayoutProps) {
                     <DropdownMenuLabel className="font-normal">
                       <div className="flex flex-col space-y-1">
                         <p className="text-xs font-bold text-[#0F172A]">{userNameDisplay}</p>
-                        <p className="text-[11px] text-[#64748B] truncate">
-                          {user.email || `${user.username || 'usuario'}@repress.com.br`}
-                        </p>
                       </div>
                     </DropdownMenuLabel>
                     <DropdownMenuSeparator />
