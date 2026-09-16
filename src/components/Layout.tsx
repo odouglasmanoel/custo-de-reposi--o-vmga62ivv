@@ -65,7 +65,7 @@ export default function Layout({ children }: LayoutProps) {
 
   const handleLogout = () => {
     logout()
-    navigate('/login')
+    navigate('/login', { replace: true })
   }
 
   const userNameDisplay = user?.name || user?.username || 'Colaborador'

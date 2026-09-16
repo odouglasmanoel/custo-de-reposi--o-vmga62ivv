@@ -32,14 +32,18 @@ export default function BolaoDashboard() {
 
   const bolaoQueryParam = searchParams.get('bolao')
 
-  // Ao abrir /inicio ou /bolao: se houver ?bolao=..., respeitar; caso contrário, garantir 'geral' como padrão
+  // Ao abrir /inicio ou /bolao: se houver ?bolao=..., respeitar com prioridade;
+  // caso contrário, na montagem do componente, garantir 'geral' (ou o ID correspondente ao Ranking Geral Unificado)
   useEffect(() => {
     if (bolaoQueryParam) {
       if (activeBolaoId !== bolaoQueryParam) {
         setActiveBolaoId(bolaoQueryParam)
       }
-    } else if (!activeBolaoId || activeBolaoId !== GERAL_BOLAO_ID) {
-      setActiveBolaoId(GERAL_BOLAO_ID)
+    } else {
+      // Força 'geral' na montagem e em qualquer navegação sem ?bolao=
+      if (activeBolaoId !== GERAL_BOLAO_ID) {
+        setActiveBolaoId(GERAL_BOLAO_ID)
+      }
     }
   }, [bolaoQueryParam])
 

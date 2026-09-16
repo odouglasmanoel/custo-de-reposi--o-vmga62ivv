@@ -44,12 +44,30 @@ export default function Login() {
 
     setLoading(true)
     try {
+      // Limpeza de cache/storage de sessão para garantir visão Geral em novo acesso
+      const keysToClear = [
+        'repress_active_bolao',
+        'repress_selected_bolao',
+        'active_bolao_id',
+        'selected_bolao_id',
+        'last_bolao_id',
+        'bolao_ativo',
+      ]
+      keysToClear.forEach((key) => {
+        try {
+          localStorage.removeItem(key)
+          sessionStorage.removeItem(key)
+        } catch {
+          /* intentionally ignored */
+        }
+      })
+
       const authData = await pb.collection('users').authWithPassword(normalizedIdentifier, password)
       const userName = authData.record?.name || ''
 
       // Check post-login redirect logic
       if (isBolaoName(userName)) {
-        navigate('/bolao', { replace: true })
+        navigate('/inicio', { replace: true })
       } else {
         navigate('/', { replace: true })
       }

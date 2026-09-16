@@ -76,6 +76,26 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, [user])
 
   const logout = () => {
+    try {
+      const keysToClear = [
+        'repress_active_bolao',
+        'repress_selected_bolao',
+        'active_bolao_id',
+        'selected_bolao_id',
+        'last_bolao_id',
+        'bolao_ativo',
+      ]
+      keysToClear.forEach((key) => {
+        try {
+          localStorage.removeItem(key)
+          sessionStorage.removeItem(key)
+        } catch {
+          /* intentionally ignored */
+        }
+      })
+    } catch {
+      /* intentionally ignored */
+    }
     pb.authStore.clear()
     setUser(null)
     setToken('')

@@ -30,10 +30,38 @@ export const ActivePoolProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   const [currentParticipante, setCurrentParticipante] = useState<Participante | null>(null)
   const [loading, setLoading] = useState<boolean>(true)
 
+  // Quando o usuário muda (login/logout), resetar estado estritamente para 'geral'
+  useEffect(() => {
+    try {
+      // Limpar chaves legadas ou possíveis persistências em storage
+      const keysToClear = [
+        'repress_active_bolao',
+        'repress_selected_bolao',
+        'active_bolao_id',
+        'selected_bolao_id',
+        'last_bolao_id',
+        'bolao_ativo',
+      ]
+      keysToClear.forEach((key) => {
+        try {
+          localStorage.removeItem(key)
+          sessionStorage.removeItem(key)
+        } catch {
+          /* intentionally ignored */
+        }
+      })
+    } catch {
+      /* intentionally ignored */
+    }
+
+    setSelectedBolaoId('geral')
+    setCurrentParticipante(null)
+  }, [user?.id])
+
   const refreshBoloes = useCallback(async () => {
     if (!user) {
       setBoloes([])
-      setSelectedBolaoId(null)
+      setSelectedBolaoId('geral')
       setCurrentParticipante(null)
       setLoading(false)
       return
@@ -46,11 +74,11 @@ export const ActivePoolProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       setBoloes(records)
 
       setSelectedBolaoId((prev) => {
-        // Se já houver uma seleção válida (seja 'geral' ou um bolão existente), manter
+        // Se já houver uma seleção válida e explicitamente setada nesta sessão
         if (prev === 'geral' || (prev && records.some((b) => b.id === prev))) {
           return prev
         }
-        // Padrão do app: 'geral' (Todas as Copas)
+        // Padrão do app: SEMPRE 'geral' (Todas as Copas)
         return 'geral'
       })
     } catch (err) {
@@ -167,10 +195,12 @@ export const ActivePoolProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       value={{
         boloes,
         activeBolao,
-        activeBolaoId: activeBolao?.id || null,
+        activeBolaoId: activeBolao?.id || 'geral',
         currentParticipante,
         loading,
-        setActiveBolaoId: setSelectedBolaoId,
+        setActiveBolaoId: (id: string) => {
+          setSelectedBolaoId(id)
+        },
         refreshBoloes,
       }}
     >
