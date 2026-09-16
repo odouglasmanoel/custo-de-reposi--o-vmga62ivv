@@ -144,6 +144,21 @@ routerAdd('GET', '/backend/v1/placar-ao-vivo', (e) => {
           liveFixtures = resLive.json.matches.map(function (m) {
             const homeScore = m.score && m.score.fullTime ? m.score.fullTime.home : null
             const awayScore = m.score && m.score.fullTime ? m.score.fullTime.away : null
+            var scorersList = []
+            if (Array.isArray(m.goals)) {
+              for (var gi = 0; gi < m.goals.length; gi++) {
+                var g = m.goals[gi]
+                var scorerName = (g.scorer && (g.scorer.name || g.scorer.shortName)) || ''
+                if (scorerName) {
+                  scorersList.push({
+                    name: scorerName,
+                    minute: g.minute || null,
+                    teamId: g.team ? g.team.id : null,
+                    teamName: g.team ? g.team.name || g.team.shortName : null,
+                  })
+                }
+              }
+            }
             return {
               provider: 'football_data',
               fixture: {
@@ -171,6 +186,7 @@ routerAdd('GET', '/backend/v1/placar-ao-vivo', (e) => {
                 home: typeof homeScore === 'number' ? homeScore : 0,
                 away: typeof awayScore === 'number' ? awayScore : 0,
               },
+              scorers: scorersList,
             }
           })
         }
@@ -201,6 +217,21 @@ routerAdd('GET', '/backend/v1/placar-ao-vivo', (e) => {
           dateFixtures = resDate.json.matches.map(function (m) {
             const homeScore = m.score && m.score.fullTime ? m.score.fullTime.home : null
             const awayScore = m.score && m.score.fullTime ? m.score.fullTime.away : null
+            var scorersList = []
+            if (Array.isArray(m.goals)) {
+              for (var gi = 0; gi < m.goals.length; gi++) {
+                var g = m.goals[gi]
+                var scorerName = (g.scorer && (g.scorer.name || g.scorer.shortName)) || ''
+                if (scorerName) {
+                  scorersList.push({
+                    name: scorerName,
+                    minute: g.minute || null,
+                    teamId: g.team ? g.team.id : null,
+                    teamName: g.team ? g.team.name || g.team.shortName : null,
+                  })
+                }
+              }
+            }
             return {
               provider: 'football_data',
               fixture: {
@@ -228,6 +259,7 @@ routerAdd('GET', '/backend/v1/placar-ao-vivo', (e) => {
                 home: typeof homeScore === 'number' ? homeScore : 0,
                 away: typeof awayScore === 'number' ? awayScore : 0,
               },
+              scorers: scorersList,
             }
           })
         }
@@ -270,6 +302,34 @@ routerAdd('GET', '/backend/v1/placar-ao-vivo', (e) => {
             const aScore = parseInt(item.intAwayScore, 10)
             const elapsed = parseInt(item.strProgress, 10)
             const st = (item.strStatus || 'LIVE').toUpperCase()
+
+            // Extrai autores de gols caso o TheSportsDB forneça strHomeGoalDetails/strAwayGoalDetails
+            var scorersList = []
+            var parseTsdbDetails = function (detailStr, teamSide) {
+              if (typeof detailStr !== 'string' || !detailStr.trim()) return
+              var parts = detailStr.split(';')
+              for (var pi = 0; pi < parts.length; pi++) {
+                var rawPart = parts[pi].trim()
+                if (!rawPart) continue
+                // Ex: "23':Neymar", "Neymar 23'", "Neymar"
+                var minMatch = rawPart.match(/(\d+)'?/)
+                var extractedMin = minMatch ? parseInt(minMatch[1], 10) : null
+                var nameClean = rawPart
+                  .replace(/^\d+'?:?/, '')
+                  .replace(/\s*\d+'?$/, '')
+                  .trim()
+                if (nameClean) {
+                  scorersList.push({
+                    name: nameClean,
+                    minute: extractedMin,
+                    teamSide: teamSide,
+                  })
+                }
+              }
+            }
+            parseTsdbDetails(item.strHomeGoalDetails, 'home')
+            parseTsdbDetails(item.strAwayGoalDetails, 'away')
+
             return {
               provider: 'thesportsdb',
               fixture: {
@@ -297,6 +357,7 @@ routerAdd('GET', '/backend/v1/placar-ao-vivo', (e) => {
                 home: isNaN(hScore) ? 0 : hScore,
                 away: isNaN(aScore) ? 0 : aScore,
               },
+              scorers: scorersList,
             }
           })
         }
@@ -323,6 +384,32 @@ routerAdd('GET', '/backend/v1/placar-ao-vivo', (e) => {
               const hScore = parseInt(item.intHomeScore, 10)
               const aScore = parseInt(item.intAwayScore, 10)
               const st = (item.strStatus || '').toUpperCase()
+
+              var scorersList = []
+              var parseTsdbDetails = function (detailStr, teamSide) {
+                if (typeof detailStr !== 'string' || !detailStr.trim()) return
+                var parts = detailStr.split(';')
+                for (var pi = 0; pi < parts.length; pi++) {
+                  var rawPart = parts[pi].trim()
+                  if (!rawPart) continue
+                  var minMatch = rawPart.match(/(\d+)'?/)
+                  var extractedMin = minMatch ? parseInt(minMatch[1], 10) : null
+                  var nameClean = rawPart
+                    .replace(/^\d+'?:?/, '')
+                    .replace(/\s*\d+'?$/, '')
+                    .trim()
+                  if (nameClean) {
+                    scorersList.push({
+                      name: nameClean,
+                      minute: extractedMin,
+                      teamSide: teamSide,
+                    })
+                  }
+                }
+              }
+              parseTsdbDetails(item.strHomeGoalDetails, 'home')
+              parseTsdbDetails(item.strAwayGoalDetails, 'away')
+
               return {
                 provider: 'thesportsdb',
                 fixture: {
@@ -350,6 +437,7 @@ routerAdd('GET', '/backend/v1/placar-ao-vivo', (e) => {
                   home: isNaN(hScore) ? 0 : hScore,
                   away: isNaN(aScore) ? 0 : aScore,
                 },
+                scorers: scorersList,
               }
             })
           }
@@ -396,7 +484,31 @@ routerAdd('GET', '/backend/v1/placar-ao-vivo', (e) => {
         timeout: 10,
       })
       if (resLive.statusCode === 200 && resLive.json && Array.isArray(resLive.json.response)) {
-        liveFixtures = resLive.json.response
+        liveFixtures = resLive.json.response.map(function (item) {
+          var scorersList = []
+          if (Array.isArray(item.events)) {
+            for (var ei = 0; ei < item.events.length; ei++) {
+              var ev = item.events[ei]
+              if (ev && ev.type === 'Goal' && ev.player && ev.player.name) {
+                scorersList.push({
+                  name: ev.player.name,
+                  minute: ev.time ? ev.time.elapsed : null,
+                  teamId: ev.team ? ev.team.id : null,
+                  teamName: ev.team ? ev.team.name : null,
+                })
+              }
+            }
+          }
+          return {
+            provider: 'api_football',
+            fixture: item.fixture,
+            teams: item.teams,
+            goals: item.goals,
+            score: item.score,
+            events: item.events,
+            scorers: scorersList,
+          }
+        })
       }
     } catch (errLive) {
       console.log(
@@ -421,7 +533,31 @@ routerAdd('GET', '/backend/v1/placar-ao-vivo', (e) => {
           timeout: 10,
         })
         if (resDate.statusCode === 200 && resDate.json && Array.isArray(resDate.json.response)) {
-          dateFixtures = resDate.json.response
+          dateFixtures = resDate.json.response.map(function (item) {
+            var scorersList = []
+            if (Array.isArray(item.events)) {
+              for (var ei = 0; ei < item.events.length; ei++) {
+                var ev = item.events[ei]
+                if (ev && ev.type === 'Goal' && ev.player && ev.player.name) {
+                  scorersList.push({
+                    name: ev.player.name,
+                    minute: ev.time ? ev.time.elapsed : null,
+                    teamId: ev.team ? ev.team.id : null,
+                    teamName: ev.team ? ev.team.name : null,
+                  })
+                }
+              }
+            }
+            return {
+              provider: 'api_football',
+              fixture: item.fixture,
+              teams: item.teams,
+              goals: item.goals,
+              score: item.score,
+              events: item.events,
+              scorers: scorersList,
+            }
+          })
         }
       } catch (errDate) {
         console.log(

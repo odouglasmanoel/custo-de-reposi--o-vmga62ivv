@@ -589,6 +589,20 @@ export default function BolaoDashboard() {
               {jogosLiberados.map((jogo) => {
                 const gameBets = palpites.filter((p) => p.jogo === jogo.id)
                 const bolaoOrigem = bolaoMap.get(jogo.bolao)
+                const matchedLive = matchGameWithApiFixtures(jogo.time_a, jogo.time_b, apiFixtures)
+
+                // 1. Título do confronto: Dinâmico (LDU 1 x 1 Palmeiras) quando há dados da API,
+                // ou estático (LDU x Palmeiras) como fallback seguro
+                const tituloConfronto = matchedLive
+                  ? `${jogo.time_a} ${matchedLive.placarA} x ${matchedLive.placarB} ${jogo.time_b}`
+                  : `${jogo.time_a} x ${jogo.time_b}`
+
+                const providerLabel =
+                  matchedLive?.provider === 'thesportsdb'
+                    ? 'TheSportsDB'
+                    : matchedLive?.provider === 'football_data'
+                      ? 'Football-Data.org'
+                      : 'API-Football'
 
                 return (
                   <div
@@ -596,65 +610,58 @@ export default function BolaoDashboard() {
                     className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-2xs"
                   >
                     {/* Header do confronto */}
-                    <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 bg-slate-50/80 px-4 py-2.5 text-xs">
-                      <div className="flex flex-wrap items-center gap-2">
-                        {bolaoOrigem && (
-                          <Badge
-                            variant="secondary"
-                            className="border border-[#CBD5E1] bg-white text-[#0F2A43] font-bold text-[10px] px-2 py-0.5"
-                          >
-                            🏆 {bolaoOrigem.nome}
-                          </Badge>
-                        )}
-                        <span className="font-bold text-sm text-[#0F172A]">
-                          {jogo.time_a} x {jogo.time_b}
-                        </span>
-                        {jogo.competicao && (
-                          <span className="text-[11px] text-slate-500 font-medium">
-                            • {jogo.competicao}
+                    <div className="border-b border-slate-100 bg-slate-50/80 px-4 py-2.5 text-xs">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <div className="flex flex-wrap items-center gap-2">
+                          {bolaoOrigem && (
+                            <Badge
+                              variant="secondary"
+                              className="border border-[#CBD5E1] bg-white text-[#0F2A43] font-bold text-[10px] px-2 py-0.5"
+                            >
+                              🏆 {bolaoOrigem.nome}
+                            </Badge>
+                          )}
+                          <span className="font-bold text-sm text-[#0F172A] tracking-tight">
+                            {tituloConfronto}
                           </span>
-                        )}
-                      </div>
+                          {jogo.competicao && (
+                            <span className="text-[11px] text-slate-500 font-medium">
+                              • {jogo.competicao}
+                            </span>
+                          )}
+                        </div>
 
-                      <div className="flex items-center gap-2">
-                        <span className="text-[11px] text-slate-500">
-                          {formatDataBR(jogo.data)} às {formatHoraBR(jogo.hora)}
-                        </span>
-                        {/* Indicador de placar ao vivo (Football-Data.org / TheSportsDB / API-Football) */}
-                        {(() => {
-                          const matched = matchGameWithApiFixtures(
-                            jogo.time_a,
-                            jogo.time_b,
-                            apiFixtures,
-                          )
-                          if (!matched) {
-                            return null
-                          }
-                          const providerLabel =
-                            matched.provider === 'thesportsdb'
-                              ? 'TheSportsDB'
-                              : matched.provider === 'football_data'
-                                ? 'Football-Data.org'
-                                : 'API-Football'
-
-                          return (
+                        <div className="flex items-center gap-2">
+                          <span className="text-[11px] text-slate-500">
+                            {formatDataBR(jogo.data)} às {formatHoraBR(jogo.hora)}
+                          </span>
+                          {/* Indicador visual / badge 'Ao Vivo' com dados da API */}
+                          {matchedLive && (
                             <Badge
                               variant="secondary"
                               className="border border-emerald-400 bg-emerald-50 text-emerald-800 text-[10px] font-bold shadow-2xs flex items-center gap-1.5 animate-pulse"
-                              title={`Placar em tempo real via ${providerLabel} (${matched.statusLong || 'Em andamento'}). Nota: Informativo, o resultado oficial é confirmado manualmente pelo Admin.`}
+                              title={`Placar em tempo real via ${providerLabel} (${matchedLive.statusLong || 'Em andamento'}). Nota: Informativo, o resultado oficial é confirmado manualmente pelo Admin.`}
                             >
                               <Radio className="h-3 w-3 text-emerald-600" />
-                              <span>{matched.displayLabel}</span>
+                              <span>{matchedLive.displayLabel}</span>
                             </Badge>
-                          )
-                        })()}
-                        <Badge
-                          variant="outline"
-                          className="border-rose-300 bg-rose-50 text-[10px] font-semibold text-rose-800"
-                        >
-                          Palpites Encerrados
-                        </Badge>
+                          )}
+                          <Badge
+                            variant="outline"
+                            className="border-rose-300 bg-rose-50 text-[10px] font-semibold text-rose-800"
+                          >
+                            Palpites Encerrados
+                          </Badge>
+                        </div>
                       </div>
+
+                      {/* 2. Autores dos gols em tempo real da API (logo abaixo do placar do confronto) */}
+                      {matchedLive && matchedLive.golsSummary && (
+                        <div className="mt-1.5 flex items-center gap-1.5 text-[11px] font-semibold text-emerald-900 bg-emerald-50/80 border border-emerald-200/80 rounded-md px-2.5 py-1 w-fit">
+                          <span className="text-emerald-700">⚽</span>
+                          <span>{matchedLive.golsSummary}</span>
+                        </div>
+                      )}
                     </div>
 
                     {/* Cards dos palpites de cada participante */}

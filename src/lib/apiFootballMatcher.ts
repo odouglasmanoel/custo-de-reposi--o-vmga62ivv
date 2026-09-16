@@ -3,6 +3,14 @@
  * e fixtures da API-Football (api-sports / RapidAPI).
  */
 
+export interface LiveScorerItem {
+  name: string
+  minute?: number | null
+  teamId?: number | string | null
+  teamName?: string | null
+  teamSide?: 'home' | 'away' | null
+}
+
 export interface ApiFootballFixture {
   provider?: 'football_data' | 'thesportsdb' | 'api_football'
   fixture?: {
@@ -35,6 +43,14 @@ export interface ApiFootballFixture {
     halftime?: { home?: number | null; away?: number | null }
     fulltime?: { home?: number | null; away?: number | null }
   }
+  events?: Array<{
+    type?: string
+    detail?: string
+    time?: { elapsed?: number | null }
+    team?: { id?: number | string; name?: string }
+    player?: { id?: number | string; name?: string }
+  }>
+  scorers?: LiveScorerItem[]
 }
 
 export interface MatchedLiveScore {
@@ -50,6 +66,8 @@ export interface MatchedLiveScore {
   elapsed: number | null
   isLive: boolean
   displayLabel: string
+  scorers: LiveScorerItem[]
+  golsSummary: string
 }
 
 /**
@@ -268,6 +286,35 @@ export function matchGameWithApiFixtures(
     displayLabel = `Fim de Jogo (API) ${placarA} x ${placarB}`
   }
 
+  // Processamento e formatação de autores dos gols
+  const rawScorers = Array.isArray(fixture.scorers) ? fixture.scorers : []
+  const scorers: LiveScorerItem[] = []
+
+  for (const s of rawScorers) {
+    if (s && s.name && s.name.trim()) {
+      scorers.push({
+        name: s.name.trim(),
+        minute: s.minute != null && !isNaN(Number(s.minute)) ? Number(s.minute) : null,
+        teamId: s.teamId ?? null,
+        teamName: s.teamName ?? null,
+        teamSide: s.teamSide ?? null,
+      })
+    }
+  }
+
+  // Monta resumo textual no formato: "Gols: Luis Segovia, Marlon Freitas" ou com minuto se disponível
+  // Ex: "Gols: Luis Segovia 23', Marlon Freitas 45'" ou "Gols: Luis Segovia, Marlon Freitas"
+  let golsSummary = ''
+  if (scorers.length > 0) {
+    const scorerTokens = scorers.map((s) => {
+      if (s.minute) {
+        return `${s.name} ${s.minute}'`
+      }
+      return s.name
+    })
+    golsSummary = `Gols: ${scorerTokens.join(', ')}`
+  }
+
   return {
     found: true,
     fixtureId: fixture.fixture?.id,
@@ -281,5 +328,7 @@ export function matchGameWithApiFixtures(
     elapsed,
     isLive,
     displayLabel,
+    scorers,
+    golsSummary,
   }
 }

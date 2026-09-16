@@ -94,7 +94,7 @@ describe('apiFootballMatcher', () => {
       expect(match?.displayLabel).toContain("AO VIVO 35' • 1 x 0")
     })
 
-    it('deve suportar dados no formato do Football-Data.org', () => {
+    it('deve suportar dados no formato do Football-Data.org com marcadores de gols', () => {
       const footballDataFixtures: ApiFootballFixture[] = [
         {
           provider: 'football_data',
@@ -107,6 +107,11 @@ describe('apiFootballMatcher', () => {
             away: { id: 11, name: 'FC Barcelona' },
           },
           goals: { home: 2, away: 1 },
+          scorers: [
+            { name: 'Vinícius Júnior', minute: 12 },
+            { name: 'Robert Lewandowski', minute: 18 },
+            { name: 'Jude Bellingham', minute: 21 },
+          ],
         },
       ]
 
@@ -118,6 +123,62 @@ describe('apiFootballMatcher', () => {
       expect(match?.placarB).toBe(1)
       expect(match?.isLive).toBe(true)
       expect(match?.displayLabel).toContain("AO VIVO 22' • 2 x 1")
+      expect(match?.scorers).toHaveLength(3)
+      expect(match?.golsSummary).toBe(
+        "Gols: Vinícius Júnior 12', Robert Lewandowski 18', Jude Bellingham 21'",
+      )
+    })
+
+    it('deve extrair marcadores formatados de API-Football / TheSportsDB', () => {
+      const fixtureWithScorers: ApiFootballFixture[] = [
+        {
+          provider: 'api_football',
+          fixture: {
+            id: 888,
+            status: { short: '2H', long: 'Second Half', elapsed: 65 },
+          },
+          teams: {
+            home: { id: 50, name: 'LDU' },
+            away: { id: 51, name: 'Palmeiras' },
+          },
+          goals: { home: 1, away: 1 },
+          scorers: [
+            { name: 'Luis Segovia', minute: 30 },
+            { name: 'Marlon Freitas', minute: 55 },
+          ],
+        },
+      ]
+
+      const match = matchGameWithApiFixtures('LDU', 'Palmeiras', fixtureWithScorers)
+      expect(match).not.toBeNull()
+      expect(match?.placarA).toBe(1)
+      expect(match?.placarB).toBe(1)
+      expect(match?.golsSummary).toBe("Gols: Luis Segovia 30', Marlon Freitas 55'")
+    })
+
+    it('deve lidar graciosamente quando não houver marcadores disponíveis', () => {
+      const fixtureWithoutScorers: ApiFootballFixture[] = [
+        {
+          provider: 'thesportsdb',
+          fixture: {
+            id: 999,
+            status: { short: '1H', long: 'Live', elapsed: 10 },
+          },
+          teams: {
+            home: { id: 70, name: 'Flamengo' },
+            away: { id: 71, name: 'Corinthians' },
+          },
+          goals: { home: 0, away: 0 },
+          scorers: [],
+        },
+      ]
+
+      const match = matchGameWithApiFixtures('Flamengo', 'Corinthians', fixtureWithoutScorers)
+      expect(match).not.toBeNull()
+      expect(match?.placarA).toBe(0)
+      expect(match?.placarB).toBe(0)
+      expect(match?.scorers).toEqual([])
+      expect(match?.golsSummary).toBe('')
     })
 
     it('deve suportar inversão de mandante/visitante', () => {
