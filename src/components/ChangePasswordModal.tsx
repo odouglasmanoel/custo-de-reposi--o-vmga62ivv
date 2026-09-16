@@ -14,6 +14,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { toast } from '@/hooks/use-toast'
+import { extractFieldErrors, getErrorMessage } from '@/lib/pocketbase/errors'
 
 interface ChangePasswordModalProps {
   open: boolean
@@ -101,24 +102,39 @@ export function ChangePasswordModal({ open, onOpenChange }: ChangePasswordModalP
     setLoading(true)
 
     try {
-      // 1. Obter e-mail para validar senha atual via authWithPassword
-      const userEmail =
-        user.email ||
-        (user.username?.includes('@')
-          ? user.username
-          : `${user.username || user.name}@repress.com.br`)
-
-      try {
-        await pb.collection('users').authWithPassword(userEmail, currentPassword)
-      } catch (authErr) {
-        console.error('Falha ao validar senha atual:', authErr)
-        setCurrentPasswordError('Senha atual incorreta.')
+      // 1. Obter ID e credenciais diretamente da sessão ativa do PocketBase
+      const authRecord = pb.authStore.record || user
+      const targetUserId = authRecord?.id
+      if (!targetUserId) {
+        setGeneralError('Sessão inválida. Faça login novamente.')
         setLoading(false)
         return
       }
 
-      // 2. Atualizar senha no PocketBase
-      await pb.collection('users').update(user.id, {
+      // 1.1 Opcional: Re-autenticar com senha atual para validação de segurança imediata no client
+      const userEmail =
+        authRecord.email ||
+        user.email ||
+        (authRecord.username?.includes('@')
+          ? authRecord.username
+          : `${authRecord.username || authRecord.name || user.name}@repress.com.br`)
+
+      if (userEmail) {
+        try {
+          await pb.collection('users').authWithPassword(userEmail, currentPassword)
+        } catch (authErr: unknown) {
+          console.error('Falha ao validar senha atual:', authErr)
+          setCurrentPasswordError('Senha atual incorreta.')
+          setLoading(false)
+          return
+        }
+      }
+
+      // 2. Atualizar senha no PocketBase via endpoint de records da collection 'users'
+      // O PocketBase exige 'oldPassword' quando um usuário autenticado atualiza sua própria senha
+      // Aceita qualquer combinação a partir de 4 caracteres (incluindo repetidos/sequenciais)
+      await pb.collection('users').update(targetUserId, {
+        oldPassword: currentPassword,
         password: newPassword,
         passwordConfirm: confirmPassword,
       })
@@ -138,7 +154,19 @@ export function ChangePasswordModal({ open, onOpenChange }: ChangePasswordModalP
       }, 1200)
     } catch (err: unknown) {
       console.error('Erro ao atualizar senha:', err)
-      setGeneralError('Não foi possível alterar a senha. Tente novamente mais tarde.')
+      const fieldErrors = extractFieldErrors(err)
+      if (fieldErrors.oldPassword) {
+        setCurrentPasswordError(fieldErrors.oldPassword)
+      }
+      if (fieldErrors.password) {
+        setNewPasswordError(fieldErrors.password)
+      }
+      if (fieldErrors.passwordConfirm) {
+        setConfirmPasswordError(fieldErrors.passwordConfirm)
+      }
+
+      const errorMsg = getErrorMessage(err)
+      setGeneralError(errorMsg || 'Não foi possível alterar a senha. Tente novamente mais tarde.')
     } finally {
       setLoading(false)
     }
