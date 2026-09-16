@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { History, Loader2, Power, RotateCcw } from 'lucide-react'
+import { History, Loader2, Lock, Power, RotateCcw, ShieldAlert } from 'lucide-react'
 import pb from '@/lib/pocketbase/client'
 import type { Bolao, Participante, Jogo, Palpite } from '@/types/bolao'
 import { useAuth } from '@/context/AuthContext'
@@ -433,32 +433,72 @@ export default function Historico() {
                           )}
 
                           {/* Per-participant predictions for this game */}
-                          {gameBets.length > 0 && (
-                            <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
-                              {gameBets.map((bet) => {
-                                const part = participantes.find((p) => p.id === bet.participante)
+                          {gameBets.length > 0 &&
+                            (() => {
+                              const podeVisualizar = jogo.resultado_finalizado || isAdmin
+
+                              if (!podeVisualizar) {
                                 return (
-                                  <div
-                                    key={bet.id}
-                                    className="rounded border border-slate-200 bg-slate-50 p-2 text-xs"
-                                  >
-                                    <div className="font-bold text-slate-800">
-                                      {part?.nome || 'Participante'}
+                                  <div className="mt-3 flex items-center justify-between rounded-lg border border-slate-200 bg-slate-50/80 px-3 py-2 text-xs text-slate-500">
+                                    <div className="flex items-center gap-2">
+                                      <Lock className="h-3.5 w-3.5 text-slate-400" />
+                                      <span>
+                                        Os palpites completos (placar e marcadores) ficam visíveis
+                                        após a conclusão da partida.
+                                      </span>
                                     </div>
-                                    <div className="text-[11px] text-slate-600">
-                                      Palpite: {bet.placar_a} x {bet.placar_b}
-                                    </div>
-                                    <div className="mt-0.5 text-[10px] text-slate-600 font-medium">
-                                      {formatPalpiteMarcadoresSummary(bet)}
-                                    </div>
-                                    <div className="mt-1 font-semibold text-emerald-700">
-                                      +{bet.pontuacao_jogo} pts
-                                    </div>
+                                    <Badge
+                                      variant="outline"
+                                      className="border-slate-300 text-[10px] text-slate-500"
+                                    >
+                                      Em sigilo
+                                    </Badge>
                                   </div>
                                 )
-                              })}
-                            </div>
-                          )}
+                              }
+
+                              return (
+                                <div className="mt-3 space-y-2">
+                                  {!jogo.resultado_finalizado && isAdmin && (
+                                    <div className="flex items-center gap-1.5 text-[11px] font-semibold text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-1">
+                                      <ShieldAlert className="h-3.5 w-3.5 shrink-0" />
+                                      <span>
+                                        Visualização antecipada exclusiva para Admin (partida ainda
+                                        não concluída).
+                                      </span>
+                                    </div>
+                                  )}
+                                  <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                                    {gameBets.map((bet) => {
+                                      const part = participantes.find(
+                                        (p) => p.id === bet.participante,
+                                      )
+                                      return (
+                                        <div
+                                          key={bet.id}
+                                          className="rounded border border-slate-200 bg-slate-50 p-2 text-xs"
+                                        >
+                                          <div className="font-bold text-slate-800">
+                                            {part?.nome || 'Participante'}
+                                          </div>
+                                          <div className="text-[11px] text-slate-600">
+                                            Palpite: {bet.placar_a} x {bet.placar_b}
+                                          </div>
+                                          <div className="mt-0.5 text-[10px] text-slate-600 font-medium">
+                                            {formatPalpiteMarcadoresSummary(bet)}
+                                          </div>
+                                          {jogo.resultado_finalizado && (
+                                            <div className="mt-1 font-semibold text-emerald-700">
+                                              +{bet.pontuacao_jogo} pts
+                                            </div>
+                                          )}
+                                        </div>
+                                      )
+                                    })}
+                                  </div>
+                                </div>
+                              )
+                            })()}
                         </div>
                       )
                     })}

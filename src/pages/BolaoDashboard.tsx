@@ -22,7 +22,13 @@ import { formatBolaoLabel, GERAL_BOLAO_ID } from '@/types/bolao'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
-import { formatDataBR, formatHoraBR, formatDateTimeBR, isPalpiteEncerrado } from '@/lib/dateUtils'
+import {
+  formatDataBR,
+  formatHoraBR,
+  formatDateTimeBR,
+  isPalpiteEncerrado,
+  isJogoHoje,
+} from '@/lib/dateUtils'
 import { formatPalpiteMarcadoresSummary } from '@/lib/scorerUtils'
 import { Users } from 'lucide-react'
 
@@ -232,11 +238,12 @@ export default function BolaoDashboard() {
     return map
   }, [allParticipantes])
 
-  // Jogos cujos palpites foram liberados (horário do jogo atingido ou jogo finalizado)
+  // Jogos cujos palpites foram liberados:
+  // SOMENTE jogos pendentes (não finalizados) cujo horário de início já passou
   const jogosLiberados = useMemo(() => {
     const targetGames = isGeral ? allJogos : jogos
     return targetGames
-      .filter((j) => j.resultado_finalizado || isPalpiteEncerrado(j.data, j.hora, nowMs))
+      .filter((j) => !j.resultado_finalizado && isPalpiteEncerrado(j.data, j.hora, nowMs))
       .sort((a, b) => {
         // Mais recentes/futuros primeiro
         const timeA = new Date(a.data).getTime()
@@ -245,18 +252,26 @@ export default function BolaoDashboard() {
       })
   }, [isGeral, allJogos, jogos, nowMs])
 
+  // Jogos de Hoje (fuso America/Sao_Paulo)
+  const jogosDeHoje = useMemo(() => {
+    const gamesToUse = isGeral ? allJogos : jogos
+    return gamesToUse
+      .filter((j) => isJogoHoje(j.data, nowMs))
+      .sort((a, b) => {
+        const horaA = a.hora || ''
+        const horaB = b.hora || ''
+        return horaA.localeCompare(horaB)
+      })
+  }, [isGeral, allJogos, jogos, nowMs])
+
   // Quick stats
   const stats = useMemo(() => {
     const gamesToUse = isGeral ? allJogos : jogos
     const registrados = gamesToUse.filter((j) => j.resultado_finalizado).length
     const pendentes = gamesToUse.filter((j) => !j.resultado_finalizado).length
-    const proximo = gamesToUse.find((j) => !j.resultado_finalizado)
     return {
       registrados,
       pendentes,
-      proximo: proximo
-        ? `${proximo.time_a} x ${proximo.time_b} (${formatDataBR(proximo.data)} às ${formatHoraBR(proximo.hora)})`
-        : '—',
     }
   }, [isGeral, allJogos, jogos])
 
@@ -428,17 +443,173 @@ export default function BolaoDashboard() {
         <Card className="rounded-[14px] border-[#E2E8F0] bg-white p-4 shadow-xs transition hover:-translate-y-0.5 hover:shadow-md">
           <div className="flex items-center justify-between">
             <div className="min-w-0 flex-1">
-              <p className="text-xs font-medium text-[#64748B]">Próximo Jogo</p>
-              <p className="mt-1 truncate text-sm font-bold text-[#0F172A]" title={stats.proximo}>
-                {stats.proximo}
-              </p>
+              <div className="flex items-center justify-between pr-2">
+                <p className="text-xs font-medium text-[#64748B]">Jogos de Hoje</p>
+                <Badge
+                  variant="outline"
+                  className="border-blue-200 bg-blue-50/60 text-[10px] font-semibold text-[#0F2A43]"
+                >
+                  {jogosDeHoje.length} jogo(s)
+                </Badge>
+              </div>
+              {jogosDeHoje.length === 0 ? (
+                <p className="mt-1 text-sm font-medium text-slate-400">
+                  Nenhum jogo agendado para hoje
+                </p>
+              ) : (
+                <div className="mt-1.5 space-y-1.5 max-h-24 overflow-y-auto pr-1">
+                  {jogosDeHoje.map((jogo) => (
+                    <div key={jogo.id} className="flex items-center justify-between gap-2 text-xs">
+                      <span className="font-bold text-[#0F172A] truncate">
+                        {jogo.time_a} x {jogo.time_b}
+                      </span>
+                      <span className="shrink-0 font-semibold text-[#0F2A43] bg-slate-100 px-1.5 py-0.5 rounded text-[11px]">
+                        {formatHoraBR(jogo.hora) || '—'}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
-            <div className="ml-2 rounded-lg bg-blue-50 p-2.5 text-[#0F2A43]">
+            <div className="ml-2 rounded-lg bg-blue-50 p-2.5 text-[#0F2A43] shrink-0 self-start">
               <Calendar className="h-5 w-5" />
             </div>
           </div>
         </Card>
       </div>
+
+      {/* Bloco: Palpites Liberados do Grupo (Posicionado entre Jogos de Hoje e a Tabela de Classificação) */}
+      <Card className="rounded-[14px] border-[#E2E8F0] bg-white p-6 shadow-xs">
+        <CardHeader className="p-0 pb-4">
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-3">
+            <div>
+              <CardTitle className="flex items-center gap-2 text-xl font-bold text-[#0F172A]">
+                <Users className="h-5 w-5 text-[#0F2A43]" />
+                Palpites Liberados do Grupo
+              </CardTitle>
+              <p className="mt-0.5 text-xs text-[#64748B]">
+                Exibição de palpites de confrontos pendentes cujos horários de início já passaram.
+              </p>
+            </div>
+            <Badge variant="outline" className="border-slate-300 text-xs text-slate-700">
+              {jogosLiberados.length} jogo(s) pendente(s) em andamento
+            </Badge>
+          </div>
+        </CardHeader>
+
+        <CardContent className="p-0">
+          {loading ? (
+            <div className="py-8 text-center text-xs text-[#64748B]">
+              Carregando palpites do grupo...
+            </div>
+          ) : jogosLiberados.length === 0 ? (
+            <div className="rounded-lg bg-slate-50 py-10 text-center text-xs text-slate-500">
+              Nenhum jogo em andamento no momento. Os palpites de cada confronto são liberados aqui
+              assim que o horário da partida iniciar e permanecem até a finalização do placar
+              definitivo.
+            </div>
+          ) : (
+            <div className="space-y-4">
+              {jogosLiberados.map((jogo) => {
+                const gameBets = palpites.filter((p) => p.jogo === jogo.id)
+                const bolaoOrigem = bolaoMap.get(jogo.bolao)
+
+                return (
+                  <div
+                    key={jogo.id}
+                    className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-2xs"
+                  >
+                    {/* Header do confronto */}
+                    <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 bg-slate-50/80 px-4 py-2.5 text-xs">
+                      <div className="flex flex-wrap items-center gap-2">
+                        {bolaoOrigem && (
+                          <Badge
+                            variant="secondary"
+                            className="border border-[#CBD5E1] bg-white text-[#0F2A43] font-bold text-[10px] px-2 py-0.5"
+                          >
+                            🏆 {bolaoOrigem.nome}
+                          </Badge>
+                        )}
+                        <span className="font-bold text-sm text-[#0F172A]">
+                          {jogo.time_a} x {jogo.time_b}
+                        </span>
+                        {jogo.competicao && (
+                          <span className="text-[11px] text-slate-500 font-medium">
+                            • {jogo.competicao}
+                          </span>
+                        )}
+                      </div>
+
+                      <div className="flex items-center gap-2">
+                        <span className="text-[11px] text-slate-500">
+                          {formatDataBR(jogo.data)} às {formatHoraBR(jogo.hora)}
+                        </span>
+                        <Badge
+                          variant="outline"
+                          className="border-rose-300 bg-rose-50 text-[10px] font-semibold text-rose-800"
+                        >
+                          Palpites Encerrados (Em andamento)
+                        </Badge>
+                      </div>
+                    </div>
+
+                    {/* Cards dos palpites de cada participante */}
+                    <div className="p-4">
+                      {gameBets.length === 0 ? (
+                        <p className="text-center text-xs italic text-slate-400 py-1">
+                          Nenhum participante palpitou para este confronto.
+                        </p>
+                      ) : (
+                        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                          {gameBets.map((bet) => {
+                            const part = participantesMap.get(bet.participante)
+                            const nomeParticipante = part?.nome || 'Participante'
+                            const isCurrentUser =
+                              participantName &&
+                              nomeParticipante.trim().toLowerCase() ===
+                                participantName.trim().toLowerCase()
+
+                            return (
+                              <div
+                                key={bet.id}
+                                className={`rounded-lg border p-3 text-xs transition shadow-2xs ${
+                                  isCurrentUser
+                                    ? 'border-emerald-300 bg-emerald-50/70 ring-1 ring-emerald-300'
+                                    : 'border-slate-200 bg-slate-50/60'
+                                }`}
+                              >
+                                <div className="flex items-center justify-between gap-1">
+                                  <span className="font-bold text-[#0F172A] truncate">
+                                    {nomeParticipante}
+                                  </span>
+                                  {isCurrentUser && (
+                                    <Badge className="bg-[#10B981] px-1 py-0 text-[9px] font-bold text-white hover:bg-[#10B981] shrink-0">
+                                      Você
+                                    </Badge>
+                                  )}
+                                </div>
+                                <div className="mt-1 text-xs font-semibold text-slate-800">
+                                  Palpite:{' '}
+                                  <strong className="text-sm font-black text-[#0F2A43]">
+                                    {bet.placar_a} x {bet.placar_b}
+                                  </strong>
+                                </div>
+                                <div className="mt-1 text-[11px] text-slate-600 font-medium leading-snug">
+                                  {formatPalpiteMarcadoresSummary(bet)}
+                                </div>
+                              </div>
+                            )
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          )}
+        </CardContent>
+      </Card>
 
       {/* Two Column Layout on Desktop: Ranking (60%) vs Actions & Archive (40%) */}
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-12">
@@ -621,160 +792,6 @@ export default function BolaoDashboard() {
           </Card>
         </div>
       </div>
-
-      {/* Seção Completa: Palpites do Grupo Liberados (A partir do horário do jogo) */}
-      <Card className="rounded-[14px] border-[#E2E8F0] bg-white p-6 shadow-xs">
-        <CardHeader className="p-0 pb-4">
-          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-3">
-            <div>
-              <CardTitle className="flex items-center gap-2 text-xl font-bold text-[#0F172A]">
-                <Users className="h-5 w-5 text-[#0F2A43]" />
-                Palpites Liberados do Grupo
-              </CardTitle>
-              <p className="mt-0.5 text-xs text-[#64748B]">
-                Exibição de palpites de todos os participantes liberados automaticamente a partir do
-                horário do jogo.
-              </p>
-            </div>
-            <Badge variant="outline" className="border-slate-300 text-xs text-slate-700">
-              {jogosLiberados.length} confronto(s) liberado(s)
-            </Badge>
-          </div>
-        </CardHeader>
-
-        <CardContent className="p-0">
-          {loading ? (
-            <div className="py-8 text-center text-xs text-[#64748B]">
-              Carregando palpites do grupo...
-            </div>
-          ) : jogosLiberados.length === 0 ? (
-            <div className="rounded-lg bg-slate-50 py-10 text-center text-xs text-slate-500">
-              Os palpites dos outros participantes permanecem em sigilo e serão exibidos aqui
-              automaticamente assim que iniciar o horário de cada partida.
-            </div>
-          ) : (
-            <div className="space-y-4">
-              {jogosLiberados.map((jogo) => {
-                const gameBets = palpites.filter((p) => p.jogo === jogo.id)
-                const bolaoOrigem = bolaoMap.get(jogo.bolao)
-                const isFinalizado = jogo.resultado_finalizado
-
-                return (
-                  <div
-                    key={jogo.id}
-                    className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-2xs"
-                  >
-                    {/* Header do confronto */}
-                    <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 bg-slate-50/80 px-4 py-2.5 text-xs">
-                      <div className="flex flex-wrap items-center gap-2">
-                        {bolaoOrigem && (
-                          <Badge
-                            variant="secondary"
-                            className="border border-[#CBD5E1] bg-white text-[#0F2A43] font-bold text-[10px] px-2 py-0.5"
-                          >
-                            🏆 {bolaoOrigem.nome}
-                          </Badge>
-                        )}
-                        <span className="font-bold text-sm text-[#0F172A]">
-                          {jogo.time_a} x {jogo.time_b}
-                        </span>
-                        {jogo.competicao && (
-                          <span className="text-[11px] text-slate-500 font-medium">
-                            • {jogo.competicao}
-                          </span>
-                        )}
-                      </div>
-
-                      <div className="flex items-center gap-2">
-                        <span className="text-[11px] text-slate-500">
-                          {formatDataBR(jogo.data)} às {formatHoraBR(jogo.hora)}
-                        </span>
-                        {isFinalizado ? (
-                          <span className="rounded bg-slate-900 px-2 py-0.5 text-xs font-black text-white">
-                            Placar Real: {jogo.placar_a} x {jogo.placar_b}
-                          </span>
-                        ) : (
-                          <Badge
-                            variant="outline"
-                            className="border-rose-300 bg-rose-50 text-[10px] font-semibold text-rose-800"
-                          >
-                            Palpites Encerrados
-                          </Badge>
-                        )}
-                      </div>
-                    </div>
-
-                    {/* Cards dos palpites de cada participante */}
-                    <div className="p-4">
-                      {gameBets.length === 0 ? (
-                        <p className="text-center text-xs italic text-slate-400 py-1">
-                          Nenhum participante palpitou para este confronto.
-                        </p>
-                      ) : (
-                        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
-                          {gameBets.map((bet) => {
-                            const part = participantesMap.get(bet.participante)
-                            const nomeParticipante = part?.nome || 'Participante'
-                            const isCurrentUser =
-                              participantName &&
-                              nomeParticipante.trim().toLowerCase() ===
-                                participantName.trim().toLowerCase()
-
-                            return (
-                              <div
-                                key={bet.id}
-                                className={`rounded-lg border p-3 text-xs transition shadow-2xs ${
-                                  isCurrentUser
-                                    ? 'border-emerald-300 bg-emerald-50/70 ring-1 ring-emerald-300'
-                                    : 'border-slate-200 bg-slate-50/60'
-                                }`}
-                              >
-                                <div className="flex items-center justify-between gap-1">
-                                  <span className="font-bold text-[#0F172A] truncate">
-                                    {nomeParticipante}
-                                  </span>
-                                  {isCurrentUser && (
-                                    <Badge className="bg-[#10B981] px-1 py-0 text-[9px] font-bold text-white hover:bg-[#10B981] shrink-0">
-                                      Você
-                                    </Badge>
-                                  )}
-                                </div>
-                                <div className="mt-1 text-xs font-semibold text-slate-800">
-                                  Palpite:{' '}
-                                  <strong className="text-sm font-black text-[#0F2A43]">
-                                    {bet.placar_a} x {bet.placar_b}
-                                  </strong>
-                                </div>
-                                <div className="mt-1 text-[11px] text-slate-600 font-medium leading-snug">
-                                  {formatPalpiteMarcadoresSummary(bet)}
-                                </div>
-                                {isFinalizado && (
-                                  <div className="mt-2 pt-1.5 border-t border-slate-200/80 flex items-center justify-between text-[11px]">
-                                    <span className="text-slate-500 font-medium">Pontos:</span>
-                                    <span
-                                      className={`font-bold ${
-                                        bet.pontuacao_jogo > 0
-                                          ? 'text-emerald-700'
-                                          : 'text-slate-500'
-                                      }`}
-                                    >
-                                      +{bet.pontuacao_jogo} pts
-                                    </span>
-                                  </div>
-                                )}
-                              </div>
-                            )
-                          })}
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                )
-              })}
-            </div>
-          )}
-        </CardContent>
-      </Card>
     </div>
   )
 }

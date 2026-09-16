@@ -215,3 +215,61 @@ export function formatHoraEncerramento(horaValue?: string | null): string {
   const { hours, minutes } = parseHoraJogo(horaValue)
   return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`
 }
+
+/**
+ * Returns today's date formatted as "YYYY-MM-DD" in America/Sao_Paulo timezone.
+ */
+export function getHojeDataSaoPaulo(nowMs: number = Date.now()): string {
+  const formatter = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/Sao_Paulo',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  })
+  return formatter.format(new Date(nowMs))
+}
+
+/**
+ * Normalizes a game date (DD/MM/YYYY, YYYY-MM-DD, or ISO) to "YYYY-MM-DD" string.
+ */
+export function normalizeDataISO(dataValue?: string | Date | null): string | null {
+  if (!dataValue) return null
+  if (dataValue instanceof Date) {
+    if (isNaN(dataValue.getTime())) return null
+    const y = dataValue.getUTCFullYear()
+    const m = String(dataValue.getUTCMonth() + 1).padStart(2, '0')
+    const d = String(dataValue.getUTCDate()).padStart(2, '0')
+    return `${y}-${m}-${d}`
+  }
+  const trimmed = dataValue.trim()
+  if (!trimmed) return null
+
+  // DD/MM/YYYY
+  const brMatch = trimmed.match(/^(\d{2})\/(\d{2})\/(\d{4})/)
+  if (brMatch) {
+    return `${brMatch[3]}-${brMatch[2]}-${brMatch[1]}`
+  }
+
+  // YYYY-MM-DD
+  const isoMatch = trimmed.match(/^(\d{4})-(\d{2})-(\d{2})/)
+  if (isoMatch) {
+    return `${isoMatch[1]}-${isoMatch[2]}-${isoMatch[3]}`
+  }
+
+  const d = new Date(trimmed)
+  if (isNaN(d.getTime())) return null
+  const y = d.getUTCFullYear()
+  const m = String(d.getUTCMonth() + 1).padStart(2, '0')
+  const day = String(d.getUTCDate()).padStart(2, '0')
+  return `${y}-${m}-${day}`
+}
+
+/**
+ * Checks if a game date is today in the America/Sao_Paulo timezone.
+ */
+export function isJogoHoje(dataValue?: string | Date | null, nowMs: number = Date.now()): boolean {
+  const normalizedGameDate = normalizeDataISO(dataValue)
+  if (!normalizedGameDate) return false
+  const hojeSaoPaulo = getHojeDataSaoPaulo(nowMs)
+  return normalizedGameDate === hojeSaoPaulo
+}
