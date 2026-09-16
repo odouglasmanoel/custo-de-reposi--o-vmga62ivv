@@ -14,7 +14,7 @@ import pb from '@/lib/pocketbase/client'
 import { useAuth } from '@/context/AuthContext'
 import { useActivePool } from '@/context/ActivePoolContext'
 import { useRealtime } from '@/hooks/use-realtime'
-import type { Jogo, Palpite } from '@/types/bolao'
+import type { Jogo, Palpite, Participante } from '@/types/bolao'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -32,11 +32,22 @@ interface PalpiteFormData {
 }
 
 function normalizeScorersArray(raw: any, goalCount: number): string[] {
-  const currentList = Array.isArray(raw)
-    ? raw.map((x) => String(x || ''))
-    : typeof raw === 'string' && raw.trim()
-      ? raw.split(',').map((s) => s.trim())
-      : []
+  let currentList: string[] = []
+  if (Array.isArray(raw)) {
+    currentList = raw.map((x) => String(x || '').trim())
+  } else if (typeof raw === 'string' && raw.trim()) {
+    // Pode ser JSON stringificado ou texto separado por vírgula
+    try {
+      const parsed = JSON.parse(raw)
+      if (Array.isArray(parsed)) {
+        currentList = parsed.map((x) => String(x || '').trim())
+      } else {
+        currentList = raw.split(',').map((s) => s.trim())
+      }
+    } catch (_) {
+      currentList = raw.split(',').map((s) => s.trim())
+    }
+  }
 
   if (goalCount <= 0) return []
   const result: string[] = []
@@ -67,16 +78,45 @@ export default function Palpites() {
   })
 
   const loadData = async () => {
-    if (!activeBolaoId || !currentParticipante) return
+    if (!activeBolaoId) return
+
+    // If currentParticipante is not yet populated from context, try resolving it directly from PB
+    let participanteId = currentParticipante?.id
+    if (!participanteId && user) {
+      const searchName =
+        participantName ||
+        (user.name as string) ||
+        (user.email ? (user.email as string).split('@')[0] : '')
+      if (searchName) {
+        try {
+          const parts = await pb.collection('participantes').getFullList<Participante>({
+            filter: `bolao = '${activeBolaoId}'`,
+          })
+          const exact = parts.find((p) => p.nome.toLowerCase() === searchName.toLowerCase())
+          const partial = parts.find(
+            (p) =>
+              p.nome.toLowerCase().includes(searchName.toLowerCase()) ||
+              searchName.toLowerCase().includes(p.nome.toLowerCase()),
+          )
+          const resolved = exact || partial || parts[0]
+          if (resolved) participanteId = resolved.id
+        } catch {
+          /* intentionally ignored */
+        }
+      }
+    }
+
     try {
       const [gamesList, myPalpites] = await Promise.all([
         pb.collection('jogos').getFullList<Jogo>({
           filter: `bolao = '${activeBolaoId}'`,
           sort: 'data,hora',
         }),
-        pb.collection('palpites').getFullList<Palpite>({
-          filter: `bolao = '${activeBolaoId}' && participante = '${currentParticipante.id}'`,
-        }),
+        participanteId
+          ? pb.collection('palpites').getFullList<Palpite>({
+              filter: `bolao = '${activeBolaoId}' && participante = '${participanteId}'`,
+            })
+          : Promise.resolve([] as Palpite[]),
       ])
 
       setJogos(gamesList)
@@ -208,7 +248,42 @@ export default function Palpites() {
   }
 
   const handleSavePalpite = async (jogo: Jogo) => {
-    if (!currentParticipante || !activeBolaoId) return
+    if (!activeBolaoId) return
+
+    // Resolve participante if missing
+    let participanteToUse = currentParticipante
+    if (!participanteToUse && user) {
+      const searchName =
+        participantName ||
+        (user.name as string) ||
+        (user.email ? (user.email as string).split('@')[0] : '')
+      if (searchName) {
+        try {
+          const parts = await pb.collection('participantes').getFullList<Participante>({
+            filter: `bolao = '${activeBolaoId}'`,
+          })
+          const exact = parts.find((p) => p.nome.toLowerCase() === searchName.toLowerCase())
+          const partial = parts.find(
+            (p) =>
+              p.nome.toLowerCase().includes(searchName.toLowerCase()) ||
+              searchName.toLowerCase().includes(p.nome.toLowerCase()),
+          )
+          participanteToUse = exact || partial || null
+        } catch {
+          /* intentionally ignored */
+        }
+      }
+    }
+
+    if (!participanteToUse) {
+      toast({
+        title: 'Participante não identificado',
+        description: 'Não foi possível encontrar seu cadastro de participante neste bolão.',
+        variant: 'destructive',
+      })
+      return
+    }
+
     const currentForm = formData[jogo.id]
 
     if (
@@ -231,62 +306,108 @@ export default function Palpites() {
       const numB = Number(currentForm.placar_b)
 
       // Only save scorers if goals > 0; trim empty values
+      // Note: Supports repeated player names (e.g. ["Pedro Raul", "Pedro Raul"] or ["Pedro Raul", "Gui Negão"])
       const gA =
         numA > 0 ? (currentForm.goleadores_a || []).map((s) => s.trim()).filter(Boolean) : []
       const gB =
         numB > 0 ? (currentForm.goleadores_b || []).map((s) => s.trim()).filter(Boolean) : []
 
-      // UPSERT robust check: check memory state or query PB for an existing bet
+      // Step 1: UPSERT Check - Always verify if a record already exists for this bolão + game + participant
       let existingRecordId: string | null = palpites[jogo.id]?.id || null
 
       if (!existingRecordId) {
         try {
-          const remoteCheck = await pb
-            .collection('palpites')
-            .getFirstListItem<Palpite>(
-              `bolao = '${activeBolaoId}' && jogo = '${jogo.id}' && participante = '${currentParticipante.id}'`,
-            )
-          if (remoteCheck) {
-            existingRecordId = remoteCheck.id
+          const remoteRecords = await pb.collection('palpites').getList<Palpite>(1, 1, {
+            filter: `bolao = '${activeBolaoId}' && jogo = '${jogo.id}' && participante = '${participanteToUse.id}'`,
+          })
+          if (remoteRecords.items.length > 0) {
+            existingRecordId = remoteRecords.items[0].id
           }
         } catch (_) {
-          // not found, proceed to create
+          // not found or error querying, proceed to creation check
         }
       }
 
+      const payload = {
+        bolao: activeBolaoId,
+        jogo: jogo.id,
+        participante: participanteToUse.id,
+        placar_a: numA,
+        placar_b: numB,
+        goleadores_a: gA, // JSON array of player names (supports repeats e.g. ["Pedro Raul", "Pedro Raul"])
+        goleadores_b: gB,
+        vencedor_penaltis: currentForm.vencedor_penaltis || 'N',
+      }
+
       if (existingRecordId) {
-        await pb.collection('palpites').update(existingRecordId, {
-          placar_a: numA,
-          placar_b: numB,
-          goleadores_a: gA,
-          goleadores_b: gB,
-          vencedor_penaltis: currentForm.vencedor_penaltis || 'N',
-        })
+        // Step 1a: Update existing record
+        try {
+          await pb.collection('palpites').update(existingRecordId, {
+            placar_a: numA,
+            placar_b: numB,
+            goleadores_a: gA,
+            goleadores_b: gB,
+            vencedor_penaltis: currentForm.vencedor_penaltis || 'N',
+          })
+        } catch (updateErr: any) {
+          // If record was deleted remotely in between or ID mismatch, fallback to create
+          if (updateErr?.status === 404) {
+            await pb.collection('palpites').create({
+              ...payload,
+              pontuacao_jogo: 0,
+              detalhamento: [],
+            })
+          } else {
+            throw updateErr
+          }
+        }
       } else {
-        await pb.collection('palpites').create({
-          bolao: activeBolaoId,
-          jogo: jogo.id,
-          participante: currentParticipante.id,
-          placar_a: numA,
-          placar_b: numB,
-          goleadores_a: gA,
-          goleadores_b: gB,
-          vencedor_penaltis: currentForm.vencedor_penaltis || 'N',
-          pontuacao_jogo: 0,
-          detalhamento: [],
-        })
+        // Step 1b: Create new record
+        try {
+          await pb.collection('palpites').create({
+            ...payload,
+            pontuacao_jogo: 0,
+            detalhamento: [],
+          })
+        } catch (createErr: any) {
+          // If a duplicate constraint occurred because someone/another tab inserted it, try update
+          const duplicateCheck = await pb
+            .collection('palpites')
+            .getFirstListItem<Palpite>(
+              `bolao = '${activeBolaoId}' && jogo = '${jogo.id}' && participante = '${participanteToUse.id}'`,
+            )
+            .catch(() => null)
+
+          if (duplicateCheck) {
+            await pb.collection('palpites').update(duplicateCheck.id, {
+              placar_a: numA,
+              placar_b: numB,
+              goleadores_a: gA,
+              goleadores_b: gB,
+              vencedor_penaltis: currentForm.vencedor_penaltis || 'N',
+            })
+          } else {
+            throw createErr
+          }
+        }
       }
 
       toast({
         title: 'Palpite salvo com sucesso!',
         description: `Palpite para ${jogo.time_a} x ${jogo.time_b} registrado.`,
       })
-      loadData()
+      await loadData()
     } catch (err: unknown) {
       console.error('Erro ao salvar palpite:', err)
+      const errorMsg =
+        err instanceof Error
+          ? err.message
+          : typeof err === 'object' && err !== null && 'message' in err
+            ? String((err as any).message)
+            : 'Falha na comunicação com o servidor'
       toast({
         title: 'Erro ao registrar palpite',
-        description: err instanceof Error ? err.message : 'Falha na comunicação com o servidor',
+        description: errorMsg,
         variant: 'destructive',
       })
     } finally {

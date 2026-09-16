@@ -70,19 +70,42 @@ export const ActivePoolProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   useEffect(() => {
     let cancelled = false
     const loadParticipante = async () => {
-      if (!user || !activeBolao || !isBolaoMember || !participantName) {
+      if (!user || !activeBolao) {
+        setCurrentParticipante(null)
+        return
+      }
+
+      // Name to search: prioritize resolved participantName, fallback to user.name or user.email prefix
+      const searchName =
+        participantName ||
+        (user.name as string) ||
+        (user.email ? (user.email as string).split('@')[0] : '')
+
+      if (!searchName) {
         setCurrentParticipante(null)
         return
       }
 
       try {
         const parts = await pb.collection('participantes').getFullList<Participante>({
-          filter: `bolao = '${activeBolao.id}' && nome ~ '${participantName}'`,
+          filter: `bolao = '${activeBolao.id}'`,
         })
 
         if (!cancelled && parts.length > 0) {
-          const exact = parts.find((p) => p.nome.toLowerCase() === participantName.toLowerCase())
-          setCurrentParticipante(exact || parts[0])
+          // Exact match case-insensitive
+          const exact = parts.find((p) => p.nome.toLowerCase() === searchName.toLowerCase())
+          if (exact) {
+            setCurrentParticipante(exact)
+            return
+          }
+
+          // Contains match
+          const partial = parts.find(
+            (p) =>
+              p.nome.toLowerCase().includes(searchName.toLowerCase()) ||
+              searchName.toLowerCase().includes(p.nome.toLowerCase()),
+          )
+          setCurrentParticipante(partial || null)
         } else if (!cancelled) {
           setCurrentParticipante(null)
         }
@@ -95,7 +118,7 @@ export const ActivePoolProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     return () => {
       cancelled = true
     }
-  }, [user, activeBolao, isBolaoMember, participantName])
+  }, [user, activeBolao, participantName])
 
   return (
     <ActivePoolContext.Provider
