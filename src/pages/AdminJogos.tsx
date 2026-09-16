@@ -24,6 +24,7 @@ import {
   parseSpreadsheet,
   importBolaoSpreadsheet,
   type ParsedParticipantScore,
+  type ParsedGame,
 } from '@/lib/spreadsheetParser'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -59,6 +60,7 @@ export default function AdminJogos() {
   // Upload Planilha states
   const [modalUpload, setModalUpload] = useState(false)
   const [parsedScores, setParsedScores] = useState<ParsedParticipantScore[]>([])
+  const [parsedGames, setParsedGames] = useState<ParsedGame[]>([])
   const [uploadFileName, setUploadFileName] = useState('')
   const [parsingSpreadsheet, setParsingSpreadsheet] = useState(false)
   const [importingSpreadsheet, setImportingSpreadsheet] = useState(false)
@@ -300,12 +302,17 @@ export default function AdminJogos() {
     setParsingSpreadsheet(true)
     setUploadError(null)
     setUploadAvisos([])
+    setParsedScores([])
+    setParsedGames([])
     try {
-      const { scores, avisos } = await parseSpreadsheet(file)
+      const { scores, games, avisos } = await parseSpreadsheet(file)
       setParsedScores(scores)
+      setParsedGames(games)
       setUploadAvisos(avisos)
-      if (scores.length === 0) {
-        setUploadError('Nenhuma pontuação identificada. Verifique os cabeçalhos da planilha.')
+      if (scores.length === 0 && games.length === 0) {
+        setUploadError(
+          'Nenhuma pontuação ou jogo identificado. Verifique os cabeçalhos da planilha.',
+        )
       }
     } catch (err: unknown) {
       console.error('Erro ao processar planilha:', err)
@@ -317,20 +324,20 @@ export default function AdminJogos() {
 
   // Confirm import into active bolão
   const handleConfirmImport = async () => {
-    if (!activeBolaoId || parsedScores.length === 0) return
-
+    if (!activeBolaoId || (parsedScores.length === 0 && parsedGames.length === 0)) return
     setImportingSpreadsheet(true)
     try {
-      const result = await importBolaoSpreadsheet(activeBolaoId, parsedScores)
+      const result = await importBolaoSpreadsheet(activeBolaoId, parsedScores, parsedGames)
       toast({
-        title: 'Importação concluída com sucesso!',
-        description: `${result.participantesAtualizados} participante(s) com pontuação atualizada. O histórico foi preservado.`,
+        title: 'Importação e Reset concluídos com sucesso!',
+        description: `${result.jogosProcessados} jogo(s) cadastrado(s), ${result.palpitesProcessados} palpite(s) e ${result.participantesAtualizados} participante(s) atualizados com a base limpa.`,
       })
       setModalUpload(false)
       setParsedScores([])
+      setParsedGames([])
       setUploadFileName('')
       if (fileInputRef.current) fileInputRef.current.value = ''
-      await refreshBoloes()
+      await Promise.all([refreshBoloes(), loadJogos()])
     } catch (err: unknown) {
       console.error('Erro ao importar planilha:', err)
       toast({
@@ -398,6 +405,7 @@ export default function AdminJogos() {
             onClick={() => {
               setUploadError(null)
               setParsedScores([])
+              setParsedGames([])
               setUploadFileName('')
               setModalUpload(true)
             }}
@@ -815,31 +823,85 @@ export default function AdminJogos() {
               </div>
             )}
 
-            {/* Preview of detected scores */}
-            {parsedScores.length > 0 && (
-              <div className="rounded-lg border border-slate-200 bg-white p-3">
-                <div className="flex items-center justify-between pb-2 border-b border-slate-100">
-                  <span className="text-xs font-bold text-slate-800">
-                    Pontuações Detectadas ({parsedScores.length} participantes):
-                  </span>
-                  <Badge
-                    variant="outline"
-                    className="border-emerald-300 bg-emerald-50 text-[10px] text-emerald-800"
-                  >
-                    Pronto para gravar
-                  </Badge>
-                </div>
-                <div className="mt-2 divide-y divide-slate-100 max-h-48 overflow-y-auto">
-                  {parsedScores.map((item, idx) => (
-                    <div key={idx} className="flex items-center justify-between py-1.5 text-xs">
-                      <span className="font-semibold text-slate-700">{item.nome}</span>
-                      <span className="font-black text-[#0F2A43]">{item.pontuacao} pts</span>
+            {/* Warning about Reset/Clear */}
+            <div className="rounded-lg border border-amber-200 bg-amber-50/70 p-3 text-xs text-amber-900">
+              <span className="font-bold">Aviso de Limpeza Prévia (Reset/Clear):</span> Antes de
+              gravar os dados do arquivo, todos os registros anteriores de{' '}
+              <strong>{activeBolao?.nome}</strong> serão limpos (pontuações acumuladas zeradas,
+              partidas e histórico de palpites antigos deletados) para evitar duplicidade.
+            </div>
+
+            {/* Preview of detected scores and games */}
+            {(parsedScores.length > 0 || parsedGames.length > 0) && (
+              <div className="space-y-3">
+                {parsedScores.length > 0 && (
+                  <div className="rounded-lg border border-slate-200 bg-white p-3">
+                    <div className="flex items-center justify-between pb-2 border-b border-slate-100">
+                      <span className="text-xs font-bold text-slate-800">
+                        Classificação Detectada ({parsedScores.length} participantes):
+                      </span>
+                      <Badge
+                        variant="outline"
+                        className="border-emerald-300 bg-emerald-50 text-[10px] text-emerald-800"
+                      >
+                        Pronto para gravar
+                      </Badge>
                     </div>
-                  ))}
-                </div>
-                <p className="mt-2 text-[10px] text-slate-500 border-t border-slate-100 pt-1.5">
-                  Esta base acumulada será gravada no bolão <strong>{activeBolao?.nome}</strong>.
-                  Novos palpites e jogos futuros utilizarão o cálculo automático normalmente.
+                    <div className="mt-2 divide-y divide-slate-100 max-h-36 overflow-y-auto">
+                      {parsedScores.map((item, idx) => (
+                        <div key={idx} className="flex items-center justify-between py-1 text-xs">
+                          <span className="font-semibold text-slate-700">{item.nome}</span>
+                          <span className="font-black text-[#0F2A43]">{item.pontuacao} pts</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {parsedGames.length > 0 && (
+                  <div className="rounded-lg border border-slate-200 bg-white p-3">
+                    <div className="flex items-center justify-between pb-2 border-b border-slate-100">
+                      <span className="text-xs font-bold text-slate-800">
+                        Partidas Históricas ({parsedGames.length} confrontos):
+                      </span>
+                      <Badge
+                        variant="outline"
+                        className="border-indigo-300 bg-indigo-50 text-[10px] text-indigo-800"
+                      >
+                        Confrontos + Palpites
+                      </Badge>
+                    </div>
+                    <div className="mt-2 divide-y divide-slate-100 max-h-40 overflow-y-auto">
+                      {parsedGames.slice(0, 15).map((game, idx) => (
+                        <div key={idx} className="flex items-center justify-between py-1 text-xs">
+                          <span className="font-semibold text-slate-700 truncate max-w-[200px]">
+                            {game.time_a} x {game.time_b}
+                          </span>
+                          <span className="font-bold text-[#0F2A43]">
+                            {game.placar_a !== undefined && game.placar_b !== undefined
+                              ? `${game.placar_a} x ${game.placar_b}`
+                              : 'Pendente'}
+                            {game.palpites && game.palpites.length > 0 && (
+                              <span className="ml-1 text-[10px] text-slate-500 font-normal">
+                                ({game.palpites.length} palpites)
+                              </span>
+                            )}
+                          </span>
+                        </div>
+                      ))}
+                      {parsedGames.length > 15 && (
+                        <div className="py-1 text-center text-[10px] text-slate-400">
+                          + {parsedGames.length - 15} confronto(s) adicional(is)
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                <p className="text-[10px] text-slate-500 pt-1">
+                  Os dados serão gravados na base limpa da competição{' '}
+                  <strong>{activeBolao?.nome}</strong>. Tanto a aba &quot;Resultados dos Jogos&quot;
+                  quanto a &quot;Tabela de Classificação&quot; serão atualizadas.
                 </p>
               </div>
             )}
@@ -858,19 +920,21 @@ export default function AdminJogos() {
               <Button
                 type="button"
                 size="sm"
-                disabled={importingSpreadsheet || parsedScores.length === 0}
+                disabled={
+                  importingSpreadsheet || (parsedScores.length === 0 && parsedGames.length === 0)
+                }
                 onClick={handleConfirmImport}
                 className="bg-emerald-600 text-xs font-semibold text-white hover:bg-emerald-700"
               >
                 {importingSpreadsheet ? (
                   <>
                     <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
-                    Gravando histórico...
+                    Limpando e Importando...
                   </>
                 ) : (
                   <>
                     <CheckCircle2 className="mr-1.5 h-3.5 w-3.5" />
-                    Confirmar e Importar
+                    Limpar Base e Importar
                   </>
                 )}
               </Button>

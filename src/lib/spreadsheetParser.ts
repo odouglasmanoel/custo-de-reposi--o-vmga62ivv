@@ -7,6 +7,15 @@ export interface ParsedParticipantScore {
   pontuacao: number
 }
 
+export interface ParsedPrediction {
+  participanteNome: string
+  placar_a: number
+  placar_b: number
+  goleadores_a?: string[]
+  goleadores_b?: string[]
+  pontos?: number
+}
+
 export interface ParsedGame {
   time_a: string
   time_b: string
@@ -14,11 +23,17 @@ export interface ParsedGame {
   placar_b?: number
   data?: string
   hora?: string
+  rodada?: string
+  finalizado?: boolean
+  gols_time_a?: Array<{ nome: string; posicao: string; quantidade: number }>
+  gols_time_b?: Array<{ nome: string; posicao: string; quantidade: number }>
+  palpites?: ParsedPrediction[]
 }
 
 export interface ImportResult {
   participantesAtualizados: number
   jogosProcessados: number
+  palpitesProcessados: number
   participantesNomes: string[]
   avisos: string[]
 }
@@ -26,7 +41,7 @@ export interface ImportResult {
 /**
  * Normalizes text removing accents, punctuation and trimming.
  */
-function cleanKey(val: string): string {
+export function cleanKey(val: string): string {
   return String(val || '')
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')
@@ -35,16 +50,13 @@ function cleanKey(val: string): string {
 }
 
 /**
- * Matches known participants (Douglas, Gabriel, Bruno, Davi) tolerance
+ * Matches known participants (Douglas, Gabriel, Bruno, Davi) with tolerance
  */
 export function matchParticipantName(rawName: string): string {
   const clean = cleanKey(rawName)
   for (const known of BOLAO_MEMBERS) {
-    if (
-      cleanKey(known) === clean ||
-      clean.includes(cleanKey(known)) ||
-      cleanKey(known).includes(clean)
-    ) {
+    const cleanKnown = cleanKey(known)
+    if (cleanKnown === clean || clean.includes(cleanKnown) || cleanKnown.includes(clean)) {
       return known
     }
   }
@@ -52,7 +64,219 @@ export function matchParticipantName(rawName: string): string {
 }
 
 /**
- * Parses an Excel or CSV file buffer and extracts participant cumulative scores and games if present.
+ * Parses score string like "2 x 1", "2x1", "2-1", "2 - 1", "2 a 1"
+ */
+function parseScoreString(val: any): { placarA: number; placarB: number } | null {
+  if (val === null || val === undefined) return null
+  const str = String(val).trim()
+  if (!str) return null
+
+  // Check pattern like "2 x 1" or "2-1" or "2:1" or "2 a 1"
+  const match = str.match(/^(\d+)\s*(?:x|[-:]|a)\s*(\d+)$/i)
+  if (match) {
+    return {
+      placarA: parseInt(match[1], 10),
+      placarB: parseInt(match[2], 10),
+    }
+  }
+  return null
+}
+
+/**
+ * Parses date/time cells into { data, hora }
+ */
+function parseDateTimeCell(val: any): { data?: string; hora?: string } {
+  if (!val) return {}
+  if (typeof val === 'number') {
+    // Excel serial date
+    try {
+      const parsedDate = XLSX.SSF.parse_date_code(val)
+      if (parsedDate) {
+        const y = parsedDate.y
+        const m = String(parsedDate.m).padStart(2, '0')
+        const d = String(parsedDate.d).padStart(2, '0')
+        const data = `${y}-${m}-${d}T00:00:00.000Z`
+        const hora = `${String(parsedDate.H || 16).padStart(2, '0')}:${String(parsedDate.M || 0).padStart(2, '0')}`
+        return { data, hora }
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+
+  const str = String(val).trim()
+  // Pattern DD/MM/YYYY or DD/MM
+  const dateMatch = str.match(/(\d{1,2})[/.-](\d{1,2})(?:[/.-](\d{2,4}))?/)
+  let data: string | undefined
+  if (dateMatch) {
+    const day = dateMatch[1].padStart(2, '0')
+    const month = dateMatch[2].padStart(2, '0')
+    const year = dateMatch[3]
+      ? dateMatch[3].length === 2
+        ? `20${dateMatch[3]}`
+        : dateMatch[3]
+      : '2024'
+    data = `${year}-${month}-${day}T12:00:00.000Z`
+  }
+
+  // Pattern HH:MM
+  const timeMatch = str.match(/(\d{1,2}):(\d{2})/)
+  let hora: string | undefined
+  if (timeMatch) {
+    hora = `${timeMatch[1].padStart(2, '0')}:${timeMatch[2]}`
+  }
+
+  return { data, hora }
+}
+
+/**
+ * Extracts goal scorers list from string cell
+ * e.g. "Pedro Raul, Gui Negão (gol contra)"
+ */
+function parseScorersString(
+  val: any,
+): Array<{ nome: string; posicao: string; quantidade: number }> {
+  if (!val) return []
+  const str = String(val).trim()
+  if (!str) return []
+
+  const parts = str
+    .split(/[,;\n]+/)
+    .map((s) => s.trim())
+    .filter(Boolean)
+  const result: Array<{ nome: string; posicao: string; quantidade: number }> = []
+
+  for (const part of parts) {
+    const isGolContra = /contra/i.test(part)
+    const isZagueiro = /zagueiro|lateral/i.test(part)
+    const isGoleiro = /goleiro/i.test(part)
+
+    let posicao = 'Atacante/Meia'
+    if (isGolContra) posicao = 'Gol Contra'
+    else if (isZagueiro) posicao = 'Zagueiro/Lateral'
+    else if (isGoleiro) posicao = 'Goleiro'
+
+    // Clean name by stripping parentheses like "(gol contra)"
+    const cleanName = part.replace(/\([^)]*\)/g, '').trim()
+    if (cleanName) {
+      result.push({
+        nome: cleanName,
+        posicao,
+        quantidade: 1,
+      })
+    }
+  }
+
+  return result
+}
+
+/**
+ * Calculates score for a prediction against a real match result according to official rules
+ */
+export function calculateMatchScore(
+  predA: number,
+  predB: number,
+  realA: number,
+  realB: number,
+  predScorersA: string[] = [],
+  predScorersB: string[] = [],
+  realScorersA: Array<{ nome: string; posicao: string; quantidade: number }> = [],
+  realScorersB: Array<{ nome: string; posicao: string; quantidade: number }> = [],
+): { pontos: number; detalhamento: string[] } {
+  let pontos = 0
+  const detalhamento: string[] = []
+
+  const getWinner = (a: number, b: number) => (a > b ? 1 : b > a ? -1 : 0)
+  const realWinner = getWinner(realA, realB)
+  const predWinner = getWinner(predA, predB)
+  const realDiff = Math.abs(realA - realB)
+  const predDiff = Math.abs(predA - predB)
+
+  const isExact = predA === realA && predB === realB
+
+  if (isExact) {
+    pontos += 8
+    detalhamento.push('Placar Exato (+8 pts)')
+  } else {
+    if (predWinner === realWinner) {
+      if (realWinner === 0) {
+        pontos += 2
+        detalhamento.push('Empate (+2 pts)')
+      } else {
+        pontos += 2
+        detalhamento.push('Vencedor (+2 pts)')
+      }
+    }
+
+    if (predDiff === realDiff && predWinner === realWinner) {
+      pontos += 1
+      detalhamento.push('Diferença de Gols (+1 pt)')
+    }
+
+    if (predA === realA || predB === realB) {
+      pontos += 1
+      detalhamento.push('Metade do Placar (+1 pt)')
+    }
+  }
+
+  // Scorers scoring
+  const allRealScorers: Array<{
+    nome: string
+    norm: string
+    posicao: string
+    points: number
+    used: boolean
+  }> = []
+
+  const addReal = (list: Array<{ nome: string; posicao: string; quantidade: number }>) => {
+    for (const item of list) {
+      const pos = (item.posicao || 'Atacante/Meia').toLowerCase()
+      let pts = 1
+      if (pos.includes('zagueiro') || pos.includes('lateral')) pts = 3
+      else if (pos.includes('goleiro')) pts = 10
+      else if (pos.includes('contra')) pts = 5
+
+      for (let i = 0; i < (item.quantidade || 1); i++) {
+        allRealScorers.push({
+          nome: item.nome,
+          norm: cleanKey(item.nome),
+          posicao: item.posicao,
+          points: pts,
+          used: false,
+        })
+      }
+    }
+  }
+
+  addReal(realScorersA)
+  addReal(realScorersB)
+
+  const allPred = [...predScorersA, ...predScorersB]
+  const matchedScorers: string[] = []
+
+  for (const p of allPred) {
+    const normP = cleanKey(p)
+    if (!normP) continue
+    const found = allRealScorers.find((rs) => !rs.used && rs.norm === normP)
+    if (found) {
+      found.used = true
+      pontos += found.points
+      matchedScorers.push(
+        `${found.nome} (+${found.points} pt${found.points > 1 ? 's' : ''} - ${found.posicao})`,
+      )
+    }
+  }
+
+  if (matchedScorers.length > 0) {
+    detalhamento.push(`Gols acertados: ${matchedScorers.join(', ')}`)
+  }
+
+  return { pontos, detalhamento }
+}
+
+/**
+ * Robust Spreadsheet Parser: extracts participant totals, individual matches,
+ * real final scores and per-participant predictions (Douglas, Gabriel, Bruno, Davi).
  */
 export async function parseSpreadsheet(file: File): Promise<{
   scores: ParsedParticipantScore[]
@@ -66,7 +290,7 @@ export async function parseSpreadsheet(file: File): Promise<{
   const scoresMap = new Map<string, number>()
   const gamesList: ParsedGame[] = []
 
-  // Iterate over sheets
+  // Iterate over all sheets in workbook
   for (const sheetName of workbook.SheetNames) {
     const sheet = workbook.Sheets[sheetName]
     if (!sheet) continue
@@ -74,15 +298,14 @@ export async function parseSpreadsheet(file: File): Promise<{
     const rows = XLSX.utils.sheet_to_json<any>(sheet, { header: 1, defval: '' })
     if (!rows || rows.length === 0) continue
 
-    // Scan rows to find participant ranking/scoring tables
-    // Common column names: "Participante", "Nome", "Apostador", "Pontos", "Pontuação", "Total", "Pts", "Score"
-    let headerRowIdx = -1
-    let colNameIdx = -1
-    let colScoreIdx = -1
-
-    for (let r = 0; r < Math.min(rows.length, 15); r++) {
+    // 1. LOOK FOR PARTICIPANT TOTALS / RANKING TABLE
+    // Columns: "Participante", "Nome", "Apostador" AND "Total", "Pontos", "Pontuação", "Pts"
+    for (let r = 0; r < Math.min(rows.length, 25); r++) {
       const row = rows[r] as any[]
       if (!Array.isArray(row)) continue
+
+      let colNameIdx = -1
+      let colScoreIdx = -1
 
       for (let c = 0; c < row.length; c++) {
         const cell = cleanKey(String(row[c] || ''))
@@ -90,7 +313,8 @@ export async function parseSpreadsheet(file: File): Promise<{
           cell === 'participante' ||
           cell === 'participantes' ||
           cell === 'nome' ||
-          cell === 'apostador'
+          cell === 'apostador' ||
+          cell === 'jogador'
         ) {
           colNameIdx = c
         }
@@ -107,53 +331,352 @@ export async function parseSpreadsheet(file: File): Promise<{
       }
 
       if (colNameIdx !== -1 && colScoreIdx !== -1) {
-        headerRowIdx = r
+        for (let nextR = r + 1; nextR < rows.length; nextR++) {
+          const rowData = rows[nextR] as any[]
+          if (!rowData || rowData.length === 0) continue
+          const rawName = String(rowData[colNameIdx] || '').trim()
+          if (!rawName) continue
+
+          const cleanN = cleanKey(rawName)
+          if (
+            cleanN === 'total' ||
+            cleanN === 'media' ||
+            cleanN === 'ranking' ||
+            cleanN === 'subtotal'
+          ) {
+            continue
+          }
+
+          const matched = matchParticipantName(rawName)
+          const rawScore = rowData[colScoreIdx]
+          if (rawScore !== '' && rawScore !== null && rawScore !== undefined) {
+            const scoreNum = parseFloat(String(rawScore).replace(',', '.'))
+            if (!isNaN(scoreNum)) {
+              scoresMap.set(matched, scoreNum)
+            }
+          }
+        }
         break
       }
     }
 
-    if (headerRowIdx !== -1 && colNameIdx !== -1 && colScoreIdx !== -1) {
-      // We found a structured ranking table!
-      for (let r = headerRowIdx + 1; r < rows.length; r++) {
-        const row = rows[r] as any[]
-        if (!row || row.length === 0) continue
-        const rawName = String(row[colNameIdx] || '').trim()
-        if (!rawName) continue
+    // Fallback totals search: Look for known member names directly adjacent to numbers
+    for (let r = 0; r < rows.length; r++) {
+      const row = rows[r] as any[]
+      if (!row) continue
 
-        // Check if name is not a subheader
-        const cleanN = cleanKey(rawName)
-        if (cleanN === 'total' || cleanN === 'media' || cleanN === 'ranking') continue
-
-        const matched = matchParticipantName(rawName)
-        const rawScore = row[colScoreIdx]
-        const scoreNum = parseFloat(String(rawScore).replace(',', '.')) || 0
-
-        scoresMap.set(matched, scoreNum)
-      }
-    } else {
-      // Fallback inspection: search for any cell matching our 4 known participants
-      // e.g. Row where column A is "Gabriel" and column B or C has a number
-      for (let r = 0; r < rows.length; r++) {
-        const row = rows[r] as any[]
-        if (!row) continue
-
-        for (let c = 0; c < row.length; c++) {
-          const val = String(row[c] || '').trim()
-          for (const member of BOLAO_MEMBERS) {
-            if (cleanKey(val) === cleanKey(member)) {
-              // Find the next numeric cell in this row or row below
-              let foundScore: number | null = null
-              for (let nc = c + 1; nc < Math.min(row.length, c + 5); nc++) {
-                const cellVal = String(row[nc] || '').trim()
-                if (cellVal !== '' && !isNaN(Number(cellVal.replace(',', '.')))) {
-                  foundScore = parseFloat(cellVal.replace(',', '.'))
-                  break
+      for (let c = 0; c < row.length; c++) {
+        const val = String(row[c] || '').trim()
+        for (const member of BOLAO_MEMBERS) {
+          if (cleanKey(val) === cleanKey(member)) {
+            // Check next 1-4 columns for a numeric value
+            for (let nc = c + 1; nc < Math.min(row.length, c + 5); nc++) {
+              const cellVal = String(row[nc] || '').trim()
+              if (cellVal !== '' && !isNaN(Number(cellVal.replace(',', '.')))) {
+                const foundNum = parseFloat(cellVal.replace(',', '.'))
+                if (!scoresMap.has(member)) {
+                  scoresMap.set(member, foundNum)
                 }
-              }
-              if (foundScore !== null && !scoresMap.has(member)) {
-                scoresMap.set(member, foundScore)
+                break
               }
             }
+          }
+        }
+      }
+    }
+
+    // 2. PARSE MATCHES / JOGOS AND PREDICTIONS
+    // Look for match tables with columns like:
+    // "Mandante" / "Time A", "Visitante" / "Time B", "Placar", "Data", "Hora", "Rodada",
+    // and participant prediction columns: "Douglas", "Gabriel", "Bruno", "Davi", etc.
+    let gameHeaderRow = -1
+    let colTimeA = -1
+    let colTimeB = -1
+    let colPlacar = -1
+    let colPlacarA = -1
+    let colPlacarB = -1
+    let colData = -1
+    let colHora = -1
+    let colRodada = -1
+    let colGolsA = -1
+    let colGolsB = -1
+    const memberCols = new Map<string, { colPred: number; colPts?: number; colScorers?: number }>()
+
+    for (let r = 0; r < rows.length; r++) {
+      const row = rows[r] as any[]
+      if (!Array.isArray(row)) continue
+
+      let foundTeamMarker = false
+      let tempColA = -1
+      let tempColB = -1
+
+      for (let c = 0; c < row.length; c++) {
+        const cell = cleanKey(String(row[c] || ''))
+        if (
+          cell === 'mandante' ||
+          cell === 'timea' ||
+          cell === 'time1' ||
+          cell === 'equipea' ||
+          cell === 'selecaoa' ||
+          cell === 'time'
+        ) {
+          tempColA = c
+        }
+        if (
+          cell === 'visitante' ||
+          cell === 'timeb' ||
+          cell === 'time2' ||
+          cell === 'equipeb' ||
+          cell === 'selecaob'
+        ) {
+          tempColB = c
+        }
+        if (cell === 'confronto' || cell === 'jogo' || cell === 'partida') {
+          // Single confrontation column like "Flamengo x Palmeiras"
+          if (tempColA === -1) tempColA = c
+        }
+      }
+
+      if (tempColA !== -1) {
+        // Found header!
+        gameHeaderRow = r
+        colTimeA = tempColA
+        colTimeB = tempColB
+
+        // Scan row headers for data, hora, placar, gols, and member predictions
+        for (let c = 0; c < row.length; c++) {
+          const rawCell = String(row[c] || '').trim()
+          const cell = cleanKey(rawCell)
+
+          if (cell === 'placar' || cell === 'resultado' || cell === 'placarfinal') {
+            colPlacar = c
+          } else if (cell === 'placara' || cell === 'golstimea' || cell === 'golsa') {
+            colPlacarA = c
+          } else if (cell === 'placarb' || cell === 'golstimeb' || cell === 'golsb') {
+            colPlacarB = c
+          } else if (cell === 'data' || cell === 'dia') {
+            colData = c
+          } else if (cell === 'hora' || cell === 'horario') {
+            colHora = c
+          } else if (cell === 'rodada' || cell === 'fase') {
+            colRodada = c
+          } else if (cell === 'autoresa' || cell === 'marcadorestimea' || cell === 'goleadoresa') {
+            colGolsA = c
+          } else if (cell === 'autoresb' || cell === 'marcadorestimeb' || cell === 'goleadoresb') {
+            colGolsB = c
+          }
+
+          // Check if column matches known member (Douglas, Gabriel, Bruno, Davi)
+          for (const member of BOLAO_MEMBERS) {
+            if (cleanKey(member) === cell || cell.includes(cleanKey(member))) {
+              memberCols.set(member, { colPred: c })
+            }
+          }
+        }
+
+        // Look at next row (r+1) in case subheaders exist like "Palpite" / "Pontos"
+        if (r + 1 < rows.length) {
+          const subRow = rows[r + 1] as any[]
+          if (Array.isArray(subRow)) {
+            for (const [member, info] of memberCols.entries()) {
+              // Check adjacent columns for pts
+              const nextC = info.colPred + 1
+              if (nextC < subRow.length) {
+                const subCell = cleanKey(String(subRow[nextC] || ''))
+                if (subCell === 'pts' || subCell === 'pontos') {
+                  info.colPts = nextC
+                }
+              }
+            }
+          }
+        }
+        break
+      }
+    }
+
+    if (gameHeaderRow !== -1 && colTimeA !== -1) {
+      // Process game rows
+      const startRow = gameHeaderRow + 1
+      for (let r = startRow; r < rows.length; r++) {
+        const row = rows[r] as any[]
+        if (!row || row.length === 0) continue
+
+        let rawA = String(row[colTimeA] || '').trim()
+        let rawB = colTimeB !== -1 ? String(row[colTimeB] || '').trim() : ''
+
+        if (!rawA) continue
+
+        // Check if rawA contains "TimeA x TimeB"
+        if (
+          !rawB &&
+          (rawA.includes(' x ') ||
+            rawA.includes(' X ') ||
+            rawA.includes(' - ') ||
+            rawA.includes(' vs '))
+        ) {
+          const parts = rawA.split(/\s*(?:x|X|-|vs)\s*/)
+          if (parts.length >= 2) {
+            rawA = parts[0].trim()
+            rawB = parts[1].trim()
+          }
+        }
+
+        // Skip headers or summary rows
+        const cleanA = cleanKey(rawA)
+        if (
+          cleanA === 'total' ||
+          cleanA === 'mandante' ||
+          cleanA === 'time' ||
+          cleanA === 'confronto'
+        ) {
+          continue
+        }
+
+        if (!rawA || !rawB) continue
+
+        // Placar
+        let placarA: number | undefined
+        let placarB: number | undefined
+        let finalizado = false
+
+        if (colPlacar !== -1 && row[colPlacar] !== '') {
+          const parsed = parseScoreString(row[colPlacar])
+          if (parsed) {
+            placarA = parsed.placarA
+            placarB = parsed.placarB
+            finalizado = true
+          }
+        } else if (colPlacarA !== -1 && colPlacarB !== -1) {
+          const valA = row[colPlacarA]
+          const valB = row[colPlacarB]
+          if (valA !== '' && valB !== '' && !isNaN(Number(valA)) && !isNaN(Number(valB))) {
+            placarA = parseInt(String(valA), 10)
+            placarB = parseInt(String(valB), 10)
+            finalizado = true
+          }
+        }
+
+        // Data / Hora
+        let dataStr: string | undefined
+        let horaStr: string | undefined
+        if (colData !== -1 && row[colData]) {
+          const dt = parseDateTimeCell(row[colData])
+          dataStr = dt.data
+          if (dt.hora) horaStr = dt.hora
+        }
+        if (colHora !== -1 && row[colHora]) {
+          const ht = parseDateTimeCell(row[colHora])
+          if (ht.hora) horaStr = ht.hora
+          else {
+            const hStr = String(row[colHora]).trim()
+            if (hStr) horaStr = hStr
+          }
+        }
+
+        const rodada =
+          colRodada !== -1 && row[colRodada] ? String(row[colRodada]).trim() : undefined
+
+        // Real scorers
+        const golsTimeA = colGolsA !== -1 ? parseScorersString(row[colGolsA]) : []
+        const golsTimeB = colGolsB !== -1 ? parseScorersString(row[colGolsB]) : []
+
+        // Member predictions
+        const palpites: ParsedPrediction[] = []
+        for (const [member, info] of memberCols.entries()) {
+          const predCell = row[info.colPred]
+          if (predCell === '' || predCell === null || predCell === undefined) continue
+
+          let pA: number | null = null
+          let pB: number | null = null
+
+          const parsedPred = parseScoreString(predCell)
+          if (parsedPred) {
+            pA = parsedPred.placarA
+            pB = parsedPred.placarB
+          }
+
+          if (pA !== null && pB !== null) {
+            let pts: number | undefined
+            if (info.colPts !== undefined && row[info.colPts] !== '') {
+              const numPts = parseFloat(String(row[info.colPts]).replace(',', '.'))
+              if (!isNaN(numPts)) pts = numPts
+            }
+
+            palpites.push({
+              participanteNome: member,
+              placar_a: pA,
+              placar_b: pB,
+              pontos: pts,
+            })
+          }
+        }
+
+        gamesList.push({
+          time_a: rawA,
+          time_b: rawB,
+          placar_a: placarA,
+          placar_b: placarB,
+          data: dataStr || new Date().toISOString(),
+          hora: horaStr || '16:00',
+          rodada,
+          finalizado,
+          gols_time_a: golsTimeA,
+          gols_time_b: golsTimeB,
+          palpites,
+        })
+      }
+    }
+  }
+
+  // 3. Fallback game search if gamesList is empty: search line-by-line for confrontation pattern
+  if (gamesList.length === 0) {
+    for (const sheetName of workbook.SheetNames) {
+      const sheet = workbook.Sheets[sheetName]
+      if (!sheet) continue
+      const rows = XLSX.utils.sheet_to_json<any>(sheet, { header: 1, defval: '' })
+      if (!rows) continue
+
+      for (let r = 0; r < rows.length; r++) {
+        const row = rows[r] as any[]
+        if (!row || row.length === 0) continue
+
+        for (let c = 0; c < row.length; c++) {
+          const cellStr = String(row[c] || '').trim()
+          // Check for "Flamengo x Palmeiras" pattern
+          const matchX = cellStr.match(/^([A-Za-zÀ-ÿ0-9\s.-]+)\s+[xX]\s+([A-Za-zÀ-ÿ0-9\s.-]+)$/)
+          if (matchX && matchX[1].trim() && matchX[2].trim()) {
+            const timeA = matchX[1].trim()
+            const timeB = matchX[2].trim()
+
+            // Skip if this is a subheader
+            if (cleanKey(timeA) === 'time' || cleanKey(timeB) === 'time') continue
+
+            // Look for score in adjacent cells
+            let placarA: number | undefined
+            let placarB: number | undefined
+            let finalizado = false
+
+            for (let nc = c + 1; nc < Math.min(row.length, c + 4); nc++) {
+              const parsed = parseScoreString(row[nc])
+              if (parsed) {
+                placarA = parsed.placarA
+                placarB = parsed.placarB
+                finalizado = true
+                break
+              }
+            }
+
+            gamesList.push({
+              time_a: timeA,
+              time_b: timeB,
+              placar_a: placarA,
+              placar_b: placarB,
+              data: new Date().toISOString(),
+              hora: '16:00',
+              finalizado,
+              palpites: [],
+            })
+            break
           }
         }
       }
@@ -168,7 +691,7 @@ export async function parseSpreadsheet(file: File): Promise<{
 
   if (scores.length === 0) {
     avisos.push(
-      'Nenhuma pontuação de participante pôde ser identificada automaticamente no formato padrão. Verifique se o arquivo possui as colunas "Participante" e "Pontos/Total".',
+      'Nenhuma pontuação acumulada de participante pôde ser identificada na aba de ranking. Verifique os cabeçalhos ou dados do arquivo.',
     )
   }
 
@@ -176,42 +699,87 @@ export async function parseSpreadsheet(file: File): Promise<{
 }
 
 /**
- * Imports parsed spreadsheet data directly into PocketBase for a specific bolão.
- * Preserves cumulative scores without position-based recalculation.
- * Idempotent: updates existing participants and pool timestamp.
+ * Executes a clean Reset/Clear of previous data for this specific bolão:
+ * 1. Deletes all previous palpites of this bolão.
+ * 2. Deletes all previous games of this bolão.
+ * 3. Resets pontos_importados and pontuacao_total to 0 for all participants of this bolão.
+ */
+export async function resetBolaoData(bolaoId: string): Promise<{
+  palpitesDeletados: number
+  jogosDeletados: number
+}> {
+  // 1. Delete all palpites belonging to this bolão
+  const palpites = await pb.collection('palpites').getFullList({
+    filter: `bolao = '${bolaoId}'`,
+  })
+  let palpitesDeletados = 0
+  for (const p of palpites) {
+    try {
+      await pb.collection('palpites').delete(p.id)
+      palpitesDeletados++
+    } catch {
+      /* ignore deletion errors */
+    }
+  }
+
+  // 2. Delete all jogos belonging to this bolão
+  const jogos = await pb.collection('jogos').getFullList({
+    filter: `bolao = '${bolaoId}'`,
+  })
+  let jogosDeletados = 0
+  for (const j of jogos) {
+    try {
+      await pb.collection('jogos').delete(j.id)
+      jogosDeletados++
+    } catch {
+      /* ignore deletion errors */
+    }
+  }
+
+  // 3. Reset participants' imported and total points to 0
+  const participantes = await pb.collection('participantes').getFullList({
+    filter: `bolao = '${bolaoId}'`,
+  })
+  for (const part of participantes) {
+    try {
+      await pb.collection('participantes').update(part.id, {
+        pontos_importados: 0,
+        pontuacao_total: 0,
+      })
+    } catch {
+      /* ignore update errors */
+    }
+  }
+
+  return { palpitesDeletados, jogosDeletados }
+}
+
+/**
+ * Imports parsed spreadsheet data with complete Reset/Clear:
+ * - Resets old palpites and games for this pool
+ * - Inserts all historical games with their real scores and goals
+ * - Inserts individual predictions for each participant (Douglas, Gabriel, Bruno, Davi)
+ * - Updates participants with the cumulative points from the file (pontos_importados)
  */
 export async function importBolaoSpreadsheet(
   bolaoId: string,
   scores: ParsedParticipantScore[],
+  games: ParsedGame[] = [],
 ): Promise<ImportResult> {
   const avisos: string[] = []
   let participantesAtualizados = 0
+  let jogosProcessados = 0
+  let palpitesProcessados = 0
   const participantesNomes: string[] = []
 
-  // 1. Fetch current participants and palpites of this bolão
-  const [existingParts, existingPalpites, existingJogos] = await Promise.all([
-    pb.collection('participantes').getFullList<any>({
-      filter: `bolao = '${bolaoId}'`,
-    }),
-    pb.collection('palpites').getFullList<any>({
-      filter: `bolao = '${bolaoId}'`,
-    }),
-    pb.collection('jogos').getFullList<any>({
-      filter: `bolao = '${bolaoId}'`,
-    }),
-  ])
+  // 1. Mandatory RESET/CLEAR of previous data for this specific pool
+  await resetBolaoData(bolaoId)
 
-  const finishedGameIds = new Set(
-    existingJogos.filter((j) => j.resultado_finalizado).map((j) => j.id),
-  )
+  // 2. Fetch or create participants for this pool (ensure Douglas, Gabriel, Bruno, Davi exist)
+  let existingParts = await pb.collection('participantes').getFullList<any>({
+    filter: `bolao = '${bolaoId}'`,
+  })
 
-  const calcPalpitesTotalForPart = (partId: string): number => {
-    return existingPalpites
-      .filter((p) => p.participante === partId && finishedGameIds.has(p.jogo))
-      .reduce((acc, cur) => acc + (Number(cur.pontuacao_jogo) || 0), 0)
-  }
-
-  // Ensure default 4 members exist if not present
   for (const member of BOLAO_MEMBERS) {
     const found = existingParts.find((p) => cleanKey(p.nome) === cleanKey(member))
     if (!found) {
@@ -224,54 +792,190 @@ export async function importBolaoSpreadsheet(
         })
         existingParts.push(created as any)
       } catch {
-        /* intentionally ignored */
+        /* ignore */
       }
     }
   }
 
-  // 2. Update each participant score according to the spreadsheet
-  for (const item of scores) {
-    const matched = existingParts.find((p) => cleanKey(p.nome) === cleanKey(item.nome))
-    if (matched) {
-      const livePalpitesPoints = calcPalpitesTotalForPart(matched.id)
-      const importedScore = Number(item.pontuacao) || 0
-      await pb.collection('participantes').update(matched.id, {
-        pontos_importados: importedScore,
-        pontuacao_total: importedScore + livePalpitesPoints,
-      })
-      participantesAtualizados++
-      participantesNomes.push(`${matched.nome}: ${item.pontuacao} pts`)
-    } else {
-      // Create new participant for this bolao
+  // Also create any additional participant mentioned in scores
+  for (const sc of scores) {
+    const matched = existingParts.find((p) => cleanKey(p.nome) === cleanKey(sc.nome))
+    if (!matched) {
       try {
-        const importedScore = Number(item.pontuacao) || 0
         const created = await pb.collection('participantes').create({
           bolao: bolaoId,
-          nome: item.nome,
-          pontos_importados: importedScore,
-          pontuacao_total: importedScore,
+          nome: sc.nome,
+          pontos_importados: 0,
+          pontuacao_total: 0,
         })
         existingParts.push(created as any)
-        participantesAtualizados++
-        participantesNomes.push(`${item.nome} (Novo): ${item.pontuacao} pts`)
-      } catch (err: any) {
-        avisos.push(`Não foi possível cadastrar ${item.nome}: ${err.message}`)
+      } catch {
+        /* ignore */
       }
     }
   }
 
-  // 3. Update bolão's ultima_atualizacao
+  // Reload participants to have accurate IDs
+  existingParts = await pb.collection('participantes').getFullList<any>({
+    filter: `bolao = '${bolaoId}'`,
+  })
+
+  // 3. Create all games and their individual participant predictions
+  for (const gameData of games) {
+    try {
+      const isFinalizado =
+        gameData.finalizado ||
+        (gameData.placar_a !== undefined &&
+          gameData.placar_a !== null &&
+          gameData.placar_b !== undefined &&
+          gameData.placar_b !== null)
+
+      const placarA =
+        isFinalizado && gameData.placar_a !== undefined ? Number(gameData.placar_a) : null
+      const placarB =
+        isFinalizado && gameData.placar_b !== undefined ? Number(gameData.placar_b) : null
+
+      const createdGame = await pb.collection('jogos').create({
+        bolao: bolaoId,
+        time_a: gameData.time_a,
+        time_b: gameData.time_b,
+        data: gameData.data || new Date().toISOString(),
+        hora: gameData.hora || '16:00',
+        placar_a: placarA,
+        placar_b: placarB,
+        resultado_finalizado: isFinalizado,
+        tem_penaltis: false,
+        vencedor_penaltis: '',
+        gols_time_a: gameData.gols_time_a || [],
+        gols_time_b: gameData.gols_time_b || [],
+      })
+      jogosProcessados++
+
+      // Create individual participant predictions if present
+      if (Array.isArray(gameData.palpites) && gameData.palpites.length > 0) {
+        for (const pred of gameData.palpites) {
+          const matchedPart = existingParts.find(
+            (p) => cleanKey(p.nome) === cleanKey(pred.participanteNome),
+          )
+          if (!matchedPart) continue
+
+          let pontuacaoJogo = pred.pontos !== undefined ? pred.pontos : 0
+          let detalhamento: string[] = []
+
+          // If final match score exists and points not explicitly provided, calculate score
+          if (isFinalizado && placarA !== null && placarB !== null && pred.pontos === undefined) {
+            const calc = calculateMatchScore(
+              pred.placar_a,
+              pred.placar_b,
+              placarA,
+              placarB,
+              pred.goleadores_a || [],
+              pred.goleadores_b || [],
+              gameData.gols_time_a || [],
+              gameData.gols_time_b || [],
+            )
+            pontuacaoJogo = calc.pontos
+            detalhamento = calc.detalhamento
+          } else if (pred.pontos !== undefined) {
+            detalhamento = [`Pontos do arquivo: ${pred.pontos} pts`]
+          }
+
+          try {
+            await pb.collection('palpites').create({
+              bolao: bolaoId,
+              jogo: createdGame.id,
+              participante: matchedPart.id,
+              placar_a: pred.placar_a,
+              placar_b: pred.placar_b,
+              goleadores_a: pred.goleadores_a || [],
+              goleadores_b: pred.goleadores_b || [],
+              vencedor_penaltis: 'N',
+              pontuacao_jogo: pontuacaoJogo,
+              detalhamento,
+            })
+            palpitesProcessados++
+          } catch (palpiteErr: any) {
+            console.error('Erro ao gravar palpite individual:', palpiteErr)
+          }
+        }
+      }
+    } catch (gameErr: any) {
+      avisos.push(`Erro ao criar jogo ${gameData.time_a} x ${gameData.time_b}: ${gameErr.message}`)
+    }
+  }
+
+  // 4. Update participants' pontos_importados from the spreadsheet totals
+  // Fetch freshly created palpites of this bolao to compute dynamic live points
+  const currentPalpites = await pb.collection('palpites').getFullList<any>({
+    filter: `bolao = '${bolaoId}'`,
+  })
+
+  // If the spreadsheet had cumulative ranking totals, store them in pontos_importados.
+  // If no scores tab was found but matches had points, derive or set accordingly.
+  for (const part of existingParts) {
+    const scoreItem = scores.find((s) => cleanKey(s.nome) === cleanKey(part.nome))
+    let importedPts = 0
+
+    if (scoreItem) {
+      importedPts = Number(scoreItem.pontuacao) || 0
+    } else if (scores.length === 0) {
+      // If file only had match results with predictions and no totals tab,
+      // sum up predictions points as the base
+      const sumBets = currentPalpites
+        .filter((p) => p.participante === part.id)
+        .reduce((acc, p) => acc + (Number(p.pontuacao_jogo) || 0), 0)
+      importedPts = sumBets
+    }
+
+    // Dynamic sum: if importedPts comes from the total ranking tab, set pontos_importados = importedPts.
+    // If games were also created, avoid double counting:
+    // If the file explicitly gave a total ranking, pontos_importados takes that total.
+    // To ensure the leaderboard reflects the exact total from the file:
+    const betsTotal = currentPalpites
+      .filter((p) => p.participante === part.id)
+      .reduce((acc, p) => acc + (Number(p.pontuacao_jogo) || 0), 0)
+
+    // When file gives both match bets and a total ranking table:
+    // pontos_importados = total ranking from file.
+    // Dashboard formula sums importedPts + sumPalpites (where game is finished).
+    // If games are already imported from file, to prevent double counting:
+    // If betsTotal > 0 and importedPts >= betsTotal, importedPts can be adjusted or kept consistent.
+    // Per requirement: "A pontuação acumulada por participante vai em pontos_importados conforme o total da planilha; a soma dinâmica exibida continua sendo palpites + pontos_importados."
+    // If games were imported with pontuacao_jogo, we adjust pontos_importados so that:
+    // pontos_importados + betsTotal = total da planilha (or importedPts = total da planilha if betsTotal == 0).
+    const adjustedImportedPts =
+      importedPts > betsTotal && betsTotal > 0
+        ? importedPts - betsTotal
+        : importedPts > 0
+          ? importedPts
+          : 0
+
+    try {
+      await pb.collection('participantes').update(part.id, {
+        pontos_importados: adjustedImportedPts,
+        pontuacao_total: adjustedImportedPts + betsTotal,
+      })
+      participantesAtualizados++
+      const finalExibido = adjustedImportedPts + betsTotal
+      participantesNomes.push(`${part.nome}: ${finalExibido} pts`)
+    } catch (partErr: any) {
+      avisos.push(`Erro ao atualizar participante ${part.nome}: ${partErr.message}`)
+    }
+  }
+
+  // 5. Update bolão's ultima_atualizacao
   try {
     await pb.collection('boloes').update(bolaoId, {
       ultima_atualizacao: new Date().toISOString(),
     })
   } catch {
-    /* intentionally ignored */
+    /* ignore */
   }
 
   return {
     participantesAtualizados,
-    jogosProcessados: 0,
+    jogosProcessados,
+    palpitesProcessados,
     participantesNomes,
     avisos,
   }
