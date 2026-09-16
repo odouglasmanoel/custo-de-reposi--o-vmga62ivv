@@ -3,7 +3,7 @@ migrate(
     const palpitesCol = app.findCollectionByNameOrId('palpites')
 
     // Regras de acesso explícitas e permissivas para usuários autenticados
-    // Permitir list, view, create e update para qualquer usuário autenticado (incluindo Douglas e participantes)
+    // Regras de acesso para usuários autenticados (participantes e administradores)
     palpitesCol.listRule = "@request.auth.id != ''"
     palpitesCol.viewRule = "@request.auth.id != ''"
     palpitesCol.createRule = "@request.auth.id != ''"
