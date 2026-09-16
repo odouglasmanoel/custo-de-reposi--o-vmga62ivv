@@ -4,6 +4,7 @@ migrate(
     const passwordField = users.fields.getByName('password')
     if (passwordField) {
       passwordField.min = 4
+      passwordField.pattern = ''
     }
     app.save(users)
   },
@@ -12,6 +13,7 @@ migrate(
     const passwordField = users.fields.getByName('password')
     if (passwordField) {
       passwordField.min = 8
+      passwordField.pattern = ''
     }
     app.save(users)
   },
