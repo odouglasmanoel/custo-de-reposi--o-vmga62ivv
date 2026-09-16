@@ -45,13 +45,14 @@ export const ActivePoolProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       })
       setBoloes(records)
 
-      if (records.length > 0) {
-        setSelectedBolaoId((prev) => {
-          if (prev && records.some((b) => b.id === prev)) return prev
-          const active = records.find((b) => b.ativo)
-          return active ? active.id : records[0].id
-        })
-      }
+      setSelectedBolaoId((prev) => {
+        // Se já houver uma seleção válida (seja 'geral' ou um bolão existente), manter
+        if (prev === 'geral' || (prev && records.some((b) => b.id === prev))) {
+          return prev
+        }
+        // Padrão do app: 'geral' (Todas as Copas)
+        return 'geral'
+      })
     } catch (err) {
       console.error('Erro ao carregar bolões:', err)
     } finally {

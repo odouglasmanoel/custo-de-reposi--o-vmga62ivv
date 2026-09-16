@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
+import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import {
   Trophy,
   Calendar,
@@ -28,6 +28,20 @@ export default function BolaoDashboard() {
   const { user, isAdmin, participantName } = useAuth()
   const { boloes, activeBolao, activeBolaoId, setActiveBolaoId } = useActivePool()
   const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
+
+  const bolaoQueryParam = searchParams.get('bolao')
+
+  // Ao abrir /inicio ou /bolao: se houver ?bolao=..., respeitar; caso contrário, garantir 'geral' como padrão
+  useEffect(() => {
+    if (bolaoQueryParam) {
+      if (activeBolaoId !== bolaoQueryParam) {
+        setActiveBolaoId(bolaoQueryParam)
+      }
+    } else if (!activeBolaoId || activeBolaoId !== GERAL_BOLAO_ID) {
+      setActiveBolaoId(GERAL_BOLAO_ID)
+    }
+  }, [bolaoQueryParam])
 
   const [participantes, setParticipantes] = useState<Participante[]>([])
   const [allParticipantes, setAllParticipantes] = useState<Participante[]>([])
@@ -55,7 +69,7 @@ export default function BolaoDashboard() {
     if (!activeBolaoId) return
     try {
       if (activeBolaoId === GERAL_BOLAO_ID) {
-        // Carregar dados de todas as copas (ativas e encerradas)
+        // Carregar dados de todas as copas (ativas e encerradas) em apenas 3 chamadas
         const [allParts, allGames, allPredictions] = await Promise.all([
           pb.collection('participantes').getFullList<Participante>({
             sort: 'nome',
@@ -71,26 +85,22 @@ export default function BolaoDashboard() {
         setJogos(allGames)
         setPalpites(allPredictions)
       } else {
-        // Carregar dados da copa selecionada e também manter globais para estatísticas consistentes
-        const [partList, jogosList, palpitesList, globalParts, globalGames] = await Promise.all([
+        // Otimização: buscar listas globais uma única vez e derivar as listas filtradas do bolão em memória,
+        // eliminando 2 queries duplicadas contra o PocketBase no mount e a cada atualização
+        const [globalParts, globalGames, palpitesList] = await Promise.all([
           pb.collection('participantes').getFullList<Participante>({
-            filter: `bolao = '${activeBolaoId}'`,
             sort: 'nome',
           }),
           pb.collection('jogos').getFullList<Jogo>({
-            filter: `bolao = '${activeBolaoId}'`,
             sort: 'data,hora',
           }),
           pb.collection('palpites').getFullList<Palpite>({
             filter: `bolao = '${activeBolaoId}'`,
           }),
-          pb.collection('participantes').getFullList<Participante>({
-            sort: 'nome',
-          }),
-          pb.collection('jogos').getFullList<Jogo>({
-            sort: 'data,hora',
-          }),
         ])
+        const partList = globalParts.filter((p) => p.bolao === activeBolaoId)
+        const jogosList = globalGames.filter((j) => j.bolao === activeBolaoId)
+
         setParticipantes(partList)
         setJogos(jogosList)
         setPalpites(palpitesList)

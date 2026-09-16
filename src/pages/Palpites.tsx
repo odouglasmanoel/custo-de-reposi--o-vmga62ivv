@@ -76,7 +76,10 @@ export default function Palpites() {
   const [searchParams, setSearchParams] = useSearchParams()
 
   const isGeralParam = searchParams.get('geral') === '1' || activeBolaoId === GERAL_BOLAO_ID
-  const pendentesParam = searchParams.get('pendentes') === '1'
+  const pendentesRaw = searchParams.get('pendentes')
+  // Padrão: true (Apenas Pendentes ativado por padrão em todas as copas e na visão geral)
+  // Caso o usuário acesse explicitamente ?pendentes=0, desativa; se ?pendentes=1 ou omitido, inicia ativado (true)
+  const initialPendentes = pendentesRaw === null ? true : pendentesRaw !== '0'
 
   const [jogos, setJogos] = useState<Jogo[]>([])
   const [allBoloes, setAllBoloes] = useState<Bolao[]>([])
@@ -86,7 +89,7 @@ export default function Palpites() {
   const [editingGames, setEditingGames] = useState<Record<string, boolean>>({})
   const [savingGameId, setSavingGameId] = useState<string | null>(null)
   const [expandedDetails, setExpandedDetails] = useState<Record<string, boolean>>({})
-  const [filterPendentes, setFilterPendentes] = useState<boolean>(pendentesParam)
+  const [filterPendentes, setFilterPendentes] = useState<boolean>(initialPendentes)
   const [loading, setLoading] = useState(true)
   const [nowMs, setNowMs] = useState<number>(Date.now())
 
@@ -98,12 +101,12 @@ export default function Palpites() {
     return () => clearInterval(timer)
   }, [])
 
-  // Atualizar filtro de pendentes se a query string mudar
+  // Sincronizar filtro se a query string mudar na navegação
   useEffect(() => {
-    if (pendentesParam) {
-      setFilterPendentes(true)
+    if (pendentesRaw !== null) {
+      setFilterPendentes(pendentesRaw !== '0')
     }
-  }, [pendentesParam])
+  }, [pendentesRaw])
 
   useRealtime<Jogo>('jogos', () => {
     loadData()
@@ -130,7 +133,7 @@ export default function Palpites() {
       setAllBoloes(loadedBoloes)
 
       if (isGeralParam) {
-        // MODO GERAL: Carregar todos os jogos de todas as copas e os palpites do usuário
+        // MODO GERAL: Carregar jogos e participantes em paralelo
         const [allGames, allParts] = await Promise.all([
           pb.collection('jogos').getFullList<Jogo>({
             sort: 'data,hora',
@@ -155,11 +158,13 @@ export default function Palpites() {
 
         const myPartIds = myParts.map((p) => p.id)
 
-        // Buscar palpites do usuário em todas as copas
+        // Buscar palpites do usuário em todas as copas com filtro no backend se houver IDs
         let myPalpites: Palpite[] = []
         if (myPartIds.length > 0) {
-          myPalpites = await pb.collection('palpites').getFullList<Palpite>()
-          myPalpites = myPalpites.filter((p) => myPartIds.includes(p.participante))
+          const filterQuery = myPartIds.map((id) => `participante = '${id}'`).join(' || ')
+          myPalpites = await pb.collection('palpites').getFullList<Palpite>({
+            filter: filterQuery,
+          })
         }
 
         setJogos(allGames)
@@ -587,13 +592,14 @@ export default function Palpites() {
             variant={filterPendentes ? 'default' : 'outline'}
             size="sm"
             onClick={() => {
-              setFilterPendentes(!filterPendentes)
+              const nextState = !filterPendentes
+              setFilterPendentes(nextState)
               setSearchParams((prev) => {
                 const updated = new URLSearchParams(prev)
-                if (!filterPendentes) {
+                if (nextState) {
                   updated.set('pendentes', '1')
                 } else {
-                  updated.delete('pendentes')
+                  updated.set('pendentes', '0')
                 }
                 return updated
               })
@@ -614,14 +620,11 @@ export default function Palpites() {
         </div>
       </div>
 
-      {filterPendentes && (
+      {filterPendentes ? (
         <div className="flex items-center justify-between rounded-lg border border-amber-200 bg-amber-50 px-4 py-2.5 text-xs text-amber-900">
           <div className="flex items-center gap-2">
             <Clock className="h-4 w-4 text-amber-700 shrink-0" />
-            <span>
-              Exibindo apenas <strong>jogos pendentes</strong> para registrar ou editar seus
-              palpites.
-            </span>
+            <span>Exibindo apenas jogos pendentes para registrar ou editar seus palpites.</span>
           </div>
           <button
             type="button"
@@ -629,13 +632,31 @@ export default function Palpites() {
               setFilterPendentes(false)
               setSearchParams((prev) => {
                 const updated = new URLSearchParams(prev)
-                updated.delete('pendentes')
+                updated.set('pendentes', '0')
                 return updated
               })
             }}
             className="text-xs font-bold text-amber-900 underline hover:text-amber-950"
           >
             Ver todos os jogos
+          </button>
+        </div>
+      ) : (
+        <div className="flex items-center justify-between rounded-lg border border-slate-200 bg-slate-50 px-4 py-2 text-xs text-slate-700">
+          <span>Exibindo todos os jogos (encerrados e pendentes).</span>
+          <button
+            type="button"
+            onClick={() => {
+              setFilterPendentes(true)
+              setSearchParams((prev) => {
+                const updated = new URLSearchParams(prev)
+                updated.set('pendentes', '1')
+                return updated
+              })
+            }}
+            className="text-xs font-bold text-[#0F2A43] underline hover:text-slate-950"
+          >
+            Apenas pendentes
           </button>
         </div>
       )}
