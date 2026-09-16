@@ -36,7 +36,7 @@ import {
   isPalpiteEncerrado,
   formatHoraEncerramento,
 } from '@/lib/dateUtils'
-import { formatPalpiteMarcadoresSummary } from '@/lib/scorerUtils'
+import { formatPalpiteMarcadoresSummary, getPalpiteMarcadoresPorTime } from '@/lib/scorerUtils'
 
 interface PalpiteFormData {
   placar_a: number | string
@@ -897,9 +897,52 @@ export default function Palpites() {
                                       {bet.placar_a} x {bet.placar_b}
                                     </strong>
                                   </div>
-                                  <div className="mt-1 text-[11px] text-slate-600 font-medium leading-snug">
-                                    {formatPalpiteMarcadoresSummary(bet)}
-                                  </div>
+                                  {(() => {
+                                    const splitPalpite = getPalpiteMarcadoresPorTime(bet)
+                                    const is0x0 =
+                                      splitPalpite.placarA === 0 && splitPalpite.placarB === 0
+
+                                    if (is0x0) {
+                                      return (
+                                        <div className="mt-1 text-[10px] text-slate-400 italic">
+                                          Sem marcadores (0x0)
+                                        </div>
+                                      )
+                                    }
+
+                                    return (
+                                      <div className="mt-1.5 space-y-0.5 border-t border-slate-200/60 pt-1 text-[11px] leading-snug">
+                                        <div className="truncate text-slate-700">
+                                          <span className="font-semibold text-slate-800">
+                                            Gols Mandante:
+                                          </span>{' '}
+                                          <span
+                                            className={
+                                              splitPalpite.labelA === '-'
+                                                ? 'text-slate-400'
+                                                : 'text-slate-900 font-medium'
+                                            }
+                                          >
+                                            {splitPalpite.labelA}
+                                          </span>
+                                        </div>
+                                        <div className="truncate text-slate-700">
+                                          <span className="font-semibold text-slate-800">
+                                            Gols Visitante:
+                                          </span>{' '}
+                                          <span
+                                            className={
+                                              splitPalpite.labelB === '-'
+                                                ? 'text-slate-400'
+                                                : 'text-slate-900 font-medium'
+                                            }
+                                          >
+                                            {splitPalpite.labelB}
+                                          </span>
+                                        </div>
+                                      </div>
+                                    )
+                                  })()}
                                   {finalizado && (
                                     <div className="mt-1.5 pt-1.5 border-t border-slate-100 flex items-center justify-between text-[11px]">
                                       <span className="text-slate-500 font-medium">Pontos:</span>

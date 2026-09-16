@@ -10,7 +10,11 @@ import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { formatDataBR, formatHoraBR, formatDateTimeBR } from '@/lib/dateUtils'
-import { formatPalpiteMarcadoresSummary } from '@/lib/scorerUtils'
+import {
+  formatPalpiteMarcadoresSummary,
+  getPalpiteMarcadoresPorTime,
+  splitMatchScorersByTeam,
+} from '@/lib/scorerUtils'
 import { AdminEditMarcadoresModal } from '@/components/AdminEditMarcadoresModal'
 
 export default function Historico() {
@@ -424,21 +428,57 @@ export default function Historico() {
                             </span>
                           </div>
 
-                          {/* Goal scorers if any */}
-                          {((Array.isArray(jogo.gols_time_a) && jogo.gols_time_a.length > 0) ||
-                            (Array.isArray(jogo.gols_time_b) && jogo.gols_time_b.length > 0)) && (
-                            <div className="mt-2 text-xs text-slate-600 bg-slate-50 p-2 rounded">
-                              <span className="font-semibold text-slate-700">Gols reais: </span>
-                              {[
-                                ...(Array.isArray(jogo.gols_time_a)
-                                  ? jogo.gols_time_a.map((g) => `${g.nome} (${g.posicao})`)
-                                  : []),
-                                ...(Array.isArray(jogo.gols_time_b)
-                                  ? jogo.gols_time_b.map((g) => `${g.nome} (${g.posicao})`)
-                                  : []),
-                              ].join(', ')}
-                            </div>
-                          )}
+                          {/* Goal scorers if any: separados por mandante e visitante */}
+                          {(() => {
+                            const splitScorers = splitMatchScorersByTeam({
+                              teamAName: jogo.time_a,
+                              teamBName: jogo.time_b,
+                              placarA: jogo.placar_a,
+                              placarB: jogo.placar_b,
+                              golsBancoA: jogo.gols_time_a,
+                              golsBancoB: jogo.gols_time_b,
+                              marcadoresBancoLegado: jogo.marcadores,
+                            })
+
+                            if (!splitScorers.hasAnyScorers) return null
+
+                            return (
+                              <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 rounded border border-slate-200 bg-slate-50 p-2 text-xs text-slate-600">
+                                <span className="font-semibold text-slate-800">⚽ Gols reais:</span>
+                                <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                                  <div>
+                                    <span className="font-semibold text-slate-700">
+                                      Gols {jogo.time_a}:
+                                    </span>{' '}
+                                    <span
+                                      className={
+                                        splitScorers.labelA === '-'
+                                          ? 'text-slate-400 font-normal'
+                                          : 'text-slate-900 font-medium'
+                                      }
+                                    >
+                                      {splitScorers.labelA}
+                                    </span>
+                                  </div>
+                                  <span className="text-slate-300 hidden sm:inline">•</span>
+                                  <div>
+                                    <span className="font-semibold text-slate-700">
+                                      Gols {jogo.time_b}:
+                                    </span>{' '}
+                                    <span
+                                      className={
+                                        splitScorers.labelB === '-'
+                                          ? 'text-slate-400 font-normal'
+                                          : 'text-slate-900 font-medium'
+                                      }
+                                    >
+                                      {splitScorers.labelB}
+                                    </span>
+                                  </div>
+                                </div>
+                              </div>
+                            )
+                          })()}
 
                           {/* Per-participant predictions for this game */}
                           {gameBets.length > 0 &&
@@ -512,9 +552,53 @@ export default function Historico() {
                                           <div className="text-[11px] text-slate-600 mt-0.5">
                                             Palpite: {bet.placar_a} x {bet.placar_b}
                                           </div>
-                                          <div className="mt-0.5 text-[10px] text-slate-600 font-medium leading-snug">
-                                            {formatPalpiteMarcadoresSummary(bet)}
-                                          </div>
+                                          {(() => {
+                                            const splitPalpite = getPalpiteMarcadoresPorTime(bet)
+                                            const is0x0 =
+                                              splitPalpite.placarA === 0 &&
+                                              splitPalpite.placarB === 0
+
+                                            if (is0x0) {
+                                              return (
+                                                <div className="mt-0.5 text-[10px] text-slate-400 italic">
+                                                  Sem marcadores (0x0)
+                                                </div>
+                                              )
+                                            }
+
+                                            return (
+                                              <div className="mt-1 space-y-0.5 border-t border-slate-200/60 pt-0.5 text-[10px] leading-snug">
+                                                <div className="truncate text-slate-700">
+                                                  <span className="font-semibold text-slate-800">
+                                                    Gols Mandante:
+                                                  </span>{' '}
+                                                  <span
+                                                    className={
+                                                      splitPalpite.labelA === '-'
+                                                        ? 'text-slate-400'
+                                                        : 'text-slate-900 font-medium'
+                                                    }
+                                                  >
+                                                    {splitPalpite.labelA}
+                                                  </span>
+                                                </div>
+                                                <div className="truncate text-slate-700">
+                                                  <span className="font-semibold text-slate-800">
+                                                    Gols Visitante:
+                                                  </span>{' '}
+                                                  <span
+                                                    className={
+                                                      splitPalpite.labelB === '-'
+                                                        ? 'text-slate-400'
+                                                        : 'text-slate-900 font-medium'
+                                                    }
+                                                  >
+                                                    {splitPalpite.labelB}
+                                                  </span>
+                                                </div>
+                                              </div>
+                                            )
+                                          })()}
                                           {jogo.resultado_finalizado && (
                                             <div className="mt-1 font-semibold text-emerald-700">
                                               +{bet.pontuacao_jogo} pts

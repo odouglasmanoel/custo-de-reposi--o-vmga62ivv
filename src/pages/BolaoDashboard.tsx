@@ -35,7 +35,11 @@ import {
   getHojeDataSaoPaulo,
   normalizeDataISO,
 } from '@/lib/dateUtils'
-import { formatPalpiteMarcadoresSummary } from '@/lib/scorerUtils'
+import {
+  formatPalpiteMarcadoresSummary,
+  getPalpiteMarcadoresPorTime,
+  splitMatchScorersByTeam,
+} from '@/lib/scorerUtils'
 import {
   resolveLiveScoreForGame,
   type ApiFootballFixture,
@@ -1043,27 +1047,94 @@ export default function BolaoDashboard() {
                         </div>
                       </div>
 
-                      {/* 2. Linha de autores dos gols reais retornados pela API (ou do banco manual/sobrescrita) logo abaixo do cabeçalho */}
-                      {marcadoresParaExibir ? (
-                        <div className="mt-2 flex items-center gap-1.5 text-[11px] font-semibold text-emerald-950 bg-emerald-50/90 border border-emerald-200/90 rounded-md px-2.5 py-1 w-fit">
-                          <span className="text-emerald-700">⚽</span>
-                          <span>
-                            Gols da partida:{' '}
-                            <span className="font-normal text-emerald-900">
-                              {marcadoresParaExibir}
-                            </span>
-                          </span>
-                          {tipoFontePlacar === 'sobrescrita' && (
-                            <span className="text-[10px] text-amber-700 bg-amber-100 px-1 py-0.2 rounded font-bold ml-1">
-                              (Admin)
-                            </span>
-                          )}
-                        </div>
-                      ) : !matchedLive && !temPlacarManualBanco && !sobrescritaJogo ? (
-                        <div className="mt-1.5 text-[10px] text-slate-400 italic">
-                          Aguardando início do placar / marcadores da API...
-                        </div>
-                      ) : null}
+                      {/* 2. Autores dos gols reais divididos por equipe (Mandante e Visitante) */}
+                      {(() => {
+                        const splitScorers = splitMatchScorersByTeam({
+                          teamAName: jogo.time_a,
+                          teamBName: jogo.time_b,
+                          placarA:
+                            sobrescritaJogo != null
+                              ? sobrescritaJogo.placar_a
+                              : matchedLive
+                                ? matchedLive.placarA
+                                : jogo.placar_a,
+                          placarB:
+                            sobrescritaJogo != null
+                              ? sobrescritaJogo.placar_b
+                              : matchedLive
+                                ? matchedLive.placarB
+                                : jogo.placar_b,
+                          sobrescritaMarcadores: sobrescritaJogo?.marcadores ?? null,
+                          liveScorers: matchedLive?.scorers ?? null,
+                          golsBancoA: (jogo as any).gols_time_a ?? null,
+                          golsBancoB: (jogo as any).gols_time_b ?? null,
+                          marcadoresBancoLegado: jogo.marcadores ?? null,
+                        })
+
+                        const temGolsParaExibir =
+                          Boolean(marcadoresParaExibir) ||
+                          splitScorers.hasAnyScorers ||
+                          (splitScorers.placarA !== null &&
+                            splitScorers.placarB !== null &&
+                            (splitScorers.placarA > 0 || splitScorers.placarB > 0))
+
+                        if (temGolsParaExibir) {
+                          return (
+                            <div className="mt-2.5 flex flex-wrap items-center gap-x-4 gap-y-1.5 rounded-lg border border-emerald-200/90 bg-emerald-50/90 px-3 py-1.5 text-[11px] text-emerald-950 shadow-2xs">
+                              <div className="flex items-center gap-1.5 font-bold text-emerald-900 shrink-0">
+                                <span>⚽</span>
+                                <span>Gols da partida:</span>
+                              </div>
+                              <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-slate-700">
+                                <div className="flex items-center gap-1">
+                                  <span className="font-semibold text-emerald-950">
+                                    Gols {jogo.time_a}:
+                                  </span>
+                                  <span
+                                    className={`font-medium ${
+                                      splitScorers.labelA === '-'
+                                        ? 'text-slate-400 font-normal'
+                                        : 'text-emerald-900'
+                                    }`}
+                                  >
+                                    {splitScorers.labelA}
+                                  </span>
+                                </div>
+                                <span className="text-emerald-300 hidden sm:inline">•</span>
+                                <div className="flex items-center gap-1">
+                                  <span className="font-semibold text-emerald-950">
+                                    Gols {jogo.time_b}:
+                                  </span>
+                                  <span
+                                    className={`font-medium ${
+                                      splitScorers.labelB === '-'
+                                        ? 'text-slate-400 font-normal'
+                                        : 'text-emerald-900'
+                                    }`}
+                                  >
+                                    {splitScorers.labelB}
+                                  </span>
+                                </div>
+                              </div>
+                              {tipoFontePlacar === 'sobrescrita' && (
+                                <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-bold text-amber-800 border border-amber-300">
+                                  (Admin Douglas)
+                                </span>
+                              )}
+                            </div>
+                          )
+                        }
+
+                        if (!matchedLive && !temPlacarManualBanco && !sobrescritaJogo) {
+                          return (
+                            <div className="mt-1.5 text-[10px] text-slate-400 italic">
+                              Aguardando início do placar / marcadores da API...
+                            </div>
+                          )
+                        }
+
+                        return null
+                      })()}
                     </div>
 
                     {/* Cards dos palpites de cada participante */}
@@ -1127,9 +1198,52 @@ export default function BolaoDashboard() {
                                     {bet.placar_a} x {bet.placar_b}
                                   </strong>
                                 </div>
-                                <div className="mt-1 text-[11px] text-slate-600 font-medium leading-snug">
-                                  {formatPalpiteMarcadoresSummary(bet)}
-                                </div>
+                                {(() => {
+                                  const splitPalpite = getPalpiteMarcadoresPorTime(bet)
+                                  const is0x0 =
+                                    splitPalpite.placarA === 0 && splitPalpite.placarB === 0
+
+                                  if (is0x0) {
+                                    return (
+                                      <div className="mt-1 text-[10px] text-slate-400 italic">
+                                        Sem marcadores (0x0)
+                                      </div>
+                                    )
+                                  }
+
+                                  return (
+                                    <div className="mt-1.5 space-y-0.5 border-t border-slate-200/60 pt-1 text-[11px] leading-snug">
+                                      <div className="truncate text-slate-700">
+                                        <span className="font-semibold text-slate-800">
+                                          Gols Mandante:
+                                        </span>{' '}
+                                        <span
+                                          className={
+                                            splitPalpite.labelA === '-'
+                                              ? 'text-slate-400'
+                                              : 'text-slate-900 font-medium'
+                                          }
+                                        >
+                                          {splitPalpite.labelA}
+                                        </span>
+                                      </div>
+                                      <div className="truncate text-slate-700">
+                                        <span className="font-semibold text-slate-800">
+                                          Gols Visitante:
+                                        </span>{' '}
+                                        <span
+                                          className={
+                                            splitPalpite.labelB === '-'
+                                              ? 'text-slate-400'
+                                              : 'text-slate-900 font-medium'
+                                          }
+                                        >
+                                          {splitPalpite.labelB}
+                                        </span>
+                                      </div>
+                                    </div>
+                                  )
+                                })()}
                               </div>
                             )
                           })}

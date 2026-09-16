@@ -23,7 +23,7 @@ import { Badge } from '@/components/ui/badge'
 import { useToast } from '@/hooks/use-toast'
 import { formatDataBR, formatHoraBR } from '@/lib/dateUtils'
 import { AdminEditMarcadoresModal } from '@/components/AdminEditMarcadoresModal'
-import { formatPalpiteMarcadoresSummary } from '@/lib/scorerUtils'
+import { formatPalpiteMarcadoresSummary, getPalpiteMarcadoresPorTime } from '@/lib/scorerUtils'
 
 export default function AdminResultado() {
   const { id } = useParams<{ id: string }>()
@@ -794,9 +794,47 @@ export default function AdminResultado() {
                           {bet.placar_a} x {bet.placar_b}
                         </strong>
                       </div>
-                      <div className="mt-1 text-[11px] text-slate-600 font-medium leading-snug">
-                        {formatPalpiteMarcadoresSummary(bet)}
-                      </div>
+                      {(() => {
+                        const splitPalpite = getPalpiteMarcadoresPorTime(bet)
+                        const is0x0 = splitPalpite.placarA === 0 && splitPalpite.placarB === 0
+
+                        if (is0x0) {
+                          return (
+                            <div className="mt-1 text-[10px] text-slate-400 italic">
+                              Sem marcadores (0x0)
+                            </div>
+                          )
+                        }
+
+                        return (
+                          <div className="mt-1.5 space-y-0.5 border-t border-slate-200/60 pt-1 text-[11px] leading-snug">
+                            <div className="truncate text-slate-700">
+                              <span className="font-semibold text-slate-800">Gols Mandante:</span>{' '}
+                              <span
+                                className={
+                                  splitPalpite.labelA === '-'
+                                    ? 'text-slate-400'
+                                    : 'text-slate-900 font-medium'
+                                }
+                              >
+                                {splitPalpite.labelA}
+                              </span>
+                            </div>
+                            <div className="truncate text-slate-700">
+                              <span className="font-semibold text-slate-800">Gols Visitante:</span>{' '}
+                              <span
+                                className={
+                                  splitPalpite.labelB === '-'
+                                    ? 'text-slate-400'
+                                    : 'text-slate-900 font-medium'
+                                }
+                              >
+                                {splitPalpite.labelB}
+                              </span>
+                            </div>
+                          </div>
+                        )
+                      })()}
                     </div>
 
                     {jogo.resultado_finalizado && (
