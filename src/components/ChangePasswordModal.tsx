@@ -83,8 +83,8 @@ export function ChangePasswordModal({ open, onOpenChange }: ChangePasswordModalP
     if (!newPassword) {
       setNewPasswordError('Informe a nova senha.')
       hasError = true
-    } else if (newPassword.length < 8) {
-      setNewPasswordError('A nova senha deve ter no mínimo 8 caracteres.')
+    } else if (newPassword.length < 4) {
+      setNewPasswordError('A nova senha deve ter no mínimo 4 caracteres.')
       hasError = true
     }
 
@@ -224,7 +224,7 @@ export function ChangePasswordModal({ open, onOpenChange }: ChangePasswordModalP
                 <Input
                   id="new-password"
                   type={showNew ? 'text' : 'password'}
-                  placeholder="Mínimo de 8 caracteres"
+                  placeholder="Mínimo de 4 caracteres"
                   value={newPassword}
                   onChange={(e) => {
                     setNewPassword(e.target.value)
