@@ -317,6 +317,29 @@ export async function parseSpreadsheet(file: File): Promise<{
     )
     const activeSheetParticipant = isParticipantSheet ? sheetMatchedMember : null
 
+    // If this sheet represents a single participant tab (e.g. Bruno, Davi, Douglas, Gabriel),
+    // check if it has a "Pontuação Total" row at the bottom (e.g. line 30 with 12, 81, 65, 62).
+    // We record this participant's total in scoresMap if not already set by a master ranking tab.
+    if (activeSheetParticipant && !scoresMap.has(activeSheetParticipant)) {
+      for (let r = 0; r < rows.length; r++) {
+        const row = rows[r] as any[]
+        if (!Array.isArray(row) || row.length === 0) continue
+        const cell0 = cleanKey(String(row[0] || ''))
+        if (cell0 === 'pontuacaototal' || cell0.includes('pontuacaototal')) {
+          for (let c = 1; c < row.length; c++) {
+            const val = row[c]
+            if (val !== '' && val !== null && val !== undefined) {
+              const numVal = parseFloat(String(val).replace(',', '.'))
+              if (!isNaN(numVal)) {
+                scoresMap.set(activeSheetParticipant, numVal)
+                break
+              }
+            }
+          }
+        }
+      }
+    }
+
     // 1. LOOK FOR PARTICIPANT TOTALS / RANKING TABLE
     // Columns: "Participante", "Nome", "Apostador" AND "Total", "Pontos", "Pontuação", "Pts"
     for (let r = 0; r < Math.min(rows.length, 25); r++) {
@@ -384,6 +407,16 @@ export async function parseSpreadsheet(file: File): Promise<{
       const row = rows[r] as any[]
       if (!row) continue
 
+      // If the row is an event, total or match line, do not treat participant name here as a table ranking
+      const firstCellClean = cleanKey(String(row[0] || ''))
+      if (
+        firstCellClean.includes('sorteio') ||
+        firstCellClean.includes('pontuacaototal') ||
+        firstCellClean.includes('x')
+      ) {
+        continue
+      }
+
       for (let c = 0; c < row.length; c++) {
         const val = String(row[c] || '').trim()
         for (const member of BOLAO_MEMBERS) {
@@ -403,7 +436,6 @@ export async function parseSpreadsheet(file: File): Promise<{
         }
       }
     }
-
     // 2. PARSE MATCHES / JOGOS AND PREDICTIONS
     // Can be a general matches sheet OR a participant sheet (e.g. Douglas, Gabriel, Bruno, Davi)
     // containing columns: Jogos / Confronto, Placar Final, Palpites, Pontuação, Detalhamento da Pontuação
@@ -577,21 +609,25 @@ export async function parseSpreadsheet(file: File): Promise<{
           !rawB &&
           (rawA.includes(' x ') ||
             rawA.includes(' X ') ||
-            rawA.includes(' - ') ||
             rawA.includes(' vs ') ||
-            rawA.includes(' VS '))
+            rawA.includes(' VS ') ||
+            /\s+-\s+/.test(rawA))
         ) {
-          const parts = rawA.split(/\s*(?:x|X|-|vs|VS)\s*/)
+          // Split ONLY by x/vs or space-hyphen-space (" - "), never bare "-" inside team names like "Atlético-MG"
+          const parts = rawA.split(/\s*(?:x|X|vs|VS|\s+-\s+)\s*/)
           if (parts.length >= 2) {
             rawA = parts[0].trim()
             rawB = parts[1].trim()
           }
         }
 
-        // Skip administrative events / non-matches (e.g. "Sorteio das Quartas de Final")
+        // Skip administrative events, totals and non-matches (e.g. "Sorteio das Quartas de Final", "Pontuação Total")
         const lowerRaw = `${rawA} ${rawB}`.toLowerCase()
         if (
           lowerRaw.includes('sorteio') ||
+          lowerRaw.includes('pontuacao total') ||
+          lowerRaw.includes('pontuação total') ||
+          lowerRaw.includes('pontuacaototal') ||
           lowerRaw.includes('abertura') ||
           lowerRaw.includes('encerramento') ||
           lowerRaw.includes('premiacao') ||
@@ -602,18 +638,21 @@ export async function parseSpreadsheet(file: File): Promise<{
           continue
         }
 
-        // Skip headers or summary rows
+        // Skip headers, totals or summary rows
         const cleanA = cleanKey(rawA)
         const cleanB = cleanKey(rawB)
         if (
           cleanA === 'total' ||
+          cleanA === 'pontuacaototal' ||
+          cleanA.includes('pontuacaototal') ||
           cleanA === 'mandante' ||
           cleanA === 'time' ||
           cleanA === 'confronto' ||
           cleanA === 'jogos' ||
           cleanA === 'partida' ||
-          cleanA === 'pontuacaototal' ||
-          cleanB === 'pontuacaototal'
+          cleanB === 'total' ||
+          cleanB === 'pontuacaototal' ||
+          cleanB.includes('pontuacaototal')
         ) {
           continue
         }
@@ -836,6 +875,9 @@ export async function parseSpreadsheet(file: File): Promise<{
             const lowerFallback = `${timeA} ${timeB}`.toLowerCase()
             if (
               lowerFallback.includes('sorteio') ||
+              lowerFallback.includes('pontuacao total') ||
+              lowerFallback.includes('pontuação total') ||
+              lowerFallback.includes('pontuacaototal') ||
               lowerFallback.includes('abertura') ||
               lowerFallback.includes('encerramento') ||
               lowerFallback.includes('premiacao') ||
@@ -846,9 +888,17 @@ export async function parseSpreadsheet(file: File): Promise<{
               continue
             }
 
-            // Skip if this is a subheader
-            if (cleanKey(timeA) === 'time' || cleanKey(timeB) === 'time') continue
-
+            // Skip if this is a subheader or total
+            if (
+              cleanKey(timeA) === 'time' ||
+              cleanKey(timeB) === 'time' ||
+              cleanKey(timeA) === 'pontuacaototal' ||
+              cleanKey(timeB) === 'pontuacaototal' ||
+              cleanKey(timeA) === 'total' ||
+              cleanKey(timeB) === 'total'
+            ) {
+              continue
+            }
             // Look for score in adjacent cells
             let placarA: number | undefined
             let placarB: number | undefined
@@ -1140,29 +1190,24 @@ export async function importBolaoSpreadsheet(
       .filter((p) => p.participante === part.id)
       .reduce((acc, p) => acc + (Number(p.pontuacao_jogo) || 0), 0)
 
-    // When file gives both match bets and a total ranking table:
-    // pontos_importados = total ranking from file.
-    // Dashboard formula sums importedPts + sumPalpites (where game is finished).
-    // If games are already imported from file, to prevent double counting:
-    // If betsTotal > 0 and importedPts >= betsTotal, importedPts can be adjusted or kept consistent.
-    // Per requirement: "A pontuação acumulada por participante vai em pontos_importados conforme o total da planilha; a soma dinâmica exibida continua sendo palpites + pontos_importados."
-    // If games were imported with pontuacao_jogo, we adjust pontos_importados so that:
-    // pontos_importados + betsTotal = total da planilha (or importedPts = total da planilha if betsTotal == 0).
-    const adjustedImportedPts =
-      importedPts > betsTotal && betsTotal > 0
-        ? importedPts - betsTotal
-        : importedPts > 0
-          ? importedPts
-          : 0
+    // Prevent double counting of participant points:
+    // The dashboard and ranking display calculates: pontuacao_total = pontos_importados + sum(palpites de jogos finalizados).
+    // If betsTotal is present (e.g. 62 for Gabriel), and importedPts is also 62 (from the "Pontuação Total" line or Tabela tab),
+    // setting pontos_importados to 62 would make 62 + 62 = 124 (double counting).
+    // We must guarantee that:
+    // 1. If betsTotal > 0, the sum of bets already covers the match points. Any excess (e.g. bonuses outside the match list) goes into pontos_importados = max(0, importedPts - betsTotal).
+    // 2. If importedPts is exactly equal to betsTotal, pontos_importados becomes 0, so pontuacao_total = betsTotal (e.g. 62).
+    // 3. In all cases, pontuacao_total stored is exactly importedPts (if importedPts was specified) OR betsTotal (if no total was given).
+    const finalTotalTarget = importedPts > 0 ? importedPts : betsTotal
+    const adjustedImportedPts = Math.max(0, finalTotalTarget - betsTotal)
 
     try {
       await pb.collection('participantes').update(part.id, {
         pontos_importados: adjustedImportedPts,
-        pontuacao_total: adjustedImportedPts + betsTotal,
+        pontuacao_total: finalTotalTarget,
       })
       participantesAtualizados++
-      const finalExibido = adjustedImportedPts + betsTotal
-      participantesNomes.push(`${part.nome}: ${finalExibido} pts`)
+      participantesNomes.push(`${part.nome}: ${finalTotalTarget} pts`)
     } catch (partErr: any) {
       avisos.push(`Erro ao atualizar participante ${part.nome}: ${partErr.message}`)
     }

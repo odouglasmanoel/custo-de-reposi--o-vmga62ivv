@@ -325,4 +325,65 @@ describe('parseSpreadsheet with Copa Genilton structure', () => {
     )
     expect(sorteio).toBe(false)
   })
+
+  it('correctly handles Atlético-MG in team names without splitting Atlético and MG into separate teams', async () => {
+    const rows = [
+      ['Jogos', 'Placar Final', 'Palpites', 'Pontuação', 'Detalhamento da Pontuação'],
+      ['Atlético-MG x Juventude', '0x0', '-', '0', '-'],
+      ['Juventude x Atlético-MG', '0x1', '-', '0', '-'],
+      ['Grêmio x Atlético-MG', '01/11 -', '-', '0', '-'],
+      ['Atlético-MG x Grêmio', '08/11 -', '-', '0', '-'],
+      ['Pontuação Total', '', '', '0', ''],
+    ]
+
+    const wb = XLSX.utils.book_new()
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(rows), 'TestSheet')
+    const buf = XLSX.write(wb, { type: 'array', bookType: 'xlsx' })
+    const file = new File([buf], 'test-atletico.xlsx', {
+      type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    })
+
+    const result = await parseSpreadsheet(file)
+    expect(result.games.length).toBe(4)
+
+    const game1 = result.games.find((g) => g.time_a === 'Atlético-MG' && g.time_b === 'Juventude')
+    expect(game1).toBeDefined()
+    expect(game1?.finalizado).toBe(true)
+    expect(game1?.placar_a).toBe(0)
+    expect(game1?.placar_b).toBe(0)
+
+    const game2 = result.games.find((g) => g.time_a === 'Juventude' && g.time_b === 'Atlético-MG')
+    expect(game2).toBeDefined()
+    expect(game2?.finalizado).toBe(true)
+    expect(game2?.placar_a).toBe(0)
+    expect(game2?.placar_b).toBe(1)
+
+    const game3 = result.games.find((g) => g.time_a === 'Grêmio' && g.time_b === 'Atlético-MG')
+    expect(game3).toBeDefined()
+    expect(game3?.finalizado).toBe(false)
+
+    const game4 = result.games.find((g) => g.time_a === 'Atlético-MG' && g.time_b === 'Grêmio')
+    expect(game4).toBeDefined()
+    expect(game4?.finalizado).toBe(false)
+  })
+
+  it('extracts participant score from the "Pontuação Total" line in single-participant sheet when no ranking tab is present', async () => {
+    const rows = [
+      ['Jogos', 'Placar Final', 'Palpites', 'Pontuação', 'Detalhamento da Pontuação'],
+      ['Vasco x Fluminense', '0x0', '1x1', '2', 'Empate'],
+      ['Pontuação Total', '', '', '2', ''],
+    ]
+
+    const wb = XLSX.utils.book_new()
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(rows), 'Bruno')
+    const buf = XLSX.write(wb, { type: 'array', bookType: 'xlsx' })
+    const file = new File([buf], 'test-total-line.xlsx', {
+      type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    })
+
+    const result = await parseSpreadsheet(file)
+    expect(result.scores.length).toBe(1)
+    expect(result.scores[0].nome).toBe('Bruno')
+    expect(result.scores[0].pontuacao).toBe(2)
+  })
 })
