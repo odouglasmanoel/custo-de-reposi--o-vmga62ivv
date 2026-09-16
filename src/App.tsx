@@ -53,8 +53,32 @@ const App = () => (
               }
             />
 
+            {/* Alias /inicio para a tela inicial do Bolão */}
+            <Route
+              path="/inicio"
+              element={
+                <BolaoRoute>
+                  <Layout>
+                    <BolaoDashboard />
+                  </Layout>
+                </BolaoRoute>
+              }
+            />
+
             <Route
               path="/bolao/palpites"
+              element={
+                <BolaoRoute>
+                  <Layout>
+                    <Palpites />
+                  </Layout>
+                </BolaoRoute>
+              }
+            />
+
+            {/* Alias /bolao/meus-palpites para Meus Palpites */}
+            <Route
+              path="/bolao/meus-palpites"
               element={
                 <BolaoRoute>
                   <Layout>

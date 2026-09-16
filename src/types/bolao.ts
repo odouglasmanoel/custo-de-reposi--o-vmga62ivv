@@ -7,6 +7,8 @@ export interface Bolao extends RecordModel {
   ultima_atualizacao?: string
 }
 
+export const GERAL_BOLAO_ID = 'geral'
+
 export function formatBolaoLabel(bolao: { nome: string; foco?: string; ativo?: boolean }): string {
   let label = bolao.nome
   if (bolao.foco && bolao.foco.trim()) {

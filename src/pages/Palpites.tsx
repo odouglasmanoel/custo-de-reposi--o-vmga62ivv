@@ -1,4 +1,5 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
+import { useSearchParams, Link } from 'react-router-dom'
 import {
   Calendar,
   Clock,
@@ -11,12 +12,16 @@ import {
   AlertCircle,
   Edit3,
   Lock,
+  Globe,
+  Filter,
+  ArrowLeft,
 } from 'lucide-react'
 import pb from '@/lib/pocketbase/client'
 import { useAuth } from '@/context/AuthContext'
 import { useActivePool } from '@/context/ActivePoolContext'
 import { useRealtime } from '@/hooks/use-realtime'
-import type { Jogo, Palpite, Participante } from '@/types/bolao'
+import type { Jogo, Palpite, Participante, Bolao } from '@/types/bolao'
+import { GERAL_BOLAO_ID } from '@/types/bolao'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -61,16 +66,30 @@ function normalizeScorersArray(raw: any, goalCount: number): string[] {
 
 export default function Palpites() {
   const { user, participantName } = useAuth()
-  const { activeBolao, activeBolaoId, currentParticipante } = useActivePool()
+  const { boloes, activeBolao, activeBolaoId, currentParticipante } = useActivePool()
   const { toast } = useToast()
+  const [searchParams, setSearchParams] = useSearchParams()
+
+  const isGeralParam = searchParams.get('geral') === '1' || activeBolaoId === GERAL_BOLAO_ID
+  const pendentesParam = searchParams.get('pendentes') === '1'
 
   const [jogos, setJogos] = useState<Jogo[]>([])
+  const [allBoloes, setAllBoloes] = useState<Bolao[]>([])
+  const [userParticipantsMap, setUserParticipantsMap] = useState<Record<string, Participante>>({})
   const [palpites, setPalpites] = useState<Record<string, Palpite>>({})
   const [formData, setFormData] = useState<Record<string, PalpiteFormData>>({})
   const [editingGames, setEditingGames] = useState<Record<string, boolean>>({})
   const [savingGameId, setSavingGameId] = useState<string | null>(null)
   const [expandedDetails, setExpandedDetails] = useState<Record<string, boolean>>({})
+  const [filterPendentes, setFilterPendentes] = useState<boolean>(pendentesParam)
   const [loading, setLoading] = useState(true)
+
+  // Atualizar filtro de pendentes se a query string mudar
+  useEffect(() => {
+    if (pendentesParam) {
+      setFilterPendentes(true)
+    }
+  }, [pendentesParam])
 
   useRealtime<Jogo>('jogos', () => {
     loadData()
@@ -81,67 +100,145 @@ export default function Palpites() {
   })
 
   const loadData = async () => {
-    if (!activeBolaoId) return
+    if (!user) return
 
-    // If currentParticipante is not yet populated from context, try resolving it directly from PB
-    let participanteId = currentParticipante?.id
-    if (!participanteId && user) {
+    try {
       const searchName =
         participantName ||
         (user.name as string) ||
         (user.email ? (user.email as string).split('@')[0] : '')
-      if (searchName) {
-        try {
-          const parts = await pb.collection('participantes').getFullList<Participante>({
-            filter: `bolao = '${activeBolaoId}'`,
-          })
-          const exact = parts.find((p) => p.nome.toLowerCase() === searchName.toLowerCase())
-          const partial = parts.find(
-            (p) =>
-              p.nome.toLowerCase().includes(searchName.toLowerCase()) ||
-              searchName.toLowerCase().includes(p.nome.toLowerCase()),
-          )
-          const resolved = exact || partial || parts[0]
-          if (resolved) participanteId = resolved.id
-        } catch {
-          /* intentionally ignored */
+
+      // Buscar lista de todos os bolões para exibir nome e tema
+      const loadedBoloes =
+        boloes.length > 0
+          ? boloes
+          : await pb.collection('boloes').getFullList<Bolao>({ sort: 'nome' })
+      setAllBoloes(loadedBoloes)
+
+      if (isGeralParam) {
+        // MODO GERAL: Carregar todos os jogos de todas as copas e os palpites do usuário
+        const [allGames, allParts] = await Promise.all([
+          pb.collection('jogos').getFullList<Jogo>({
+            sort: 'data,hora',
+          }),
+          pb.collection('participantes').getFullList<Participante>({
+            sort: 'nome',
+          }),
+        ])
+
+        // Encontrar os registros de participante do usuário para cada bolão
+        const myParts = allParts.filter(
+          (p) =>
+            searchName &&
+            (p.nome.trim().toLowerCase() === searchName.trim().toLowerCase() ||
+              p.nome.toLowerCase().includes(searchName.toLowerCase())),
+        )
+        const myPartMapByBolao: Record<string, Participante> = {}
+        for (const p of myParts) {
+          myPartMapByBolao[p.bolao] = p
         }
-      }
-    }
+        setUserParticipantsMap(myPartMapByBolao)
 
-    try {
-      const [gamesList, myPalpites] = await Promise.all([
-        pb.collection('jogos').getFullList<Jogo>({
-          filter: `bolao = '${activeBolaoId}'`,
-          sort: 'data,hora',
-        }),
-        participanteId
-          ? pb.collection('palpites').getFullList<Palpite>({
-              filter: `bolao = '${activeBolaoId}' && participante = '${participanteId}'`,
-            })
-          : Promise.resolve([] as Palpite[]),
-      ])
+        const myPartIds = myParts.map((p) => p.id)
 
-      setJogos(gamesList)
-
-      const mapPalpites: Record<string, Palpite> = {}
-      const forms: Record<string, PalpiteFormData> = {}
-
-      for (const p of myPalpites) {
-        mapPalpites[p.jogo] = p
-        const gA = p.placar_a !== null && p.placar_a !== undefined ? Number(p.placar_a) : 0
-        const gB = p.placar_b !== null && p.placar_b !== undefined ? Number(p.placar_b) : 0
-        forms[p.jogo] = {
-          placar_a: p.placar_a ?? '',
-          placar_b: p.placar_b ?? '',
-          goleadores_a: normalizeScorersArray(p.goleadores_a, gA),
-          goleadores_b: normalizeScorersArray(p.goleadores_b, gB),
-          vencedor_penaltis: p.vencedor_penaltis || 'N',
+        // Buscar palpites do usuário em todas as copas
+        let myPalpites: Palpite[] = []
+        if (myPartIds.length > 0) {
+          myPalpites = await pb.collection('palpites').getFullList<Palpite>()
+          myPalpites = myPalpites.filter((p) => myPartIds.includes(p.participante))
         }
-      }
 
-      setPalpites(mapPalpites)
-      setFormData(forms)
+        setJogos(allGames)
+
+        const mapPalpites: Record<string, Palpite> = {}
+        const forms: Record<string, PalpiteFormData> = {}
+
+        for (const p of myPalpites) {
+          mapPalpites[p.jogo] = p
+          const gA = p.placar_a !== null && p.placar_a !== undefined ? Number(p.placar_a) : 0
+          const gB = p.placar_b !== null && p.placar_b !== undefined ? Number(p.placar_b) : 0
+          forms[p.jogo] = {
+            placar_a: p.placar_a ?? '',
+            placar_b: p.placar_b ?? '',
+            goleadores_a: normalizeScorersArray(p.goleadores_a, gA),
+            goleadores_b: normalizeScorersArray(p.goleadores_b, gB),
+            vencedor_penaltis: p.vencedor_penaltis || 'N',
+          }
+        }
+
+        setPalpites(mapPalpites)
+        setFormData(forms)
+      } else {
+        // MODO BOLÃO ESPECÍFICO
+        const currentTargetBolaoId =
+          activeBolaoId && activeBolaoId !== GERAL_BOLAO_ID
+            ? activeBolaoId
+            : loadedBoloes.find((b) => b.ativo)?.id || loadedBoloes[0]?.id
+
+        if (!currentTargetBolaoId) {
+          setLoading(false)
+          return
+        }
+
+        let participanteId = currentParticipante?.id
+        if (!participanteId || currentParticipante?.bolao !== currentTargetBolaoId) {
+          if (searchName) {
+            try {
+              const parts = await pb.collection('participantes').getFullList<Participante>({
+                filter: `bolao = '${currentTargetBolaoId}'`,
+              })
+              const exact = parts.find((p) => p.nome.toLowerCase() === searchName.toLowerCase())
+              const partial = parts.find(
+                (p) =>
+                  p.nome.toLowerCase().includes(searchName.toLowerCase()) ||
+                  searchName.toLowerCase().includes(p.nome.toLowerCase()),
+              )
+              const resolved = exact || partial || parts[0]
+              if (resolved) {
+                participanteId = resolved.id
+                setUserParticipantsMap({ [currentTargetBolaoId]: resolved })
+              }
+            } catch {
+              /* ignore */
+            }
+          }
+        } else if (currentParticipante) {
+          setUserParticipantsMap({ [currentTargetBolaoId]: currentParticipante })
+        }
+
+        const [gamesList, myPalpites] = await Promise.all([
+          pb.collection('jogos').getFullList<Jogo>({
+            filter: `bolao = '${currentTargetBolaoId}'`,
+            sort: 'data,hora',
+          }),
+          participanteId
+            ? pb.collection('palpites').getFullList<Palpite>({
+                filter: `bolao = '${currentTargetBolaoId}' && participante = '${participanteId}'`,
+              })
+            : Promise.resolve([] as Palpite[]),
+        ])
+
+        setJogos(gamesList)
+
+        const mapPalpites: Record<string, Palpite> = {}
+        const forms: Record<string, PalpiteFormData> = {}
+
+        for (const p of myPalpites) {
+          mapPalpites[p.jogo] = p
+          const gA = p.placar_a !== null && p.placar_a !== undefined ? Number(p.placar_a) : 0
+          const gB = p.placar_b !== null && p.placar_b !== undefined ? Number(p.placar_b) : 0
+          forms[p.jogo] = {
+            placar_a: p.placar_a ?? '',
+            placar_b: p.placar_b ?? '',
+            goleadores_a: normalizeScorersArray(p.goleadores_a, gA),
+            goleadores_b: normalizeScorersArray(p.goleadores_b, gB),
+            vencedor_penaltis: p.vencedor_penaltis || 'N',
+          }
+        }
+
+        setPalpites(mapPalpites)
+        setFormData(forms)
+      }
     } catch (err) {
       console.error('Erro ao carregar palpites:', err)
     } finally {
@@ -150,13 +247,9 @@ export default function Palpites() {
   }
 
   useEffect(() => {
-    if (activeBolaoId && currentParticipante) {
-      setLoading(true)
-      loadData()
-    } else {
-      setLoading(false)
-    }
-  }, [activeBolaoId, currentParticipante])
+    setLoading(true)
+    loadData()
+  }, [activeBolaoId, isGeralParam, currentParticipante])
 
   const handleScoreChange = (jogoId: string, team: 'a' | 'b', rawVal: string) => {
     const valNum = rawVal === '' ? '' : Math.max(0, parseInt(rawVal, 10) || 0)
@@ -251,19 +344,20 @@ export default function Palpites() {
   }
 
   const handleSavePalpite = async (jogo: Jogo) => {
-    if (!activeBolaoId) return
+    const jogoBolaoId = jogo.bolao || activeBolaoId
+    if (!jogoBolaoId) return
 
-    // Resolve participante if missing
-    let participanteToUse = currentParticipante
-    if (!participanteToUse && user) {
+    // Resolve participante específico para o bolão deste jogo
+    let participanteToUse = userParticipantsMap[jogoBolaoId] || currentParticipante
+    if (!participanteToUse || participanteToUse.bolao !== jogoBolaoId) {
       const searchName =
         participantName ||
-        (user.name as string) ||
-        (user.email ? (user.email as string).split('@')[0] : '')
+        (user?.name as string) ||
+        (user?.email ? (user.email as string).split('@')[0] : '')
       if (searchName) {
         try {
           const parts = await pb.collection('participantes').getFullList<Participante>({
-            filter: `bolao = '${activeBolaoId}'`,
+            filter: `bolao = '${jogoBolaoId}'`,
           })
           const exact = parts.find((p) => p.nome.toLowerCase() === searchName.toLowerCase())
           const partial = parts.find(
@@ -271,7 +365,7 @@ export default function Palpites() {
               p.nome.toLowerCase().includes(searchName.toLowerCase()) ||
               searchName.toLowerCase().includes(p.nome.toLowerCase()),
           )
-          participanteToUse = exact || partial || null
+          participanteToUse = exact || partial || parts[0] || null
         } catch {
           /* intentionally ignored */
         }
@@ -340,7 +434,7 @@ export default function Palpites() {
           },
           body: JSON.stringify({
             jogo_id: jogo.id,
-            bolao_id: activeBolaoId,
+            bolao_id: jogoBolaoId,
             participante_id: participanteToUse.id,
             usuario_email: userEmail,
             usuario_id: userId,
@@ -396,49 +490,140 @@ export default function Palpites() {
     }))
   }
 
+  // Mapear id do bolão para o objeto do bolão para rótulos fáceis
+  const bolaoMap = useMemo(() => {
+    const map = new Map<string, Bolao>()
+    for (const b of allBoloes) {
+      map.set(b.id, b)
+    }
+    return map
+  }, [allBoloes])
+
+  // Lista de jogos filtrada se pendentes estiver ativo
+  const displayedJogos = useMemo(() => {
+    if (!filterPendentes) return jogos
+    return jogos.filter((j) => !j.resultado_finalizado)
+  }, [jogos, filterPendentes])
+
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex flex-col justify-between gap-2 rounded-[14px] border border-[#E2E8F0] bg-white p-6 shadow-xs sm:flex-row sm:items-center">
+      <div className="flex flex-col justify-between gap-4 rounded-[14px] border border-[#E2E8F0] bg-white p-6 shadow-xs sm:flex-row sm:items-center">
         <div>
           <div className="flex flex-wrap items-center gap-2">
             <h1 className="text-2xl font-bold tracking-tight text-[#0F172A]">
               Meus Palpites — {participantName || 'Participante'}
             </h1>
-            {activeBolao?.foco && (
+            {isGeralParam ? (
               <Badge
                 variant="secondary"
-                className="border border-indigo-200 bg-indigo-50 font-bold text-indigo-800 shadow-xs text-xs px-2.5 py-0.5"
+                className="border border-amber-300 bg-amber-50 font-bold text-amber-900 shadow-xs text-xs px-2.5 py-0.5 flex items-center gap-1"
               >
-                Tema: {activeBolao.foco}
+                <Globe className="h-3 w-3 text-amber-600" />
+                Tema: Ranking Geral Unificado
               </Badge>
+            ) : (
+              activeBolao?.foco && (
+                <Badge
+                  variant="secondary"
+                  className="border border-indigo-200 bg-indigo-50 font-bold text-indigo-800 shadow-xs text-xs px-2.5 py-0.5"
+                >
+                  Tema: {activeBolao.foco}
+                </Badge>
+              )
             )}
           </div>
           <p className="text-xs text-[#64748B]">
-            Competição:{' '}
-            <span className="font-semibold text-[#0F2A43]">
-              {activeBolao?.nome || 'Bolão do Grupo'}
-            </span>
+            {isGeralParam ? (
+              <span>
+                Listagem unificada:{' '}
+                <span className="font-semibold text-[#0F2A43]">Todas as Copas e Competições</span>
+              </span>
+            ) : (
+              <span>
+                Competição:{' '}
+                <span className="font-semibold text-[#0F2A43]">
+                  {activeBolao?.nome || 'Bolão do Grupo'}
+                </span>
+              </span>
+            )}
           </p>
         </div>
 
-        <Badge variant="outline" className="border-slate-300 text-xs text-slate-700">
-          Total de jogos: {jogos.length}
-        </Badge>
+        <div className="flex flex-wrap items-center gap-2">
+          {/* Botão de filtro para alternar entre todos e apenas pendentes */}
+          <Button
+            type="button"
+            variant={filterPendentes ? 'default' : 'outline'}
+            size="sm"
+            onClick={() => {
+              setFilterPendentes(!filterPendentes)
+              setSearchParams((prev) => {
+                const updated = new URLSearchParams(prev)
+                if (!filterPendentes) {
+                  updated.set('pendentes', '1')
+                } else {
+                  updated.delete('pendentes')
+                }
+                return updated
+              })
+            }}
+            className={`h-8 gap-1.5 text-xs font-semibold ${
+              filterPendentes
+                ? 'bg-[#F59E0B] text-slate-950 hover:bg-amber-400 font-bold'
+                : 'border-slate-300 text-slate-700 hover:bg-slate-50'
+            }`}
+          >
+            <Clock className="h-3.5 w-3.5" />
+            <span>{filterPendentes ? 'Filtrando: Jogos Pendentes' : 'Apenas Pendentes'}</span>
+          </Button>
+
+          <Badge variant="outline" className="border-slate-300 text-xs text-slate-700 py-1">
+            {displayedJogos.length} de {jogos.length} jogo(s)
+          </Badge>
+        </div>
       </div>
+
+      {filterPendentes && (
+        <div className="flex items-center justify-between rounded-lg border border-amber-200 bg-amber-50 px-4 py-2.5 text-xs text-amber-900">
+          <div className="flex items-center gap-2">
+            <Clock className="h-4 w-4 text-amber-700 shrink-0" />
+            <span>
+              Exibindo apenas <strong>jogos pendentes</strong> para registrar ou editar seus
+              palpites.
+            </span>
+          </div>
+          <button
+            type="button"
+            onClick={() => {
+              setFilterPendentes(false)
+              setSearchParams((prev) => {
+                const updated = new URLSearchParams(prev)
+                updated.delete('pendentes')
+                return updated
+              })
+            }}
+            className="text-xs font-bold text-amber-900 underline hover:text-amber-950"
+          >
+            Ver todos os jogos
+          </button>
+        </div>
+      )}
 
       {loading ? (
         <div className="flex min-h-[300px] items-center justify-center">
           <Loader2 className="h-8 w-8 animate-spin text-[#0F2A43]" />
         </div>
-      ) : jogos.length === 0 ? (
+      ) : displayedJogos.length === 0 ? (
         <Card className="rounded-[14px] border-[#E2E8F0] bg-white p-12 text-center text-xs text-slate-500">
-          Nenhuma partida disponível neste bolão. Os jogos serão cadastrados pelo administrador
-          Douglas.
+          {filterPendentes
+            ? 'Não há jogos pendentes no momento para os critérios selecionados.'
+            : 'Nenhuma partida disponível. Os jogos serão cadastrados pelo administrador Douglas.'}
         </Card>
       ) : (
         <div className="space-y-4">
-          {jogos.map((jogo) => {
+          {displayedJogos.map((jogo) => {
+            const bolaoOrigem = bolaoMap.get(jogo.bolao)
             const palpite = palpites[jogo.id]
             const form = formData[jogo.id] || {
               placar_a: '',
@@ -459,12 +644,25 @@ export default function Palpites() {
               >
                 {/* Match header */}
                 <div className="flex flex-wrap items-center justify-between border-b border-slate-100 bg-slate-50/70 px-6 py-3">
-                  <div className="flex items-center gap-2 text-xs text-slate-600">
-                    <Calendar className="h-3.5 w-3.5 text-slate-400" />
-                    <span>{formatDataBR(jogo.data)}</span>
+                  <div className="flex flex-wrap items-center gap-2 text-xs text-slate-600">
+                    {/* Badge da Copa / Bolão de origem (especialmente valioso na lista unificada) */}
+                    {bolaoOrigem && (
+                      <Badge
+                        variant="secondary"
+                        className="border border-[#CBD5E1] bg-white text-[#0F2A43] font-bold text-[11px] px-2 py-0.5 shadow-2xs"
+                      >
+                        🏆 {bolaoOrigem.nome} {bolaoOrigem.ativo === false ? '(Encerrado)' : ''}
+                      </Badge>
+                    )}
+                    <span className="flex items-center gap-1">
+                      <Calendar className="h-3.5 w-3.5 text-slate-400" />
+                      <span>{formatDataBR(jogo.data)}</span>
+                    </span>
                     <span>•</span>
-                    <Clock className="h-3.5 w-3.5 text-slate-400" />
-                    <span>{formatHoraBR(jogo.hora)}</span>
+                    <span className="flex items-center gap-1">
+                      <Clock className="h-3.5 w-3.5 text-slate-400" />
+                      <span>{formatHoraBR(jogo.hora)}</span>
+                    </span>
                   </div>
                   {finalizado ? (
                     <div className="flex items-center gap-2">

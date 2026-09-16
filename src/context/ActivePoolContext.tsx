@@ -64,7 +64,19 @@ export const ActivePoolProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   }, [refreshBoloes])
 
   // Resolve current active bolao record
-  const activeBolao = boloes.find((b) => b.id === selectedBolaoId) || null
+  const activeBolao =
+    selectedBolaoId === 'geral'
+      ? ({
+          id: 'geral',
+          nome: 'Geral (Todas as Copas)',
+          ativo: true,
+          foco: 'Ranking Geral Unificado',
+          collectionId: '',
+          collectionName: 'boloes',
+          created: '',
+          updated: '',
+        } as Bolao)
+      : boloes.find((b) => b.id === selectedBolaoId) || null
 
   // Fetch corresponding participant record for the active bolão and current user
   useEffect(() => {
@@ -72,6 +84,35 @@ export const ActivePoolProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     const loadParticipante = async () => {
       if (!user || !activeBolao) {
         setCurrentParticipante(null)
+        return
+      }
+
+      // If active bolao is general, resolve participant using any available bolão or member list
+      if (activeBolao.id === 'geral') {
+        const searchName =
+          participantName ||
+          (user.name as string) ||
+          (user.email ? (user.email as string).split('@')[0] : '')
+        if (searchName) {
+          try {
+            const parts = await pb.collection('participantes').getFullList<Participante>({
+              sort: '-created',
+            })
+            if (!cancelled && parts.length > 0) {
+              const exact = parts.find((p) => p.nome.toLowerCase() === searchName.toLowerCase())
+              const partial = parts.find(
+                (p) =>
+                  p.nome.toLowerCase().includes(searchName.toLowerCase()) ||
+                  searchName.toLowerCase().includes(p.nome.toLowerCase()),
+              )
+              setCurrentParticipante(exact || partial || parts[0])
+              return
+            }
+          } catch {
+            /* ignore */
+          }
+        }
+        if (!cancelled) setCurrentParticipante(null)
         return
       }
 

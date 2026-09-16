@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import {
   Trophy,
   Calendar,
@@ -11,13 +11,14 @@ import {
   ArrowRight,
   Sparkles,
   BarChart2,
+  Globe,
 } from 'lucide-react'
 import pb from '@/lib/pocketbase/client'
-import { useAuth } from '@/context/AuthContext'
+import { useAuth, BOLAO_MEMBERS } from '@/context/AuthContext'
 import { useActivePool } from '@/context/ActivePoolContext'
 import { useRealtime } from '@/hooks/use-realtime'
 import type { Participante, Jogo, Palpite } from '@/types/bolao'
-import { formatBolaoLabel } from '@/types/bolao'
+import { formatBolaoLabel, GERAL_BOLAO_ID } from '@/types/bolao'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -26,11 +27,16 @@ import { formatDataBR, formatHoraBR, formatDateTimeBR } from '@/lib/dateUtils'
 export default function BolaoDashboard() {
   const { user, isAdmin, participantName } = useAuth()
   const { boloes, activeBolao, activeBolaoId, setActiveBolaoId } = useActivePool()
+  const navigate = useNavigate()
 
   const [participantes, setParticipantes] = useState<Participante[]>([])
+  const [allParticipantes, setAllParticipantes] = useState<Participante[]>([])
+  const [allJogos, setAllJogos] = useState<Jogo[]>([])
   const [jogos, setJogos] = useState<Jogo[]>([])
   const [palpites, setPalpites] = useState<Palpite[]>([])
   const [loading, setLoading] = useState(true)
+
+  const isGeral = activeBolaoId === GERAL_BOLAO_ID
 
   // Real-time updates
   useRealtime<Participante>('participantes', () => {
@@ -48,22 +54,49 @@ export default function BolaoDashboard() {
   const loadData = async () => {
     if (!activeBolaoId) return
     try {
-      const [partList, jogosList, palpitesList] = await Promise.all([
-        pb.collection('participantes').getFullList<Participante>({
-          filter: `bolao = '${activeBolaoId}'`,
-          sort: 'nome',
-        }),
-        pb.collection('jogos').getFullList<Jogo>({
-          filter: `bolao = '${activeBolaoId}'`,
-          sort: 'data,hora',
-        }),
-        pb.collection('palpites').getFullList<Palpite>({
-          filter: `bolao = '${activeBolaoId}'`,
-        }),
-      ])
-      setParticipantes(partList)
-      setJogos(jogosList)
-      setPalpites(palpitesList)
+      if (activeBolaoId === GERAL_BOLAO_ID) {
+        // Carregar dados de todas as copas (ativas e encerradas)
+        const [allParts, allGames, allPredictions] = await Promise.all([
+          pb.collection('participantes').getFullList<Participante>({
+            sort: 'nome',
+          }),
+          pb.collection('jogos').getFullList<Jogo>({
+            sort: 'data,hora',
+          }),
+          pb.collection('palpites').getFullList<Palpite>(),
+        ])
+        setAllParticipantes(allParts)
+        setAllJogos(allGames)
+        setParticipantes(allParts)
+        setJogos(allGames)
+        setPalpites(allPredictions)
+      } else {
+        // Carregar dados da copa selecionada e também manter globais para estatísticas consistentes
+        const [partList, jogosList, palpitesList, globalParts, globalGames] = await Promise.all([
+          pb.collection('participantes').getFullList<Participante>({
+            filter: `bolao = '${activeBolaoId}'`,
+            sort: 'nome',
+          }),
+          pb.collection('jogos').getFullList<Jogo>({
+            filter: `bolao = '${activeBolaoId}'`,
+            sort: 'data,hora',
+          }),
+          pb.collection('palpites').getFullList<Palpite>({
+            filter: `bolao = '${activeBolaoId}'`,
+          }),
+          pb.collection('participantes').getFullList<Participante>({
+            sort: 'nome',
+          }),
+          pb.collection('jogos').getFullList<Jogo>({
+            sort: 'data,hora',
+          }),
+        ])
+        setParticipantes(partList)
+        setJogos(jogosList)
+        setPalpites(palpitesList)
+        setAllParticipantes(globalParts)
+        setAllJogos(globalGames)
+      }
     } catch (err) {
       console.error('Erro ao carregar dados do dashboard:', err)
     } finally {
@@ -80,6 +113,57 @@ export default function BolaoDashboard() {
 
   // Dynamic leaderboard calculation (SUM of valid finished games + imported points)
   const rankingParticipantes = useMemo(() => {
+    if (isGeral) {
+      // Visão Geral: agregar os 4 participantes em todas as copas
+      const finishedGameIds = new Set(
+        allJogos.filter((j) => j.resultado_finalizado).map((j) => j.id),
+      )
+
+      // Identificar os 4 membros oficiais
+      const memberNames = [...BOLAO_MEMBERS]
+
+      return memberNames
+        .map((memberName) => {
+          // Encontrar todos os registros de participantes deste membro em todos os bolões
+          const memberPartRecords = allParticipantes.filter(
+            (p) => p.nome.trim().toLowerCase() === memberName.toLowerCase(),
+          )
+          const memberPartIds = new Set(memberPartRecords.map((p) => p.id))
+
+          // Soma de pontos importados de todas as copas para este membro
+          const totalImportados = memberPartRecords.reduce(
+            (acc, p) => acc + (Number(p.pontos_importados) || 0),
+            0,
+          )
+
+          // Soma de palpites de jogos finalizados em todas as copas para este membro
+          const sumPalpites = palpites
+            .filter((p) => memberPartIds.has(p.participante) && finishedGameIds.has(p.jogo))
+            .reduce((acc, p) => acc + (Number(p.pontuacao_jogo) || 0), 0)
+
+          const pontuacaoConsolidada = totalImportados + sumPalpites
+
+          return {
+            id: memberPartRecords[0]?.id || `geral-${memberName}`,
+            bolao: GERAL_BOLAO_ID,
+            nome: memberName,
+            pontos_importados: totalImportados,
+            pontuacao_total: pontuacaoConsolidada,
+            collectionId: '',
+            collectionName: 'participantes',
+            created: '',
+            updated: '',
+          } as Participante
+        })
+        .sort((a, b) => {
+          if (b.pontuacao_total !== a.pontuacao_total) {
+            return b.pontuacao_total - a.pontuacao_total
+          }
+          return a.nome.localeCompare(b.nome)
+        })
+    }
+
+    // Visão de bolão específico (lógica existente mantida com precisão)
     const finishedGameIds = new Set(jogos.filter((j) => j.resultado_finalizado).map((j) => j.id))
 
     return participantes
@@ -103,13 +187,14 @@ export default function BolaoDashboard() {
         }
         return a.nome.localeCompare(b.nome)
       })
-  }, [participantes, jogos, palpites])
+  }, [isGeral, participantes, jogos, palpites, allJogos, allParticipantes])
 
   // Quick stats
   const stats = useMemo(() => {
-    const registrados = jogos.filter((j) => j.resultado_finalizado).length
-    const pendentes = jogos.filter((j) => !j.resultado_finalizado).length
-    const proximo = jogos.find((j) => !j.resultado_finalizado)
+    const gamesToUse = isGeral ? allJogos : jogos
+    const registrados = gamesToUse.filter((j) => j.resultado_finalizado).length
+    const pendentes = gamesToUse.filter((j) => !j.resultado_finalizado).length
+    const proximo = gamesToUse.find((j) => !j.resultado_finalizado)
     return {
       registrados,
       pendentes,
@@ -117,7 +202,15 @@ export default function BolaoDashboard() {
         ? `${proximo.time_a} x ${proximo.time_b} (${formatDataBR(proximo.data)} às ${formatHoraBR(proximo.hora)})`
         : '—',
     }
-  }, [jogos])
+  }, [isGeral, allJogos, jogos])
+
+  const handleCardPendentesClick = () => {
+    if (isGeral) {
+      navigate('/bolao/meus-palpites?geral=1&pendentes=1')
+    } else {
+      navigate('/bolao/meus-palpites?pendentes=1')
+    }
+  }
 
   // Ranking tier badge style
   const getPositionBadge = (index: number) => {
@@ -163,21 +256,42 @@ export default function BolaoDashboard() {
                 <h1 className="text-2xl font-bold tracking-tight text-[#0F172A] sm:text-3xl">
                   Bolão do Grupo
                 </h1>
-                {activeBolao?.foco && (
+                {isGeral ? (
                   <Badge
                     variant="secondary"
-                    className="border border-indigo-200 bg-indigo-50 font-bold text-indigo-800 shadow-xs text-xs px-2.5 py-0.5"
+                    className="border border-amber-300 bg-amber-50 font-bold text-amber-900 shadow-xs text-xs px-2.5 py-0.5 flex items-center gap-1"
                   >
-                    Tema: {activeBolao.foco}
+                    <Globe className="h-3 w-3 text-amber-600" />
+                    Tema: Ranking Geral Unificado
                   </Badge>
+                ) : (
+                  activeBolao?.foco && (
+                    <Badge
+                      variant="secondary"
+                      className="border border-indigo-200 bg-indigo-50 font-bold text-indigo-800 shadow-xs text-xs px-2.5 py-0.5"
+                    >
+                      Tema: {activeBolao.foco}
+                    </Badge>
+                  )
                 )}
               </div>
               <p className="text-xs text-[#64748B]">
-                Competição ativa:{' '}
-                <span className="font-semibold text-[#0F2A43]">
-                  {activeBolao?.nome || 'Carregando...'}
-                </span>
-                {activeBolao?.ultima_atualizacao && (
+                {isGeral ? (
+                  <span>
+                    Visão Consolidada:{' '}
+                    <span className="font-semibold text-[#0F2A43]">
+                      Todas as Copas (Ativas e Encerradas)
+                    </span>
+                  </span>
+                ) : (
+                  <span>
+                    Competição ativa:{' '}
+                    <span className="font-semibold text-[#0F2A43]">
+                      {activeBolao?.nome || 'Carregando...'}
+                    </span>
+                  </span>
+                )}
+                {!isGeral && activeBolao?.ultima_atualizacao && (
                   <span className="ml-2 text-[11px] text-slate-400">
                     • Atualizado em: {formatDateTimeBR(activeBolao.ultima_atualizacao)}
                   </span>
@@ -198,6 +312,8 @@ export default function BolaoDashboard() {
             onChange={(e) => setActiveBolaoId(e.target.value)}
             className="rounded-lg border border-[#CBD5E1] bg-white px-3 py-1.5 text-xs font-medium text-[#0F2A43] shadow-xs focus:border-[#10B981] focus:outline-none"
           >
+            {/* Opção Geral (Todas as Copas) NO TOPO do dropdown */}
+            <option value={GERAL_BOLAO_ID}>Geral (Todas as Copas)</option>
             {boloes.map((b) => (
               <option key={b.id} value={b.id}>
                 {formatBolaoLabel(b)}
@@ -221,13 +337,33 @@ export default function BolaoDashboard() {
           </div>
         </Card>
 
-        <Card className="rounded-[14px] border-[#E2E8F0] bg-white p-4 shadow-xs transition hover:-translate-y-0.5 hover:shadow-md">
+        <Card
+          onClick={handleCardPendentesClick}
+          role="button"
+          tabIndex={0}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+              e.preventDefault()
+              handleCardPendentesClick()
+            }
+          }}
+          className="group cursor-pointer rounded-[14px] border-[#E2E8F0] bg-white p-4 shadow-xs transition duration-200 hover:-translate-y-0.5 hover:border-amber-300 hover:shadow-md focus:outline-none focus:ring-2 focus:ring-amber-400"
+          title="Ver jogos pendentes em Meus Palpites"
+        >
           <div className="flex items-center justify-between">
             <div>
-              <p className="text-xs font-medium text-[#64748B]">Jogos Pendentes</p>
+              <div className="flex items-center gap-1.5">
+                <p className="text-xs font-medium text-[#64748B] group-hover:text-amber-800 transition-colors">
+                  Jogos Pendentes
+                </p>
+                <ArrowRight className="h-3.5 w-3.5 text-slate-400 opacity-0 group-hover:opacity-100 group-hover:translate-x-0.5 transition-all text-amber-600" />
+              </div>
               <p className="mt-1 text-2xl font-black text-[#0F172A]">{stats.pendentes}</p>
+              <span className="text-[10px] font-semibold text-amber-600 group-hover:underline">
+                Clique para palpitar &rarr;
+              </span>
             </div>
-            <div className="rounded-lg bg-amber-50 p-2.5 text-[#F59E0B]">
+            <div className="rounded-lg bg-amber-50 p-2.5 text-[#F59E0B] group-hover:bg-amber-100 transition-colors">
               <Clock className="h-5 w-5" />
             </div>
           </div>
@@ -357,7 +493,10 @@ export default function BolaoDashboard() {
                 </Button>
               </Link>
 
-              <Link to="/bolao/palpites" className="block">
+              <Link
+                to={isGeral ? '/bolao/meus-palpites?geral=1' : '/bolao/meus-palpites'}
+                className="block"
+              >
                 <Button className="h-11 w-full justify-between rounded-lg bg-[#0F2A43] text-sm font-semibold text-white shadow-xs hover:bg-[#1B3A5C]">
                   <span>Meus Palpites</span>
                   <ArrowRight className="h-4 w-4" />

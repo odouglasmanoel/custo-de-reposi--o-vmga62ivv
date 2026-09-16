@@ -33,10 +33,11 @@ export default function Layout({ children }: LayoutProps) {
   const navigate = useNavigate()
   const location = useLocation()
 
-  const isBolaoScreen = location.pathname.startsWith('/bolao')
+  const isBolaoScreen = location.pathname.startsWith('/bolao') || location.pathname === '/inicio'
   const showBackButton =
     location.pathname === '/bolao/chat' ||
     location.pathname === '/bolao/palpites' ||
+    location.pathname === '/bolao/meus-palpites' ||
     location.pathname === '/bolao/historico' ||
     location.pathname === '/bolao/estatisticas' ||
     location.pathname.startsWith('/bolao/admin')
@@ -48,6 +49,7 @@ export default function Layout({ children }: LayoutProps) {
       location.pathname === '/bolao/admin/jogos' ||
       location.pathname === '/bolao/chat' ||
       location.pathname === '/bolao/palpites' ||
+      location.pathname === '/bolao/meus-palpites' ||
       location.pathname === '/bolao/historico' ||
       location.pathname === '/bolao/estatisticas'
     ) {
@@ -116,7 +118,7 @@ export default function Layout({ children }: LayoutProps) {
                     <Link
                       to="/bolao"
                       className={`rounded-md px-2.5 py-1 text-xs font-medium transition ${
-                        location.pathname === '/bolao'
+                        location.pathname === '/bolao' || location.pathname === '/inicio'
                           ? 'bg-[#1B3A5C] text-white'
                           : 'text-slate-300 hover:text-white'
                       }`}
@@ -124,9 +126,10 @@ export default function Layout({ children }: LayoutProps) {
                       Início
                     </Link>
                     <Link
-                      to="/bolao/palpites"
+                      to="/bolao/meus-palpites"
                       className={`rounded-md px-2.5 py-1 text-xs font-medium transition ${
-                        location.pathname === '/bolao/palpites'
+                        location.pathname === '/bolao/palpites' ||
+                        location.pathname === '/bolao/meus-palpites'
                           ? 'bg-[#1B3A5C] text-white'
                           : 'text-slate-300 hover:text-white'
                       }`}
