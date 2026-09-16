@@ -450,4 +450,138 @@ describe('parseSpreadsheet with Copa Genilton structure', () => {
     expect(result3.games.length).toBe(1)
     expect(result3.games[0].competicao || '').toBe('')
   })
+
+  it('correctly handles teams with letter x inside their name, such as México, without breaking the match split', async () => {
+    const rows = [
+      ['Jogos', 'Placar Final', 'Palpites', 'Pontuação'],
+      ['Tchéquia x México', '0x3', '1x2', '3'],
+      ['México x África do Sul', '2x0', '2x0', '8'],
+      ['Bélgica x México', '1x1', '0x0', '2'],
+    ]
+
+    const wb = XLSX.utils.book_new()
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(rows), 'Douglas')
+    const buf = XLSX.write(wb, { type: 'array', bookType: 'xlsx' })
+    const file = new File([buf], 'copa-mundo-mexico.xlsx', {
+      type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    })
+
+    const result = await parseSpreadsheet(file)
+    expect(result.games.length).toBe(3)
+
+    const game1 = result.games.find((g) => g.time_a === 'Tchéquia' && g.time_b === 'México')
+    expect(game1).toBeDefined()
+    expect(game1?.placar_a).toBe(0)
+    expect(game1?.placar_b).toBe(3)
+    expect(game1?.finalizado).toBe(true)
+
+    const game2 = result.games.find((g) => g.time_a === 'México' && g.time_b === 'África do Sul')
+    expect(game2).toBeDefined()
+    expect(game2?.placar_a).toBe(2)
+    expect(game2?.placar_b).toBe(0)
+    expect(game2?.finalizado).toBe(true)
+
+    const game3 = result.games.find((g) => g.time_a === 'Bélgica' && g.time_b === 'México')
+    expect(game3).toBeDefined()
+    expect(game3?.placar_a).toBe(1)
+    expect(game3?.placar_b).toBe(1)
+    expect(game3?.finalizado).toBe(true)
+  })
+
+  it('preserves matches with extra spaces, special characters, and matches without goal scorers', async () => {
+    const rows = [
+      ['Jogos', 'Placar Final', 'Palpites', 'Pontuação'],
+      ['  Brasil   x   Haiti  ', '3x0', '2x0', '3'],
+      ['Turquia x Paraguai', '0x1', '1x1', '0'],
+      ['Estados Unidos vs Jordânia', '2x0', '1x0', '2'],
+      ['Costa do Marfim - Noruega', '1x2', '0x1', '2'],
+      ['Curaçao x Alemanha', '0x0', '0x0', '8'],
+    ]
+
+    const wb = XLSX.utils.book_new()
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(rows), 'Gabriel')
+    const buf = XLSX.write(wb, { type: 'array', bookType: 'xlsx' })
+    const file = new File([buf], 'copa-spaces.xlsx', {
+      type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    })
+
+    const result = await parseSpreadsheet(file)
+    expect(result.games.length).toBe(5)
+
+    const brasilHaiti = result.games.find((g) => g.time_a === 'Brasil' && g.time_b === 'Haiti')
+    expect(brasilHaiti).toBeDefined()
+    expect(brasilHaiti?.placar_a).toBe(3)
+    expect(brasilHaiti?.placar_b).toBe(0)
+
+    const euaJordania = result.games.find(
+      (g) => g.time_a === 'Estados Unidos' && g.time_b === 'Jordânia',
+    )
+    expect(euaJordania).toBeDefined()
+    expect(euaJordania?.placar_a).toBe(2)
+    expect(euaJordania?.placar_b).toBe(0)
+
+    const curacaoAlemanha = result.games.find(
+      (g) => g.time_a === 'Curaçao' && g.time_b === 'Alemanha',
+    )
+    expect(curacaoAlemanha).toBeDefined()
+    expect(curacaoAlemanha?.finalizado).toBe(true)
+    expect(curacaoAlemanha?.placar_a).toBe(0)
+    expect(curacaoAlemanha?.placar_b).toBe(0)
+  })
+
+  it('simulates 74 World Cup matches import and guarantees all 74 are detected without losing México matches', async () => {
+    // Generate 74 matches like the World Cup pool
+    const confrontationRows: any[][] = [
+      ['Jogos', 'Placar Final', 'Palpites', 'Pontuação', 'Detalhamento da Pontuação'],
+    ]
+
+    for (let i = 1; i <= 70; i++) {
+      confrontationRows.push([
+        `Seleção ${i} x Seleção ${i + 1}`,
+        `${i % 4}x${(i + 1) % 3}`,
+        '-',
+        '0',
+        '-',
+      ])
+    }
+    // Add specific matches with México, extra spaces, special chars, etc.
+    confrontationRows.push([
+      'Tchéquia x México',
+      '0x3 (Quiñones 2x e Giménez)',
+      '1x2',
+      '3',
+      'Vencedor',
+    ])
+    confrontationRows.push(['  México   x   África do Sul  ', '2x0', '2x0', '8', 'Placar Exato'])
+    confrontationRows.push(['Bélgica x México', '1x1', '0x0', '2', 'Empate'])
+    confrontationRows.push(['França x Inglaterra', '4x6', '2x0', '1', 'Gol do Mbappé'])
+    // Administrative event line that should be ignored
+    confrontationRows.push(['Pontuação Total', '', '', '14', ''])
+
+    expect(confrontationRows.length).toBe(1 + 74 + 1) // header + 74 games + 1 total
+
+    const wb = XLSX.utils.book_new()
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(confrontationRows), 'Davi')
+    const buf = XLSX.write(wb, { type: 'array', bookType: 'xlsx' })
+    const file = new File([buf], 'copa-do-mundo-74.xlsx', {
+      type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    })
+
+    const result = await parseSpreadsheet(file)
+    expect(result.games.length).toBe(74)
+
+    const tchequiaMexico = result.games.find(
+      (g) => g.time_a === 'Tchéquia' && g.time_b === 'México',
+    )
+    expect(tchequiaMexico).toBeDefined()
+    expect(tchequiaMexico?.placar_a).toBe(0)
+    expect(tchequiaMexico?.placar_b).toBe(3)
+
+    const mexicoAfrica = result.games.find(
+      (g) => g.time_a === 'México' && g.time_b === 'África do Sul',
+    )
+    expect(mexicoAfrica).toBeDefined()
+    expect(mexicoAfrica?.placar_a).toBe(2)
+    expect(mexicoAfrica?.placar_b).toBe(0)
+  })
 })

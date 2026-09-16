@@ -618,17 +618,19 @@ export async function parseSpreadsheet(file: File): Promise<{
         // Check if rawA contains "TimeA x TimeB"
         if (
           !rawB &&
-          (rawA.includes(' x ') ||
-            rawA.includes(' X ') ||
-            rawA.includes(' vs ') ||
-            rawA.includes(' VS ') ||
-            /\s+-\s+/.test(rawA))
+          (/\s+[xX]\s+/.test(rawA) || /\s+vs\.?\s+/i.test(rawA) || /\s+-\s+/.test(rawA))
         ) {
-          // Split ONLY by x/vs or space-hyphen-space (" - "), never bare "-" inside team names like "Atlético-MG"
-          const parts = rawA.split(/\s*(?:x|X|vs|VS|\s+-\s+)\s*/)
+          // Split ONLY when x/X/vs has whitespace around it or space-hyphen-space (" - "),
+          // never inside words like "México", "Bélgica x México", or team names like "Atlético-MG"
+          const parts = rawA.split(/\s+(?:[xX]|vs\.?|-)\s+/)
           if (parts.length >= 2) {
-            rawA = parts[0].trim()
-            rawB = parts[1].trim()
+            rawA = parts[0].trim().replace(/\s+/g, ' ')
+            rawB = parts.slice(1).join(' - ').trim().replace(/\s+/g, ' ')
+          }
+        } else {
+          rawA = rawA.replace(/\s+/g, ' ')
+          if (rawB) {
+            rawB = rawB.replace(/\s+/g, ' ')
           }
         }
 
@@ -652,17 +654,33 @@ export async function parseSpreadsheet(file: File): Promise<{
         // Skip headers, totals or summary rows
         const cleanA = cleanKey(rawA)
         const cleanB = cleanKey(rawB)
+        const headerKeywords = new Set([
+          'total',
+          'pontuacaototal',
+          'mandante',
+          'visitante',
+          'time',
+          'timea',
+          'timeb',
+          'time1',
+          'time2',
+          'equipe',
+          'equipea',
+          'equipeb',
+          'selecao',
+          'selecaoa',
+          'selecaob',
+          'confronto',
+          'confrontos',
+          'jogo',
+          'jogos',
+          'partida',
+          'partidas',
+        ])
         if (
-          cleanA === 'total' ||
-          cleanA === 'pontuacaototal' ||
+          headerKeywords.has(cleanA) ||
           cleanA.includes('pontuacaototal') ||
-          cleanA === 'mandante' ||
-          cleanA === 'time' ||
-          cleanA === 'confronto' ||
-          cleanA === 'jogos' ||
-          cleanA === 'partida' ||
-          cleanB === 'total' ||
-          cleanB === 'pontuacaototal' ||
+          headerKeywords.has(cleanB) ||
           cleanB.includes('pontuacaototal')
         ) {
           continue
@@ -883,10 +901,12 @@ export async function parseSpreadsheet(file: File): Promise<{
         for (let c = 0; c < row.length; c++) {
           const cellStr = String(row[c] || '').trim()
           // Check for "Flamengo x Palmeiras" pattern
-          const matchX = cellStr.match(/^([A-Za-zÀ-ÿ0-9\s.-]+)\s+[xX]\s+([A-Za-zÀ-ÿ0-9\s.-]+)$/)
+          const matchX = cellStr.match(
+            /^([A-Za-zÀ-ÿ0-9\s.'-]+?)\s+(?:[xX]|vs\.?|-)\s+([A-Za-zÀ-ÿ0-9\s.'-]+)$/,
+          )
           if (matchX && matchX[1].trim() && matchX[2].trim()) {
-            const timeA = matchX[1].trim()
-            const timeB = matchX[2].trim()
+            const timeA = matchX[1].trim().replace(/\s+/g, ' ')
+            const timeB = matchX[2].trim().replace(/\s+/g, ' ')
 
             const lowerFallback = `${timeA} ${timeB}`.toLowerCase()
             if (
@@ -905,13 +925,36 @@ export async function parseSpreadsheet(file: File): Promise<{
             }
 
             // Skip if this is a subheader or total
+            const cleanFA = cleanKey(timeA)
+            const cleanFB = cleanKey(timeB)
+            const fallbackHeaders = new Set([
+              'total',
+              'pontuacaototal',
+              'mandante',
+              'visitante',
+              'time',
+              'timea',
+              'timeb',
+              'time1',
+              'time2',
+              'equipe',
+              'equipea',
+              'equipeb',
+              'selecao',
+              'selecaoa',
+              'selecaob',
+              'confronto',
+              'confrontos',
+              'jogo',
+              'jogos',
+              'partida',
+              'partidas',
+            ])
             if (
-              cleanKey(timeA) === 'time' ||
-              cleanKey(timeB) === 'time' ||
-              cleanKey(timeA) === 'pontuacaototal' ||
-              cleanKey(timeB) === 'pontuacaototal' ||
-              cleanKey(timeA) === 'total' ||
-              cleanKey(timeB) === 'total'
+              fallbackHeaders.has(cleanFA) ||
+              cleanFA.includes('pontuacaototal') ||
+              fallbackHeaders.has(cleanFB) ||
+              cleanFB.includes('pontuacaototal')
             ) {
               continue
             }
