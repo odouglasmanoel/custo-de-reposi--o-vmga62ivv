@@ -12,6 +12,7 @@ import Index from './pages/Index'
 import BolaoDashboard from './pages/BolaoDashboard'
 import AdminJogos from './pages/AdminJogos'
 import AdminResultado from './pages/AdminResultado'
+import AdminConfiguracoes from './pages/AdminConfiguracoes'
 import Palpites from './pages/Palpites'
 import Historico from './pages/Historico'
 import Estatisticas from './pages/Estatisticas'
@@ -139,6 +140,28 @@ const App = () => (
                 <AdminRoute>
                   <Layout>
                     <AdminResultado />
+                  </Layout>
+                </AdminRoute>
+              }
+            />
+
+            <Route
+              path="/bolao/admin/configuracoes"
+              element={
+                <AdminRoute>
+                  <Layout>
+                    <AdminConfiguracoes />
+                  </Layout>
+                </AdminRoute>
+              }
+            />
+
+            <Route
+              path="/bolao/configuracoes"
+              element={
+                <AdminRoute>
+                  <Layout>
+                    <AdminConfiguracoes />
                   </Layout>
                 </AdminRoute>
               }

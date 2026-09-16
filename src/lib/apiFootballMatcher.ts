@@ -4,24 +4,25 @@
  */
 
 export interface ApiFootballFixture {
+  provider?: 'football_data' | 'thesportsdb' | 'api_football'
   fixture?: {
-    id?: number
+    id?: number | string
     date?: string
     timestamp?: number
     status?: {
       long?: string
       short?: string
-      elapsed?: number
+      elapsed?: number | null
     }
   }
   teams?: {
     home?: {
-      id?: number
+      id?: number | string
       name?: string
       logo?: string
     }
     away?: {
-      id?: number
+      id?: number | string
       name?: string
       logo?: string
     }
@@ -38,7 +39,8 @@ export interface ApiFootballFixture {
 
 export interface MatchedLiveScore {
   found: boolean
-  fixtureId?: number
+  fixtureId?: number | string
+  provider?: string
   homeTeamName: string
   awayTeamName: string
   placarA: number
@@ -161,7 +163,19 @@ export function stringSimilarity(strA: string, strB: string): number {
  * 1H: First Half, 2H: Second Half, ET: Extra Time, P: Penalty in progress,
  * LIVE: Live, HT: Half Time, BT: Break Time.
  */
-const LIVE_STATUSES = new Set(['1H', '2H', 'HT', 'ET', 'BT', 'P', 'LIVE', 'INT'])
+const LIVE_STATUSES = new Set([
+  '1H',
+  '2H',
+  'HT',
+  'ET',
+  'BT',
+  'P',
+  'LIVE',
+  'INT',
+  'IN_PLAY',
+  'PAUSED',
+  'IN PLAY',
+])
 
 export function isFixtureLive(statusShort?: string): boolean {
   if (!statusShort) return false
@@ -240,17 +254,24 @@ export function matchGameWithApiFixtures(
 
   // Label amigável de exibição
   let displayLabel = `AO VIVO ${placarA} x ${placarB}`
-  if (statusShort === 'HT') {
+  if (statusShort === 'HT' || statusShort === 'PAUSED' || statusLong.toUpperCase() === 'PAUSED') {
     displayLabel = `AO VIVO (Intervalo) ${placarA} x ${placarB}`
   } else if (elapsed && isLive) {
     displayLabel = `AO VIVO ${elapsed}' • ${placarA} x ${placarB}`
-  } else if (!isLive && (statusShort === 'FT' || statusShort === 'AET' || statusShort === 'PEN')) {
+  } else if (
+    !isLive &&
+    (statusShort === 'FT' ||
+      statusShort === 'AET' ||
+      statusShort === 'PEN' ||
+      statusShort === 'FINISHED')
+  ) {
     displayLabel = `Fim de Jogo (API) ${placarA} x ${placarB}`
   }
 
   return {
     found: true,
     fixtureId: fixture.fixture?.id,
+    provider: fixture.provider,
     homeTeamName: fixture.teams?.home?.name || '',
     awayTeamName: fixture.teams?.away?.name || '',
     placarA,

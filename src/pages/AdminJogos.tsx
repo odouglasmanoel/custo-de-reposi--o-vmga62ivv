@@ -14,6 +14,7 @@ import {
   Trophy,
   CheckCircle2,
   FileSpreadsheet,
+  Settings,
 } from 'lucide-react'
 import pb from '@/lib/pocketbase/client'
 import { useActivePool } from '@/context/ActivePoolContext'
@@ -435,6 +436,20 @@ export default function AdminJogos() {
             <Upload className="mr-1 h-3.5 w-3.5 text-indigo-600" />
             Upload de Planilha ({activeBolao?.nome || 'Bolão'})
           </Button>
+
+          {/* Atalho para Configurações de API Key */}
+          <Link to="/bolao/configuracoes">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="h-8 rounded-lg border-emerald-300 bg-emerald-50 px-3 text-xs font-semibold text-emerald-900 shadow-xs hover:bg-emerald-100"
+              title="Configurar fontes de placar ao vivo e API Key"
+            >
+              <Settings className="mr-1 h-3.5 w-3.5 text-emerald-600" />
+              Configurar Placar Ao Vivo
+            </Button>
+          </Link>
         </div>
       </div>
 

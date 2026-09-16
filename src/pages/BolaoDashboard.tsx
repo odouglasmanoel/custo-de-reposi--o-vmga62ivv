@@ -73,9 +73,10 @@ export default function BolaoDashboard() {
   const [loading, setLoading] = useState(true)
   const [nowMs, setNowMs] = useState<number>(Date.now())
 
-  // Live score state via API-Football
+  // Live score state via API de futebol (Football-Data.org / TheSportsDB / API-Football)
   const [apiFixtures, setApiFixtures] = useState<ApiFootballFixture[]>([])
   const [apiConfigured, setApiConfigured] = useState<boolean | null>(null)
+  const [apiProvider, setApiProvider] = useState<string>('football_data')
 
   // Edição de marcadores pelo Admin
   const [adminEditingPalpite, setAdminEditingPalpite] = useState<{
@@ -106,6 +107,9 @@ export default function BolaoDashboard() {
       if (res.ok) {
         const data = await res.json()
         setApiConfigured(Boolean(data.configured))
+        if (data.provider) {
+          setApiProvider(data.provider)
+        }
         if (Array.isArray(data.live)) {
           setApiFixtures(data.live)
         }
@@ -616,7 +620,7 @@ export default function BolaoDashboard() {
                         <span className="text-[11px] text-slate-500">
                           {formatDataBR(jogo.data)} às {formatHoraBR(jogo.hora)}
                         </span>
-                        {/* Indicador de placar ao vivo da API-Football se correspondência for encontrada */}
+                        {/* Indicador de placar ao vivo (Football-Data.org / TheSportsDB / API-Football) */}
                         {(() => {
                           const matched = matchGameWithApiFixtures(
                             jogo.time_a,
@@ -626,11 +630,18 @@ export default function BolaoDashboard() {
                           if (!matched) {
                             return null
                           }
+                          const providerLabel =
+                            matched.provider === 'thesportsdb'
+                              ? 'TheSportsDB'
+                              : matched.provider === 'football_data'
+                                ? 'Football-Data.org'
+                                : 'API-Football'
+
                           return (
                             <Badge
                               variant="secondary"
                               className="border border-emerald-400 bg-emerald-50 text-emerald-800 text-[10px] font-bold shadow-2xs flex items-center gap-1.5 animate-pulse"
-                              title={`Placar em tempo real via API-Football (${matched.statusLong || 'Em andamento'}). Nota: Informativo, o resultado oficial é confirmado manualmente pelo Admin.`}
+                              title={`Placar em tempo real via ${providerLabel} (${matched.statusLong || 'Em andamento'}). Nota: Informativo, o resultado oficial é confirmado manualmente pelo Admin.`}
                             >
                               <Radio className="h-3 w-3 text-emerald-600" />
                               <span>{matched.displayLabel}</span>

@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-09-16T22:07:00.330Z",
+  "generatedAt": "2026-09-16T22:35:55.127Z",
   "collections": [
     {
       "name": "users",
@@ -449,6 +449,59 @@
         }
       ],
       "indexes": ["CREATE UNIQUE INDEX idx_norm_bolao_orig ON normalizacoes (bolao, nome_original)"]
+    },
+    {
+      "name": "config_integracoes",
+      "type": "base",
+      "apiRules": {
+        "list": null,
+        "view": null,
+        "create": null,
+        "update": null,
+        "delete": null
+      },
+      "fields": [
+        {
+          "name": "chave",
+          "type": "text",
+          "required": true,
+          "system": false
+        },
+        {
+          "name": "provedor",
+          "type": "select",
+          "required": true,
+          "system": false,
+          "selectValues": ["football_data", "thesportsdb", "api_football"]
+        },
+        {
+          "name": "api_key",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "ativo",
+          "type": "bool",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "created",
+          "type": "autodate",
+          "required": false,
+          "system": false,
+          "autodateTriggers": ["onCreate"]
+        },
+        {
+          "name": "updated",
+          "type": "autodate",
+          "required": false,
+          "system": false,
+          "autodateTriggers": ["onCreate", "onUpdate"]
+        }
+      ],
+      "indexes": ["CREATE UNIQUE INDEX idx_config_integracoes_chave ON config_integracoes (chave)"]
     }
   ]
 }

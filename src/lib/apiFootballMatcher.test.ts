@@ -35,17 +35,22 @@ describe('apiFootballMatcher', () => {
   })
 
   describe('isFixtureLive', () => {
-    it('deve reconhecer status ao vivo da API-Football', () => {
+    it('deve reconhecer status ao vivo de Football-Data.org, TheSportsDB e API-Football', () => {
       expect(isFixtureLive('1H')).toBe(true)
       expect(isFixtureLive('2H')).toBe(true)
       expect(isFixtureLive('HT')).toBe(true)
       expect(isFixtureLive('ET')).toBe(true)
       expect(isFixtureLive('P')).toBe(true)
       expect(isFixtureLive('LIVE')).toBe(true)
+      expect(isFixtureLive('IN_PLAY')).toBe(true)
+      expect(isFixtureLive('PAUSED')).toBe(true)
     })
 
     it('deve retornar false para jogos encerrados ou não iniciados', () => {
       expect(isFixtureLive('FT')).toBe(false)
+      expect(isFixtureLive('FINISHED')).toBe(false)
+      expect(isFixtureLive('TIMED')).toBe(false)
+      expect(isFixtureLive('SCHEDULED')).toBe(false)
       expect(isFixtureLive('NS')).toBe(false)
       expect(isFixtureLive('TBD')).toBe(false)
       expect(isFixtureLive('CANC')).toBe(false)
@@ -87,6 +92,32 @@ describe('apiFootballMatcher', () => {
       expect(match?.placarB).toBe(0)
       expect(match?.isLive).toBe(true)
       expect(match?.displayLabel).toContain("AO VIVO 35' • 1 x 0")
+    })
+
+    it('deve suportar dados no formato do Football-Data.org', () => {
+      const footballDataFixtures: ApiFootballFixture[] = [
+        {
+          provider: 'football_data',
+          fixture: {
+            id: 450123,
+            status: { short: '1H', long: 'IN_PLAY', elapsed: 22 },
+          },
+          teams: {
+            home: { id: 10, name: 'Real Madrid CF' },
+            away: { id: 11, name: 'FC Barcelona' },
+          },
+          goals: { home: 2, away: 1 },
+        },
+      ]
+
+      const match = matchGameWithApiFixtures('Real Madrid', 'Barcelona', footballDataFixtures)
+      expect(match).not.toBeNull()
+      expect(match?.found).toBe(true)
+      expect(match?.provider).toBe('football_data')
+      expect(match?.placarA).toBe(2)
+      expect(match?.placarB).toBe(1)
+      expect(match?.isLive).toBe(true)
+      expect(match?.displayLabel).toContain("AO VIVO 22' • 2 x 1")
     })
 
     it('deve suportar inversão de mandante/visitante', () => {

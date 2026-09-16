@@ -7,6 +7,7 @@ import {
   MessageSquare,
   Shield,
   KeyRound,
+  Settings,
   User,
   BarChart2,
 } from 'lucide-react'
@@ -40,6 +41,7 @@ export default function Layout({ children }: LayoutProps) {
     location.pathname === '/bolao/meus-palpites' ||
     location.pathname === '/bolao/historico' ||
     location.pathname === '/bolao/estatisticas' ||
+    location.pathname === '/bolao/configuracoes' ||
     location.pathname.startsWith('/bolao/admin')
 
   const handleBack = () => {
@@ -47,6 +49,8 @@ export default function Layout({ children }: LayoutProps) {
       navigate('/bolao/admin/jogos')
     } else if (
       location.pathname === '/bolao/admin/jogos' ||
+      location.pathname === '/bolao/admin/configuracoes' ||
+      location.pathname === '/bolao/configuracoes' ||
       location.pathname === '/bolao/chat' ||
       location.pathname === '/bolao/palpites' ||
       location.pathname === '/bolao/meus-palpites' ||
@@ -169,17 +173,33 @@ export default function Layout({ children }: LayoutProps) {
                       Assistente
                     </Link>
                     {isAdmin && (
-                      <Link
-                        to="/bolao/admin/jogos"
-                        className={`inline-flex items-center gap-1 rounded-md px-2.5 py-1 text-xs font-medium transition ${
-                          location.pathname.startsWith('/bolao/admin')
-                            ? 'bg-[#1B3A5C] text-amber-300'
-                            : 'text-amber-400 hover:text-amber-300'
-                        }`}
-                      >
-                        <Shield className="h-3.5 w-3.5" />
-                        Admin
-                      </Link>
+                      <div className="flex items-center gap-1">
+                        <Link
+                          to="/bolao/admin/jogos"
+                          className={`inline-flex items-center gap-1 rounded-md px-2.5 py-1 text-xs font-medium transition ${
+                            location.pathname === '/bolao/admin/jogos' ||
+                            location.pathname.startsWith('/bolao/admin/jogos/')
+                              ? 'bg-[#1B3A5C] text-amber-300'
+                              : 'text-amber-400 hover:text-amber-300'
+                          }`}
+                        >
+                          <Shield className="h-3.5 w-3.5" />
+                          Admin
+                        </Link>
+                        <Link
+                          to="/bolao/configuracoes"
+                          className={`inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium transition ${
+                            location.pathname === '/bolao/configuracoes' ||
+                            location.pathname === '/bolao/admin/configuracoes'
+                              ? 'bg-[#1B3A5C] text-emerald-300'
+                              : 'text-slate-300 hover:text-white'
+                          }`}
+                          title="Configurações de Integrações e API Key (Admin)"
+                        >
+                          <Settings className="h-3.5 w-3.5" />
+                          <span className="hidden xl:inline">Configurações</span>
+                        </Link>
+                      </div>
                     )}
                   </nav>
                 )}
