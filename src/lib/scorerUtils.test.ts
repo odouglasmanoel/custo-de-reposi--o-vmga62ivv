@@ -206,7 +206,73 @@ describe('scorerUtils', () => {
       expect(res.labelB).toBe('-')
     })
 
-    it('cenário Sobrescrita do Admin Douglas: divide marcadores na proporção do placar A x B', () => {
+    it('cenário Sobrescrita com campos independentes: marcadores dos dois lados', () => {
+      const res = splitMatchScorersByTeam({
+        teamAName: 'LDU',
+        teamBName: 'Palmeiras',
+        placarA: 1,
+        placarB: 1,
+        sobrescritaMarcadoresA: ["Luis Segovia 30'"],
+        sobrescritaMarcadoresB: ["Marlon Freitas 55'"],
+      })
+
+      expect(res.labelA).toBe("Luis Segovia 30'")
+      expect(res.labelB).toBe("Marlon Freitas 55'")
+      expect(res.scorersA).toEqual(["Luis Segovia 30'"])
+      expect(res.scorersB).toEqual(["Marlon Freitas 55'"])
+      expect(res.hasGolsA).toBe(true)
+      expect(res.hasGolsB).toBe(true)
+    })
+
+    it('cenário Sobrescrita com campos independentes: string com múltiplos autores separados por vírgula', () => {
+      const res = splitMatchScorersByTeam({
+        teamAName: 'LDU',
+        teamBName: 'Palmeiras',
+        placarA: 2,
+        placarB: 1,
+        sobrescritaMarcadoresA: "Luis Segovia 15', Alex Arce 44'",
+        sobrescritaMarcadoresB: "Flaco López 88'",
+      })
+
+      expect(res.labelA).toBe("Luis Segovia 15', Alex Arce 44'")
+      expect(res.labelB).toBe("Flaco López 88'")
+      expect(res.scorersA).toEqual(["Luis Segovia 15'", "Alex Arce 44'"])
+      expect(res.scorersB).toEqual(["Flaco López 88'"])
+    })
+
+    it('cenário Sobrescrita com campos independentes: apenas mandante tem gols', () => {
+      const res = splitMatchScorersByTeam({
+        teamAName: 'LDU',
+        teamBName: 'Palmeiras',
+        placarA: 2,
+        placarB: 0,
+        sobrescritaMarcadoresA: ["Luis Segovia 10'", "Alex Arce 35'"],
+        sobrescritaMarcadoresB: [],
+      })
+
+      expect(res.labelA).toBe("Luis Segovia 10', Alex Arce 35'")
+      expect(res.labelB).toBe('-')
+      expect(res.scorersA).toHaveLength(2)
+      expect(res.scorersB).toHaveLength(0)
+    })
+
+    it('cenário Sobrescrita com campos independentes: apenas visitante tem gols', () => {
+      const res = splitMatchScorersByTeam({
+        teamAName: 'LDU',
+        teamBName: 'Palmeiras',
+        placarA: 0,
+        placarB: 1,
+        sobrescritaMarcadoresA: '',
+        sobrescritaMarcadoresB: ["Marlon Freitas 75'"],
+      })
+
+      expect(res.labelA).toBe('-')
+      expect(res.labelB).toBe("Marlon Freitas 75'")
+      expect(res.scorersA).toHaveLength(0)
+      expect(res.scorersB).toEqual(["Marlon Freitas 75'"])
+    })
+
+    it('cenário Sobrescrita legada: divide marcadores na proporção do placar A x B', () => {
       const res = splitMatchScorersByTeam({
         teamAName: 'LDU',
         teamBName: 'Palmeiras',
@@ -217,6 +283,32 @@ describe('scorerUtils', () => {
 
       expect(res.labelA).toBe('Luis Segovia')
       expect(res.labelB).toBe('Marlon Freitas')
+    })
+
+    it('cenário Sobrescrita legada: se placar for 2 x 0, atribui todos ao mandante', () => {
+      const res = splitMatchScorersByTeam({
+        teamAName: 'LDU',
+        teamBName: 'Palmeiras',
+        placarA: 2,
+        placarB: 0,
+        sobrescritaMarcadores: ['Luis Segovia', 'Alex Arce'],
+      })
+
+      expect(res.labelA).toBe('Luis Segovia, Alex Arce')
+      expect(res.labelB).toBe('-')
+    })
+
+    it('cenário Sobrescrita legada: se placar for 0 x 2, atribui todos ao visitante', () => {
+      const res = splitMatchScorersByTeam({
+        teamAName: 'LDU',
+        teamBName: 'Palmeiras',
+        placarA: 0,
+        placarB: 2,
+        sobrescritaMarcadores: ['Veiga', 'Flaco López'],
+      })
+
+      expect(res.labelA).toBe('-')
+      expect(res.labelB).toBe('Veiga, Flaco López')
     })
 
     it('cenário Banco Manual: usa golsBancoA e golsBancoB estruturados', () => {

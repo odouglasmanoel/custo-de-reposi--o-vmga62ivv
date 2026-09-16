@@ -1150,20 +1150,36 @@ routerAdd('POST', '/backend/v1/placar-ao-vivo/sobrescrever', (e) => {
     if (body.remover === true) {
       delete map[jogoId]
     } else {
-      let marcadoresList = []
-      if (Array.isArray(body.marcadores)) {
-        marcadoresList = body.marcadores
-          .map(function (m) {
-            return String(m || '').trim()
-          })
-          .filter(Boolean)
-      } else if (typeof body.marcadores === 'string') {
-        marcadoresList = body.marcadores
-          .split(',')
-          .map(function (m) {
-            return m.trim()
-          })
-          .filter(Boolean)
+      var parseNamesList = function (input) {
+        if (!input) return []
+        if (Array.isArray(input)) {
+          return input
+            .map(function (m) {
+              return String(m || '').trim()
+            })
+            .filter(Boolean)
+        }
+        if (typeof input === 'string') {
+          return input
+            .split(',')
+            .map(function (m) {
+              return m.trim()
+            })
+            .filter(Boolean)
+        }
+        return []
+      }
+
+      var marcadoresListA = parseNamesList(body.marcadores_a)
+      var marcadoresListB = parseNamesList(body.marcadores_b)
+      var marcadoresList = parseNamesList(body.marcadores)
+
+      // Se marcadores_a ou marcadores_b foram enviados, compõe marcadoresList caso esteja vazio
+      if (
+        marcadoresList.length === 0 &&
+        (marcadoresListA.length > 0 || marcadoresListB.length > 0)
+      ) {
+        marcadoresList = marcadoresListA.concat(marcadoresListB)
       }
 
       map[jogoId] = {
@@ -1173,6 +1189,8 @@ routerAdd('POST', '/backend/v1/placar-ao-vivo/sobrescrever', (e) => {
         placar_b:
           typeof body.placar_b === 'number' ? body.placar_b : parseInt(body.placar_b, 10) || 0,
         marcadores: marcadoresList,
+        marcadores_a: marcadoresListA,
+        marcadores_b: marcadoresListB,
         status: (body.status || 'Ao Vivo').trim(),
         updated_at: new Date().toISOString(),
       }

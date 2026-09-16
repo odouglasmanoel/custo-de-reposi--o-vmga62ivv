@@ -12,7 +12,7 @@ export interface PalpiteLike {
 export interface LiveScorerLike {
   name: string
   minute?: number | null
-  teamId?: number | null
+  teamId?: number | string | null
   teamName?: string | null
   teamSide?: 'home' | 'away' | null
 }
@@ -156,7 +156,10 @@ export interface SplitMatchScorersOptions {
   teamBName: string
   placarA?: number | string | null
   placarB?: number | string | null
-  // Fonte 1: Sobrescrita manual do Admin (ex: ["Luis Segovia", "Marlon Freitas"] ou lista formatada)
+  // Fonte 1: Sobrescrita manual do Admin
+  // Suporta marcadores separados por time (prioritário) ou lista única legada
+  sobrescritaMarcadoresA?: string[] | string | null
+  sobrescritaMarcadoresB?: string[] | string | null
   sobrescritaMarcadores?: string[] | null
   // Fonte 2: Marcadores ao vivo da API (LiveScorerItem[])
   liveScorers?: LiveScorerLike[] | null
@@ -178,6 +181,8 @@ export function splitMatchScorersByTeam(options: SplitMatchScorersOptions): Matc
     teamBName,
     placarA: rawPlacarA,
     placarB: rawPlacarB,
+    sobrescritaMarcadoresA,
+    sobrescritaMarcadoresB,
     sobrescritaMarcadores,
     liveScorers,
     golsBancoA,
@@ -193,30 +198,36 @@ export function splitMatchScorersByTeam(options: SplitMatchScorersOptions): Matc
   const scorersA: string[] = []
   const scorersB: string[] = []
 
+  // Normaliza listas específicas de sobrescrita se fornecidas
+  const explicitSobA = extractScorerNames(sobrescritaMarcadoresA)
+  const explicitSobB = extractScorerNames(sobrescritaMarcadoresB)
+  const hasExplicitSobrescrita =
+    sobrescritaMarcadoresA !== undefined && sobrescritaMarcadoresB !== undefined
+      ? true
+      : explicitSobA.length > 0 || explicitSobB.length > 0
+
   // Prioridade 1: Sobrescrita manual do Admin Douglas
-  if (Array.isArray(sobrescritaMarcadores) && sobrescritaMarcadores.length > 0) {
+  if (hasExplicitSobrescrita && (explicitSobA.length > 0 || explicitSobB.length > 0)) {
+    // Sobrescrita com lados explícitos (novo formato com campos independentes)
+    scorersA.push(...explicitSobA)
+    scorersB.push(...explicitSobB)
+  } else if (Array.isArray(sobrescritaMarcadores) && sobrescritaMarcadores.length > 0) {
+    // Sobrescrita em formato legado (lista única sem separação prévia)
     const pA = parsedPlacarA ?? 0
     const pB = parsedPlacarB ?? 0
 
-    // Se temos placar definido (ex: 1 x 1) e itens na lista de sobrescrita,
-    // os primeiros pA itens pertencem ao Time A e os seguintes pB pertencem ao Time B
-    if (pA > 0 || pB > 0) {
-      const cleanList = sobrescritaMarcadores.map((s) => String(s || '').trim()).filter(Boolean)
-      const aItems = cleanList.slice(0, pA)
-      const bItems = cleanList.slice(pA, pA + pB)
+    const cleanList = sobrescritaMarcadores.map((s) => String(s || '').trim()).filter(Boolean)
 
-      scorersA.push(...aItems)
-      scorersB.push(...bItems)
-
-      // Se por algum motivo pA for 0 mas tiver itens sobrando para B, ou vice-versa:
-      if (aItems.length === 0 && bItems.length === 0 && cleanList.length > 0) {
-        if (pA > 0 && pB === 0) scorersA.push(...cleanList)
-        else if (pB > 0 && pA === 0) scorersB.push(...cleanList)
-        else scorersA.push(...cleanList)
-      }
+    if (pA > 0 && pB === 0) {
+      scorersA.push(...cleanList)
+    } else if (pB > 0 && pA === 0) {
+      scorersB.push(...cleanList)
+    } else if (pA > 0 && pB > 0) {
+      scorersA.push(...cleanList.slice(0, pA))
+      scorersB.push(...cleanList.slice(pA, pA + pB))
     } else {
-      // Placar ainda não definido ou 0x0 mas informaram sobrescrita
-      scorersA.push(...sobrescritaMarcadores.map((s) => String(s || '').trim()).filter(Boolean))
+      // Placar 0x0 ou indefinido: atribui à lista de A por padrão gracioso
+      scorersA.push(...cleanList)
     }
   } else if (Array.isArray(liveScorers) && liveScorers.length > 0) {
     // Prioridade 2: Marcadores ao vivo retornados pela API (com teamSide: 'home' | 'away' ou teamName)

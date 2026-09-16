@@ -93,6 +93,8 @@ export default function BolaoDashboard() {
         placar_a: number
         placar_b: number
         marcadores: string[]
+        marcadores_a?: string[]
+        marcadores_b?: string[]
         status?: string
         updated_at?: string
       }
@@ -104,7 +106,8 @@ export default function BolaoDashboard() {
     jogo: Jogo
     placarA: number | string
     placarB: number | string
-    marcadoresText: string
+    marcadoresTextA: string
+    marcadoresTextB: string
     isSaving?: boolean
   } | null>(null)
 
@@ -211,23 +214,30 @@ export default function BolaoDashboard() {
 
   const handleSalvarSobrescritaAdmin = async () => {
     if (!adminSobrescritaJogo) return
-    const { jogo, placarA, placarB, marcadoresText } = adminSobrescritaJogo
+    const { jogo, placarA, placarB, marcadoresTextA, marcadoresTextB } = adminSobrescritaJogo
     setAdminSobrescritaJogo((prev) => (prev ? { ...prev, isSaving: true } : null))
 
     try {
       const parsedA = placarA === '' ? 0 : Number(placarA)
       const parsedB = placarB === '' ? 0 : Number(placarB)
-      const marcList = marcadoresText
+      const marcListA = (marcadoresTextA || '')
         .split(',')
         .map((m) => m.trim())
         .filter(Boolean)
+      const marcListB = (marcadoresTextB || '')
+        .split(',')
+        .map((m) => m.trim())
+        .filter(Boolean)
+      const combinedMarcadores = [...marcListA, ...marcListB]
 
       // Atualiza estado local de imediato
       const novaSobrescrita = {
         jogo_id: jogo.id,
         placar_a: parsedA,
         placar_b: parsedB,
-        marcadores: marcList,
+        marcadores: combinedMarcadores,
+        marcadores_a: marcListA,
+        marcadores_b: marcListB,
         status: 'Ao Vivo (Manual)',
         updated_at: new Date().toISOString(),
       }
@@ -254,7 +264,9 @@ export default function BolaoDashboard() {
             jogo_id: jogo.id,
             placar_a: parsedA,
             placar_b: parsedB,
-            marcadores: marcList,
+            marcadores: combinedMarcadores,
+            marcadores_a: marcListA,
+            marcadores_b: marcListB,
             status: 'Ao Vivo (Manual)',
           }),
         },
@@ -997,7 +1009,53 @@ export default function BolaoDashboard() {
                               <Button
                                 size="sm"
                                 variant="outline"
-                                onClick={() =>
+                                onClick={() => {
+                                  // Pré-preenche os marcadores divididos de cada lado
+                                  let initialA = ''
+                                  let initialB = ''
+
+                                  if (sobrescritaJogo != null) {
+                                    if (
+                                      Array.isArray(sobrescritaJogo.marcadores_a) ||
+                                      Array.isArray(sobrescritaJogo.marcadores_b)
+                                    ) {
+                                      initialA = (sobrescritaJogo.marcadores_a || []).join(', ')
+                                      initialB = (sobrescritaJogo.marcadores_b || []).join(', ')
+                                    } else if (Array.isArray(sobrescritaJogo.marcadores)) {
+                                      // Degrade gracioso para sobrescrita legada: divide de acordo com o placar
+                                      const pA = Number(sobrescritaJogo.placar_a) || 0
+                                      const pB = Number(sobrescritaJogo.placar_b) || 0
+                                      if (pA > 0 && pB === 0) {
+                                        initialA = sobrescritaJogo.marcadores.join(', ')
+                                      } else if (pB > 0 && pA === 0) {
+                                        initialB = sobrescritaJogo.marcadores.join(', ')
+                                      } else {
+                                        initialA = sobrescritaJogo.marcadores
+                                          .slice(0, pA)
+                                          .join(', ')
+                                        initialB = sobrescritaJogo.marcadores
+                                          .slice(pA, pA + pB)
+                                          .join(', ')
+                                      }
+                                    }
+                                  } else if (
+                                    matchedLive?.scorers &&
+                                    matchedLive.scorers.length > 0
+                                  ) {
+                                    const listA: string[] = []
+                                    const listB: string[] = []
+                                    for (const sc of matchedLive.scorers) {
+                                      const token = sc.minute ? `${sc.name} ${sc.minute}'` : sc.name
+                                      if (sc.teamSide === 'away') {
+                                        listB.push(token)
+                                      } else {
+                                        listA.push(token)
+                                      }
+                                    }
+                                    initialA = listA.join(', ')
+                                    initialB = listB.join(', ')
+                                  }
+
                                   setAdminSobrescritaJogo({
                                     jogo,
                                     placarA:
@@ -1010,12 +1068,10 @@ export default function BolaoDashboard() {
                                         ? sobrescritaJogo.placar_b
                                         : (matchedLive?.placarB ??
                                           (jogo.placar_b != null ? Number(jogo.placar_b) : '')),
-                                    marcadoresText:
-                                      sobrescritaJogo != null
-                                        ? sobrescritaJogo.marcadores.join(', ')
-                                        : marcadoresParaExibir,
+                                    marcadoresTextA: initialA,
+                                    marcadoresTextB: initialB,
                                   })
-                                }
+                                }}
                                 className="h-6 px-2 text-[10px] font-bold border-amber-300 bg-amber-50 text-amber-900 hover:bg-amber-100 flex items-center gap-1"
                                 title="Digitar placar e marcadores manualmente para esta partida em andamento (Admin)"
                               >
@@ -1064,6 +1120,8 @@ export default function BolaoDashboard() {
                               : matchedLive
                                 ? matchedLive.placarB
                                 : jogo.placar_b,
+                          sobrescritaMarcadoresA: sobrescritaJogo?.marcadores_a ?? null,
+                          sobrescritaMarcadoresB: sobrescritaJogo?.marcadores_b ?? null,
                           sobrescritaMarcadores: sobrescritaJogo?.marcadores ?? null,
                           liveScorers: matchedLive?.scorers ?? null,
                           golsBancoA: (jogo as any).gols_time_a ?? null,
@@ -1508,25 +1566,49 @@ export default function BolaoDashboard() {
                 </div>
               </div>
 
-              {/* Autores dos Gols */}
-              <div>
-                <label className="block text-xs font-medium text-slate-600 mb-1">
-                  Autores dos gols (separados por vírgula)
-                </label>
-                <input
-                  type="text"
-                  value={adminSobrescritaJogo.marcadoresText}
-                  onChange={(e) =>
-                    setAdminSobrescritaJogo((prev) =>
-                      prev ? { ...prev, marcadoresText: e.target.value } : null,
-                    )
-                  }
-                  placeholder="Ex: Hulk 22', Paulinho 45'"
-                  className="w-full rounded-md border border-slate-300 px-3 py-2 text-xs text-slate-800 focus:border-amber-500 focus:outline-none"
-                />
-                <p className="mt-1 text-[10px] text-slate-400">
-                  Dica: digite os nomes separados por vírgula. Exibido no card do confronto.
-                </p>
+              {/* Autores dos Gols separados por equipe (Mandante e Visitante) */}
+              <div className="space-y-3">
+                {/* Campo 1: Autores dos Gols [Mandante] */}
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">
+                    Autores dos Gols [{adminSobrescritaJogo.jogo.time_a}]
+                  </label>
+                  <input
+                    type="text"
+                    value={adminSobrescritaJogo.marcadoresTextA}
+                    onChange={(e) =>
+                      setAdminSobrescritaJogo((prev) =>
+                        prev ? { ...prev, marcadoresTextA: e.target.value } : null,
+                      )
+                    }
+                    placeholder={`Autores ${adminSobrescritaJogo.jogo.time_a} (ex: Luis Segovia 30')`}
+                    className="w-full rounded-md border border-slate-300 px-3 py-2 text-xs text-slate-800 focus:border-amber-500 focus:outline-none"
+                  />
+                  <p className="mt-1 text-[10px] text-slate-400">
+                    Nomes digitados separados por vírgula para {adminSobrescritaJogo.jogo.time_a}.
+                  </p>
+                </div>
+
+                {/* Campo 2: Autores dos Gols [Visitante] */}
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">
+                    Autores dos Gols [{adminSobrescritaJogo.jogo.time_b}]
+                  </label>
+                  <input
+                    type="text"
+                    value={adminSobrescritaJogo.marcadoresTextB}
+                    onChange={(e) =>
+                      setAdminSobrescritaJogo((prev) =>
+                        prev ? { ...prev, marcadoresTextB: e.target.value } : null,
+                      )
+                    }
+                    placeholder={`Autores ${adminSobrescritaJogo.jogo.time_b} (ex: Marlon Freitas 55')`}
+                    className="w-full rounded-md border border-slate-300 px-3 py-2 text-xs text-slate-800 focus:border-amber-500 focus:outline-none"
+                  />
+                  <p className="mt-1 text-[10px] text-slate-400">
+                    Nomes digitados separados por vírgula para {adminSobrescritaJogo.jogo.time_b}.
+                  </p>
+                </div>
               </div>
 
               <div className="rounded-md bg-amber-50/80 p-2.5 text-[11px] text-amber-900 border border-amber-200">
