@@ -575,6 +575,94 @@ routerAdd('GET', '/backend/v1/placar-ao-vivo', (e) => {
       }
     }
 
+    // -------------------------------------------------------------
+    // CONSULTA DIRETA POR FIXTURE_ID (prioridade máxima via API-Football)
+    // Se o cliente enviar ?fixture_id=123 ou ?ids=123,456 ou se houver partidas pendentes
+    // cadastradas no banco com fixture_id preenchido.
+    // Endpoint direto da API-Football: https://v3.football.api-sports.io/fixtures?id=FIXTURE_ID
+    // -------------------------------------------------------------
+    var directFixtureParam = (
+      e.requestInfo().query.fixture_id ||
+      e.requestInfo().query.ids ||
+      ''
+    ).trim()
+    var directFixtureIds = []
+    if (directFixtureParam) {
+      var rawIds = directFixtureParam.split(',')
+      for (var idi = 0; idi < rawIds.length; idi++) {
+        var cleanId = rawIds[idi].trim()
+        if (cleanId && directFixtureIds.indexOf(cleanId) === -1) {
+          directFixtureIds.push(cleanId)
+        }
+      }
+    }
+
+    // Também verifica no banco todos os jogos pendentes (resultado_finalizado = false) que possuem fixture_id preenchido
+    try {
+      var pendentesComId = $app.findRecordsByFilter(
+        'jogos',
+        "resultado_finalizado = false && fixture_id != ''",
+        '-data',
+        50,
+        0,
+      )
+      if (Array.isArray(pendentesComId)) {
+        for (var pii = 0; pii < pendentesComId.length; pii++) {
+          var fIdFromDb = (pendentesComId[pii].getString('fixture_id') || '').trim()
+          if (fIdFromDb && directFixtureIds.indexOf(fIdFromDb) === -1) {
+            directFixtureIds.push(fIdFromDb)
+          }
+        }
+      }
+    } catch (_) {}
+
+    var directFixtures = []
+    var seenDirectIds = {}
+
+    for (var fxi = 0; fxi < directFixtureIds.length; fxi++) {
+      var targetFixtureId = directFixtureIds[fxi]
+      if (!targetFixtureId || seenDirectIds[targetFixtureId]) continue
+
+      var baseDirectUrl = isRapidApi
+        ? 'https://api-football-v1.p.rapidapi.com/v3/fixtures'
+        : 'https://v3.football.api-sports.io/fixtures'
+      var urlDirect =
+        baseDirectUrl +
+        '?id=' +
+        encodeURIComponent(targetFixtureId) +
+        '&timezone=America%2FSao_Paulo'
+
+      try {
+        var resDirect = $http.send({
+          url: urlDirect,
+          method: 'GET',
+          headers: headers,
+          timeout: 10,
+        })
+        if (
+          resDirect.statusCode === 200 &&
+          resDirect.json &&
+          Array.isArray(resDirect.json.response)
+        ) {
+          for (var dri = 0; dri < resDirect.json.response.length; dri++) {
+            var directItem = resDirect.json.response[dri]
+            var parsedDirect = mapApiFootballItem(directItem)
+            var actualId =
+              directItem.fixture && directItem.fixture.id
+                ? String(directItem.fixture.id)
+                : targetFixtureId
+            seenDirectIds[actualId] = true
+            directFixtures.push(parsedDirect)
+          }
+        }
+      } catch (errDirect) {
+        console.log(
+          'Aviso ao consultar fixture_id direto (' + targetFixtureId + '):',
+          errDirect ? errDirect.message : errDirect,
+        )
+      }
+    }
+
     let liveFixtures = []
     try {
       const resLive = $http.send({
@@ -660,6 +748,7 @@ routerAdd('GET', '/backend/v1/placar-ao-vivo', (e) => {
     return e.json(200, {
       configured: true,
       provider: 'api_football',
+      directFixtures: directFixtures,
       live: liveFixtures,
       dateFixtures: dateFixtures,
       sobrescritas: sobrescritasMap,

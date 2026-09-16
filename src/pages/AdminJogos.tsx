@@ -74,6 +74,7 @@ export default function AdminJogos() {
   const [timeA, setTimeA] = useState('')
   const [timeB, setTimeB] = useState('')
   const [competicao, setCompeticao] = useState('')
+  const [fixtureId, setFixtureId] = useState('')
   const [dataJogo, setDataJogo] = useState('')
   const [horaJogo, setHoraJogo] = useState('')
   const [temPenaltis, setTemPenaltis] = useState(false)
@@ -130,6 +131,7 @@ export default function AdminJogos() {
         time_a: timeA.trim(),
         time_b: timeB.trim(),
         competicao: competicao.trim() || '',
+        fixture_id: fixtureId.trim() || '',
         data: `${dataJogo.trim()}T00:00:00.000Z`,
         hora: horaJogo.trim(),
         resultado_finalizado: false,
@@ -147,6 +149,7 @@ export default function AdminJogos() {
       setTimeA('')
       setTimeB('')
       setCompeticao('')
+      setFixtureId('')
       setDataJogo('')
       setHoraJogo('')
       setTemPenaltis(false)
@@ -474,7 +477,7 @@ export default function AdminJogos() {
           )}
 
           <form onSubmit={handleCreateJogo} className="space-y-4">
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-5">
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
               <div>
                 <Label htmlFor="time-a" className="text-xs font-semibold text-[#0F172A]">
                   Time A (Mandante)
@@ -538,6 +541,25 @@ export default function AdminJogos() {
                   onChange={(e) => setHoraJogo(e.target.value)}
                   className="mt-1 h-10 border-[#CBD5E1] text-xs focus-visible:border-[#10B981] focus-visible:ring-[#10B981]"
                 />
+              </div>
+
+              <div>
+                <div className="flex items-center justify-between">
+                  <Label htmlFor="fixture-id-jogo" className="text-xs font-semibold text-[#0F172A]">
+                    ID da Partida (API-Football)
+                  </Label>
+                  <span className="text-[10px] font-normal text-slate-400">Opcional</span>
+                </div>
+                <Input
+                  id="fixture-id-jogo"
+                  placeholder="Ex: 1208456 (consulta direta)"
+                  value={fixtureId}
+                  onChange={(e) => setFixtureId(e.target.value)}
+                  className="mt-1 h-10 border-[#CBD5E1] text-xs focus-visible:border-[#10B981] focus-visible:ring-[#10B981]"
+                />
+                <p className="mt-1 text-[10px] text-slate-400">
+                  Se informado, busca na API diretamente pelo ID da fixture.
+                </p>
               </div>
             </div>
 
@@ -615,6 +637,14 @@ export default function AdminJogos() {
                           {jogo.competicao && (
                             <span className="rounded bg-indigo-50 border border-indigo-200 px-1.5 py-0.5 text-[10px] font-semibold text-indigo-700">
                               {jogo.competicao}
+                            </span>
+                          )}
+                          {jogo.fixture_id && (
+                            <span
+                              className="rounded bg-emerald-50 border border-emerald-200 px-1.5 py-0.5 text-[10px] font-mono font-semibold text-emerald-800"
+                              title={`ID direto API-Football: ${jogo.fixture_id}`}
+                            >
+                              ID: {jogo.fixture_id}
                             </span>
                           )}
                           {jogo.tem_penaltis && (

@@ -69,6 +69,134 @@ export interface MatchedLiveScore {
   displayLabel: string
   scorers: LiveScorerItem[]
   golsSummary: string
+  matchedBy?: 'fixture_id' | 'text'
+}
+
+/**
+ * Converte diretamente uma fixture da API em um MatchedLiveScore para um confronto específico.
+ * Se jogoTimeA e jogoTimeB forem informados, alinha o placar com base na correspondência de time A = home ou away.
+ */
+export function formatFixtureToLiveScore(
+  fixture: ApiFootballFixture,
+  jogoTimeA?: string,
+  jogoTimeB?: string,
+): MatchedLiveScore {
+  const homeName = fixture.teams?.home?.name || ''
+  const awayName = fixture.teams?.away?.name || ''
+
+  // Extrai goals reais atualizados
+  const rawHome =
+    fixture.goals?.home != null && !isNaN(Number(fixture.goals.home))
+      ? Number(fixture.goals.home)
+      : fixture.score?.fulltime?.home != null && !isNaN(Number(fixture.score.fulltime.home))
+        ? Number(fixture.score.fulltime.home)
+        : fixture.score?.halftime?.home != null && !isNaN(Number(fixture.score.halftime.home))
+          ? Number(fixture.score.halftime.home)
+          : 0
+
+  const rawAway =
+    fixture.goals?.away != null && !isNaN(Number(fixture.goals.away))
+      ? Number(fixture.goals.away)
+      : fixture.score?.fulltime?.away != null && !isNaN(Number(fixture.score.fulltime.away))
+        ? Number(fixture.score.fulltime.away)
+        : fixture.score?.halftime?.away != null && !isNaN(Number(fixture.score.halftime.away))
+          ? Number(fixture.score.halftime.away)
+          : 0
+
+  // Se informado os nomes cadastrados, verifica se time A é home ou away
+  let isHomeA = true
+  if (jogoTimeA && jogoTimeB && homeName && awayName) {
+    const simAHome = stringSimilarity(jogoTimeA, homeName)
+    const simAAway = stringSimilarity(jogoTimeA, awayName)
+    if (simAAway > simAHome) {
+      isHomeA = false
+    }
+  }
+
+  const placarA = isHomeA ? rawHome : rawAway
+  const placarB = isHomeA ? rawAway : rawHome
+
+  const statusShort = fixture.fixture?.status?.short || ''
+  const statusLong = fixture.fixture?.status?.long || ''
+  const elapsed = fixture.fixture?.status?.elapsed ?? null
+  const isLive = isFixtureLive(statusShort)
+  const isFinished = isFixtureFinished(statusShort, statusLong)
+
+  let displayLabel = `AO VIVO ${placarA} x ${placarB}`
+  if (statusShort === 'HT' || statusShort === 'PAUSED' || statusLong.toUpperCase() === 'PAUSED') {
+    displayLabel = `AO VIVO (Intervalo) ${placarA} x ${placarB}`
+  } else if (elapsed && isLive) {
+    displayLabel = `AO VIVO ${elapsed}' • ${placarA} x ${placarB}`
+  } else if (isFinished) {
+    displayLabel = `Encerrado ${placarA} x ${placarB}`
+  }
+
+  const scorers: LiveScorerItem[] = []
+  if (Array.isArray(fixture.scorers) && fixture.scorers.length > 0) {
+    for (const s of fixture.scorers) {
+      if (s && s.name && s.name.trim()) {
+        scorers.push({
+          name: s.name.trim(),
+          minute: s.minute != null && !isNaN(Number(s.minute)) ? Number(s.minute) : null,
+          teamId: s.teamId ?? null,
+          teamName: s.teamName ?? null,
+          teamSide: s.teamSide ?? null,
+        })
+      }
+    }
+  } else if (Array.isArray(fixture.events) && fixture.events.length > 0) {
+    for (const ev of fixture.events) {
+      if (ev && ev.type === 'Goal' && ev.player && ev.player.name) {
+        const isOwnGoal = ev.detail && ev.detail.toLowerCase().includes('own')
+        let scorerNameStr = String(ev.player.name).trim()
+        if (isOwnGoal) {
+          scorerNameStr += ' (contra)'
+        }
+        scorers.push({
+          name: scorerNameStr,
+          minute: ev.time?.elapsed != null ? Number(ev.time.elapsed) : null,
+          teamId: ev.team?.id ?? null,
+          teamName: ev.team?.name ?? null,
+          teamSide:
+            fixture.teams?.home && ev.team && ev.team.id === fixture.teams.home.id
+              ? 'home'
+              : fixture.teams?.away && ev.team && ev.team.id === fixture.teams.away.id
+                ? 'away'
+                : null,
+        })
+      }
+    }
+  }
+
+  let golsSummary = ''
+  if (scorers.length > 0) {
+    const scorerTokens = scorers.map((s) => {
+      if (s.minute) {
+        return `${s.name} ${s.minute}'`
+      }
+      return s.name
+    })
+    golsSummary = `Gols: ${scorerTokens.join(', ')}`
+  }
+
+  return {
+    found: true,
+    fixtureId: fixture.fixture?.id,
+    provider: fixture.provider,
+    homeTeamName: homeName,
+    awayTeamName: awayName,
+    placarA,
+    placarB,
+    statusShort,
+    statusLong,
+    elapsed,
+    isLive,
+    isFinished,
+    displayLabel,
+    scorers,
+    golsSummary,
+    matchedBy: 'fixture_id',
+  }
 }
 
 /**
@@ -565,5 +693,36 @@ export function matchGameWithApiFixtures(
     displayLabel,
     scorers,
     golsSummary,
+    matchedBy: 'text',
   }
+}
+
+/**
+ * Resolve o placar ao vivo para um jogo do Bolão respeitando a prioridade:
+ * 1. Se o jogo possui `fixture_id` preenchido, busca a fixture correspondente por ID exato.
+ * 2. Se não houver fixture_id ou se o ID não for encontrado na lista de fixtures,
+ *    executa o matching por texto / sinônimos como fallback.
+ */
+export function resolveLiveScoreForGame(
+  jogo: { time_a: string; time_b: string; fixture_id?: string | null; data?: string },
+  apiFixtures: ApiFootballFixture[],
+  minSimilarity = 0.55,
+  jogoDataISO?: string | null,
+): MatchedLiveScore | null {
+  const cleanFixtureId = (jogo.fixture_id || '').trim()
+
+  // Prioridade 1: ID direto da partida
+  if (cleanFixtureId && Array.isArray(apiFixtures) && apiFixtures.length > 0) {
+    const directMatch = apiFixtures.find((f) => {
+      const fId = f.fixture?.id
+      return fId != null && String(fId).trim() === cleanFixtureId
+    })
+
+    if (directMatch) {
+      return formatFixtureToLiveScore(directMatch, jogo.time_a, jogo.time_b)
+    }
+  }
+
+  // Prioridade 2 (Fallback): Matching por texto / sinônimos
+  return matchGameWithApiFixtures(jogo.time_a, jogo.time_b, apiFixtures, minSimilarity, jogoDataISO)
 }

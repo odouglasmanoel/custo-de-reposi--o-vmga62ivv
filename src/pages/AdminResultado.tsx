@@ -45,9 +45,10 @@ export default function AdminResultado() {
   const [golsA, setGolsA] = useState<ScorerItem[]>([])
   const [golsB, setGolsB] = useState<ScorerItem[]>([])
 
-  // Penalties
+  // Penalties & API ID
   const [temPenaltis, setTemPenaltis] = useState(false)
   const [vencedorPenaltis, setVencedorPenaltis] = useState<'A' | 'B' | ''>('')
+  const [fixtureId, setFixtureId] = useState('')
 
   // Normalization mappings state
   const [showNormalizer, setShowNormalizer] = useState(false)
@@ -83,6 +84,7 @@ export default function AdminResultado() {
       )
       setTemPenaltis(!!gameRecord.tem_penaltis)
       setVencedorPenaltis((gameRecord.vencedor_penaltis as 'A' | 'B') || '')
+      setFixtureId(gameRecord.fixture_id || '')
 
       // Real scorers
       setGolsA(Array.isArray(gameRecord.gols_time_a) ? gameRecord.gols_time_a : [])
@@ -249,6 +251,7 @@ export default function AdminResultado() {
         gols_time_b: golsB.filter((g) => g.nome.trim()),
         tem_penaltis: temPenaltis,
         vencedor_penaltis: temPenaltis ? vencedorPenaltis : '',
+        fixture_id: fixtureId.trim() || '',
       }
       await pb.collection('jogos').update<Jogo>(jogo.id, gamePayload)
 
@@ -354,6 +357,14 @@ export default function AdminResultado() {
                     {jogo.competicao}
                   </Badge>
                 )}
+                {jogo.fixture_id && (
+                  <Badge
+                    variant="outline"
+                    className="border-emerald-300 bg-emerald-50 font-mono font-semibold text-emerald-800 text-xs px-2 py-0.5"
+                  >
+                    ID API: {jogo.fixture_id}
+                  </Badge>
+                )}
               </div>
             </div>
             <p className="mt-0.5 text-xs text-[#64748B]">
@@ -396,6 +407,22 @@ export default function AdminResultado() {
         <p className="mt-0.5 text-xs text-[#64748B]">
           Informe a quantidade de gols no tempo normal (ou prorrogação) de cada time.
         </p>
+
+        <div className="mt-4 mb-4 max-w-sm">
+          <Label htmlFor="edit-fixture-id" className="text-xs font-semibold text-[#0F172A]">
+            ID da Partida (API-Football)
+          </Label>
+          <Input
+            id="edit-fixture-id"
+            placeholder="Ex: 1208456 (consulta direta)"
+            value={fixtureId}
+            onChange={(e) => setFixtureId(e.target.value)}
+            className="mt-1 h-9 border-[#CBD5E1] text-xs focus-visible:border-[#10B981] focus-visible:ring-[#10B981]"
+          />
+          <p className="mt-1 text-[10px] text-slate-500">
+            Associa este jogo diretamente à fixture da API-Football.
+          </p>
+        </div>
 
         <div className="mt-6 flex flex-wrap items-center justify-center gap-4 sm:gap-8">
           <div className="w-36 text-center">

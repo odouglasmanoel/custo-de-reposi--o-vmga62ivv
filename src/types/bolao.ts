@@ -31,6 +31,7 @@ export interface Jogo extends RecordModel {
   time_a: string
   time_b: string
   competicao?: string
+  fixture_id?: string
   data: string
   hora: string
   placar_a?: number | null

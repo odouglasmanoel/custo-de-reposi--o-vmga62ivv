@@ -4,6 +4,8 @@ import {
   stringSimilarity,
   isFixtureLive,
   matchGameWithApiFixtures,
+  resolveLiveScoreForGame,
+  formatFixtureToLiveScore,
   type ApiFootballFixture,
 } from './apiFootballMatcher'
 
@@ -398,9 +400,136 @@ describe('apiFootballMatcher', () => {
           goals: { home: 1, away: 0 },
         },
       ]
-
-      const matched = matchGameWithApiFixtures('Flamengo', 'Corinthians', fixtures)
+      const matched = matchGameWithApiFixtures('Flamengo', 'Fluminense', fixtures)
       expect(matched).toBeNull()
+    })
+  })
+
+  describe('resolveLiveScoreForGame (prioridade fixture_id vs fallback por texto)', () => {
+    const apiFixturesSample: ApiFootballFixture[] = [
+      {
+        provider: 'api_football',
+        fixture: {
+          id: 1208456,
+          status: { short: '2H', long: 'Second Half', elapsed: 75 },
+        },
+        teams: {
+          home: { id: 10, name: 'Flamengo' },
+          away: { id: 20, name: 'Palmeiras' },
+        },
+        goals: { home: 3, away: 1 },
+        events: [
+          {
+            type: 'Goal',
+            player: { name: 'Pedro' },
+            time: { elapsed: 12 },
+            team: { id: 10, name: 'Flamengo' },
+          },
+          {
+            type: 'Goal',
+            player: { name: 'Arrascaeta' },
+            time: { elapsed: 44 },
+            team: { id: 10, name: 'Flamengo' },
+          },
+          {
+            type: 'Goal',
+            player: { name: 'Veiga' },
+            time: { elapsed: 58 },
+            team: { id: 20, name: 'Palmeiras' },
+          },
+          {
+            type: 'Goal',
+            player: { name: 'Gabi' },
+            time: { elapsed: 70 },
+            team: { id: 10, name: 'Flamengo' },
+          },
+        ],
+      },
+      {
+        provider: 'api_football',
+        fixture: {
+          id: 999999,
+          status: { short: '1H', long: 'First Half', elapsed: 20 },
+        },
+        teams: {
+          home: { id: 30, name: 'Corinthians' },
+          away: { id: 40, name: 'São Paulo' },
+        },
+        goals: { home: 0, away: 1 },
+        events: [
+          {
+            type: 'Goal',
+            player: { name: 'Lucas Moura' },
+            time: { elapsed: 15 },
+          },
+        ],
+      },
+    ]
+
+    it('deve priorizar a busca direta por fixture_id quando preenchido no jogo', () => {
+      const jogoComId = {
+        time_a: 'Fla',
+        time_b: 'Pal',
+        fixture_id: '1208456',
+      }
+
+      const res = resolveLiveScoreForGame(jogoComId, apiFixturesSample)
+      expect(res).not.toBeNull()
+      expect(res?.matchedBy).toBe('fixture_id')
+      expect(res?.fixtureId).toBe(1208456)
+      expect(res?.placarA).toBe(3)
+      expect(res?.placarB).toBe(1)
+      expect(res?.isLive).toBe(true)
+      expect(res?.elapsed).toBe(75)
+      expect(res?.displayLabel).toContain("AO VIVO 75' • 3 x 1")
+      expect(res?.scorers).toHaveLength(4)
+      expect(res?.scorers[0].name).toBe('Pedro')
+      expect(res?.scorers[1].name).toBe('Arrascaeta')
+      expect(res?.golsSummary).toContain('Pedro')
+    })
+
+    it('deve funcionar com fixture_id numérico ou string com espaços', () => {
+      const jogoComId = {
+        time_a: 'Flamengo',
+        time_b: 'Palmeiras',
+        fixture_id: '  1208456  ',
+      }
+
+      const res = resolveLiveScoreForGame(jogoComId, apiFixturesSample)
+      expect(res).not.toBeNull()
+      expect(res?.matchedBy).toBe('fixture_id')
+      expect(res?.fixtureId).toBe(1208456)
+    })
+
+    it('se fixture_id não for encontrado na lista, faz fallback automático para matching por texto', () => {
+      const jogoComIdInexistente = {
+        time_a: 'Corinthians',
+        time_b: 'São Paulo',
+        fixture_id: '88888888', // não existe na lista mockada
+      }
+
+      const res = resolveLiveScoreForGame(jogoComIdInexistente, apiFixturesSample)
+      expect(res).not.toBeNull()
+      expect(res?.matchedBy).toBe('text')
+      expect(res?.fixtureId).toBe(999999)
+      expect(res?.placarA).toBe(0)
+      expect(res?.placarB).toBe(1)
+      expect(res?.scorers[0].name).toBe('Lucas Moura')
+    })
+
+    it('quando fixture_id estiver vazio ou nulo, usa matching por texto diretamente', () => {
+      const jogoSemId = {
+        time_a: 'Corinthians',
+        time_b: 'São Paulo',
+        fixture_id: '',
+      }
+
+      const res = resolveLiveScoreForGame(jogoSemId, apiFixturesSample)
+      expect(res).not.toBeNull()
+      expect(res?.matchedBy).toBe('text')
+      expect(res?.fixtureId).toBe(999999)
+      expect(res?.placarA).toBe(0)
+      expect(res?.placarB).toBe(1)
     })
 
     it('faz matching por substring para nomes com variações como LDU vs LDU Quito e Atletico-MG vs Club Atletico Mineiro', () => {

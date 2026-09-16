@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-09-16T23:09:16.927Z",
+  "generatedAt": "2026-09-16T23:20:23.060Z",
   "collections": [
     {
       "name": "users",
@@ -296,6 +296,12 @@
         },
         {
           "name": "competicao",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "fixture_id",
           "type": "text",
           "required": false,
           "system": false

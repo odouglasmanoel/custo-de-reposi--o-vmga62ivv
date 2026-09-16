@@ -37,7 +37,7 @@ import {
 } from '@/lib/dateUtils'
 import { formatPalpiteMarcadoresSummary } from '@/lib/scorerUtils'
 import {
-  matchGameWithApiFixtures,
+  resolveLiveScoreForGame,
   type ApiFootballFixture,
   type MatchedLiveScore,
 } from '@/lib/apiFootballMatcher'
@@ -130,7 +130,22 @@ export default function BolaoDashboard() {
       }
       const hojeSP = getHojeDataSaoPaulo(Date.now())
       const baseUrl = `${import.meta.env.VITE_POCKETBASE_URL}/backend/v1/placar-ao-vivo`
-      const url = `${baseUrl}?date=${encodeURIComponent(hojeSP)}`
+
+      // Coleta todos os fixture_ids de jogos pendentes para requisitar diretamente
+      const relevantGames = allJogos && allJogos.length > 0 ? allJogos : jogos
+      const fixtureIdsFromGames = Array.from(
+        new Set(
+          relevantGames
+            .filter((j) => !j.resultado_finalizado && j.fixture_id && j.fixture_id.trim())
+            .map((j) => j.fixture_id!.trim()),
+        ),
+      )
+
+      let url = `${baseUrl}?date=${encodeURIComponent(hojeSP)}`
+      if (fixtureIdsFromGames.length > 0) {
+        url += `&ids=${encodeURIComponent(fixtureIdsFromGames.join(','))}`
+      }
+
       const res = await fetch(url, { headers })
       if (res.ok) {
         const data = await res.json()
@@ -142,18 +157,32 @@ export default function BolaoDashboard() {
           setSobrescritasAdmin(data.sobrescritas)
         }
 
-        // Combina fixtures ao vivo e fixtures da data sem duplicatas por ID
+        // Combina fixtures diretas (por ID), ao vivo e da data sem duplicatas por ID
+        // Prioridade de atualização: directFixtures > live > dateFixtures
         const combinedMap = new Map<string | number, ApiFootballFixture>()
-        if (Array.isArray(data.live)) {
-          for (const item of data.live) {
+
+        // 1. Inserir fixtures diretas requisitadas por fixture_id
+        if (Array.isArray(data.directFixtures)) {
+          for (const item of data.directFixtures) {
             const fid = item.fixture?.id ?? `${item.teams?.home?.name}-${item.teams?.away?.name}`
             combinedMap.set(fid, item)
           }
         }
+
+        // 2. Inserir live se ainda não tiver direta
+        if (Array.isArray(data.live)) {
+          for (const item of data.live) {
+            const fid = item.fixture?.id ?? `${item.teams?.home?.name}-${item.teams?.away?.name}`
+            if (!combinedMap.has(fid)) {
+              combinedMap.set(fid, item)
+            }
+          }
+        }
+
+        // 3. Inserir dateFixtures
         if (Array.isArray(data.dateFixtures)) {
           for (const item of data.dateFixtures) {
             const fid = item.fixture?.id ?? `${item.teams?.home?.name}-${item.teams?.away?.name}`
-            // Se já tem no map vindo de live, preserva o live (que é mais quente), senão adiciona
             if (!combinedMap.has(fid)) {
               combinedMap.set(fid, item)
             }
@@ -165,7 +194,7 @@ export default function BolaoDashboard() {
       // Falha silenciosa de polling para nunca interromper a experiência do usuário
       console.warn('Polling de placar ao vivo indisponível:', err)
     }
-  }, [])
+  }, [allJogos, jogos])
 
   // Dispara polling a cada 60s
   useEffect(() => {
@@ -800,13 +829,8 @@ export default function BolaoDashboard() {
                 const gameBets = palpites.filter((p) => p.jogo === jogo.id)
                 const bolaoOrigem = bolaoMap.get(jogo.bolao)
                 const jogoDataISO = normalizeDataISO(jogo.data)
-                const matchedLive = matchGameWithApiFixtures(
-                  jogo.time_a,
-                  jogo.time_b,
-                  apiFixtures,
-                  0.55,
-                  jogoDataISO,
-                )
+                // Resolve placar ao vivo: Se houver fixture_id busca direto na API; senão matching por texto
+                const matchedLive = resolveLiveScoreForGame(jogo, apiFixtures, 0.55, jogoDataISO)
 
                 // -------------------------------------------------------------
                 // ORDEM DE PRIORIDADE RIGOROSA (solicitada pelo usuário):
@@ -928,13 +952,15 @@ export default function BolaoDashboard() {
                             <Badge
                               variant="secondary"
                               className="border border-emerald-400 bg-emerald-50 text-emerald-800 text-[10px] font-bold shadow-2xs flex items-center gap-1.5 animate-pulse"
-                              title={`Partida em andamento via ${providerLabel} (${matchedLive?.statusLong || 'Ao Vivo'}).`}
+                              title={`Partida em andamento via ${providerLabel} (${matchedLive?.statusLong || 'Ao Vivo'}${matchedLive?.matchedBy === 'fixture_id' ? ' • ID Direto' : ''}).`}
                             >
                               <Radio className="h-3 w-3 text-emerald-600" />
                               <span>
                                 {matchedLive?.elapsed
                                   ? `Ao Vivo ${matchedLive.elapsed}'`
-                                  : 'Ao Vivo'}
+                                  : matchedLive?.statusShort === 'HT'
+                                    ? 'Intervalo'
+                                    : 'Ao Vivo'}
                               </span>
                             </Badge>
                           )}
