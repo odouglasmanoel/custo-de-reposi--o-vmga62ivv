@@ -12,9 +12,16 @@ describe('apiFootballMatcher', () => {
     it('deve remover acentos e ruídos comuns de times', () => {
       expect(cleanTeamName('São Paulo FC')).toBe('sao paulo')
       expect(cleanTeamName('C.R. Flamengo')).toBe('flamengo')
-      expect(cleanTeamName('SE Palmeiras')).toBe('se palmeiras')
-      expect(cleanTeamName('Atlético Mineiro')).toBe('mineiro')
+      expect(cleanTeamName('SE Palmeiras')).toBe('palmeiras')
+      expect(cleanTeamName('Atlético Mineiro')).toBe('atletico mineiro')
       expect(cleanTeamName('Real Madrid C.F.')).toBe('real madrid')
+    })
+
+    it('deve normalizar sinônimos como LDU e Liga de Quito para a forma canônica', () => {
+      expect(cleanTeamName('LDU')).toBe('ldu quito')
+      expect(cleanTeamName('Liga de Quito')).toBe('ldu quito')
+      expect(cleanTeamName('Liga Deportiva Universitaria')).toBe('ldu quito')
+      expect(stringSimilarity('LDU', 'Liga de Quito')).toBe(1)
     })
   })
 
@@ -153,9 +160,115 @@ describe('apiFootballMatcher', () => {
       expect(match).not.toBeNull()
       expect(match?.placarA).toBe(1)
       expect(match?.placarB).toBe(1)
+      expect(match?.isLive).toBe(true)
+      expect(match?.isFinished).toBe(false)
       expect(match?.golsSummary).toBe("Gols: Luis Segovia 30', Marlon Freitas 55'")
+      expect(match?.scorers).toHaveLength(2)
+      expect(match?.scorers[0].name).toBe('Luis Segovia')
+      expect(match?.scorers[1].name).toBe('Marlon Freitas')
     })
 
+    it('deve encontrar correspondência com nomes alternativos como Liga de Quito x Palmeiras', () => {
+      const fixtureLigaQuito: ApiFootballFixture[] = [
+        {
+          provider: 'api_football',
+          fixture: {
+            id: 9991,
+            date: '2026-09-16T22:00:00Z',
+            status: { short: '2H', long: 'Second Half', elapsed: 78 },
+          },
+          teams: {
+            home: { id: 50, name: 'Liga de Quito' },
+            away: { id: 51, name: 'SE Palmeiras' },
+          },
+          goals: { home: 1, away: 1 },
+          scorers: [
+            { name: 'Luis Segovia', minute: 30 },
+            { name: 'Marlon Freitas', minute: 55 },
+          ],
+        },
+      ]
+
+      // Cadastrado no Bolão como "LDU" x "Palmeiras"
+      const match = matchGameWithApiFixtures('LDU', 'Palmeiras', fixtureLigaQuito)
+      expect(match).not.toBeNull()
+      expect(match?.found).toBe(true)
+      expect(match?.placarA).toBe(1)
+      expect(match?.placarB).toBe(1)
+      expect(match?.isLive).toBe(true)
+    })
+
+    it('deve identificar partida encerrada corretamente (status FT ou FINISHED)', () => {
+      const finishedFixtures: ApiFootballFixture[] = [
+        {
+          provider: 'api_football',
+          fixture: {
+            id: 777,
+            date: '2026-09-16T19:00:00Z',
+            status: { short: 'FT', long: 'Match Finished' },
+          },
+          teams: {
+            home: { id: 50, name: 'LDU' },
+            away: { id: 51, name: 'Palmeiras' },
+          },
+          goals: { home: 2, away: 1 },
+          scorers: [
+            { name: 'Luis Segovia', minute: 30 },
+            { name: 'Marlon Freitas', minute: 55 },
+            { name: 'Veiga', minute: 89 },
+          ],
+        },
+      ]
+
+      const match = matchGameWithApiFixtures('LDU', 'Palmeiras', finishedFixtures)
+      expect(match).not.toBeNull()
+      expect(match?.isLive).toBe(false)
+      expect(match?.isFinished).toBe(true)
+      expect(match?.displayLabel).toBe('Encerrado 2 x 1')
+    })
+
+    it('deve priorizar fixture que bate a data informada no fuso America/Sao_Paulo', () => {
+      const multiDateFixtures: ApiFootballFixture[] = [
+        {
+          provider: 'api_football',
+          fixture: {
+            id: 111,
+            date: '2026-05-10T19:00:00Z',
+            status: { short: 'FT', long: 'Match Finished' },
+          },
+          teams: {
+            home: { id: 50, name: 'LDU' },
+            away: { id: 51, name: 'Palmeiras' },
+          },
+          goals: { home: 0, away: 0 },
+        },
+        {
+          provider: 'api_football',
+          fixture: {
+            id: 222,
+            date: '2026-09-16T22:00:00Z', // 19:00 SP
+            status: { short: '2H', long: 'Second Half', elapsed: 60 },
+          },
+          teams: {
+            home: { id: 50, name: 'LDU' },
+            away: { id: 51, name: 'Palmeiras' },
+          },
+          goals: { home: 1, away: 1 },
+        },
+      ]
+
+      const match = matchGameWithApiFixtures(
+        'LDU',
+        'Palmeiras',
+        multiDateFixtures,
+        0.6,
+        '2026-09-16',
+      )
+      expect(match).not.toBeNull()
+      expect(match?.fixtureId).toBe(222)
+      expect(match?.placarA).toBe(1)
+      expect(match?.placarB).toBe(1)
+    })
     it('deve lidar graciosamente quando não houver marcadores disponíveis', () => {
       const fixtureWithoutScorers: ApiFootballFixture[] = [
         {

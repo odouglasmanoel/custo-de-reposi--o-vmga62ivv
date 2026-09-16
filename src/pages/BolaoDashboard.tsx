@@ -32,6 +32,8 @@ import {
   isJogoHoje,
   isJogoHojeNaoIniciado,
   getJogoKickoffTimestamp,
+  getHojeDataSaoPaulo,
+  normalizeDataISO,
 } from '@/lib/dateUtils'
 import { formatPalpiteMarcadoresSummary } from '@/lib/scorerUtils'
 import {
@@ -94,25 +96,42 @@ export default function BolaoDashboard() {
     return () => clearInterval(timer)
   }, [])
 
-  // Polling de placar ao vivo da API-Football a cada 60s (apenas se houver jogos em andamento)
+  // Polling de placar ao vivo da API-Football a cada 60s
+  // Passa ?date=YYYY-MM-DD (America/Sao_Paulo) para cobrir jogos ao vivo E partidas do dia (em andamento ou encerradas)
   const fetchLiveScores = useCallback(async () => {
     try {
       const headers: Record<string, string> = {}
       if (pb.authStore.token) {
         headers['Authorization'] = pb.authStore.token
       }
-      const res = await fetch(`${import.meta.env.VITE_POCKETBASE_URL}/backend/v1/placar-ao-vivo`, {
-        headers,
-      })
+      const hojeSP = getHojeDataSaoPaulo(Date.now())
+      const url = `${import.meta.env.VITE_POCKETBASE_URL}/backend/v1/placar-ao-vivo?date=${encodeURIComponent(hojeSP)}`
+      const res = await fetch(url, { headers })
       if (res.ok) {
         const data = await res.json()
         setApiConfigured(Boolean(data.configured))
         if (data.provider) {
           setApiProvider(data.provider)
         }
+
+        // Combina fixtures ao vivo e fixtures da data sem duplicatas por ID
+        const combinedMap = new Map<string | number, ApiFootballFixture>()
         if (Array.isArray(data.live)) {
-          setApiFixtures(data.live)
+          for (const item of data.live) {
+            const fid = item.fixture?.id ?? `${item.teams?.home?.name}-${item.teams?.away?.name}`
+            combinedMap.set(fid, item)
+          }
         }
+        if (Array.isArray(data.dateFixtures)) {
+          for (const item of data.dateFixtures) {
+            const fid = item.fixture?.id ?? `${item.teams?.home?.name}-${item.teams?.away?.name}`
+            // Se já tem no map vindo de live, preserva o live (que é mais quente), senão adiciona
+            if (!combinedMap.has(fid)) {
+              combinedMap.set(fid, item)
+            }
+          }
+        }
+        setApiFixtures(Array.from(combinedMap.values()))
       }
     } catch (err) {
       // Falha silenciosa de polling para nunca interromper a experiência do usuário
@@ -589,13 +608,35 @@ export default function BolaoDashboard() {
               {jogosLiberados.map((jogo) => {
                 const gameBets = palpites.filter((p) => p.jogo === jogo.id)
                 const bolaoOrigem = bolaoMap.get(jogo.bolao)
-                const matchedLive = matchGameWithApiFixtures(jogo.time_a, jogo.time_b, apiFixtures)
+                const jogoDataISO = normalizeDataISO(jogo.data)
+                const matchedLive = matchGameWithApiFixtures(
+                  jogo.time_a,
+                  jogo.time_b,
+                  apiFixtures,
+                  0.6,
+                  jogoDataISO,
+                )
 
-                // 1. Título do confronto: Dinâmico (LDU 1 x 1 Palmeiras) quando há dados da API,
-                // ou estático (LDU x Palmeiras) como fallback seguro
-                const tituloConfronto = matchedLive
-                  ? `${jogo.time_a} ${matchedLive.placarA} x ${matchedLive.placarB} ${jogo.time_b}`
-                  : `${jogo.time_a} x ${jogo.time_b}`
+                // Verifica se há placar real lançado na tabela de jogos do banco de dados
+                const temPlacarBanco =
+                  jogo.placar_a != null &&
+                  jogo.placar_b != null &&
+                  !isNaN(Number(jogo.placar_a)) &&
+                  !isNaN(Number(jogo.placar_b)) &&
+                  (Number(jogo.placar_a) > 0 ||
+                    Number(jogo.placar_b) > 0 ||
+                    jogo.resultado_finalizado)
+
+                // 1. Título do confronto:
+                // Prioridade 1: Dados em tempo real da API (ex: LDU 1 x 1 Palmeiras)
+                // Prioridade 2 (Fallback): Placar real já inserido na tabela de jogos (ex: LDU 1 x 1 Palmeiras)
+                // Prioridade 3: Formato estático (LDU x Palmeiras) se não houver placar no banco nem na API
+                let tituloConfronto = `${jogo.time_a} x ${jogo.time_b}`
+                if (matchedLive) {
+                  tituloConfronto = `${jogo.time_a} ${matchedLive.placarA} x ${matchedLive.placarB} ${jogo.time_b}`
+                } else if (temPlacarBanco) {
+                  tituloConfronto = `${jogo.time_a} ${Number(jogo.placar_a)} x ${Number(jogo.placar_b)} ${jogo.time_b}`
+                }
 
                 const providerLabel =
                   matchedLive?.provider === 'thesportsdb'
@@ -603,6 +644,12 @@ export default function BolaoDashboard() {
                     : matchedLive?.provider === 'football_data'
                       ? 'Football-Data.org'
                       : 'API-Football'
+
+                // Status badge: Ao Vivo (API em andamento) ou Encerrado (API finalizada ou resultado confirmado no banco)
+                const isStatusAoVivo = Boolean(matchedLive?.isLive)
+                const isStatusEncerrado = Boolean(
+                  (matchedLive && matchedLive.isFinished) || jogo.resultado_finalizado,
+                )
 
                 return (
                   <div
@@ -635,17 +682,34 @@ export default function BolaoDashboard() {
                           <span className="text-[11px] text-slate-500">
                             {formatDataBR(jogo.data)} às {formatHoraBR(jogo.hora)}
                           </span>
-                          {/* Indicador visual / badge 'Ao Vivo' com dados da API */}
-                          {matchedLive && (
+
+                          {/* Badge de status da partida (Ao Vivo ou Encerrado) vinda da API ou fallback */}
+                          {isStatusAoVivo && (
                             <Badge
                               variant="secondary"
                               className="border border-emerald-400 bg-emerald-50 text-emerald-800 text-[10px] font-bold shadow-2xs flex items-center gap-1.5 animate-pulse"
-                              title={`Placar em tempo real via ${providerLabel} (${matchedLive.statusLong || 'Em andamento'}). Nota: Informativo, o resultado oficial é confirmado manualmente pelo Admin.`}
+                              title={`Partida em andamento via ${providerLabel} (${matchedLive?.statusLong || 'Ao Vivo'}).`}
                             >
                               <Radio className="h-3 w-3 text-emerald-600" />
-                              <span>{matchedLive.displayLabel}</span>
+                              <span>
+                                {matchedLive?.elapsed
+                                  ? `Ao Vivo ${matchedLive.elapsed}'`
+                                  : 'Ao Vivo'}
+                              </span>
                             </Badge>
                           )}
+
+                          {!isStatusAoVivo && isStatusEncerrado && (
+                            <Badge
+                              variant="secondary"
+                              className="border border-slate-300 bg-slate-100 text-slate-800 text-[10px] font-bold shadow-2xs flex items-center gap-1"
+                              title="Partida encerrada"
+                            >
+                              <CheckCircle2 className="h-3 w-3 text-slate-600" />
+                              <span>Encerrado</span>
+                            </Badge>
+                          )}
+
                           <Badge
                             variant="outline"
                             className="border-rose-300 bg-rose-50 text-[10px] font-semibold text-rose-800"
@@ -655,11 +719,18 @@ export default function BolaoDashboard() {
                         </div>
                       </div>
 
-                      {/* 2. Autores dos gols em tempo real da API (logo abaixo do placar do confronto) */}
-                      {matchedLive && matchedLive.golsSummary && (
-                        <div className="mt-1.5 flex items-center gap-1.5 text-[11px] font-semibold text-emerald-900 bg-emerald-50/80 border border-emerald-200/80 rounded-md px-2.5 py-1 w-fit">
+                      {/* 2. Linha de autores dos gols reais retornados pela API logo abaixo do cabeçalho */}
+                      {matchedLive && matchedLive.scorers && matchedLive.scorers.length > 0 && (
+                        <div className="mt-2 flex items-center gap-1.5 text-[11px] font-semibold text-emerald-950 bg-emerald-50/90 border border-emerald-200/90 rounded-md px-2.5 py-1 w-fit">
                           <span className="text-emerald-700">⚽</span>
-                          <span>{matchedLive.golsSummary}</span>
+                          <span>
+                            Gols da partida:{' '}
+                            <span className="font-normal text-emerald-900">
+                              {matchedLive.scorers
+                                .map((s) => (s.minute ? `${s.name} ${s.minute}'` : s.name))
+                                .join(', ')}
+                            </span>
+                          </span>
                         </div>
                       )}
                     </div>

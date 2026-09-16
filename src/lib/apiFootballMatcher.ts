@@ -65,9 +65,58 @@ export interface MatchedLiveScore {
   statusLong: string
   elapsed: number | null
   isLive: boolean
+  isFinished: boolean
   displayLabel: string
   scorers: LiveScorerItem[]
   golsSummary: string
+}
+
+/**
+ * Remove acentos, pontuação, prefixos/sufixos comuns de clubes e espaços extras.
+ */
+/**
+ * Tabela de sinônimos conhecidos e normalizações canônicas de times.
+ * Muito comum em Libertadores e competições sul-americanas / brasileiras,
+ * ex: "LDU" vs "Liga de Quito", "Athletico-PR" vs "Atlético Paranaense", etc.
+ */
+const TEAM_SYNONYMS: Record<string, string> = {
+  // LDU Quito
+  ldu: 'ldu quito',
+  'ldu de quito': 'ldu quito',
+  'ldu quito': 'ldu quito',
+  'liga de quito': 'ldu quito',
+  'liga deportiva universitaria': 'ldu quito',
+  'liga deportiva universitaria de quito': 'ldu quito',
+  // Independiente del Valle
+  idv: 'independiente del valle',
+  'independiente valle': 'independiente del valle',
+  'independiente del valle': 'independiente del valle',
+  // Cerro Porteño
+  cerro: 'cerro porteno',
+  'cerro porteno': 'cerro porteno',
+  // Sporting Cristal
+  'sporting cristal': 'cristal',
+  // Red Bull Bragantino
+  'red bull bragantino': 'bragantino',
+  'rb bragantino': 'bragantino',
+  bragantino: 'bragantino',
+  // Athletico Paranaense
+  athletico: 'athletico paranaense',
+  'athletico pr': 'athletico paranaense',
+  'atletico pr': 'athletico paranaense',
+  'atletico paranaense': 'athletico paranaense',
+  // Atlético Mineiro
+  'atletico mg': 'atletico mineiro',
+  'atletico mineiro': 'atletico mineiro',
+  // América Mineiro
+  'america mg': 'america mineiro',
+  'america mineiro': 'america mineiro',
+  // Botafogo
+  'botafogo rj': 'botafogo',
+  'botafogo fr': 'botafogo',
+  // Vasco
+  'vasco da gama': 'vasco',
+  'cr vasco da gama': 'vasco',
 }
 
 /**
@@ -82,8 +131,19 @@ export function cleanTeamName(name: string): string {
     /* fallback */
   }
 
-  // Remove caracteres que não sejam letras, números ou espaços
+  // Remove pontuação isolada mantendo caracteres alfanuméricos
   s = s.replace(/[^a-z0-9\s]/g, ' ')
+
+  const rawTokens = s
+    .split(/\s+/)
+    .map((t) => t.trim())
+    .filter(Boolean)
+  const rawClean = rawTokens.join(' ')
+
+  // 1. Checa se a string inteira bate com algum sinônimo
+  if (TEAM_SYNONYMS[rawClean]) {
+    return TEAM_SYNONYMS[rawClean]
+  }
 
   // Remove termos genéricos de clubes de futebol
   const noiseWords = [
@@ -93,9 +153,12 @@ export function cleanTeamName(name: string): string {
     'e.c.',
     'cr',
     'c.r.',
+    'se',
+    's.e.',
+    'sc',
+    's.c.',
     'clube',
     'club',
-    'atletico',
     'de',
     'da',
     'do',
@@ -103,23 +166,25 @@ export function cleanTeamName(name: string): string {
     'das',
     'esporte',
     'futebol',
+    'futbol',
     'sport',
     'association',
     'afc',
     'cf',
+    'c.f.',
+    'sociedade',
+    'esportiva',
   ]
 
-  const tokens = s
-    .split(/\s+/)
-    .map((t) => t.trim())
-    .filter((t) => t.length > 0 && !noiseWords.includes(t))
+  const tokens = rawTokens.filter((t) => !noiseWords.includes(t))
 
   // Se todos foram removidos por ruído (ex: time "Clube"), mantém original sanitizado
   if (tokens.length === 0) {
     return s.replace(/[^a-z0-9]/g, '').trim()
   }
 
-  return tokens.join(' ')
+  const result = tokens.join(' ')
+  return TEAM_SYNONYMS[result] || result
 }
 
 /**
@@ -208,11 +273,55 @@ export function isFixtureLive(statusShort?: string): boolean {
  * @param fixtures Lista de fixtures retornadas pela API-Football
  * @param minSimilarity Limiar mínimo de similaridade para cada time (padrão 0.6)
  */
+/**
+ * Converte data da fixture para string YYYY-MM-DD no fuso America/Sao_Paulo (UTC-3).
+ */
+export function extractFixtureDateSP(fixture: ApiFootballFixture): string | null {
+  const rawDate = fixture.fixture?.date
+  if (!rawDate) return null
+  try {
+    const d = new Date(rawDate)
+    if (isNaN(d.getTime())) return null
+    const formatter = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'America/Sao_Paulo',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    })
+    return formatter.format(d)
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Status finalizados oficiais reconhecidos por Football-Data.org, TheSportsDB e API-Football.
+ */
+const FINISHED_STATUSES = new Set(['FT', 'AET', 'PEN', 'FINISHED', 'AOT', 'POST', 'MATCH FINISHED'])
+
+export function isFixtureFinished(statusShort?: string, statusLong?: string): boolean {
+  if (statusShort && FINISHED_STATUSES.has(statusShort.toUpperCase().trim())) return true
+  if (statusLong && FINISHED_STATUSES.has(statusLong.toUpperCase().trim())) return true
+  return false
+}
+
+/**
+ * Realiza o matching fuzzy de um jogo do bolão contra a lista de fixtures da API-Football.
+ * Suporta filtro opcional por data (America/Sao_Paulo) para evitar cruzar confrontos
+ * homônimos de datas/temporadas diferentes.
+ *
+ * @param jogoTimeA Nome do time A cadastrado no bolão
+ * @param jogoTimeB Nome do time B cadastrado no bolão
+ * @param fixtures Lista de fixtures retornadas pela API-Football
+ * @param minSimilarity Limiar mínimo de similaridade para cada time (padrão 0.6)
+ * @param jogoDataISO Data do jogo em formato YYYY-MM-DD (opcional)
+ */
 export function matchGameWithApiFixtures(
   jogoTimeA: string,
   jogoTimeB: string,
   fixtures: ApiFootballFixture[],
   minSimilarity = 0.6,
+  jogoDataISO?: string | null,
 ): MatchedLiveScore | null {
   if (!fixtures || fixtures.length === 0 || !jogoTimeA || !jogoTimeB) {
     return null
@@ -222,6 +331,7 @@ export function matchGameWithApiFixtures(
     fixture: ApiFootballFixture
     score: number
     isHomeA: boolean
+    dateMatches: boolean
   } | null = null
 
   for (const f of fixtures) {
@@ -229,28 +339,38 @@ export function matchGameWithApiFixtures(
     const awayName = f.teams?.away?.name || ''
     if (!homeName || !awayName) continue
 
+    // Verifica compatibilidade de data se informada
+    const fixtureDateSP = extractFixtureDateSP(f)
+    const dateMatches = Boolean(jogoDataISO && fixtureDateSP && jogoDataISO === fixtureDateSP)
+
     // Tentativa 1: jogoTimeA = Home, jogoTimeB = Away
     const simAHome = stringSimilarity(jogoTimeA, homeName)
     const simBAway = stringSimilarity(jogoTimeB, awayName)
-    const directScore = (simAHome + simBAway) / 2
+    let directScore = (simAHome + simBAway) / 2
 
     // Tentativa 2: jogoTimeA = Away, jogoTimeB = Home (ordem invertida no cadastro manual)
     const simAAway = stringSimilarity(jogoTimeA, awayName)
     const simBHome = stringSimilarity(jogoTimeB, homeName)
-    const invertedScore = (simAAway + simBHome) / 2
+    let invertedScore = (simAAway + simBHome) / 2
+
+    // Bônus se a data for idêntica (fuso America/Sao_Paulo)
+    if (dateMatches) {
+      directScore += 0.15
+      invertedScore += 0.15
+    }
 
     if (
       simAHome >= minSimilarity &&
       simBAway >= minSimilarity &&
       (!bestMatch || directScore > bestMatch.score)
     ) {
-      bestMatch = { fixture: f, score: directScore, isHomeA: true }
+      bestMatch = { fixture: f, score: directScore, isHomeA: true, dateMatches }
     } else if (
       simAAway >= minSimilarity &&
       simBHome >= minSimilarity &&
       (!bestMatch || invertedScore > bestMatch.score)
     ) {
-      bestMatch = { fixture: f, score: invertedScore, isHomeA: false }
+      bestMatch = { fixture: f, score: invertedScore, isHomeA: false, dateMatches }
     }
   }
 
@@ -269,6 +389,7 @@ export function matchGameWithApiFixtures(
   const statusLong = fixture.fixture?.status?.long || ''
   const elapsed = fixture.fixture?.status?.elapsed ?? null
   const isLive = isFixtureLive(statusShort)
+  const isFinished = isFixtureFinished(statusShort, statusLong)
 
   // Label amigável de exibição
   let displayLabel = `AO VIVO ${placarA} x ${placarB}`
@@ -276,14 +397,8 @@ export function matchGameWithApiFixtures(
     displayLabel = `AO VIVO (Intervalo) ${placarA} x ${placarB}`
   } else if (elapsed && isLive) {
     displayLabel = `AO VIVO ${elapsed}' • ${placarA} x ${placarB}`
-  } else if (
-    !isLive &&
-    (statusShort === 'FT' ||
-      statusShort === 'AET' ||
-      statusShort === 'PEN' ||
-      statusShort === 'FINISHED')
-  ) {
-    displayLabel = `Fim de Jogo (API) ${placarA} x ${placarB}`
+  } else if (isFinished) {
+    displayLabel = `Encerrado ${placarA} x ${placarB}`
   }
 
   // Processamento e formatação de autores dos gols
@@ -327,6 +442,7 @@ export function matchGameWithApiFixtures(
     statusLong,
     elapsed,
     isLive,
+    isFinished,
     displayLabel,
     scorers,
     golsSummary,
