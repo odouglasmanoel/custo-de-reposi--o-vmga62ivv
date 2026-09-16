@@ -19,6 +19,7 @@ import {
 } from 'lucide-react'
 import pb from '@/lib/pocketbase/client'
 import { useAuth } from '@/context/AuthContext'
+import { AdminEditMarcadoresModal } from '@/components/AdminEditMarcadoresModal'
 import { useActivePool } from '@/context/ActivePoolContext'
 import { useRealtime } from '@/hooks/use-realtime'
 import type { Jogo, Palpite, Participante, Bolao } from '@/types/bolao'
@@ -72,7 +73,7 @@ function normalizeScorersArray(raw: any, goalCount: number): string[] {
 }
 
 export default function Palpites() {
-  const { user, participantName } = useAuth()
+  const { user, participantName, isAdmin } = useAuth()
   const { boloes, activeBolao, activeBolaoId, currentParticipante } = useActivePool()
   const { toast } = useToast()
   const [searchParams, setSearchParams] = useSearchParams()
@@ -93,6 +94,12 @@ export default function Palpites() {
   const [editingGames, setEditingGames] = useState<Record<string, boolean>>({})
   const [savingGameId, setSavingGameId] = useState<string | null>(null)
   const [expandedDetails, setExpandedDetails] = useState<Record<string, boolean>>({})
+  const [adminEditingPalpite, setAdminEditingPalpite] = useState<{
+    palpite: Palpite
+    participanteNome: string
+    timeA: string
+    timeB: string
+  } | null>(null)
   const [filterPendentes, setFilterPendentes] = useState<boolean>(initialPendentes)
   const [loading, setLoading] = useState(true)
   const [nowMs, setNowMs] = useState<number>(Date.now())
@@ -858,11 +865,31 @@ export default function Palpites() {
                                     <span className="font-bold text-[#0F172A] truncate">
                                       {nomeParticipante}
                                     </span>
-                                    {isCurrentUser && (
-                                      <Badge className="bg-[#10B981] px-1 py-0 text-[9px] font-bold text-white hover:bg-[#10B981] shrink-0">
-                                        Você
-                                      </Badge>
-                                    )}
+                                    <div className="flex items-center gap-1 shrink-0">
+                                      {isCurrentUser && (
+                                        <Badge className="bg-[#10B981] px-1 py-0 text-[9px] font-bold text-white hover:bg-[#10B981]">
+                                          Você
+                                        </Badge>
+                                      )}
+                                      {isAdmin && (
+                                        <button
+                                          type="button"
+                                          onClick={() =>
+                                            setAdminEditingPalpite({
+                                              palpite: bet,
+                                              participanteNome: nomeParticipante,
+                                              timeA: jogo.time_a,
+                                              timeB: jogo.time_b,
+                                            })
+                                          }
+                                          className="inline-flex items-center gap-0.5 rounded px-1.5 py-0.5 text-[9px] font-semibold text-amber-700 bg-amber-50 hover:bg-amber-100 border border-amber-200 transition"
+                                          title="Editar marcadores deste palpite (Admin)"
+                                        >
+                                          <Edit3 className="h-2.5 w-2.5" />
+                                          <span>Editar</span>
+                                        </button>
+                                      )}
+                                    </div>
                                   </div>
                                   <div className="mt-1 text-xs font-semibold text-slate-800">
                                     Palpite:{' '}
@@ -1331,6 +1358,21 @@ export default function Palpites() {
           })}
         </div>
       )}
+
+      {/* Modal de Edição de Marcadores para o Admin */}
+      <AdminEditMarcadoresModal
+        open={Boolean(adminEditingPalpite)}
+        onOpenChange={(open) => {
+          if (!open) setAdminEditingPalpite(null)
+        }}
+        palpite={adminEditingPalpite?.palpite || null}
+        nomeParticipante={adminEditingPalpite?.participanteNome}
+        timeA={adminEditingPalpite?.timeA}
+        timeB={adminEditingPalpite?.timeB}
+        onSuccess={() => {
+          loadData()
+        }}
+      />
     </div>
   )
 }

@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { History, Loader2, Lock, Power, RotateCcw, ShieldAlert } from 'lucide-react'
+import { History, Loader2, Lock, Power, RotateCcw, ShieldAlert, Edit3 } from 'lucide-react'
 import pb from '@/lib/pocketbase/client'
 import type { Bolao, Participante, Jogo, Palpite } from '@/types/bolao'
 import { useAuth } from '@/context/AuthContext'
@@ -11,6 +11,7 @@ import { Badge } from '@/components/ui/badge'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { formatDataBR, formatHoraBR, formatDateTimeBR } from '@/lib/dateUtils'
 import { formatPalpiteMarcadoresSummary } from '@/lib/scorerUtils'
+import { AdminEditMarcadoresModal } from '@/components/AdminEditMarcadoresModal'
 
 export default function Historico() {
   const { isAdmin } = useAuth()
@@ -21,6 +22,13 @@ export default function Historico() {
   const [participantes, setParticipantes] = useState<Participante[]>([])
   const [jogos, setJogos] = useState<Jogo[]>([])
   const [palpites, setPalpites] = useState<Palpite[]>([])
+
+  const [editingPalpite, setEditingPalpite] = useState<{
+    palpite: Palpite
+    participanteNome: string
+    timeA: string
+    timeB: string
+  } | null>(null)
 
   const [loadingBoloes, setLoadingBoloes] = useState(true)
   const [loadingDetails, setLoadingDetails] = useState(false)
@@ -478,13 +486,33 @@ export default function Historico() {
                                           key={bet.id}
                                           className="rounded border border-slate-200 bg-slate-50 p-2 text-xs"
                                         >
-                                          <div className="font-bold text-slate-800">
-                                            {part?.nome || 'Participante'}
+                                          <div className="flex items-center justify-between gap-1">
+                                            <span className="font-bold text-slate-800 truncate">
+                                              {part?.nome || 'Participante'}
+                                            </span>
+                                            {isAdmin && (
+                                              <button
+                                                type="button"
+                                                onClick={() =>
+                                                  setEditingPalpite({
+                                                    palpite: bet,
+                                                    participanteNome: part?.nome || 'Participante',
+                                                    timeA: jogo.time_a,
+                                                    timeB: jogo.time_b,
+                                                  })
+                                                }
+                                                className="inline-flex items-center gap-0.5 rounded px-1.5 py-0.5 text-[10px] font-semibold text-amber-700 bg-amber-50 hover:bg-amber-100 border border-amber-200 transition"
+                                                title="Editar marcadores deste palpite (Admin)"
+                                              >
+                                                <Edit3 className="h-2.5 w-2.5" />
+                                                <span>Editar</span>
+                                              </button>
+                                            )}
                                           </div>
-                                          <div className="text-[11px] text-slate-600">
+                                          <div className="text-[11px] text-slate-600 mt-0.5">
                                             Palpite: {bet.placar_a} x {bet.placar_b}
                                           </div>
-                                          <div className="mt-0.5 text-[10px] text-slate-600 font-medium">
+                                          <div className="mt-0.5 text-[10px] text-slate-600 font-medium leading-snug">
                                             {formatPalpiteMarcadoresSummary(bet)}
                                           </div>
                                           {jogo.resultado_finalizado && (
@@ -509,6 +537,21 @@ export default function Historico() {
           )}
         </Card>
       )}
+
+      {/* Modal de Edição de Marcadores para o Admin */}
+      <AdminEditMarcadoresModal
+        open={Boolean(editingPalpite)}
+        onOpenChange={(open) => {
+          if (!open) setEditingPalpite(null)
+        }}
+        palpite={editingPalpite?.palpite || null}
+        nomeParticipante={editingPalpite?.participanteNome}
+        timeA={editingPalpite?.timeA}
+        timeB={editingPalpite?.timeB}
+        onSuccess={(updated) => {
+          setPalpites((prev) => prev.map((p) => (p.id === updated.id ? updated : p)))
+        }}
+      />
     </div>
   )
 }

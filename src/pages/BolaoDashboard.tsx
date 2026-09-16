@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useCallback } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import {
   Trophy,
@@ -12,6 +12,8 @@ import {
   Sparkles,
   BarChart2,
   Globe,
+  Radio,
+  Edit3,
 } from 'lucide-react'
 import pb from '@/lib/pocketbase/client'
 import { useAuth, BOLAO_MEMBERS } from '@/context/AuthContext'
@@ -32,6 +34,12 @@ import {
   getJogoKickoffTimestamp,
 } from '@/lib/dateUtils'
 import { formatPalpiteMarcadoresSummary } from '@/lib/scorerUtils'
+import {
+  matchGameWithApiFixtures,
+  type ApiFootballFixture,
+  type MatchedLiveScore,
+} from '@/lib/apiFootballMatcher'
+import { AdminEditMarcadoresModal } from '@/components/AdminEditMarcadoresModal'
 import { Users } from 'lucide-react'
 
 export default function BolaoDashboard() {
@@ -65,6 +73,18 @@ export default function BolaoDashboard() {
   const [loading, setLoading] = useState(true)
   const [nowMs, setNowMs] = useState<number>(Date.now())
 
+  // Live score state via API-Football
+  const [apiFixtures, setApiFixtures] = useState<ApiFootballFixture[]>([])
+  const [apiConfigured, setApiConfigured] = useState<boolean | null>(null)
+
+  // Edição de marcadores pelo Admin
+  const [adminEditingPalpite, setAdminEditingPalpite] = useState<{
+    palpite: Palpite
+    participanteNome: string
+    timeA: string
+    timeB: string
+  } | null>(null)
+
   // Atualiza periodicamente o timestamp atual para destravar os palpites do grupo no minuto exato do jogo
   useEffect(() => {
     const timer = setInterval(() => {
@@ -72,6 +92,36 @@ export default function BolaoDashboard() {
     }, 15000)
     return () => clearInterval(timer)
   }, [])
+
+  // Polling de placar ao vivo da API-Football a cada 60s (apenas se houver jogos em andamento)
+  const fetchLiveScores = useCallback(async () => {
+    try {
+      const headers: Record<string, string> = {}
+      if (pb.authStore.token) {
+        headers['Authorization'] = pb.authStore.token
+      }
+      const res = await fetch(`${import.meta.env.VITE_POCKETBASE_URL}/backend/v1/placar-ao-vivo`, {
+        headers,
+      })
+      if (res.ok) {
+        const data = await res.json()
+        setApiConfigured(Boolean(data.configured))
+        if (Array.isArray(data.live)) {
+          setApiFixtures(data.live)
+        }
+      }
+    } catch (err) {
+      // Falha silenciosa de polling para nunca interromper a experiência do usuário
+      console.warn('Polling de placar ao vivo indisponível:', err)
+    }
+  }, [])
+
+  // Dispara polling a cada 60s
+  useEffect(() => {
+    fetchLiveScores()
+    const interval = setInterval(fetchLiveScores, 60000)
+    return () => clearInterval(interval)
+  }, [fetchLiveScores])
 
   const isGeral = activeBolaoId === GERAL_BOLAO_ID
 
@@ -566,11 +616,32 @@ export default function BolaoDashboard() {
                         <span className="text-[11px] text-slate-500">
                           {formatDataBR(jogo.data)} às {formatHoraBR(jogo.hora)}
                         </span>
+                        {/* Indicador de placar ao vivo da API-Football se correspondência for encontrada */}
+                        {(() => {
+                          const matched = matchGameWithApiFixtures(
+                            jogo.time_a,
+                            jogo.time_b,
+                            apiFixtures,
+                          )
+                          if (!matched) {
+                            return null
+                          }
+                          return (
+                            <Badge
+                              variant="secondary"
+                              className="border border-emerald-400 bg-emerald-50 text-emerald-800 text-[10px] font-bold shadow-2xs flex items-center gap-1.5 animate-pulse"
+                              title={`Placar em tempo real via API-Football (${matched.statusLong || 'Em andamento'}). Nota: Informativo, o resultado oficial é confirmado manualmente pelo Admin.`}
+                            >
+                              <Radio className="h-3 w-3 text-emerald-600" />
+                              <span>{matched.displayLabel}</span>
+                            </Badge>
+                          )
+                        })()}
                         <Badge
                           variant="outline"
                           className="border-rose-300 bg-rose-50 text-[10px] font-semibold text-rose-800"
                         >
-                          Palpites Encerrados (Em andamento)
+                          Palpites Encerrados
                         </Badge>
                       </div>
                     </div>
@@ -604,12 +675,32 @@ export default function BolaoDashboard() {
                                   <span className="font-bold text-[#0F172A] truncate">
                                     {nomeParticipante}
                                   </span>
-                                  {isCurrentUser && (
-                                    <Badge className="bg-[#10B981] px-1 py-0 text-[9px] font-bold text-white hover:bg-[#10B981] shrink-0">
-                                      Você
-                                    </Badge>
-                                  )}
-                                </div>
+                                  <div className="flex items-center gap-1 shrink-0">
+                                    {isCurrentUser && (
+                                      <Badge className="bg-[#10B981] px-1 py-0 text-[9px] font-bold text-white hover:bg-[#10B981]">
+                                        Você
+                                      </Badge>
+                                    )}
+                                    {isAdmin && (
+                                      <button
+                                        type="button"
+                                        onClick={() =>
+                                          setAdminEditingPalpite({
+                                            palpite: bet,
+                                            participanteNome: nomeParticipante,
+                                            timeA: jogo.time_a,
+                                            timeB: jogo.time_b,
+                                          })
+                                        }
+                                        className="inline-flex items-center gap-0.5 rounded px-1.5 py-0.5 text-[9px] font-semibold text-amber-700 bg-amber-50 hover:bg-amber-100 border border-amber-200 transition"
+                                        title="Editar marcadores deste palpite (Admin)"
+                                      >
+                                        <Edit3 className="h-2.5 w-2.5" />
+                                        <span>Editar</span>
+                                      </button>
+                                    )}
+                                  </div>
+                                </div>{' '}
                                 <div className="mt-1 text-xs font-semibold text-slate-800">
                                   Palpite:{' '}
                                   <strong className="text-sm font-black text-[#0F2A43]">
@@ -814,6 +905,21 @@ export default function BolaoDashboard() {
           </Card>
         </div>
       </div>
+
+      {/* Modal de Edição de Marcadores do Admin */}
+      <AdminEditMarcadoresModal
+        open={Boolean(adminEditingPalpite)}
+        onOpenChange={(open) => {
+          if (!open) setAdminEditingPalpite(null)
+        }}
+        palpite={adminEditingPalpite?.palpite || null}
+        nomeParticipante={adminEditingPalpite?.participanteNome}
+        timeA={adminEditingPalpite?.timeA}
+        timeB={adminEditingPalpite?.timeB}
+        onSuccess={() => {
+          loadData()
+        }}
+      />
     </div>
   )
 }

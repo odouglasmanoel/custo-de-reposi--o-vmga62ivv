@@ -11,6 +11,7 @@ import {
   AlertCircle,
   ChevronDown,
   ChevronUp,
+  Edit3,
 } from 'lucide-react'
 import pb from '@/lib/pocketbase/client'
 import type { Jogo, Palpite, Normalizacao, ScorerItem } from '@/types/bolao'
@@ -21,6 +22,8 @@ import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { useToast } from '@/hooks/use-toast'
 import { formatDataBR, formatHoraBR } from '@/lib/dateUtils'
+import { AdminEditMarcadoresModal } from '@/components/AdminEditMarcadoresModal'
+import { formatPalpiteMarcadoresSummary } from '@/lib/scorerUtils'
 
 export default function AdminResultado() {
   const { id } = useParams<{ id: string }>()
@@ -50,6 +53,11 @@ export default function AdminResultado() {
   const [showNormalizer, setShowNormalizer] = useState(false)
   const [mappingInputs, setMappingInputs] = useState<Record<string, string>>({})
   const [savingNorms, setSavingNorms] = useState(false)
+  const [participantesMap, setParticipantesMap] = useState<Record<string, string>>({})
+  const [editingPalpite, setEditingPalpite] = useState<{
+    palpite: Palpite
+    participanteNome: string
+  } | null>(null)
 
   useEffect(() => {
     if (id) {
@@ -92,6 +100,20 @@ export default function AdminResultado() {
 
       setPalpites(allPalpites)
       setNormalizacoes(allNorms)
+
+      // Carregar nomes dos participantes deste bolão
+      try {
+        const parts = await pb.collection('participantes').getFullList({
+          filter: `bolao = '${gameRecord.bolao}'`,
+        })
+        const partMap: Record<string, string> = {}
+        for (const p of parts) {
+          partMap[p.id] = p.nome
+        }
+        setParticipantesMap(partMap)
+      } catch {
+        /* ignore */
+      }
 
       // Initialize mapping inputs with existing normalizations
       const initialMap: Record<string, string> = {}
@@ -688,6 +710,95 @@ export default function AdminResultado() {
           </div>
         )}
       </Card>
+
+      {/* Painel de Palpites Registrados com Edição Direta de Marcadores pelo Admin */}
+      <Card className="rounded-[14px] border-[#E2E8F0] bg-white p-6 shadow-xs">
+        <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+          <div>
+            <CardTitle className="text-base font-bold text-[#0F172A]">
+              Palpites Registrados e Marcadores dos Participantes ({palpites.length})
+            </CardTitle>
+            <p className="mt-0.5 text-xs text-[#64748B]">
+              Edite diretamente o texto dos marcadores de qualquer palpite para padronizar a grafia.
+            </p>
+          </div>
+          <Badge variant="outline" className="border-slate-300 text-xs text-slate-700">
+            {palpites.length} participante(s)
+          </Badge>
+        </div>
+
+        <div className="mt-4">
+          {palpites.length === 0 ? (
+            <p className="py-4 text-center text-xs text-slate-400 italic">
+              Nenhum palpite registrado para este confronto.
+            </p>
+          ) : (
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+              {palpites.map((bet) => {
+                const partNome = participantesMap[bet.participante] || 'Participante'
+                return (
+                  <div
+                    key={bet.id}
+                    className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs flex flex-col justify-between"
+                  >
+                    <div>
+                      <div className="flex items-center justify-between gap-1 pb-1 border-b border-slate-200/60">
+                        <span className="font-bold text-slate-800 truncate">{partNome}</span>
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="outline"
+                          onClick={() =>
+                            setEditingPalpite({
+                              palpite: bet,
+                              participanteNome: partNome,
+                            })
+                          }
+                          className="h-6 px-2 text-[10px] font-semibold border-amber-300 bg-amber-50 text-amber-800 hover:bg-amber-100"
+                          title="Editar marcadores deste palpite"
+                        >
+                          <Edit3 className="mr-1 h-2.5 w-2.5" />
+                          Editar
+                        </Button>
+                      </div>
+                      <div className="mt-2 text-xs font-semibold text-slate-800">
+                        Palpite:{' '}
+                        <strong className="text-sm font-black text-[#0F2A43]">
+                          {bet.placar_a} x {bet.placar_b}
+                        </strong>
+                      </div>
+                      <div className="mt-1 text-[11px] text-slate-600 font-medium leading-snug">
+                        {formatPalpiteMarcadoresSummary(bet)}
+                      </div>
+                    </div>
+
+                    {jogo.resultado_finalizado && (
+                      <div className="mt-2 pt-2 border-t border-slate-200/60 text-[11px] font-bold text-emerald-700">
+                        Pontuação: +{bet.pontuacao_jogo} pts
+                      </div>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+          )}
+        </div>
+      </Card>
+
+      {/* Modal de Edição de Marcadores pelo Admin */}
+      <AdminEditMarcadoresModal
+        open={Boolean(editingPalpite)}
+        onOpenChange={(open) => {
+          if (!open) setEditingPalpite(null)
+        }}
+        palpite={editingPalpite?.palpite || null}
+        nomeParticipante={editingPalpite?.participanteNome}
+        timeA={jogo.time_a}
+        timeB={jogo.time_b}
+        onSuccess={() => {
+          loadGameData(jogo.id)
+        }}
+      />
 
       {/* Save button footer */}
       <div className="flex justify-end gap-3 pt-4">
