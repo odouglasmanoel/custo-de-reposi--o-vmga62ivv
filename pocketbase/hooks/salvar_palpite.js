@@ -24,6 +24,64 @@ routerAdd('POST', '/backend/v1/salvar-palpite', (e) => {
 
     const bolaoId = body.bolao_id || body.bolao || jogo.getString('bolao')
 
+    // =========================================================================
+    // VALIDAÇÃO RIGOROSA DE HORÁRIO / TRAVA DE ENCERRAMENTO (Fuso de Brasília UTC-3)
+    // Se o horário atual for maior ou igual à hora do jogo (dataHoraAtual >= dataHoraJogo),
+    // recusa o salvamento e exibe o alerta solicitado.
+    // =========================================================================
+    const jogoDataRaw = (jogo.getString('data') || '').trim()
+    const jogoHoraRaw = (jogo.getString('hora') || '').trim()
+
+    let cutoffHours = 0
+    let cutoffMinutes = 0
+    const horaMatch = jogoHoraRaw.match(/^(\d{1,2})[:hH](\d{2})/)
+    if (horaMatch) {
+      cutoffHours = parseInt(horaMatch[1], 10)
+      cutoffMinutes = parseInt(horaMatch[2], 10)
+    } else {
+      const justH = jogoHoraRaw.match(/^(\d{1,2})/)
+      if (justH) {
+        cutoffHours = parseInt(justH[1], 10)
+      }
+    }
+
+    const formattedCutoff =
+      String(cutoffHours).padStart(2, '0') + ':' + String(cutoffMinutes).padStart(2, '0')
+
+    if (jogoDataRaw) {
+      let jYear = 0
+      let jMonth = 0
+      let jDay = 0
+
+      const brM = jogoDataRaw.match(/^(\d{2})\/(\d{2})\/(\d{4})/)
+      if (brM) {
+        jDay = parseInt(brM[1], 10)
+        jMonth = parseInt(brM[2], 10)
+        jYear = parseInt(brM[3], 10)
+      } else {
+        const isoM = jogoDataRaw.match(/^(\d{4})-(\d{2})-(\d{2})/)
+        if (isoM) {
+          jYear = parseInt(isoM[1], 10)
+          jMonth = parseInt(isoM[2], 10)
+          jDay = parseInt(isoM[3], 10)
+        }
+      }
+
+      if (jYear > 0 && jMonth > 0 && jDay > 0) {
+        // Horário de Brasília é UTC-3 fixo. Para converter a data/hora local
+        // da partida para o timestamp absoluto UTC: soma 3 horas ao horário local.
+        const kickoffUtcMs = Date.UTC(jYear, jMonth - 1, jDay, cutoffHours + 3, cutoffMinutes, 0, 0)
+
+        const nowMs = Date.now()
+        if (nowMs >= kickoffUtcMs) {
+          return e.json(400, {
+            success: false,
+            error: `Não foi possível salvar: os palpites para este jogo foram encerrados às ${formattedCutoff}`,
+          })
+        }
+      }
+    }
+
     // Parse gols
     const rawGolsA = body.gols_time_a !== undefined ? body.gols_time_a : body.placar_a
     const rawGolsB = body.gols_time_b !== undefined ? body.gols_time_b : body.placar_b

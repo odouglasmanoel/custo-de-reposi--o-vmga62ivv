@@ -28,7 +28,12 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Badge } from '@/components/ui/badge'
 import { useToast } from '@/hooks/use-toast'
-import { formatDataBR, formatHoraBR } from '@/lib/dateUtils'
+import {
+  formatDataBR,
+  formatHoraBR,
+  isPalpiteEncerrado,
+  formatHoraEncerramento,
+} from '@/lib/dateUtils'
 
 interface PalpiteFormData {
   placar_a: number | string
@@ -83,6 +88,15 @@ export default function Palpites() {
   const [expandedDetails, setExpandedDetails] = useState<Record<string, boolean>>({})
   const [filterPendentes, setFilterPendentes] = useState<boolean>(pendentesParam)
   const [loading, setLoading] = useState(true)
+  const [nowMs, setNowMs] = useState<number>(Date.now())
+
+  // Atualiza periodicamente o horário atual para sincronizar o bloqueio de encerramento em tempo real
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setNowMs(Date.now())
+    }, 15000)
+    return () => clearInterval(timer)
+  }, [])
 
   // Atualizar filtro de pendentes se a query string mudar
   useEffect(() => {
@@ -344,6 +358,22 @@ export default function Palpites() {
   }
 
   const handleSavePalpite = async (jogo: Jogo) => {
+    // Validação preventiva no frontend: verificar se o horário do jogo já foi atingido (Fuso Brasília UTC-3)
+    if (isPalpiteEncerrado(jogo.data, jogo.hora, Date.now())) {
+      const horaEncerramento = formatHoraEncerramento(jogo.hora)
+      toast({
+        title: 'Palpites encerrados',
+        description: `Não foi possível salvar: os palpites para este jogo foram encerrados às ${horaEncerramento}`,
+        variant: 'destructive',
+      })
+      // Desabilita modo de edição
+      setEditingGames((prev) => ({
+        ...prev,
+        [jogo.id]: false,
+      }))
+      return
+    }
+
     const jogoBolaoId = jogo.bolao || activeBolaoId
     if (!jogoBolaoId) return
 
@@ -679,6 +709,14 @@ export default function Palpites() {
                         {pontos > 0 ? `+${pontos} pontos` : '0 pontos'}
                       </span>
                     </div>
+                  ) : isPalpiteEncerrado(jogo.data, jogo.hora, nowMs) ? (
+                    <Badge
+                      variant="outline"
+                      className="border-rose-300 bg-rose-50 text-rose-800 text-[11px] font-semibold gap-1"
+                    >
+                      <Lock className="h-3 w-3 text-rose-600" />
+                      Palpites encerrados para esta partida
+                    </Badge>
                   ) : palpite && !editingGames[jogo.id] ? (
                     <Badge
                       variant="outline"
@@ -810,13 +848,35 @@ export default function Palpites() {
                     /* Active game: Palpite registration form */
                     (() => {
                       const isSaved = Boolean(palpite)
-                      const isEditing = Boolean(editingGames[jogo.id])
-                      const isLocked = isSaved && !isEditing
+                      const isExpired = isPalpiteEncerrado(jogo.data, jogo.hora, nowMs)
+                      // Se o prazo expirou, não permite editar
+                      const isEditing = Boolean(editingGames[jogo.id]) && !isExpired
+                      const isLocked = (isSaved && !isEditing) || isExpired
+                      const horaEncerramento = formatHoraEncerramento(jogo.hora)
 
                       return (
                         <div className="mt-4 space-y-4">
-                          {/* Status banner when saved & locked */}
-                          {isLocked && (
+                          {/* Banner de encerramento da partida */}
+                          {isExpired && (
+                            <div className="flex items-center justify-between rounded-lg border border-rose-200 bg-rose-50 px-4 py-2.5 text-xs text-rose-900">
+                              <div className="flex items-center gap-2">
+                                <Lock className="h-4 w-4 text-rose-700 shrink-0" />
+                                <span>
+                                  <strong>Palpites encerrados para esta partida</strong>{' '}
+                                  (encerramento às {horaEncerramento}).
+                                </span>
+                              </div>
+                              <Badge
+                                variant="outline"
+                                className="border-rose-300 bg-white text-rose-800 text-[11px] font-bold"
+                              >
+                                Encerrado
+                              </Badge>
+                            </div>
+                          )}
+
+                          {/* Status banner when saved & locked (and not expired) */}
+                          {isLocked && !isExpired && (
                             <div className="flex items-center justify-between rounded-lg border border-emerald-200 bg-emerald-50/70 px-4 py-2.5 text-xs text-emerald-900">
                               <div className="flex items-center gap-2">
                                 <Lock className="h-4 w-4 text-emerald-700 shrink-0" />
@@ -842,7 +902,7 @@ export default function Palpites() {
                             </div>
                           )}
 
-                          {isEditing && (
+                          {isEditing && !isExpired && (
                             <div className="flex items-center justify-between rounded-lg border border-blue-200 bg-blue-50/70 px-4 py-2.5 text-xs text-blue-900">
                               <div className="flex items-center gap-2">
                                 <Edit3 className="h-4 w-4 text-blue-700 shrink-0" />
@@ -1087,7 +1147,16 @@ export default function Palpites() {
 
                           {/* Action buttons footer */}
                           <div className="flex justify-end pt-2">
-                            {isLocked ? (
+                            {isExpired ? (
+                              <Button
+                                type="button"
+                                disabled
+                                className="h-9 cursor-not-allowed rounded-lg border border-slate-300 bg-slate-100 px-5 text-xs font-bold text-slate-400 shadow-none"
+                              >
+                                <Lock className="mr-1.5 h-3.5 w-3.5 text-slate-400" />
+                                Palpites Encerrados
+                              </Button>
+                            ) : isLocked ? (
                               <Button
                                 type="button"
                                 onClick={() =>

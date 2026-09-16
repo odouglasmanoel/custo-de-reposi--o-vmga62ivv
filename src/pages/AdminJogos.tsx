@@ -129,7 +129,7 @@ export default function AdminJogos() {
         time_a: timeA.trim(),
         time_b: timeB.trim(),
         competicao: competicao.trim() || '',
-        data: new Date(dataJogo).toISOString(),
+        data: `${dataJogo.trim()}T00:00:00.000Z`,
         hora: horaJogo.trim(),
         resultado_finalizado: false,
         tem_penaltis: temPenaltis,
