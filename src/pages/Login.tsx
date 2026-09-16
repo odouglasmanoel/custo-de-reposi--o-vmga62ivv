@@ -58,14 +58,6 @@ export default function Login() {
     }
   }
 
-  const fillQuickAccount = (quickEmail: string) => {
-    setEmail(quickEmail)
-    setPassword('Skip@Pass')
-    setError(null)
-    setEmailError(null)
-    setPasswordError(null)
-  }
-
   return (
     <div className="flex min-h-screen w-full bg-[#F3F6F9]">
       {/* Left Panel (Branding) — hidden on small mobile, visible from md up */}
@@ -185,55 +177,6 @@ export default function Login() {
                 )}
               </Button>
             </form>
-
-            <div className="mt-6 border-t border-[#E2E8F0] pt-4 text-center">
-              <p className="text-xs text-[#64748B]">Acesso restrito a colaboradores autorizados.</p>
-            </div>
-
-            {/* Quick access accounts helper for evaluation / easy test */}
-            <div className="mt-5 rounded-lg border border-dashed border-slate-300 bg-slate-50 p-3 text-xs text-slate-600">
-              <p className="font-semibold text-slate-800">Contas de teste para demonstração:</p>
-              <div className="mt-2 flex flex-wrap gap-1.5">
-                <button
-                  type="button"
-                  onClick={() => fillQuickAccount('douglas@repress.com.br')}
-                  className="rounded bg-white px-2 py-1 font-medium shadow-xs hover:bg-slate-100 border border-slate-200"
-                >
-                  Douglas (Admin)
-                </button>
-                <button
-                  type="button"
-                  onClick={() => fillQuickAccount('davi@repress.com.br')}
-                  className="rounded bg-white px-2 py-1 font-medium shadow-xs hover:bg-slate-100 border border-slate-200"
-                >
-                  Davi (Membro)
-                </button>
-                <button
-                  type="button"
-                  onClick={() => fillQuickAccount('gabriel@repress.com.br')}
-                  className="rounded bg-white px-2 py-1 font-medium shadow-xs hover:bg-slate-100 border border-slate-200"
-                >
-                  Gabriel (Membro)
-                </button>
-                <button
-                  type="button"
-                  onClick={() => fillQuickAccount('bruno@repress.com.br')}
-                  className="rounded bg-white px-2 py-1 font-medium shadow-xs hover:bg-slate-100 border border-slate-200"
-                >
-                  Bruno (Membro)
-                </button>
-                <button
-                  type="button"
-                  onClick={() => fillQuickAccount('gil.araujo@repress.com.br')}
-                  className="rounded bg-white px-2 py-1 font-medium shadow-xs hover:bg-slate-100 border border-slate-200 text-blue-700"
-                >
-                  Gil (Corporativo)
-                </button>
-              </div>
-              <p className="mt-2 text-[11px] text-slate-500">
-                Senha padrão para todos: <span className="font-mono font-semibold">Skip@Pass</span>
-              </p>
-            </div>
           </div>
         </div>
       </div>
