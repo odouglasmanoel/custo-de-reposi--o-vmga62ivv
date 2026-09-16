@@ -1,14 +1,13 @@
 import { useState, useEffect } from 'react'
-import { History, Calendar, AlertCircle, Loader2, Power, RotateCcw } from 'lucide-react'
+import { History, Loader2, Power, RotateCcw } from 'lucide-react'
 import pb from '@/lib/pocketbase/client'
 import type { Bolao, Participante, Jogo, Palpite } from '@/types/bolao'
 import { useAuth } from '@/context/AuthContext'
 import { useActivePool } from '@/context/ActivePoolContext'
 import { toast } from '@/hooks/use-toast'
-import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
+import { Card } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
-import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { formatDataBR, formatHoraBR, formatDateTimeBR } from '@/lib/dateUtils'
 
@@ -172,14 +171,6 @@ export default function Historico() {
           </div>
         </div>
       </div>
-
-      {/* Mandatory note banner */}
-      <Alert className="border-blue-200 bg-blue-50/70 text-blue-900">
-        <AlertCircle className="h-4 w-4 text-blue-600" />
-        <AlertDescription className="text-xs font-semibold text-blue-800">
-          O arquivo da Copa do Mundo será integrado posteriormente.
-        </AlertDescription>
-      </Alert>
 
       {/* Pool Cards Grid */}
       <div>
