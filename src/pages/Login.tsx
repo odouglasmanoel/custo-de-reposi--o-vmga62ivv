@@ -24,11 +24,9 @@ export default function Login() {
     setPasswordError(null)
 
     let hasError = false
-    if (!email.trim()) {
-      setEmailError('Informe seu e-mail')
-      hasError = true
-    } else if (!email.includes('@')) {
-      setEmailError('Informe um e-mail válido')
+    const rawIdentifier = email.trim()
+    if (!rawIdentifier) {
+      setEmailError('Informe seu e-mail ou usuário')
       hasError = true
     }
 
@@ -39,9 +37,14 @@ export default function Login() {
 
     if (hasError) return
 
+    // Normaliza para e-mail completo se for digitado apenas o username (sem @)
+    const normalizedIdentifier = rawIdentifier.includes('@')
+      ? rawIdentifier
+      : `${rawIdentifier}@repress.com.br`
+
     setLoading(true)
     try {
-      const authData = await pb.collection('users').authWithPassword(email.trim(), password)
+      const authData = await pb.collection('users').authWithPassword(normalizedIdentifier, password)
       const userName = authData.record?.name || ''
 
       // Check post-login redirect logic
@@ -117,7 +120,7 @@ export default function Login() {
               </div>
             )}
 
-            <form onSubmit={handleSubmit} className="space-y-4">
+            <form onSubmit={handleSubmit} noValidate className="space-y-4">
               <div>
                 <Label htmlFor="email" className="text-xs font-semibold text-[#0F172A]">
                   E-mail institucional
@@ -126,11 +129,12 @@ export default function Login() {
                   <Mail className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#64748B]" />
                   <Input
                     id="email"
-                    type="email"
+                    type="text"
                     placeholder="seu.email@repress.com.br"
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
                     className="h-11 border-[#CBD5E1] pl-9 text-sm focus-visible:border-[#10B981] focus-visible:ring-[#10B981]"
+                    autoComplete="username"
                   />
                 </div>
                 {emailError && <p className="mt-1 text-xs text-red-600">{emailError}</p>}
