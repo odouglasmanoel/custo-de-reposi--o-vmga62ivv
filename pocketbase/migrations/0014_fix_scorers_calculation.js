@@ -1,6 +1,6 @@
 migrate(
   (app) => {
-    // Recalculate pontuacao for existing finished games using the updated logic
+    // Recálculo idempotente da pontuação dos jogos finalizados com o algoritmo corrigido de goleadores.
     try {
       const parseJsonField = (rec, fieldName) => {
         try {
