@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-09-16T13:25:32.561Z",
+  "generatedAt": "2026-09-16T13:29:15.241Z",
   "collections": [
     {
       "name": "users",
@@ -297,7 +297,7 @@
         "view": "@request.auth.id != ''",
         "create": "@request.auth.id != ''",
         "update": "@request.auth.id != ''",
-        "delete": null
+        "delete": "@request.auth.id != ''"
       },
       "fields": [
         {
@@ -324,13 +324,13 @@
         {
           "name": "placar_a",
           "type": "number",
-          "required": true,
+          "required": false,
           "system": false
         },
         {
           "name": "placar_b",
           "type": "number",
-          "required": true,
+          "required": false,
           "system": false
         },
         {
