@@ -2361,6 +2361,223 @@ routerAdd('GET', '/backend/v1/jogos-do-dia', (e) => {
       return { fixtures: convertedFixtures, hasLive: hasLiveMatchFD }
     }
 
+    // Função utilitária para buscar partidas no TheSportsDB (CONMEBOL + UEFA secundárias)
+    // Disponível no escopo da rota /backend/v1/jogos-do-dia
+    var fetchConmebolFromTheSportsDb = function (targetDate, apiKeyTsdb) {
+      if (!targetDate) return []
+      var key = apiKeyTsdb || '3'
+      var conmebolFixtures = []
+      var conmebolLeagues = [
+        {
+          id: 4501,
+          name: 'Copa Libertadores',
+          shortId: 13,
+          region: 'Sul-Americana',
+          country: 'South America',
+        },
+        {
+          id: 4724,
+          name: 'Copa Sudamericana',
+          shortId: 11,
+          region: 'Sul-Americana',
+          country: 'South America',
+        },
+        {
+          id: 4481,
+          name: 'UEFA Europa League',
+          shortId: 3,
+          region: 'Futebol Europeu',
+          country: 'Europe',
+        },
+        {
+          id: 5071,
+          name: 'UEFA Europa Conference League',
+          shortId: 848,
+          region: 'Futebol Europeu',
+          country: 'Europe',
+        },
+      ]
+
+      for (var cli = 0; cli < conmebolLeagues.length; cli++) {
+        var cl = conmebolLeagues[cli]
+        try {
+          var tsdbUrl =
+            'https://www.thesportsdb.com/api/v1/json/' +
+            encodeURIComponent(key) +
+            '/eventsday.php?d=' +
+            encodeURIComponent(targetDate) +
+            '&l=' +
+            encodeURIComponent(cl.id)
+
+          var resTsdb = $http.send({
+            url: tsdbUrl,
+            method: 'GET',
+            timeout: 8,
+          })
+
+          if (
+            resTsdb &&
+            resTsdb.statusCode === 200 &&
+            resTsdb.json &&
+            Array.isArray(resTsdb.json.events)
+          ) {
+            var events = resTsdb.json.events
+            for (var ei = 0; ei < events.length; ei++) {
+              var ev = events[ei]
+              var homeTeam = (ev.strHomeTeam || '').trim()
+              var awayTeam = (ev.strAwayTeam || '').trim()
+              if (!homeTeam || !awayTeam) continue
+
+              var evDate = ev.dateEvent || targetDate
+              var evTime = ev.strTime || '20:00:00'
+              // Monta ISO string aproximada (UTC)
+              var isoDateStr =
+                evDate + 'T' + (evTime.indexOf(':') !== -1 ? evTime : '20:00:00') + 'Z'
+
+              var hScore =
+                ev.intHomeScore !== null && ev.intHomeScore !== undefined && ev.intHomeScore !== ''
+                  ? parseInt(ev.intHomeScore, 10)
+                  : null
+              var aScore =
+                ev.intAwayScore !== null && ev.intAwayScore !== undefined && ev.intAwayScore !== ''
+                  ? parseInt(ev.intAwayScore, 10)
+                  : null
+
+              var rawStatus = (ev.strStatus || '').trim().toUpperCase()
+              var shortStatus = 'NS'
+              if (
+                rawStatus === 'FT' ||
+                rawStatus === 'AOT' ||
+                rawStatus === 'FINISHED' ||
+                rawStatus === 'MATCH FINISHED'
+              ) {
+                shortStatus = 'FT'
+              } else if (
+                rawStatus === '1H' ||
+                rawStatus === '2H' ||
+                rawStatus === 'HT' ||
+                rawStatus === 'LIVE' ||
+                rawStatus === 'IN PROGRESS'
+              ) {
+                shortStatus = rawStatus === 'HT' ? 'HT' : '1H'
+              } else if (rawStatus === 'POSTPONED' || rawStatus === 'PST') {
+                shortStatus = 'PST'
+              } else if (rawStatus === 'CANCELLED' || rawStatus === 'CANC') {
+                shortStatus = 'CANC'
+              }
+
+              var tsdbScorers = []
+              var tsdbEvents = []
+              var parseTsdbGoalStr = function (detailStr, teamSide, teamId, teamName) {
+                if (typeof detailStr !== 'string' || !detailStr.trim()) return
+                var parts = detailStr.split(';')
+                for (var pi = 0; pi < parts.length; pi++) {
+                  var rawPart = parts[pi].trim()
+                  if (!rawPart) continue
+                  var plusMatch = rawPart.match(/(\d+)\s*\+\s*(\d+)/)
+                  var extractedMin = null
+                  var extractedExtra = null
+                  if (plusMatch) {
+                    extractedMin = parseInt(plusMatch[1], 10)
+                    extractedExtra = parseInt(plusMatch[2], 10)
+                  } else {
+                    var minMatch = rawPart.match(/(\d+)'?/)
+                    extractedMin = minMatch ? parseInt(minMatch[1], 10) : null
+                  }
+                  var nameClean = rawPart
+                    .replace(/^\d+(\+\d+)?'?:?/, '')
+                    .replace(/\s*\d+(\+\d+)?'?$/, '')
+                    .replace(/\s*\(pen\.?\)/i, '')
+                    .trim()
+                  var isOwnGoal = /contra|own\s*goal|o\.?g\.?/i.test(rawPart)
+                  if (isOwnGoal && nameClean.toLowerCase().indexOf('contra') === -1) {
+                    nameClean += ' (contra)'
+                  }
+                  if (nameClean) {
+                    tsdbScorers.push({
+                      name: nameClean,
+                      minute: extractedMin,
+                      extraMinute: extractedExtra,
+                      teamId: teamId || null,
+                      teamName: teamName || null,
+                      teamSide: teamSide,
+                    })
+                    tsdbEvents.push({
+                      type: 'Goal',
+                      detail: isOwnGoal ? 'Own Goal' : 'Normal Goal',
+                      time: { elapsed: extractedMin, extra: extractedExtra },
+                      team: { id: teamId || null, name: teamName || '' },
+                      player: { id: null, name: nameClean },
+                    })
+                  }
+                }
+              }
+
+              var hTeamId = parseInt(ev.idHomeTeam, 10) || null
+              var aTeamId = parseInt(ev.idAwayTeam, 10) || null
+              parseTsdbGoalStr(ev.strHomeGoalDetails, 'home', hTeamId, homeTeam)
+              parseTsdbGoalStr(ev.strAwayGoalDetails, 'away', aTeamId, awayTeam)
+
+              conmebolFixtures.push({
+                fixture: {
+                  id: 'tsdb_' + (ev.idEvent || cli + '_' + ei),
+                  date: isoDateStr,
+                  timestamp: Math.floor(new Date(isoDateStr).getTime() / 1000) || 0,
+                  status: {
+                    short: shortStatus,
+                    long: ev.strStatus || 'Not Started',
+                    elapsed: null,
+                  },
+                },
+                league: {
+                  id: cl.shortId,
+                  name: ev.strLeague || cl.name,
+                  country: cl.country || 'Europe',
+                  logo: ev.strLeagueBadge || ev.strBadge || '',
+                  flag: '',
+                  round: ev.strRound || '',
+                  region: cl.region || 'Sul-Americana',
+                },
+                teams: {
+                  home: {
+                    id: hTeamId || 0,
+                    name: homeTeam,
+                    logo: ev.strHomeTeamBadge || '',
+                    country: cl.country || 'Europe',
+                  },
+                  away: {
+                    id: aTeamId || 0,
+                    name: awayTeam,
+                    logo: ev.strAwayTeamBadge || '',
+                    country: cl.country || 'Europe',
+                  },
+                },
+                goals: {
+                  home: !isNaN(hScore) ? hScore : null,
+                  away: !isNaN(aScore) ? aScore : null,
+                },
+                score: {
+                  halftime: { home: null, away: null },
+                  fulltime: {
+                    home: !isNaN(hScore) ? hScore : null,
+                    away: !isNaN(aScore) ? aScore : null,
+                  },
+                },
+                events: tsdbEvents,
+                scorers: tsdbScorers,
+                isLive: ['1H', 'HT', '2H', 'LIVE'].indexOf(shortStatus) !== -1,
+                provider: 'thesportsdb',
+              })
+            }
+          }
+        } catch (errTsdbLeague) {
+          console.log('[TheSportsDB Fallback] Erro ao buscar liga ' + cl.name + ':', errTsdbLeague)
+        }
+      }
+
+      return conmebolFixtures
+    }
+
     // Se FOOTBALL_DATA for o provedor principal selecionado
     if (provedor === 'football_data') {
       var fdPrimaryToken = apiKey || fallbackApiKey

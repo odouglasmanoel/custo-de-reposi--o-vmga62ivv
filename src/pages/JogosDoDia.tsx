@@ -124,7 +124,7 @@ interface JogosDoDiaCachePayload {
   timestamp: number
 }
 
-const JOGOS_DO_DIA_CACHE_PREFIX = 'cr_jogos_dia_cache_v3'
+const JOGOS_DO_DIA_CACHE_PREFIX = 'cr_jogos_dia_cache_v4'
 const jogosDiaMemoryCache = new Map<string, JogosDoDiaCachePayload>()
 
 function readJogosDiaCache(dateStr: string): JogosDoDiaCachePayload | null {
@@ -1286,10 +1286,18 @@ export default function JogosDoDia() {
                           <div className="flex-1 max-w-xl">
                             {/* Confronto Central: Times e Placar com marcadores logo abaixo de cada time */}
                             {(() => {
-                              const isFinishedMatch = isFixtureFinished(stMatch, longMatch)
-                              const isLiveMatch = match.isLive || isFixtureLive(stMatch)
+                              // Condição inclusiva: exibe marcadores sempre que houver marcadores e a partida não estiver agendada/adiada/cancelada
+                              const isScheduledStatus = [
+                                'NS',
+                                'TBD',
+                                'PST',
+                                'CANC',
+                                'ABD',
+                                'SUSP',
+                              ].includes(stMatch)
+                              const hasAnyScorers = homeScorers.length > 0 || awayScorers.length > 0
                               const canShowScorers =
-                                (isLiveMatch || isFinishedMatch) && !isPstOrCanc
+                                !isPstOrCanc && !isScheduledStatus && hasAnyScorers
 
                               return (
                                 <>
