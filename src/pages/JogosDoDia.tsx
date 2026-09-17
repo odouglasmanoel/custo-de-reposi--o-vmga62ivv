@@ -22,6 +22,7 @@ import { Input } from '@/components/ui/input'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { getHojeDataSaoPaulo } from '@/lib/dateUtils'
 import {
+  cleanTeamName,
   getFixtureDateSaoPaulo,
   isFixturePostponed,
   isFixtureCancelled,
@@ -85,6 +86,10 @@ export interface DayFixture {
     penalty?: { home: number | null; away: number | null }
   }
   scorers: FixtureScorer[]
+  events?: any[]
+  goalEvents?: any[]
+  golevents?: any[]
+  provider?: string
   isLive: boolean
   isManual?: boolean
   manualRecordId?: string
@@ -256,7 +261,10 @@ export default function JogosDoDia() {
       2015, // Football-Data.org Ligue 1
     ])
 
-    return fixtures.filter((item) => {
+    const seenMatchupKeys = new Set<string>()
+    const deduplicated: DayFixture[] = []
+
+    for (const item of fixtures) {
       // Jogos manuais cadastrados pelo Admin têm passe livre e NUNCA devem ser descartados
       const isManualMatch = Boolean(
         item.isManual ||
@@ -268,45 +276,56 @@ export default function JogosDoDia() {
       // FILTRO ESTRITO DE FUSO HORÁRIO (America/Sao_Paulo - UTC-3):
       // Converte o horário da partida para a data no fuso de Brasília.
       // Se a partida pertence a outro dia que não a selectedDate selecionada no datepicker,
-      // descarta imediatamente (evitando jogos de ontem, ex.: Corinthians).
+      // descarta imediatamente (evitando jogos de ontem).
       const fixtureDateStr = item.fixture?.date
       if (selectedDate && fixtureDateStr) {
         const fixtureDateSP = getFixtureDateSaoPaulo(fixtureDateStr)
         if (fixtureDateSP && fixtureDateSP !== selectedDate) {
-          return false
+          continue
         }
       }
 
-      // Se for jogo manual cadastrado na data correta, exibe sempre no topo sem exigir fixture_id externo ou ligas da API
-      if (isManualMatch) {
-        return true
-      }
+      if (!isManualMatch) {
+        const lid = item.league?.id
+        // Se não temos lid ou não está no target, mas tem região mapeada válida
+        if (item.league?.region && item.league.region !== 'Outros') {
+          // Aceita torneios categorizados diretamente
+        } else if (!lid || !targetLeagueSet.has(lid)) {
+          continue
+        }
 
-      const lid = item.league?.id
-      // Se não temos lid ou não está no target, mas tem região mapeada válida
-      if (item.league?.region && item.league.region !== 'Outros') {
-        // Aceita torneios categorizados diretamente
-      } else if (!lid || !targetLeagueSet.has(lid)) {
-        return false
-      }
+        // Regra CONMEBOL (Libertadores e Sul-Americana): prioriza confrontos que envolvam clubes brasileiros
+        if (lid === 13 || lid === 11 || lid === 450) {
+          const homeName = item.teams?.home?.name || ''
+          const awayName = item.teams?.away?.name || ''
+          const homeCountry = item.teams?.home?.country || ''
+          const awayCountry = item.teams?.away?.country || ''
 
-      // Regra CONMEBOL (Libertadores e Sul-Americana): prioriza confrontos que envolvam clubes brasileiros
-      if (lid === 13 || lid === 11 || lid === 450) {
-        const homeName = item.teams?.home?.name || ''
-        const awayName = item.teams?.away?.name || ''
-        const homeCountry = item.teams?.home?.country || ''
-        const awayCountry = item.teams?.away?.country || ''
+          const isHomeBrazilian = homeCountry === 'Brazil' || brazilianClubsRegex.test(homeName)
+          const isAwayBrazilian = awayCountry === 'Brazil' || brazilianClubsRegex.test(awayName)
 
-        const isHomeBrazilian = homeCountry === 'Brazil' || brazilianClubsRegex.test(homeName)
-        const isAwayBrazilian = awayCountry === 'Brazil' || brazilianClubsRegex.test(awayName)
-
-        if (!isHomeBrazilian && !isAwayBrazilian) {
-          return false
+          if (!isHomeBrazilian && !isAwayBrazilian) {
+            continue
+          }
         }
       }
 
-      return true
-    })
+      // DEDUPLICAÇÃO DE CONFRONTOS ENTRE PROVEDORES:
+      // Garante que o mesmo par de times não apareça duas vezes na lista final
+      const hClean = cleanTeamName(item.teams?.home?.name || '').toLowerCase()
+      const aClean = cleanTeamName(item.teams?.away?.name || '').toLowerCase()
+      if (hClean && aClean) {
+        const matchupKey = `${hClean}__vs__${aClean}`
+        if (seenMatchupKeys.has(matchupKey)) {
+          continue
+        }
+        seenMatchupKeys.add(matchupKey)
+      }
+
+      deduplicated.push(item)
+    }
+
+    return deduplicated
   }, [fixtures, selectedDate])
 
   // Contadores para os filtros de status e controle de polling baseados nas partidas relevantes
@@ -570,21 +589,110 @@ export default function JogosDoDia() {
     )
   }
 
-  // Agrupar marcadores por time para exibição visual
+  // Agrupar marcadores por time para exibição visual, consumindo:
+  // - events da API-Football
+  // - goals / goalEvents do Football-Data.org
+  // - golevents / events do TheSportsDB
+  // - scorers normalizado do backend
   const getMatchScorers = (fixture: DayFixture) => {
     const homeScorers: string[] = []
     const awayScorers: string[] = []
+    const seenScorerKeys = new Set<string>()
 
-    for (const sc of fixture.scorers || []) {
-      const minText = sc.minute ? `${sc.minute}'` : ''
-      const entry = `${sc.name} ${minText}`.trim()
-      if (sc.teamSide === 'home' || (sc.teamId && sc.teamId === fixture.teams.home.id)) {
-        homeScorers.push(entry)
-      } else if (sc.teamSide === 'away' || (sc.teamId && sc.teamId === fixture.teams.away.id)) {
+    const addScorer = (
+      name: string,
+      minute: number | null | undefined,
+      side: 'home' | 'away' | null,
+      isOwnGoal = false,
+    ) => {
+      const cleanName = (name || '').trim()
+      if (!cleanName) return
+      const finalName = isOwnGoal ? `${cleanName} (contra)` : cleanName
+      const minText = minute != null && !isNaN(Number(minute)) ? `${minute}'` : ''
+      const entry = minText ? `${finalName} ${minText}` : finalName
+      const key = `${side || 'any'}__${finalName.toLowerCase()}__${minute ?? ''}`
+      if (seenScorerKeys.has(key)) return
+      seenScorerKeys.add(key)
+
+      if (side === 'away') {
         awayScorers.push(entry)
       } else {
-        // Fallback se não tiver timeSide explícito
         homeScorers.push(entry)
+      }
+    }
+
+    const homeId = fixture.teams?.home?.id
+    const awayId = fixture.teams?.away?.id
+    const homeClean = cleanTeamName(fixture.teams?.home?.name || '').toLowerCase()
+    const awayClean = cleanTeamName(fixture.teams?.away?.name || '').toLowerCase()
+
+    const resolveSide = (
+      tId: number | null | undefined,
+      tName: string | null | undefined,
+      hintSide: 'home' | 'away' | null | undefined,
+    ): 'home' | 'away' | null => {
+      if (hintSide === 'home' || hintSide === 'away') return hintSide
+      if (tId != null) {
+        if (homeId != null && tId === homeId) return 'home'
+        if (awayId != null && tId === awayId) return 'away'
+      }
+      if (tName) {
+        const c = cleanTeamName(tName).toLowerCase()
+        if (homeClean && (c === homeClean || homeClean.includes(c) || c.includes(homeClean)))
+          return 'home'
+        if (awayClean && (c === awayClean || awayClean.includes(c) || c.includes(awayClean)))
+          return 'away'
+      }
+      return null
+    }
+
+    // 1. Provedor API-Football: events do tipo "Goal"
+    if (Array.isArray(fixture.events) && fixture.events.length > 0) {
+      for (const ev of fixture.events) {
+        if (ev && String(ev.type || '').toLowerCase() === 'goal') {
+          const playerName = ev.player?.name || ev.player?.shortName || ''
+          const isOwn = Boolean(ev.detail && String(ev.detail).toLowerCase().includes('own'))
+          const minute = ev.time?.elapsed ?? null
+          const side = resolveSide(ev.team?.id, ev.team?.name, null)
+          addScorer(playerName, minute, side, isOwn)
+        }
+      }
+    }
+
+    // 2. Provedor Football-Data.org: goals / goalEvents
+    const rawGoals = Array.isArray(fixture.goalEvents)
+      ? fixture.goalEvents
+      : Array.isArray((fixture as any).goals)
+        ? (fixture as any).goals
+        : []
+    if (rawGoals.length > 0) {
+      for (const g of rawGoals) {
+        const playerName = g.scorer?.name || g.scorer?.shortName || g.name || ''
+        const isOwn = String(g.type || '').toUpperCase() === 'OWN'
+        const minute = g.minute ?? null
+        const side = resolveSide(g.team?.id, g.team?.name || g.team?.shortName, null)
+        addScorer(playerName, minute, side, isOwn)
+      }
+    }
+
+    // 3. Provedor TheSportsDB: golevents
+    if (Array.isArray(fixture.golevents) && fixture.golevents.length > 0) {
+      for (const ge of fixture.golevents) {
+        const playerName = ge.player || ge.scorer || ge.strPlayer || ge.strScorer || ge.name || ''
+        const minute = ge.minute ?? ge.intMinute ?? ge.intTime ?? null
+        const side =
+          ge.teamSide === 'away' || ge.teamSide === 'home'
+            ? ge.teamSide
+            : resolveSide(null, ge.strTeam || ge.teamName, null)
+        addScorer(playerName, minute, side, false)
+      }
+    }
+
+    // 4. Fallback / Normalizado: scorers do backend
+    if (homeScorers.length === 0 && awayScorers.length === 0 && Array.isArray(fixture.scorers)) {
+      for (const sc of fixture.scorers) {
+        const side = resolveSide(sc.teamId, sc.teamName, sc.teamSide)
+        addScorer(sc.name, sc.minute, side, false)
       }
     }
 
@@ -1050,25 +1158,46 @@ export default function JogosDoDia() {
                                 </div>
                               )}
 
-                            {/* Marcadores dos gols com minutagem */}
-                            {(homeScorers.length > 0 || awayScorers.length > 0) && (
-                              <div className="mt-2.5 grid grid-cols-2 gap-3 border-t border-slate-100 pt-2 text-[11px] text-slate-600">
-                                <div className="text-right space-y-0.5">
-                                  {homeScorers.map((s, idx) => (
-                                    <div key={idx} className="truncate text-slate-700 font-medium">
-                                      ⚽ {s}
+                            {/* Marcadores dos gols com minutagem: exibido apenas para partidas Ao Vivo ou Finalizadas */}
+                            {(() => {
+                              const canShow =
+                                (match.isLive || ['FT', 'AET', 'PEN'].includes(stMatch)) &&
+                                !isPstOrCanc
+                              const hasScorers = homeScorers.length > 0 || awayScorers.length > 0
+                              if (!canShow || !hasScorers) return null
+
+                              return (
+                                <div className="mt-2.5 border-t border-slate-100 pt-2 text-[11px] text-slate-600">
+                                  <div className="flex items-center justify-center gap-1 mb-1 text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                                    <span>Gols:</span>
+                                  </div>
+                                  <div className="grid grid-cols-2 gap-3">
+                                    <div className="text-right space-y-0.5">
+                                      {homeScorers.map((s, idx) => (
+                                        <div
+                                          key={idx}
+                                          className="truncate text-slate-700 font-medium text-[11px]"
+                                          title={`Gols: ⚽ ${s}`}
+                                        >
+                                          ⚽ {s}
+                                        </div>
+                                      ))}
                                     </div>
-                                  ))}
-                                </div>
-                                <div className="text-left space-y-0.5">
-                                  {awayScorers.map((s, idx) => (
-                                    <div key={idx} className="truncate text-slate-700 font-medium">
-                                      ⚽ {s}
+                                    <div className="text-left space-y-0.5">
+                                      {awayScorers.map((s, idx) => (
+                                        <div
+                                          key={idx}
+                                          className="truncate text-slate-700 font-medium text-[11px]"
+                                          title={`Gols: ⚽ ${s}`}
+                                        >
+                                          ⚽ {s}
+                                        </div>
+                                      ))}
                                     </div>
-                                  ))}
+                                  </div>
                                 </div>
-                              </div>
-                            )}
+                              )
+                            })()}
                           </div>
 
                           {/* Espaço lateral para ID e alinhamento uniforme */}
