@@ -2136,19 +2136,49 @@ routerAdd('GET', '/backend/v1/jogos-do-dia', (e) => {
           ) {
             var parsedFD = parseFootballDataToDayFixtures(resFDPrimary.json.matches)
 
-            // REGRA: Se retornar 0 partidas, NUNCA grave no cache
+            // REGRA: Se retornar partidas, mescla com TheSportsDB para cobertura de copas secundárias e retorna
             if (parsedFD.fixtures.length > 0) {
+              var fdFixturesList = parsedFD.fixtures
+              var fdHasLive = parsedFD.hasLive
+
+              try {
+                var tsdbExtra = fetchConmebolFromTheSportsDb(dateQuery, theSportsDbKey)
+                for (var tsei = 0; tsei < tsdbExtra.length; tsei++) {
+                  var extraFix = tsdbExtra[tsei]
+                  var extraDup = false
+                  for (var fdi2 = 0; fdi2 < fdFixturesList.length; fdi2++) {
+                    if (isSameMatchConfrontation(fdFixturesList[fdi2], extraFix)) {
+                      extraDup = true
+                      break
+                    }
+                  }
+                  if (!extraDup) {
+                    fdFixturesList.push(extraFix)
+                    if (extraFix.isLive) fdHasLive = true
+                  }
+                }
+              } catch (eTsdbExtra) {
+                console.log('[TheSportsDB extra com Football-Data primário] Erro:', eTsdbExtra)
+              }
+
+              var freshManFD = fetchManualGamesForDate(dateQuery)
+              var finalFdList = mergeManualFixturesOnTop(freshManFD, fdFixturesList)
+
               var fdPrimaryPayload = {
                 configured: true,
                 provider: 'football_data',
                 date: dateQuery,
-                total: parsedFD.fixtures.length,
-                hasLive: parsedFD.hasLive,
-                fixtures: parsedFD.fixtures,
+                total: finalFdList.length,
+                hasLive:
+                  fdHasLive ||
+                  freshManFD.some(function (m) {
+                    return m.isLive
+                  }),
+                fixtures: finalFdList,
                 updatedAt: new Date().toISOString(),
               }
 
-              if (dayStore) {
+              if (dayStore && finalFdList.length > 0) {
                 dayStore[dateQuery] = {
                   timestamp: Date.now(),
                   payload: fdPrimaryPayload,
@@ -2161,7 +2191,7 @@ routerAdd('GET', '/backend/v1/jogos-do-dia', (e) => {
                 Object.assign({}, fdPrimaryPayload, {
                   cached: false,
                   ttlSeconds: Math.round(
-                    (parsedFD.hasLive ? 5 * 60 * 1000 : 30 * 60 * 1000) / 1000,
+                    (fdPrimaryPayload.hasLive ? 5 * 60 * 1000 : 30 * 60 * 1000) / 1000,
                   ),
                 }),
               )
@@ -2228,6 +2258,32 @@ routerAdd('GET', '/backend/v1/jogos-do-dia', (e) => {
       }
     }
 
+    // Chave para TheSportsDB (usada como provedor terciário e cobertura das copas secundárias)
+    var theSportsDbKey = ''
+    try {
+      var tsdbRecDay = $app.findFirstRecordByData(
+        'config_integracoes',
+        'chave',
+        'thesportsdb_fallback',
+      )
+      if (tsdbRecDay) {
+        theSportsDbKey = (tsdbRecDay.getString('api_key') || '').trim()
+      }
+    } catch (_) {}
+    if (!theSportsDbKey) {
+      try {
+        theSportsDbKey =
+          ($secrets.has && $secrets.has('THESPORTSDB_KEY')
+            ? $secrets.get('THESPORTSDB_KEY')
+            : '') ||
+          $os.getenv('THESPORTSDB_KEY') ||
+          ''
+      } catch (_) {}
+    }
+    if (!theSportsDbKey) {
+      theSportsDbKey = '3'
+    }
+
     // Se API-Football é primária (ou contingência de Football-Data)
     var apiFootballKey = apiKey
     if (provedor === 'football_data') {
@@ -2288,9 +2344,14 @@ routerAdd('GET', '/backend/v1/jogos-do-dia', (e) => {
     }
 
     // -------------------------------------------------------------
-    // CONTINGÊNCIA AUTOMÁTICA EM JOGOS DO DIA: Football-Data.org
+    // CONTINGÊNCIA AUTOMÁTICA EM JOGOS DO DIA:
+    // Cascata API-Football -> Football-Data.org -> TheSportsDB
     // -------------------------------------------------------------
     var contingencyUsed = false
+    var contingencyFixtures = []
+    var contingencyHasLive = false
+    var contingencyProvider = ''
+
     if ((rateLimitHit || !allFixtures || allFixtures.length === 0) && fallbackApiKey) {
       console.log(
         '[Contingência Jogos-do-Dia] API-Football indisponível ou sem partidas. Acionando Football-Data.org...',
@@ -2326,45 +2387,100 @@ routerAdd('GET', '/backend/v1/jogos-do-dia', (e) => {
           rateLimitHit = true
         } else if (resFD.statusCode === 200 && resFD.json && Array.isArray(resFD.json.matches)) {
           var parsedContingency = parseFootballDataToDayFixtures(resFD.json.matches)
-
           if (parsedContingency.fixtures.length > 0) {
             contingencyUsed = true
-            var fdPayload = {
-              configured: true,
-              provider: 'football_data',
-              fallback_active: true,
-              original_provider: 'api_football',
-              message: 'Contingência ativada: jogos providos via Football-Data.org.',
-              date: dateQuery,
-              total: parsedContingency.fixtures.length,
-              hasLive: parsedContingency.hasLive,
-              fixtures: parsedContingency.fixtures,
-              updatedAt: new Date().toISOString(),
-            }
-
-            // Grava no cache se houver pelo menos 1 partida!
-            if (dayStore) {
-              dayStore[dateQuery] = {
-                timestamp: Date.now(),
-                payload: fdPayload,
-                fetching: 0,
-              }
-            }
-
-            return e.json(
-              200,
-              Object.assign({}, fdPayload, {
-                cached: false,
-                ttlSeconds: Math.round(
-                  (parsedContingency.hasLive ? 5 * 60 * 1000 : 30 * 60 * 1000) / 1000,
-                ),
-              }),
-            )
+            contingencyProvider = 'football_data'
+            contingencyFixtures = parsedContingency.fixtures
+            contingencyHasLive = parsedContingency.hasLive
           }
         }
       } catch (eFD) {
         console.log('Aviso ao consultar contingência Football-Data.org em jogos-do-dia:', eFD)
       }
+    }
+
+    // Se Football-Data.org foi usado OU se mesmo após API-Football e Football-Data.org ainda não temos partidas,
+    // aciona TheSportsDB para completar ou fornecer os jogos (Europa League, Conference, Libertadores, Sul-Americana)
+    if (contingencyUsed || !allFixtures || allFixtures.length === 0) {
+      try {
+        var tsdbContingencyFixtures = fetchConmebolFromTheSportsDb(dateQuery, theSportsDbKey)
+        if (tsdbContingencyFixtures && tsdbContingencyFixtures.length > 0) {
+          if (!contingencyUsed && (!allFixtures || allFixtures.length === 0)) {
+            contingencyUsed = true
+            contingencyProvider = 'thesportsdb'
+            contingencyFixtures = tsdbContingencyFixtures
+            contingencyHasLive = tsdbContingencyFixtures.some(function (tf) {
+              return tf.isLive
+            })
+          } else if (contingencyUsed) {
+            // Se já tínhamos partidas de Football-Data.org, complementa com TheSportsDB com deduplicação
+            for (var tcfi = 0; tcfi < tsdbContingencyFixtures.length; tcfi++) {
+              var tcf = tsdbContingencyFixtures[tcfi]
+              var isDuplicateConfrontation = false
+              for (var cfi = 0; cfi < contingencyFixtures.length; cfi++) {
+                if (isSameMatchConfrontation(contingencyFixtures[cfi], tcf)) {
+                  isDuplicateConfrontation = true
+                  break
+                }
+              }
+              if (!isDuplicateConfrontation) {
+                contingencyFixtures.push(tcf)
+                if (tcf.isLive) contingencyHasLive = true
+              }
+            }
+          }
+        }
+      } catch (errTsdbContingency) {
+        console.log('[Contingência TheSportsDB em Jogos-do-Dia] Erro:', errTsdbContingency)
+      }
+    }
+
+    if (contingencyUsed && contingencyFixtures.length > 0) {
+      // Mescla com eventuais jogos manuais cadastrados
+      var freshManualsContingency = fetchManualGamesForDate(dateQuery)
+      var finalContingencyFixtures = mergeManualFixturesOnTop(
+        freshManualsContingency,
+        contingencyFixtures,
+      )
+
+      var contingencyPayload = {
+        configured: true,
+        provider: contingencyProvider,
+        fallback_active: true,
+        original_provider: provedor,
+        message:
+          contingencyProvider === 'football_data'
+            ? 'Contingência ativada: jogos providos via Football-Data.org e TheSportsDB.'
+            : 'Contingência ativada: jogos providos via TheSportsDB.',
+        date: dateQuery,
+        total: finalContingencyFixtures.length,
+        hasLive:
+          contingencyHasLive ||
+          freshManualsContingency.some(function (m) {
+            return m.isLive
+          }),
+        fixtures: finalContingencyFixtures,
+        updatedAt: new Date().toISOString(),
+      }
+
+      // REGRA: Só grava no cache se houver pelo menos 1 partida!
+      if (dayStore && finalContingencyFixtures.length > 0) {
+        dayStore[dateQuery] = {
+          timestamp: Date.now(),
+          payload: contingencyPayload,
+          fetching: 0,
+        }
+      }
+
+      return e.json(
+        200,
+        Object.assign({}, contingencyPayload, {
+          cached: false,
+          ttlSeconds: Math.round(
+            (contingencyPayload.hasLive ? 5 * 60 * 1000 : 30 * 60 * 1000) / 1000,
+          ),
+        }),
+      )
     }
 
     // Tratamento Gracioso se cota excedida e sem contingência funcional
@@ -2728,9 +2844,9 @@ routerAdd('GET', '/backend/v1/jogos-do-dia', (e) => {
       updatedAt: new Date().toISOString(),
     }
 
-    // Se o provedor principal for Football-Data.org (que não cobre Europa League, Conference nem CONMEBOL no plano gratuito)
-    // ou se faltarem partidas secundárias no dia, busca no TheSportsDB para adicionar essas competições automaticamente.
-    // Aplica deduplicação rigorosa por data + par de equipes (ignorando ordem mandante/visitante).
+    // CASCATA CONTINUADA: Se a API primária (ex: API-Football) não trouxe os jogos de ligas secundárias
+    // (Europa League id 4481, Conference League id 5071, Libertadores id 4501, Sul-Americana id 4724),
+    // consulta TheSportsDB e deduplica confrontos (mesma data + par de equipes independente da ordem).
     try {
       var tsdbFallbackFixtures = fetchConmebolFromTheSportsDb(dateQuery, theSportsDbKey)
       for (var tsi = 0; tsi < tsdbFallbackFixtures.length; tsi++) {
@@ -2740,6 +2856,21 @@ routerAdd('GET', '/backend/v1/jogos-do-dia', (e) => {
           var rf = rawFixtures[rfi]
           if (isSameMatchConfrontation(rf, tFix)) {
             dupFound = true
+            // Atualiza placar/status se o jogo existente estava sem placar e o secundário tem
+            if (
+              (rf.goals.home === null || rf.goals.home === undefined) &&
+              tFix.goals.home !== null &&
+              tFix.goals.home !== undefined
+            ) {
+              rf.goals.home = tFix.goals.home
+              rf.goals.away = tFix.goals.away
+              rf.score.fulltime.home = tFix.score.fulltime.home
+              rf.score.fulltime.away = tFix.score.fulltime.away
+            }
+            if (tFix.isLive) {
+              rf.isLive = true
+              hasLiveMatch = true
+            }
             break
           }
         }
@@ -2767,6 +2898,15 @@ routerAdd('GET', '/backend/v1/jogos-do-dia', (e) => {
           return m.isLive
         }),
     })
+
+    // Grava no cache se houver pelo menos 1 partida!
+    if (dayStore && finalFixtures.length > 0) {
+      dayStore[dateQuery] = {
+        timestamp: Date.now(),
+        payload: finalPayload,
+        fetching: 0,
+      }
+    }
 
     return e.json(
       200,
