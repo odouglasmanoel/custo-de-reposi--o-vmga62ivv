@@ -1583,31 +1583,41 @@ export default function Enquetes() {
                       {/* Confronto */}
                       <div className="my-3 flex items-center justify-between gap-2">
                         {/* Time A */}
-                        <div className="flex flex-1 items-center gap-2">
+                        <div className="flex flex-1 items-center gap-2 min-w-0">
                           {jogo.logo_casa ? (
                             <img
                               src={jogo.logo_casa}
                               alt={jogo.time_a}
-                              className="h-7 w-7 object-contain"
+                              className="h-7 w-7 object-contain shrink-0"
+                              loading="lazy"
                               onError={(e) => {
-                                ;(e.target as HTMLElement).style.display = 'none'
+                                e.currentTarget.style.display = 'none'
+                                const fallback = e.currentTarget
+                                  .nextElementSibling as HTMLElement | null
+                                if (fallback) fallback.style.display = 'flex'
                               }}
                             />
-                          ) : (
-                            <div className="flex h-7 w-7 items-center justify-center rounded-full bg-slate-100 text-[10px] font-black text-slate-700">
+                          ) : null}
+                          <div
+                            className={`h-7 w-7 rounded-full bg-slate-100 border border-slate-200 items-center justify-center shrink-0 ${
+                              jogo.logo_casa ? 'hidden' : 'flex'
+                            }`}
+                            title={jogo.time_a}
+                          >
+                            <span className="text-[10px] font-black uppercase text-slate-700">
                               {jogo.time_a.slice(0, 2).toUpperCase()}
-                            </div>
-                          )}
+                            </span>
+                          </div>
                           <span className="text-xs font-bold text-slate-800 line-clamp-1">
                             {jogo.time_a}
                           </span>
                         </div>
 
                         {/* Versus */}
-                        <div className="px-1 text-[11px] font-black text-slate-400">x</div>
+                        <div className="px-1 text-[11px] font-black text-slate-400 shrink-0">x</div>
 
                         {/* Time B */}
-                        <div className="flex flex-1 items-center justify-end gap-2 text-right">
+                        <div className="flex flex-1 items-center justify-end gap-2 text-right min-w-0">
                           <span className="text-xs font-bold text-slate-800 line-clamp-1">
                             {jogo.time_b}
                           </span>
@@ -1615,16 +1625,26 @@ export default function Enquetes() {
                             <img
                               src={jogo.logo_visitante}
                               alt={jogo.time_b}
-                              className="h-7 w-7 object-contain"
+                              className="h-7 w-7 object-contain shrink-0"
+                              loading="lazy"
                               onError={(e) => {
-                                ;(e.target as HTMLElement).style.display = 'none'
+                                e.currentTarget.style.display = 'none'
+                                const fallback = e.currentTarget
+                                  .nextElementSibling as HTMLElement | null
+                                if (fallback) fallback.style.display = 'flex'
                               }}
                             />
-                          ) : (
-                            <div className="flex h-7 w-7 items-center justify-center rounded-full bg-slate-100 text-[10px] font-black text-slate-700">
+                          ) : null}
+                          <div
+                            className={`h-7 w-7 rounded-full bg-slate-100 border border-slate-200 items-center justify-center shrink-0 ${
+                              jogo.logo_visitante ? 'hidden' : 'flex'
+                            }`}
+                            title={jogo.time_b}
+                          >
+                            <span className="text-[10px] font-black uppercase text-slate-700">
                               {jogo.time_b.slice(0, 2).toUpperCase()}
-                            </div>
-                          )}
+                            </span>
+                          </div>
                         </div>
                       </div>
 
@@ -1777,9 +1797,69 @@ export default function Enquetes() {
                           {/* Times e Detalhes */}
                           <div>
                             <div className="flex flex-wrap items-center gap-2">
-                              <span className="text-sm font-bold text-slate-900">
-                                {jogo.time_a} x {jogo.time_b}
-                              </span>
+                              {/* Escudo Mandante */}
+                              <div className="flex items-center gap-1.5">
+                                {jogo.logo_casa ? (
+                                  <img
+                                    src={jogo.logo_casa}
+                                    alt={jogo.time_a}
+                                    className="h-5 w-5 object-contain shrink-0"
+                                    loading="lazy"
+                                    onError={(e) => {
+                                      e.currentTarget.style.display = 'none'
+                                      const fallback = e.currentTarget
+                                        .nextElementSibling as HTMLElement | null
+                                      if (fallback) fallback.style.display = 'flex'
+                                    }}
+                                  />
+                                ) : null}
+                                <div
+                                  className={`h-5 w-5 rounded-full bg-slate-100 border border-slate-200 items-center justify-center shrink-0 ${
+                                    jogo.logo_casa ? 'hidden' : 'flex'
+                                  }`}
+                                  title={jogo.time_a}
+                                >
+                                  <span className="text-[8px] font-black uppercase text-slate-700">
+                                    {jogo.time_a.slice(0, 2).toUpperCase()}
+                                  </span>
+                                </div>
+                                <span className="text-sm font-bold text-slate-900">
+                                  {jogo.time_a}
+                                </span>
+                              </div>
+
+                              <span className="text-xs font-black text-slate-400">x</span>
+
+                              {/* Escudo Visitante */}
+                              <div className="flex items-center gap-1.5">
+                                {jogo.logo_visitante ? (
+                                  <img
+                                    src={jogo.logo_visitante}
+                                    alt={jogo.time_b}
+                                    className="h-5 w-5 object-contain shrink-0"
+                                    loading="lazy"
+                                    onError={(e) => {
+                                      e.currentTarget.style.display = 'none'
+                                      const fallback = e.currentTarget
+                                        .nextElementSibling as HTMLElement | null
+                                      if (fallback) fallback.style.display = 'flex'
+                                    }}
+                                  />
+                                ) : null}
+                                <div
+                                  className={`h-5 w-5 rounded-full bg-slate-100 border border-slate-200 items-center justify-center shrink-0 ${
+                                    jogo.logo_visitante ? 'hidden' : 'flex'
+                                  }`}
+                                  title={jogo.time_b}
+                                >
+                                  <span className="text-[8px] font-black uppercase text-slate-700">
+                                    {jogo.time_b.slice(0, 2).toUpperCase()}
+                                  </span>
+                                </div>
+                                <span className="text-sm font-bold text-slate-900">
+                                  {jogo.time_b}
+                                </span>
+                              </div>
 
                               {jogo.origem === 'manual' && (
                                 <Badge
@@ -2070,6 +2150,49 @@ export default function Enquetes() {
                     </div>
                   </div>
 
+                  {/* Escudos Opcionais (Mandante e Visitante) */}
+                  <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
+                    <div className="space-y-1">
+                      <Label
+                        htmlFor="manual-logo-casa"
+                        className="text-xs font-bold text-slate-700 flex items-center justify-between"
+                      >
+                        <span>URL Escudo Mandante (opcional):</span>
+                        <span className="text-[10px] font-normal text-slate-500">
+                          Prioridade máxima
+                        </span>
+                      </Label>
+                      <Input
+                        id="manual-logo-casa"
+                        type="url"
+                        placeholder="https://... (se vazio, busca automática)"
+                        value={manualLogoCasa}
+                        onChange={(e) => setManualLogoCasa(e.target.value)}
+                        className="h-8 bg-white text-xs"
+                      />
+                    </div>
+
+                    <div className="space-y-1">
+                      <Label
+                        htmlFor="manual-logo-visitante"
+                        className="text-xs font-bold text-slate-700 flex items-center justify-between"
+                      >
+                        <span>URL Escudo Visitante (opcional):</span>
+                        <span className="text-[10px] font-normal text-slate-500">
+                          Prioridade máxima
+                        </span>
+                      </Label>
+                      <Input
+                        id="manual-logo-visitante"
+                        type="url"
+                        placeholder="https://... (se vazio, busca automática)"
+                        value={manualLogoVisitante}
+                        onChange={(e) => setManualLogoVisitante(e.target.value)}
+                        className="h-8 bg-white text-xs"
+                      />
+                    </div>
+                  </div>
+
                   <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-3">
                     {/* Competição com Datalist de sugestões */}
                     <div className="space-y-1 sm:col-span-1">
@@ -2209,13 +2332,63 @@ export default function Enquetes() {
                       >
                         <div className="flex items-center gap-2.5">
                           {sel ? (
-                            <CheckSquare className="h-4 w-4 text-emerald-600" />
+                            <CheckSquare className="h-4 w-4 text-emerald-600 shrink-0" />
                           ) : (
-                            <Square className="h-4 w-4 text-slate-300" />
+                            <Square className="h-4 w-4 text-slate-300 shrink-0" />
                           )}
-                          <span className="font-bold text-slate-800">
-                            {j.time_a} x {j.time_b}
-                          </span>
+                          {/* Escudo Mandante */}
+                          {j.logo_casa ? (
+                            <img
+                              src={j.logo_casa}
+                              alt={j.time_a}
+                              className="h-5 w-5 object-contain shrink-0"
+                              loading="lazy"
+                              onError={(e) => {
+                                e.currentTarget.style.display = 'none'
+                                const fallback = e.currentTarget
+                                  .nextElementSibling as HTMLElement | null
+                                if (fallback) fallback.style.display = 'flex'
+                              }}
+                            />
+                          ) : null}
+                          <div
+                            className={`h-5 w-5 rounded-full bg-slate-100 border border-slate-200 items-center justify-center shrink-0 ${
+                              j.logo_casa ? 'hidden' : 'flex'
+                            }`}
+                            title={j.time_a}
+                          >
+                            <span className="text-[8px] font-black uppercase text-slate-700">
+                              {j.time_a.slice(0, 2).toUpperCase()}
+                            </span>
+                          </div>
+                          <span className="font-bold text-slate-800">{j.time_a}</span>
+                          <span className="text-slate-400 font-bold text-[10px]">x</span>
+                          {/* Escudo Visitante */}
+                          {j.logo_visitante ? (
+                            <img
+                              src={j.logo_visitante}
+                              alt={j.time_b}
+                              className="h-5 w-5 object-contain shrink-0"
+                              loading="lazy"
+                              onError={(e) => {
+                                e.currentTarget.style.display = 'none'
+                                const fallback = e.currentTarget
+                                  .nextElementSibling as HTMLElement | null
+                                if (fallback) fallback.style.display = 'flex'
+                              }}
+                            />
+                          ) : null}
+                          <div
+                            className={`h-5 w-5 rounded-full bg-slate-100 border border-slate-200 items-center justify-center shrink-0 ${
+                              j.logo_visitante ? 'hidden' : 'flex'
+                            }`}
+                            title={j.time_b}
+                          >
+                            <span className="text-[8px] font-black uppercase text-slate-700">
+                              {j.time_b.slice(0, 2).toUpperCase()}
+                            </span>
+                          </div>
+                          <span className="font-bold text-slate-800">{j.time_b}</span>
                           {isManual && (
                             <Badge
                               variant="outline"
@@ -2295,11 +2468,59 @@ export default function Enquetes() {
 
           <div className="max-h-48 overflow-y-auto divide-y divide-slate-100 rounded-lg border border-slate-200 p-2">
             {jogosAprovadosParaConi.map((j) => (
-              <div key={j.id} className="py-1.5 text-xs">
-                <span className="font-bold text-slate-800">
-                  {j.time_a} x {j.time_b}
-                </span>{' '}
-                <span className="text-slate-500">
+              <div key={j.id} className="flex items-center justify-between py-1.5 text-xs">
+                <div className="flex items-center gap-1.5">
+                  {j.logo_casa ? (
+                    <img
+                      src={j.logo_casa}
+                      alt={j.time_a}
+                      className="h-4 w-4 object-contain shrink-0"
+                      loading="lazy"
+                      onError={(e) => {
+                        e.currentTarget.style.display = 'none'
+                        const fallback = e.currentTarget.nextElementSibling as HTMLElement | null
+                        if (fallback) fallback.style.display = 'flex'
+                      }}
+                    />
+                  ) : null}
+                  <div
+                    className={`h-4 w-4 rounded-full bg-slate-100 border border-slate-200 items-center justify-center shrink-0 ${
+                      j.logo_casa ? 'hidden' : 'flex'
+                    }`}
+                    title={j.time_a}
+                  >
+                    <span className="text-[7px] font-black uppercase text-slate-700">
+                      {j.time_a.slice(0, 2).toUpperCase()}
+                    </span>
+                  </div>
+                  <span className="font-bold text-slate-800">{j.time_a}</span>
+                  <span className="text-[10px] font-bold text-slate-400">x</span>
+                  {j.logo_visitante ? (
+                    <img
+                      src={j.logo_visitante}
+                      alt={j.time_b}
+                      className="h-4 w-4 object-contain shrink-0"
+                      loading="lazy"
+                      onError={(e) => {
+                        e.currentTarget.style.display = 'none'
+                        const fallback = e.currentTarget.nextElementSibling as HTMLElement | null
+                        if (fallback) fallback.style.display = 'flex'
+                      }}
+                    />
+                  ) : null}
+                  <div
+                    className={`h-4 w-4 rounded-full bg-slate-100 border border-slate-200 items-center justify-center shrink-0 ${
+                      j.logo_visitante ? 'hidden' : 'flex'
+                    }`}
+                    title={j.time_b}
+                  >
+                    <span className="text-[7px] font-black uppercase text-slate-700">
+                      {j.time_b.slice(0, 2).toUpperCase()}
+                    </span>
+                  </div>
+                  <span className="font-bold text-slate-800">{j.time_b}</span>
+                </div>
+                <span className="text-slate-500 text-[11px]">
                   ({j.campeonato} — {formatDataBR(j.data)} {formatHoraBR(j.horario || '16:00')})
                 </span>
               </div>
@@ -2375,6 +2596,45 @@ export default function Enquetes() {
                   placeholder="Ex.: Palmeiras"
                   value={ativaManualVisitante}
                   onChange={(e) => setAtivaManualVisitante(e.target.value)}
+                  className="h-9 bg-white text-xs"
+                />
+              </div>
+            </div>
+
+            {/* Escudos Opcionais (Mandante e Visitante) */}
+            <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
+              <div className="space-y-1">
+                <Label
+                  htmlFor="ativa-manual-logo-casa"
+                  className="text-xs font-bold text-slate-700 flex items-center justify-between"
+                >
+                  <span>URL Escudo Mandante (opcional):</span>
+                  <span className="text-[10px] font-normal text-slate-500">Prioridade máxima</span>
+                </Label>
+                <Input
+                  id="ativa-manual-logo-casa"
+                  type="url"
+                  placeholder="https://... (se vazio, busca automática)"
+                  value={ativaManualLogoCasa}
+                  onChange={(e) => setAtivaManualLogoCasa(e.target.value)}
+                  className="h-9 bg-white text-xs"
+                />
+              </div>
+
+              <div className="space-y-1">
+                <Label
+                  htmlFor="ativa-manual-logo-visitante"
+                  className="text-xs font-bold text-slate-700 flex items-center justify-between"
+                >
+                  <span>URL Escudo Visitante (opcional):</span>
+                  <span className="text-[10px] font-normal text-slate-500">Prioridade máxima</span>
+                </Label>
+                <Input
+                  id="ativa-manual-logo-visitante"
+                  type="url"
+                  placeholder="https://... (se vazio, busca automática)"
+                  value={ativaManualLogoVisitante}
+                  onChange={(e) => setAtivaManualLogoVisitante(e.target.value)}
                   className="h-9 bg-white text-xs"
                 />
               </div>
@@ -2525,6 +2785,45 @@ export default function Enquetes() {
                   placeholder="Ex.: Palmeiras"
                   value={editVisitante}
                   onChange={(e) => setEditVisitante(e.target.value)}
+                  className="h-9 bg-white text-xs"
+                />
+              </div>
+            </div>
+
+            {/* Escudos Mandante e Visitante (Pré-preenchidos) */}
+            <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
+              <div className="space-y-1">
+                <Label
+                  htmlFor="edit-logo-casa"
+                  className="text-xs font-bold text-slate-700 flex items-center justify-between"
+                >
+                  <span>URL Escudo Mandante (opcional):</span>
+                  <span className="text-[10px] font-normal text-slate-500">Prioridade máxima</span>
+                </Label>
+                <Input
+                  id="edit-logo-casa"
+                  type="url"
+                  placeholder="https://... (se vazio, busca automática)"
+                  value={editLogoCasa}
+                  onChange={(e) => setEditLogoCasa(e.target.value)}
+                  className="h-9 bg-white text-xs"
+                />
+              </div>
+
+              <div className="space-y-1">
+                <Label
+                  htmlFor="edit-logo-visitante"
+                  className="text-xs font-bold text-slate-700 flex items-center justify-between"
+                >
+                  <span>URL Escudo Visitante (opcional):</span>
+                  <span className="text-[10px] font-normal text-slate-500">Prioridade máxima</span>
+                </Label>
+                <Input
+                  id="edit-logo-visitante"
+                  type="url"
+                  placeholder="https://... (se vazio, busca automática)"
+                  value={editLogoVisitante}
+                  onChange={(e) => setEditLogoVisitante(e.target.value)}
                   className="h-9 bg-white text-xs"
                 />
               </div>
