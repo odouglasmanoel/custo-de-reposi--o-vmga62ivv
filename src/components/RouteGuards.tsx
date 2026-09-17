@@ -1,5 +1,6 @@
 import React from 'react'
 import { Navigate, useLocation } from 'react-router-dom'
+import pb from '@/lib/pocketbase/client'
 import { useAuth } from '@/context/AuthContext'
 import { Loader2 } from 'lucide-react'
 
@@ -7,7 +8,10 @@ export const ProtectedRoute: React.FC<{ children: React.ReactNode }> = ({ childr
   const { user, loading } = useAuth()
   const location = useLocation()
 
-  if (loading) {
+  // Se o PocketBase authStore já possui credencial válida síncrona, não bloqueia em spinner
+  const hasValidAuth = !!user || pb.authStore.isValid
+
+  if (loading && !hasValidAuth) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-[#F3F6F9]">
         <div className="flex flex-col items-center gap-3">
@@ -18,7 +22,7 @@ export const ProtectedRoute: React.FC<{ children: React.ReactNode }> = ({ childr
     )
   }
 
-  if (!user) {
+  if (!user && !loading && !pb.authStore.isValid) {
     return <Navigate to="/login" state={{ from: location }} replace />
   }
 
@@ -29,7 +33,9 @@ export const BolaoRoute: React.FC<{ children: React.ReactNode }> = ({ children }
   const { user, loading, isBolaoMember } = useAuth()
   const location = useLocation()
 
-  if (loading) {
+  const hasValidAuth = !!user || pb.authStore.isValid
+
+  if (loading && !hasValidAuth) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-[#F3F6F9]">
         <div className="flex flex-col items-center gap-3">
@@ -40,11 +46,11 @@ export const BolaoRoute: React.FC<{ children: React.ReactNode }> = ({ children }
     )
   }
 
-  if (!user) {
+  if (!user && !loading && !pb.authStore.isValid) {
     return <Navigate to="/login" state={{ from: location }} replace />
   }
 
-  if (!isBolaoMember) {
+  if (!isBolaoMember && !loading) {
     return <Navigate to="/" replace />
   }
 
@@ -54,7 +60,9 @@ export const BolaoRoute: React.FC<{ children: React.ReactNode }> = ({ children }
 export const AdminRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { user, loading, isAdmin, isBolaoMember } = useAuth()
 
-  if (loading) {
+  const hasValidAuth = !!user || pb.authStore.isValid
+
+  if (loading && !hasValidAuth) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-[#F3F6F9]">
         <div className="flex flex-col items-center gap-3">
@@ -67,11 +75,11 @@ export const AdminRoute: React.FC<{ children: React.ReactNode }> = ({ children }
     )
   }
 
-  if (!user) {
+  if (!user && !loading && !pb.authStore.isValid) {
     return <Navigate to="/login" replace />
   }
 
-  if (!isAdmin) {
+  if (!isAdmin && !loading) {
     return isBolaoMember ? <Navigate to="/bolao" replace /> : <Navigate to="/" replace />
   }
 

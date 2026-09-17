@@ -52,6 +52,74 @@ import {
 import { AdminEditMarcadoresModal } from '@/components/AdminEditMarcadoresModal'
 import { Users } from 'lucide-react'
 
+interface DashboardCachePayload {
+  participantes: Participante[]
+  allParticipantes: Participante[]
+  allJogos: Jogo[]
+  jogos: Jogo[]
+  palpites: Palpite[]
+  stats: { registrados: number; pendentes: number } | null
+  timestamp: number
+}
+
+const DASHBOARD_CACHE_PREFIX = 'cr_dashboard_cache_v2'
+const dashboardMemoryCache = new Map<string, DashboardCachePayload>()
+
+function readDashboardCache(bolaoId: string): DashboardCachePayload | null {
+  const key = bolaoId || GERAL_BOLAO_ID
+  const mem = dashboardMemoryCache.get(key)
+  if (mem && (mem.jogos.length > 0 || mem.allJogos.length > 0)) {
+    return mem
+  }
+  try {
+    const raw = localStorage.getItem(`${DASHBOARD_CACHE_PREFIX}_${key}`)
+    if (raw) {
+      const parsed = JSON.parse(raw) as DashboardCachePayload
+      if (parsed && (Array.isArray(parsed.jogos) || Array.isArray(parsed.allJogos))) {
+        dashboardMemoryCache.set(key, parsed)
+        return parsed
+      }
+    }
+  } catch {
+    /* ignore */
+  }
+  try {
+    const rawSession = sessionStorage.getItem(`bolao_cache_jogos_${key}`)
+    if (rawSession) {
+      const sessionJogos = JSON.parse(rawSession)
+      if (Array.isArray(sessionJogos) && sessionJogos.length > 0) {
+        const payload: DashboardCachePayload = {
+          participantes: [],
+          allParticipantes: [],
+          allJogos: sessionJogos,
+          jogos: sessionJogos,
+          palpites: [],
+          stats: null,
+          timestamp: Date.now(),
+        }
+        return payload
+      }
+    }
+  } catch {
+    /* ignore */
+  }
+  return null
+}
+
+function writeDashboardCache(bolaoId: string, data: Omit<DashboardCachePayload, 'timestamp'>) {
+  const key = bolaoId || GERAL_BOLAO_ID
+  const payload: DashboardCachePayload = {
+    ...data,
+    timestamp: Date.now(),
+  }
+  dashboardMemoryCache.set(key, payload)
+  try {
+    localStorage.setItem(`${DASHBOARD_CACHE_PREFIX}_${key}`, JSON.stringify(payload))
+  } catch {
+    /* ignore */
+  }
+}
+
 export default function BolaoDashboard() {
   const { user, isAdmin, participantName } = useAuth()
   const { boloes, activeBolao, activeBolaoId, setActiveBolaoId } = useActivePool()
@@ -75,67 +143,49 @@ export default function BolaoDashboard() {
     }
   }, [bolaoQueryParam])
 
-  // Cache em memória compartilhado por sessão para carregamento instantâneo e tolerância a falhas
-  const [participantes, setParticipantes] = useState<Participante[]>(() => {
-    try {
-      const cached = sessionStorage.getItem(`bolao_cache_parts_${activeBolaoId || 'geral'}`)
-      return cached ? JSON.parse(cached) : []
-    } catch {
-      return []
-    }
-  })
-  const [allParticipantes, setAllParticipantes] = useState<Participante[]>(() => {
-    try {
-      const cached = sessionStorage.getItem('bolao_cache_all_parts')
-      return cached ? JSON.parse(cached) : []
-    } catch {
-      return []
-    }
-  })
-  const [allJogos, setAllJogos] = useState<Jogo[]>(() => {
-    try {
-      const cached = sessionStorage.getItem('bolao_cache_all_jogos')
-      return cached ? JSON.parse(cached) : []
-    } catch {
-      return []
-    }
-  })
-  const [jogos, setJogos] = useState<Jogo[]>(() => {
-    try {
-      const cached = sessionStorage.getItem(`bolao_cache_jogos_${activeBolaoId || 'geral'}`)
-      return cached ? JSON.parse(cached) : []
-    } catch {
-      return []
-    }
-  })
-  const [palpites, setPalpites] = useState<Palpite[]>(() => {
-    try {
-      const cached = sessionStorage.getItem(`bolao_cache_palpites_${activeBolaoId || 'geral'}`)
-      return cached ? JSON.parse(cached) : []
-    } catch {
-      return []
-    }
-  })
+  // Cache de dois níveis (memória + localStorage + sessionStorage) para inicialização instantânea (SWR)
+  const currentTargetKey = activeBolaoId || GERAL_BOLAO_ID
+  const initialDashboardCache = useMemo(() => {
+    return readDashboardCache(currentTargetKey)
+  }, [currentTargetKey])
+
+  const [participantes, setParticipantes] = useState<Participante[]>(
+    () => initialDashboardCache?.participantes || [],
+  )
+  const [allParticipantes, setAllParticipantes] = useState<Participante[]>(
+    () => initialDashboardCache?.allParticipantes || [],
+  )
+  const [allJogos, setAllJogos] = useState<Jogo[]>(() => initialDashboardCache?.allJogos || [])
+  const [jogos, setJogos] = useState<Jogo[]>(() => initialDashboardCache?.jogos || [])
+  const [palpites, setPalpites] = useState<Palpite[]>(() => initialDashboardCache?.palpites || [])
   // Preservação do último valor válido de estatísticas para NUNCA zerar os contadores por timeout/erro
   const [lastValidStats, setLastValidStats] = useState<{
     registrados: number
     pendentes: number
-  } | null>(() => {
-    try {
-      const cached = sessionStorage.getItem(`bolao_cache_stats_${activeBolaoId || 'geral'}`)
-      return cached ? JSON.parse(cached) : null
-    } catch {
-      return null
-    }
-  })
-  const [loading, setLoading] = useState(true)
+  } | null>(() => initialDashboardCache?.stats || null)
+
+  const hasInitialCache = !!(
+    initialDashboardCache &&
+    (initialDashboardCache.jogos.length > 0 || initialDashboardCache.allJogos.length > 0)
+  )
+
+  const [loading, setLoading] = useState(!hasInitialCache)
   const [isRefreshing, setIsRefreshing] = useState(false)
+  const [isRevalidating, setIsRevalidating] = useState(hasInitialCache)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [nowMs, setNowMs] = useState<number>(Date.now())
 
-  // Controle de concorrência e deduplicação de requisições ativas
+  // Refs para dados de jogos e requisição em voo de live scores (evita loops e re-render infinito)
+  const gamesRef = useRef<{ allJogos: Jogo[]; jogos: Jogo[] }>({ allJogos: [], jogos: [] })
+  gamesRef.current = { allJogos, jogos }
+
+  const liveScoresAbortControllerRef = useRef<AbortController | null>(null)
+  const isFetchingLiveScoresRef = useRef<boolean>(false)
+
+  // Controle de concorrência e deduplicação de requisições ativas do loadData
   const activeFetchPromiseRef = useRef<Promise<void> | null>(null)
   const lastFetchTimeRef = useRef<number>(0)
+  const prevDashboardScopeRef = useRef<string>(currentTargetKey)
 
   // Live score state via API de futebol (Football-Data.org / TheSportsDB / API-Football)
   const [apiFixtures, setApiFixtures] = useState<ApiFootballFixture[]>([])
@@ -187,11 +237,20 @@ export default function BolaoDashboard() {
     return () => clearInterval(timer)
   }, [])
 
-  // Consulta de placar ao vivo com regras estritas de economia de cota:
-  // 1. Jogos ainda não iniciados ("Em Breve"/agendados): NÃO acionam chamadas externas de tempo real.
-  // 2. No momento do kickoff (horário do jogo iniciar), a API é acionada EXATAMENTE 1 vez.
-  // 3. Durante o jogo: APENAS quando há partidas efetivamente "Ao Vivo" ocorre polling periódico (~60s).
+  // Consulta de placar ao vivo com cancelamento de requisição em voo e uso de refs estáveis
+  // para evitar recriação de funções e loops contínuos de requisições de rede.
   const fetchLiveScores = useCallback(async () => {
+    if (isFetchingLiveScoresRef.current) {
+      return
+    }
+
+    if (liveScoresAbortControllerRef.current) {
+      liveScoresAbortControllerRef.current.abort()
+    }
+    const controller = new AbortController()
+    liveScoresAbortControllerRef.current = controller
+    isFetchingLiveScoresRef.current = true
+
     try {
       const headers: Record<string, string> = {}
       if (pb.authStore.token) {
@@ -200,8 +259,12 @@ export default function BolaoDashboard() {
       const hojeSP = getHojeDataSaoPaulo(Date.now())
       const baseUrl = `${import.meta.env.VITE_POCKETBASE_URL}/backend/v1/placar-ao-vivo`
 
-      // Coleta todos os fixture_ids de jogos pendentes para requisitar diretamente
-      const relevantGames = allJogos && allJogos.length > 0 ? allJogos : jogos
+      // Usa gamesRef para ler a versão mais recente dos jogos sem colocar os arrays como dependência do callback
+      const currentGames = gamesRef.current
+      const relevantGames =
+        currentGames.allJogos && currentGames.allJogos.length > 0
+          ? currentGames.allJogos
+          : currentGames.jogos
       const fixtureIdsFromGames = Array.from(
         new Set(
           relevantGames
@@ -216,7 +279,6 @@ export default function BolaoDashboard() {
       }
 
       // Controller com timeout de 10s para estabilidade total
-      const controller = new AbortController()
       const timeoutId = setTimeout(() => controller.abort(), 10000)
 
       let res: Response
@@ -242,7 +304,6 @@ export default function BolaoDashboard() {
         }
 
         // Combina fixtures diretas (por ID), ao vivo e da data sem duplicatas por ID
-        // Prioridade de atualização: directFixtures > live > dateFixtures
         const combinedMap = new Map<string | number, ApiFootballFixture>()
 
         // 1. Inserir fixtures diretas requisitadas por fixture_id
@@ -274,15 +335,23 @@ export default function BolaoDashboard() {
         }
         setApiFixtures(Array.from(combinedMap.values()))
       }
-    } catch (err) {
-      // Falha silenciosa de polling para nunca interromper a experiência do usuário
-      console.warn('Polling de placar ao vivo indisponível:', err)
+    } catch (err: any) {
+      if (err?.name !== 'AbortError') {
+        console.warn('Polling de placar ao vivo indisponível:', err)
+      }
+    } finally {
+      isFetchingLiveScoresRef.current = false
     }
-  }, [allJogos, jogos])
+  }, [])
 
-  // Carga inicial leve das fixtures ao montar o dashboard
+  // Carga inicial leve das fixtures ao montar o dashboard (executa apenas uma vez na montagem)
   useEffect(() => {
     fetchLiveScores()
+    return () => {
+      if (liveScoresAbortControllerRef.current) {
+        liveScoresAbortControllerRef.current.abort()
+      }
+    }
   }, [fetchLiveScores])
 
   const isGeral = activeBolaoId === GERAL_BOLAO_ID
@@ -498,14 +567,14 @@ export default function BolaoDashboard() {
     loadSobrescritasFromDb()
   }, [])
 
-  // Carregamento resiliente com tolerância a timeout (10s), deduplicação de chamadas paralelas e cache
+  // Carregamento resiliente com tolerância a timeout (10s), deduplicação de chamadas paralelas e cache SWR
   const loadData = useCallback(
     async (isManualRefresh: boolean = false) => {
       if (!activeBolaoId) return
 
-      // Evita refetches redundantes em menos de 3s a não ser que seja refresh manual
+      // Evita refetches redundantes em menos de 2.5s a não ser que seja refresh manual
       const now = Date.now()
-      if (!isManualRefresh && now - lastFetchTimeRef.current < 3000) {
+      if (!isManualRefresh && now - lastFetchTimeRef.current < 2500) {
         return
       }
 
@@ -514,8 +583,15 @@ export default function BolaoDashboard() {
         return activeFetchPromiseRef.current
       }
 
+      const currentHasData =
+        gamesRef.current.jogos.length > 0 || gamesRef.current.allJogos.length > 0
+
       if (isManualRefresh) {
         setIsRefreshing(true)
+      } else if (currentHasData) {
+        setIsRevalidating(true)
+      } else {
+        setLoading(true)
       }
 
       // Promise com timeout de 10s para que NUNCA trave o dashboard infinitamente
@@ -540,7 +616,7 @@ export default function BolaoDashboard() {
               timeoutPromise,
             ])
 
-            if (Array.isArray(allGames) && allGames.length > 0) {
+            if (Array.isArray(allGames)) {
               setAllParticipantes(allParts)
               setAllJogos(allGames)
               setParticipantes(allParts)
@@ -553,7 +629,16 @@ export default function BolaoDashboard() {
               const newStats = { registrados: reg, pendentes: pend }
               setLastValidStats(newStats)
 
-              // Salva em cache de sessão para resiliência offline e carregamento instantâneo
+              // Grava em cache de 2 níveis para renderização instantânea nas próximas visitas
+              writeDashboardCache(GERAL_BOLAO_ID, {
+                participantes: allParts,
+                allParticipantes: allParts,
+                allJogos: allGames,
+                jogos: allGames,
+                palpites: allPredictions,
+                stats: newStats,
+              })
+
               try {
                 sessionStorage.setItem('bolao_cache_all_parts', JSON.stringify(allParts))
                 sessionStorage.setItem('bolao_cache_all_jogos', JSON.stringify(allGames))
@@ -591,7 +676,7 @@ export default function BolaoDashboard() {
               timeoutPromise,
             ])
 
-            if (Array.isArray(globalGames) && globalGames.length > 0) {
+            if (Array.isArray(globalGames)) {
               const partList = globalParts.filter((p) => p.bolao === activeBolaoId)
               const jogosList = globalGames.filter((j) => j.bolao === activeBolaoId)
 
@@ -605,6 +690,16 @@ export default function BolaoDashboard() {
               const pend = jogosList.filter((j) => !j.resultado_finalizado).length
               const newStats = { registrados: reg, pendentes: pend }
               setLastValidStats(newStats)
+
+              // Grava no cache de 2 níveis
+              writeDashboardCache(activeBolaoId, {
+                participantes: partList,
+                allParticipantes: globalParts,
+                allJogos: globalGames,
+                jogos: jogosList,
+                palpites: palpitesList,
+                stats: newStats,
+              })
 
               try {
                 sessionStorage.setItem('bolao_cache_all_parts', JSON.stringify(globalParts))
@@ -637,6 +732,7 @@ export default function BolaoDashboard() {
         } finally {
           setLoading(false)
           setIsRefreshing(false)
+          setIsRevalidating(false)
           activeFetchPromiseRef.current = null
         }
       }
@@ -661,11 +757,25 @@ export default function BolaoDashboard() {
     loadData()
   })
 
+  // Hidratação e revalidação SWR instantânea ao mudar de bolão
   useEffect(() => {
     if (activeBolaoId) {
-      // Se já temos dados válidos em memória/cache, não exibe tela cheia de loading, faz refresh gracioso
-      if (jogos.length === 0 && allJogos.length === 0) {
-        setLoading(true)
+      if (prevDashboardScopeRef.current !== activeBolaoId) {
+        prevDashboardScopeRef.current = activeBolaoId
+        const cached = readDashboardCache(activeBolaoId)
+        if (cached && (cached.jogos.length > 0 || cached.allJogos.length > 0)) {
+          setParticipantes(cached.participantes)
+          setAllParticipantes(cached.allParticipantes)
+          setAllJogos(cached.allJogos)
+          setJogos(cached.jogos)
+          setPalpites(cached.palpites)
+          if (cached.stats) setLastValidStats(cached.stats)
+          setLoading(false)
+          setIsRevalidating(true)
+        } else {
+          setLoading(true)
+          setIsRevalidating(false)
+        }
       }
       loadData()
     }
@@ -841,6 +951,15 @@ export default function BolaoDashboard() {
       })
   }, [isGeral, allJogos, jogos, nowMs])
 
+  // Assinatura estável dos jogos para evitar re-execução desnecessária do efeito de kickoff
+  const gamesKickoffSignature = useMemo(() => {
+    const targetGames = isGeral ? allJogos : jogos
+    return targetGames
+      .filter((j) => !j.resultado_finalizado)
+      .map((j) => `${j.id}_${j.data}_${j.hora}`)
+      .join('|')
+  }, [isGeral, allJogos, jogos])
+
   // 1. REGRA DO KICKOFF ("rola a bola"): Dispara a API APENAS 1 única vez quando o horário de um jogo iniciar
   useEffect(() => {
     const targetGames = isGeral ? allJogos : jogos
@@ -867,7 +986,7 @@ export default function BolaoDashboard() {
     return () => {
       timers.forEach((t) => clearTimeout(t))
     }
-  }, [isGeral, allJogos, jogos, fetchLiveScores])
+  }, [gamesKickoffSignature, isGeral, fetchLiveScores])
 
   // 2. REGRA DO POLLING: APENAS quando há jogos liberados/em andamento ou com partidas ao vivo na API
   // E nunca se tiver atingido rate limit
@@ -891,7 +1010,7 @@ export default function BolaoDashboard() {
 
   // Quick stats com fallback para o último valor válido conhecido
   // NUNCA zera as estatísticas por falta de tempo de resposta ou carregamento
-  const stats = useMemo(() => {
+  const stats: { registrados: number; pendentes: number } | null = useMemo(() => {
     const gamesToUse = isGeral ? allJogos : jogos
     if (gamesToUse.length > 0) {
       const registrados = gamesToUse.filter((j) => j.resultado_finalizado).length
@@ -904,10 +1023,7 @@ export default function BolaoDashboard() {
     if (lastValidStats) {
       return lastValidStats
     }
-    return {
-      registrados: 0,
-      pendentes: 0,
-    }
+    return null
   }, [isGeral, allJogos, jogos, lastValidStats])
 
   const handleCardPendentesClick = () => {
@@ -1009,6 +1125,13 @@ export default function BolaoDashboard() {
 
         {/* Pool switcher dropdown & manual refresh */}
         <div className="flex flex-wrap items-center gap-2">
+          {isRevalidating && !isRefreshing && (
+            <span className="flex items-center gap-1.5 text-[11px] font-medium text-[#64748B] bg-slate-100 px-2 py-1 rounded-md animate-pulse">
+              <RefreshCcw className="h-3 w-3 animate-spin text-[#0F2A43]" />
+              Sincronizando...
+            </span>
+          )}
+
           <Button
             type="button"
             variant="outline"
@@ -1082,7 +1205,11 @@ export default function BolaoDashboard() {
           <div className="flex items-center justify-between">
             <div>
               <p className="text-xs font-medium text-[#64748B]">Jogos Encerrados</p>
-              <p className="mt-1 text-2xl font-black text-[#0F172A]">{stats.registrados}</p>
+              {stats === null && loading ? (
+                <div className="mt-2 h-7 w-16 animate-pulse rounded bg-slate-200" />
+              ) : (
+                <p className="mt-1 text-2xl font-black text-[#0F172A]">{stats?.registrados ?? 0}</p>
+              )}
             </div>
             <div className="rounded-lg bg-emerald-50 p-2.5 text-[#10B981]">
               <CheckCircle2 className="h-5 w-5" />
@@ -1111,7 +1238,11 @@ export default function BolaoDashboard() {
                 </p>
                 <ArrowRight className="h-3.5 w-3.5 text-slate-400 opacity-0 group-hover:opacity-100 group-hover:translate-x-0.5 transition-all text-amber-600" />
               </div>
-              <p className="mt-1 text-2xl font-black text-[#0F172A]">{stats.pendentes}</p>
+              {stats === null && loading ? (
+                <div className="mt-2 h-7 w-16 animate-pulse rounded bg-slate-200" />
+              ) : (
+                <p className="mt-1 text-2xl font-black text-[#0F172A]">{stats?.pendentes ?? 0}</p>
+              )}
               <span className="text-[10px] font-semibold text-amber-600 group-hover:underline">
                 Clique para palpitar &rarr;
               </span>
@@ -1127,14 +1258,23 @@ export default function BolaoDashboard() {
             <div className="min-w-0 flex-1">
               <div className="flex items-center justify-between pr-2">
                 <p className="text-xs font-medium text-[#64748B]">Jogos de Hoje</p>
-                <Badge
-                  variant="outline"
-                  className="border-blue-200 bg-blue-50/60 text-[10px] font-semibold text-[#0F2A43]"
-                >
-                  {jogosDeHoje.length} jogo(s)
-                </Badge>
+                {loading && (isGeral ? allJogos.length === 0 : jogos.length === 0) ? (
+                  <div className="h-4 w-12 animate-pulse rounded bg-slate-200" />
+                ) : (
+                  <Badge
+                    variant="outline"
+                    className="border-blue-200 bg-blue-50/60 text-[10px] font-semibold text-[#0F2A43]"
+                  >
+                    {jogosDeHoje.length} jogo(s)
+                  </Badge>
+                )}
               </div>
-              {jogosDeHoje.length === 0 ? (
+              {loading && (isGeral ? allJogos.length === 0 : jogos.length === 0) ? (
+                <div className="mt-2 space-y-1.5">
+                  <div className="h-3 w-3/4 animate-pulse rounded bg-slate-200" />
+                  <div className="h-3 w-1/2 animate-pulse rounded bg-slate-200" />
+                </div>
+              ) : jogosDeHoje.length === 0 ? (
                 <p className="mt-1 text-sm font-medium text-slate-400">
                   Nenhum jogo agendado para hoje
                 </p>

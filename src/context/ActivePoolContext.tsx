@@ -1,4 +1,12 @@
-import React, { createContext, useContext, useEffect, useState, useCallback } from 'react'
+import React, {
+  createContext,
+  useContext,
+  useEffect,
+  useState,
+  useCallback,
+  useMemo,
+  useRef,
+} from 'react'
 import pb from '@/lib/pocketbase/client'
 import type { Bolao, Participante } from '@/types/bolao'
 import { useAuth } from './AuthContext'
@@ -92,36 +100,50 @@ export const ActivePoolProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     refreshBoloes()
   }, [refreshBoloes])
 
-  // Resolve current active bolao record
-  const activeBolao =
-    selectedBolaoId === 'geral'
-      ? ({
-          id: 'geral',
-          nome: 'Geral (Todas as Copas)',
-          ativo: true,
-          foco: 'Ranking Geral Unificado',
-          collectionId: '',
-          collectionName: 'boloes',
-          created: '',
-          updated: '',
-        } as Bolao)
-      : boloes.find((b) => b.id === selectedBolaoId) || null
+  // Resolve current active bolao record with memoization to prevent recreating object on every render
+  const activeBolao = useMemo(() => {
+    if (selectedBolaoId === 'geral') {
+      return {
+        id: 'geral',
+        nome: 'Geral (Todas as Copas)',
+        ativo: true,
+        foco: 'Ranking Geral Unificado',
+        collectionId: '',
+        collectionName: 'boloes',
+        created: '',
+        updated: '',
+      } as Bolao
+    }
+    return boloes.find((b) => b.id === selectedBolaoId) || null
+  }, [selectedBolaoId, boloes])
+
+  // Guard ref para evitar disparos redundantes de busca de participante
+  const lastParticipantQueryRef = useRef<string>('')
 
   // Fetch corresponding participant record for the active bolão and current user
   useEffect(() => {
     let cancelled = false
-    const loadParticipante = async () => {
-      if (!user || !activeBolao) {
-        setCurrentParticipante(null)
-        return
-      }
+    const activeId = activeBolao?.id || ''
+    const userId = user?.id || ''
+    const searchName =
+      participantName ||
+      (user?.name as string) ||
+      (user?.email ? (user.email as string).split('@')[0] : '')
 
+    if (!user || !activeBolao) {
+      lastParticipantQueryRef.current = ''
+      setCurrentParticipante(null)
+      return
+    }
+
+    const querySignature = `${userId}_${activeId}_${searchName}`
+    if (lastParticipantQueryRef.current === querySignature) {
+      return
+    }
+
+    const loadParticipante = async () => {
       // If active bolao is general, resolve participant using any available bolão or member list
       if (activeBolao.id === 'geral') {
-        const searchName =
-          participantName ||
-          (user.name as string) ||
-          (user.email ? (user.email as string).split('@')[0] : '')
         if (searchName) {
           try {
             const parts = await pb.collection('participantes').getFullList<Participante>({
@@ -134,24 +156,24 @@ export const ActivePoolProvider: React.FC<{ children: React.ReactNode }> = ({ ch
                   p.nome.toLowerCase().includes(searchName.toLowerCase()) ||
                   searchName.toLowerCase().includes(p.nome.toLowerCase()),
               )
-              setCurrentParticipante(exact || partial || parts[0])
+              const resolved = exact || partial || parts[0]
+              lastParticipantQueryRef.current = querySignature
+              setCurrentParticipante(resolved)
               return
             }
           } catch {
             /* ignore */
           }
         }
-        if (!cancelled) setCurrentParticipante(null)
+        if (!cancelled) {
+          lastParticipantQueryRef.current = querySignature
+          setCurrentParticipante(null)
+        }
         return
       }
 
-      // Name to search: prioritize resolved participantName, fallback to user.name or user.email prefix
-      const searchName =
-        participantName ||
-        (user.name as string) ||
-        (user.email ? (user.email as string).split('@')[0] : '')
-
       if (!searchName) {
+        lastParticipantQueryRef.current = querySignature
         setCurrentParticipante(null)
         return
       }
@@ -165,6 +187,7 @@ export const ActivePoolProvider: React.FC<{ children: React.ReactNode }> = ({ ch
           // Exact match case-insensitive
           const exact = parts.find((p) => p.nome.toLowerCase() === searchName.toLowerCase())
           if (exact) {
+            lastParticipantQueryRef.current = querySignature
             setCurrentParticipante(exact)
             return
           }
@@ -175,12 +198,17 @@ export const ActivePoolProvider: React.FC<{ children: React.ReactNode }> = ({ ch
               p.nome.toLowerCase().includes(searchName.toLowerCase()) ||
               searchName.toLowerCase().includes(p.nome.toLowerCase()),
           )
+          lastParticipantQueryRef.current = querySignature
           setCurrentParticipante(partial || null)
         } else if (!cancelled) {
+          lastParticipantQueryRef.current = querySignature
           setCurrentParticipante(null)
         }
       } catch (err) {
-        if (!cancelled) setCurrentParticipante(null)
+        if (!cancelled) {
+          lastParticipantQueryRef.current = querySignature
+          setCurrentParticipante(null)
+        }
       }
     }
 

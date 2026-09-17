@@ -17,6 +17,18 @@ export default function Login() {
   const [emailError, setEmailError] = useState<string | null>(null)
   const [passwordError, setPasswordError] = useState<string | null>(null)
 
+  // Desvio imediato não-bloqueante se o usuário já estiver logado no PocketBase
+  React.useEffect(() => {
+    if (pb.authStore.isValid && pb.authStore.record) {
+      const userName = pb.authStore.record.name || ''
+      if (isBolaoName(userName)) {
+        navigate('/inicio', { replace: true })
+      } else {
+        navigate('/', { replace: true })
+      }
+    }
+  }, [navigate])
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setError(null)

@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback } from 'react'
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { Link } from 'react-router-dom'
 import {
   Radio,
@@ -115,109 +115,215 @@ interface ApiResponse {
   rate_limited?: boolean
 }
 
+interface JogosDoDiaCachePayload {
+  fixtures: DayFixture[]
+  provider: string
+  configured: boolean
+  updatedAt: string
+  timestamp: number
+}
+
+const JOGOS_DO_DIA_CACHE_PREFIX = 'cr_jogos_dia_cache_v2'
+const jogosDiaMemoryCache = new Map<string, JogosDoDiaCachePayload>()
+
+function readJogosDiaCache(dateStr: string): JogosDoDiaCachePayload | null {
+  if (!dateStr) return null
+  const fromMem = jogosDiaMemoryCache.get(dateStr)
+  if (fromMem && Array.isArray(fromMem.fixtures)) {
+    return fromMem
+  }
+  try {
+    const raw = localStorage.getItem(`${JOGOS_DO_DIA_CACHE_PREFIX}_${dateStr}`)
+    if (raw) {
+      const parsed = JSON.parse(raw) as JogosDoDiaCachePayload
+      if (parsed && Array.isArray(parsed.fixtures)) {
+        jogosDiaMemoryCache.set(dateStr, parsed)
+        return parsed
+      }
+    }
+  } catch {
+    /* ignore */
+  }
+  return null
+}
+
+function writeJogosDiaCache(dateStr: string, data: Omit<JogosDoDiaCachePayload, 'timestamp'>) {
+  if (!dateStr) return
+  const payload: JogosDoDiaCachePayload = {
+    ...data,
+    timestamp: Date.now(),
+  }
+  jogosDiaMemoryCache.set(dateStr, payload)
+  try {
+    localStorage.setItem(`${JOGOS_DO_DIA_CACHE_PREFIX}_${dateStr}`, JSON.stringify(payload))
+  } catch {
+    /* ignore */
+  }
+}
+
 export default function JogosDoDia() {
   const { user, isAdmin } = useAuth()
   const [selectedDate, setSelectedDate] = useState<string>(() => getHojeDataSaoPaulo(Date.now()))
-  const [fixtures, setFixtures] = useState<DayFixture[]>([])
-  const [loading, setLoading] = useState(true)
+
+  // Leitura inicial síncrona do cache SWR de dois níveis
+  const initialCache = useMemo(() => {
+    return readJogosDiaCache(selectedDate)
+  }, [selectedDate])
+
+  const [fixtures, setFixtures] = useState<DayFixture[]>(() => initialCache?.fixtures || [])
+  const [loading, setLoading] = useState<boolean>(
+    () => !initialCache || initialCache.fixtures.length === 0,
+  )
+  const [isRevalidating, setIsRevalidating] = useState<boolean>(
+    () => !!(initialCache && initialCache.fixtures.length > 0),
+  )
   const [refreshing, setRefreshing] = useState(false)
-  const [activeProvider, setActiveProvider] = useState<string>('api_football')
-  const [isConfigured, setIsConfigured] = useState<boolean>(true)
+  const [activeProvider, setActiveProvider] = useState<string>(
+    () => initialCache?.provider || 'api_football',
+  )
+  const [isConfigured, setIsConfigured] = useState<boolean>(() =>
+    initialCache ? initialCache.configured : true,
+  )
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
   const [isCached, setIsCached] = useState<boolean>(false)
   const [cacheAge, setCacheAge] = useState<number>(0)
   const [ttlRemaining, setTtlRemaining] = useState<number>(0)
   const [isRateLimited, setIsRateLimited] = useState<boolean>(false)
-  const [lastUpdated, setLastUpdated] = useState<string>('')
+  const [lastUpdated, setLastUpdated] = useState<string>(() => initialCache?.updatedAt || '')
+
+  const prevDateRef = useRef<string>(selectedDate)
+  const activeFetchAbortRef = useRef<AbortController | null>(null)
 
   // Filtros
   const [selectedRegion, setSelectedRegion] = useState<string>('todos')
   const [selectedStatus, setSelectedStatus] = useState<string>('todos') // todos, ao-vivo, em-breve, finalizado
   const [searchTerm, setSearchTerm] = useState<string>('')
 
-  const fetchJogos = useCallback(async (dateStr: string, force = false) => {
-    try {
-      if (force) {
-        setRefreshing(true)
-      } else {
-        setLoading(true)
-      }
-      setErrorMessage(null)
-
-      const headers: Record<string, string> = {}
-      if (pb.authStore.token) {
-        headers['Authorization'] = pb.authStore.token
-      }
-
-      const url = `${import.meta.env.VITE_POCKETBASE_URL}/backend/v1/jogos-do-dia?date=${encodeURIComponent(
-        dateStr,
-      )}${force ? '&refresh=1' : ''}`
-
-      // Timeout seguro de 10s no client para nunca travar a tela
-      const controller = new AbortController()
-      const timeoutId = setTimeout(() => controller.abort(), 10000)
-
-      let res: Response
+  const fetchJogos = useCallback(
+    async (dateStr: string, force = false) => {
       try {
-        res = await fetch(url, { headers, signal: controller.signal })
-      } finally {
-        clearTimeout(timeoutId)
-      }
-
-      if (!res.ok) {
-        // Tratar 500 ou qualquer outro status sem explodir
-        let errorBodyText = ''
-        try {
-          const errJson = await res.json()
-          errorBodyText = errJson?.error || errJson?.message || ''
-        } catch {
-          /* intentionally ignored */
+        if (force) {
+          setRefreshing(true)
+        } else {
+          // Se já temos partidas em cache, não exibe tela bloqueante, apenas sinaliza revalidação discreta
+          const hasExisting =
+            fixtures.length > 0 || (readJogosDiaCache(dateStr)?.fixtures.length || 0) > 0
+          if (hasExisting) {
+            setIsRevalidating(true)
+          } else {
+            setLoading(true)
+          }
         }
-        throw new Error(
-          errorBodyText ||
-            `Instabilidade momentânea no servidor de dados (HTTP ${res.status}). Os dados serão recarregados automaticamente.`,
-        )
-      }
-
-      const data: ApiResponse = await res.json()
-      setIsConfigured(Boolean(data.configured))
-      setActiveProvider(data.provider || 'api_football')
-      setFixtures(Array.isArray(data.fixtures) ? data.fixtures : [])
-      setIsCached(Boolean(data.cached))
-      setCacheAge(data.cacheAgeSeconds || 0)
-      setTtlRemaining(data.ttlRemainingSeconds ?? 0)
-      setIsRateLimited(Boolean(data.rate_limited))
-      setLastUpdated(data.updatedAt || new Date().toISOString())
-
-      // Se rate limit foi sinalizado (429 tratado com status 200)
-      if (data.rate_limited) {
-        setErrorMessage(
-          'Dados ao vivo temporariamente indisponíveis (limite de requisições excedido). Tente novamente mais tarde.',
-        )
-      } else if (data.error && (!data.fixtures || data.fixtures.length === 0)) {
-        setErrorMessage(data.error)
-      } else if (data.message && !data.configured) {
-        setErrorMessage(data.message)
-      } else {
         setErrorMessage(null)
-      }
-    } catch (err: unknown) {
-      console.error('Erro ao buscar jogos do dia:', err)
-      const isAbort = err instanceof DOMException && err.name === 'AbortError'
-      setErrorMessage(
-        isAbort
-          ? 'Tempo de resposta excedido ao buscar jogos do dia. Tente atualizar novamente.'
-          : err instanceof Error
+
+        if (activeFetchAbortRef.current) {
+          activeFetchAbortRef.current.abort()
+        }
+        const controller = new AbortController()
+        activeFetchAbortRef.current = controller
+
+        const headers: Record<string, string> = {}
+        if (pb.authStore.token) {
+          headers['Authorization'] = pb.authStore.token
+        }
+
+        const url = `${import.meta.env.VITE_POCKETBASE_URL}/backend/v1/jogos-do-dia?date=${encodeURIComponent(
+          dateStr,
+        )}${force ? '&refresh=1' : ''}`
+
+        // Timeout seguro de 10s no client para nunca travar a tela
+        const timeoutId = setTimeout(() => controller.abort(), 10000)
+
+        let res: Response
+        try {
+          res = await fetch(url, { headers, signal: controller.signal })
+        } finally {
+          clearTimeout(timeoutId)
+        }
+
+        if (!res.ok) {
+          let errorBodyText = ''
+          try {
+            const errJson = await res.json()
+            errorBodyText = errJson?.error || errJson?.message || ''
+          } catch {
+            /* intentionally ignored */
+          }
+          throw new Error(
+            errorBodyText ||
+              `Instabilidade momentânea no servidor de dados (HTTP ${res.status}). Os dados serão recarregados automaticamente.`,
+          )
+        }
+
+        const data: ApiResponse = await res.json()
+        setIsConfigured(Boolean(data.configured))
+        setActiveProvider(data.provider || 'api_football')
+        const loadedFixtures = Array.isArray(data.fixtures) ? data.fixtures : []
+        setFixtures(loadedFixtures)
+        setIsCached(Boolean(data.cached))
+        setCacheAge(data.cacheAgeSeconds || 0)
+        setTtlRemaining(data.ttlRemainingSeconds ?? 0)
+        setIsRateLimited(Boolean(data.rate_limited))
+        const updatedTimestamp = data.updatedAt || new Date().toISOString()
+        setLastUpdated(updatedTimestamp)
+
+        // Grava no cache de dois níveis
+        writeJogosDiaCache(dateStr, {
+          fixtures: loadedFixtures,
+          provider: data.provider || 'api_football',
+          configured: Boolean(data.configured),
+          updatedAt: updatedTimestamp,
+        })
+
+        // Se rate limit foi sinalizado (429 tratado com status 200)
+        if (data.rate_limited) {
+          setErrorMessage(
+            'Dados ao vivo temporariamente indisponíveis (limite de requisições excedido). Tente novamente mais tarde.',
+          )
+        } else if (data.error && (!data.fixtures || data.fixtures.length === 0)) {
+          setErrorMessage(data.error)
+        } else if (data.message && !data.configured) {
+          setErrorMessage(data.message)
+        } else {
+          setErrorMessage(null)
+        }
+      } catch (err: unknown) {
+        if (err instanceof DOMException && err.name === 'AbortError') {
+          return
+        }
+        console.error('Erro ao buscar jogos do dia:', err)
+        setErrorMessage(
+          err instanceof Error
             ? err.message
             : 'Não foi possível carregar os jogos do dia. Verifique sua conexão.',
-      )
-    } finally {
-      setLoading(false)
-      setRefreshing(false)
-    }
-  }, [])
+        )
+      } finally {
+        setLoading(false)
+        setRefreshing(false)
+        setIsRevalidating(false)
+      }
+    },
+    [fixtures.length],
+  )
 
+  // Hidratação instantânea ao trocar a data selecionada (SWR)
   useEffect(() => {
+    if (selectedDate !== prevDateRef.current) {
+      prevDateRef.current = selectedDate
+      const cached = readJogosDiaCache(selectedDate)
+      if (cached && cached.fixtures.length > 0) {
+        setFixtures(cached.fixtures)
+        setActiveProvider(cached.provider)
+        setIsConfigured(cached.configured)
+        setLastUpdated(cached.updatedAt)
+        setLoading(false)
+        setIsRevalidating(true)
+      } else {
+        setFixtures([])
+        setLoading(true)
+        setIsRevalidating(false)
+      }
+    }
     fetchJogos(selectedDate)
   }, [selectedDate, fetchJogos])
 
@@ -787,7 +893,12 @@ export default function JogosDoDia() {
               className="bg-transparent text-xs font-semibold text-slate-800 outline-none"
             />
           </div>
-
+          {isRevalidating && !refreshing && (
+            <span className="flex items-center gap-1.5 text-[11px] font-medium text-[#64748B] bg-slate-100 px-2.5 py-1 rounded-md animate-pulse">
+              <RefreshCw className="h-3 w-3 animate-spin text-[#0F2A43]" />
+              Sincronizando...
+            </span>
+          )}
           <Button
             type="button"
             variant="outline"
@@ -800,8 +911,8 @@ export default function JogosDoDia() {
             <RefreshCw
               className={`h-3.5 w-3.5 ${refreshing ? 'animate-spin text-[#0F2A43]' : ''}`}
             />
-            <span>Atualizar</span>
-          </Button>
+            <span>{refreshing ? 'Atualizando...' : 'Atualizar'}</span>
+          </Button>{' '}
         </div>
       </div>
 
@@ -941,12 +1052,32 @@ export default function JogosDoDia() {
 
       {/* Lista de Jogos por Competição */}
       {loading ? (
-        <Card className="rounded-[14px] border-[#E2E8F0] bg-white p-16 text-center shadow-xs">
-          <RefreshCw className="mx-auto h-8 w-8 animate-spin text-[#0F2A43]" />
-          <p className="mt-3 text-xs font-semibold text-slate-600">
-            Consultando calendário e partidas da API-Football...
-          </p>
-        </Card>
+        <div className="space-y-4">
+          {[1, 2].map((i) => (
+            <Card
+              key={i}
+              className="overflow-hidden rounded-[14px] border border-[#E2E8F0] bg-white shadow-xs"
+            >
+              <div className="flex items-center justify-between border-b border-slate-100 bg-slate-50/80 px-4 py-3">
+                <div className="flex items-center gap-2.5">
+                  <div className="h-6 w-6 rounded-full bg-slate-200 animate-pulse" />
+                  <div className="space-y-1">
+                    <div className="h-4 w-32 rounded bg-slate-200 animate-pulse" />
+                    <div className="h-3 w-20 rounded bg-slate-100 animate-pulse" />
+                  </div>
+                </div>
+                <div className="h-5 w-16 rounded bg-slate-200 animate-pulse" />
+              </div>
+              <div className="p-4 space-y-3">
+                <div className="flex items-center justify-between gap-4">
+                  <div className="h-4 w-1/3 rounded bg-slate-200 animate-pulse" />
+                  <div className="h-8 w-16 rounded bg-slate-900/10 animate-pulse" />
+                  <div className="h-4 w-1/3 rounded bg-slate-200 animate-pulse" />
+                </div>
+              </div>
+            </Card>
+          ))}
+        </div>
       ) : errorMessage && fixtures.length === 0 ? (
         <Card
           className={`rounded-[14px] p-8 text-center text-xs ${
