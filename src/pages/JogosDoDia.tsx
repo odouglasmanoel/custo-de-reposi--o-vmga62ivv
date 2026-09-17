@@ -23,6 +23,7 @@ import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { getHojeDataSaoPaulo } from '@/lib/dateUtils'
 import {
   cleanTeamName,
+  stringSimilarity,
   getFixtureDateSaoPaulo,
   isFixturePostponed,
   isFixtureCancelled,
@@ -735,8 +736,16 @@ export default function JogosDoDia() {
       } else if (side === 'home') {
         homeScorers.push(entry)
       } else {
-        // Sem lado identificado, coloca no mandante por omissão somente se houver gol do mandante
-        homeScorers.push(entry)
+        // Sem lado identificado, se houver placar de mandante e não de visitante, vai pro mandante
+        const hGoalCount = fixture.goals?.home || 0
+        const aGoalCount = fixture.goals?.away || 0
+        if (hGoalCount > 0 && aGoalCount === 0) {
+          homeScorers.push(entry)
+        } else if (aGoalCount > 0 && hGoalCount === 0) {
+          awayScorers.push(entry)
+        } else {
+          homeScorers.push(entry)
+        }
       }
     }
 
@@ -830,6 +839,7 @@ export default function JogosDoDia() {
           minute: sc.minute != null ? Number(sc.minute) : null,
           extra: sc.extraMinute != null ? Number(sc.extraMinute) : null,
         }
+        // Se for gol contra, o gol pontua para a equipe adversária no placar
         addScorer(cleanScName, minObj.minute, side, isContra, minObj.extra)
       }
     }
@@ -1274,150 +1284,156 @@ export default function JogosDoDia() {
 
                           {/* Confronto Central: Times e Placar */}
                           <div className="flex-1 max-w-xl">
-                            <div className="flex items-center justify-between gap-4">
-                              {/* Time Mandante */}
-                              <div className="flex flex-1 items-center justify-end gap-2.5 text-right">
-                                <span
-                                  className={`text-sm font-bold sm:text-base truncate ${
-                                    isPstOrCanc ? 'text-slate-600' : 'text-[#0F172A]'
-                                  }`}
-                                >
-                                  {match.teams.home.name}
-                                </span>
-                                {match.teams.home.logo ? (
-                                  <img
-                                    src={match.teams.home.logo}
-                                    alt={match.teams.home.name}
-                                    className={`h-6 w-6 object-contain shrink-0 ${
-                                      isPstOrCanc ? 'grayscale-[50%] opacity-80' : ''
-                                    }`}
-                                    loading="lazy"
-                                    onError={(e) => {
-                                      e.currentTarget.style.display = 'none'
-                                      const fallback = e.currentTarget
-                                        .nextElementSibling as HTMLElement | null
-                                      if (fallback) fallback.style.display = 'flex'
-                                    }}
-                                  />
-                                ) : null}
-                                <div
-                                  className={`h-6 w-6 rounded-full bg-slate-100 border border-slate-200 flex items-center justify-center shrink-0 ${
-                                    match.teams.home.logo ? 'hidden' : 'flex'
-                                  }`}
-                                  title={match.teams.home.name}
-                                >
-                                  {match.teams.home.name ? (
-                                    <span className="text-[10px] font-black uppercase text-slate-600">
-                                      {match.teams.home.name.substring(0, 2)}
-                                    </span>
-                                  ) : (
-                                    <Shield className="h-3.5 w-3.5 text-slate-400" />
-                                  )}
-                                </div>
-                              </div>
-
-                              {/* Placar Central ou Badge de Adiado/Cancelado */}
-                              {isPstOrCanc ? (
-                                <div className="flex items-center justify-center rounded-lg border border-slate-200 bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-500 shadow-2xs min-w-[72px]">
-                                  <span>{matchIsPostponed ? 'Adiado' : 'Cancelado'}</span>
-                                </div>
-                              ) : (
-                                <div className="flex items-center justify-center gap-2 rounded-lg bg-slate-900 px-3 py-1 font-mono text-base font-black text-white shadow-2xs sm:text-lg min-w-[72px]">
-                                  <span>{homeScore}</span>
-                                  <span className="text-slate-500 font-normal">:</span>
-                                  <span>{awayScore}</span>
-                                </div>
-                              )}
-
-                              {/* Time Visitante */}
-                              <div className="flex flex-1 items-center justify-start gap-2.5 text-left">
-                                {match.teams.away.logo ? (
-                                  <img
-                                    src={match.teams.away.logo}
-                                    alt={match.teams.away.name}
-                                    className={`h-6 w-6 object-contain shrink-0 ${
-                                      isPstOrCanc ? 'grayscale-[50%] opacity-80' : ''
-                                    }`}
-                                    loading="lazy"
-                                    onError={(e) => {
-                                      e.currentTarget.style.display = 'none'
-                                      const fallback = e.currentTarget
-                                        .nextElementSibling as HTMLElement | null
-                                      if (fallback) fallback.style.display = 'flex'
-                                    }}
-                                  />
-                                ) : null}
-                                <div
-                                  className={`h-6 w-6 rounded-full bg-slate-100 border border-slate-200 flex items-center justify-center shrink-0 ${
-                                    match.teams.away.logo ? 'hidden' : 'flex'
-                                  }`}
-                                  title={match.teams.away.name}
-                                >
-                                  {match.teams.away.name ? (
-                                    <span className="text-[10px] font-black uppercase text-slate-600">
-                                      {match.teams.away.name.substring(0, 2)}
-                                    </span>
-                                  ) : (
-                                    <Shield className="h-3.5 w-3.5 text-slate-400" />
-                                  )}
-                                </div>
-                                <span
-                                  className={`text-sm font-bold sm:text-base truncate ${
-                                    isPstOrCanc ? 'text-slate-600' : 'text-[#0F172A]'
-                                  }`}
-                                >
-                                  {match.teams.away.name}
-                                </span>
-                              </div>
-                            </div>
-
-                            {/* Detalhes de Pênaltis se houver */}
-                            {match.score?.penalty &&
-                              match.score.penalty.home !== null &&
-                              match.score.penalty.away !== null && (
-                                <div className="text-center text-[10px] font-semibold text-slate-500 mt-1">
-                                  (Pênaltis: {match.score.penalty.home} x {match.score.penalty.away}
-                                  )
-                                </div>
-                              )}
-
-                            {/* Marcadores dos gols com minutagem: exibido apenas para partidas Ao Vivo ou Finalizadas */}
+                            {/* Confronto Central: Times e Placar com marcadores logo abaixo de cada time */}
                             {(() => {
                               const isFinishedMatch = isFixtureFinished(stMatch, longMatch)
                               const isLiveMatch = match.isLive || isFixtureLive(stMatch)
-                              const canShow = (isLiveMatch || isFinishedMatch) && !isPstOrCanc
-                              const hasScorers = homeScorers.length > 0 || awayScorers.length > 0
-                              if (!canShow || !hasScorers) return null
+                              const canShowScorers =
+                                (isLiveMatch || isFinishedMatch) && !isPstOrCanc
 
                               return (
-                                <div className="mt-2.5 border-t border-slate-100/80 pt-2 text-[11px] text-slate-600">
-                                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 sm:gap-4">
-                                    {/* Mandante: alinhado à esquerda no mobile, à direita no desktop */}
-                                    <div className="sm:text-right space-y-1 min-w-0">
-                                      {homeScorers.map((s, idx) => (
-                                        <div
-                                          key={idx}
-                                          className="truncate text-slate-600 font-medium text-[11px] sm:text-right"
-                                          title={s}
+                                <>
+                                  <div className="flex items-start justify-between gap-4">
+                                    {/* Time Mandante e seus marcadores logo abaixo */}
+                                    <div className="flex flex-1 flex-col items-end text-right min-w-0">
+                                      <div className="flex items-center justify-end gap-2.5 w-full">
+                                        <span
+                                          className={`text-sm font-bold sm:text-base truncate ${
+                                            isPstOrCanc ? 'text-slate-600' : 'text-[#0F172A]'
+                                          }`}
                                         >
-                                          {s}
+                                          {match.teams.home.name}
+                                        </span>
+                                        {match.teams.home.logo ? (
+                                          <img
+                                            src={match.teams.home.logo}
+                                            alt={match.teams.home.name}
+                                            className={`h-6 w-6 object-contain shrink-0 ${
+                                              isPstOrCanc ? 'grayscale-[50%] opacity-80' : ''
+                                            }`}
+                                            loading="lazy"
+                                            onError={(e) => {
+                                              e.currentTarget.style.display = 'none'
+                                              const fallback = e.currentTarget
+                                                .nextElementSibling as HTMLElement | null
+                                              if (fallback) fallback.style.display = 'flex'
+                                            }}
+                                          />
+                                        ) : null}
+                                        <div
+                                          className={`h-6 w-6 rounded-full bg-slate-100 border border-slate-200 flex items-center justify-center shrink-0 ${
+                                            match.teams.home.logo ? 'hidden' : 'flex'
+                                          }`}
+                                          title={match.teams.home.name}
+                                        >
+                                          {match.teams.home.name ? (
+                                            <span className="text-[10px] font-black uppercase text-slate-600">
+                                              {match.teams.home.name.substring(0, 2)}
+                                            </span>
+                                          ) : (
+                                            <Shield className="h-3.5 w-3.5 text-slate-400" />
+                                          )}
                                         </div>
-                                      ))}
+                                      </div>
+                                      {/* Marcadores do MANDANTE logo abaixo do nome */}
+                                      {canShowScorers && homeScorers.length > 0 && (
+                                        <div className="mt-1 space-y-0.5 text-right w-full">
+                                          {homeScorers.map((s, idx) => (
+                                            <div
+                                              key={idx}
+                                              className="truncate text-slate-500 font-normal text-[11px]"
+                                              title={s}
+                                            >
+                                              {s}
+                                            </div>
+                                          ))}
+                                        </div>
+                                      )}
                                     </div>
-                                    {/* Visitante: alinhado à esquerda */}
-                                    <div className="text-left space-y-1 min-w-0">
-                                      {awayScorers.map((s, idx) => (
-                                        <div
-                                          key={idx}
-                                          className="truncate text-slate-600 font-medium text-[11px]"
-                                          title={s}
-                                        >
-                                          {s}
+
+                                    {/* Placar Central ou Badge de Adiado/Cancelado */}
+                                    <div className="shrink-0 flex flex-col items-center pt-0.5">
+                                      {isPstOrCanc ? (
+                                        <div className="flex items-center justify-center rounded-lg border border-slate-200 bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-500 shadow-2xs min-w-[72px]">
+                                          <span>{matchIsPostponed ? 'Adiado' : 'Cancelado'}</span>
                                         </div>
-                                      ))}
+                                      ) : (
+                                        <div className="flex items-center justify-center gap-2 rounded-lg bg-slate-900 px-3 py-1 font-mono text-base font-black text-white shadow-2xs sm:text-lg min-w-[72px]">
+                                          <span>{homeScore}</span>
+                                          <span className="text-slate-500 font-normal">:</span>
+                                          <span>{awayScore}</span>
+                                        </div>
+                                      )}
+
+                                      {/* Detalhes de Pênaltis se houver */}
+                                      {match.score?.penalty &&
+                                        match.score.penalty.home !== null &&
+                                        match.score.penalty.away !== null && (
+                                          <div className="text-center text-[10px] font-semibold text-slate-500 mt-1">
+                                            (Pên: {match.score.penalty.home}x
+                                            {match.score.penalty.away})
+                                          </div>
+                                        )}
+                                    </div>
+
+                                    {/* Time Visitante e seus marcadores logo abaixo */}
+                                    <div className="flex flex-1 flex-col items-start text-left min-w-0">
+                                      <div className="flex items-center justify-start gap-2.5 w-full">
+                                        {match.teams.away.logo ? (
+                                          <img
+                                            src={match.teams.away.logo}
+                                            alt={match.teams.away.name}
+                                            className={`h-6 w-6 object-contain shrink-0 ${
+                                              isPstOrCanc ? 'grayscale-[50%] opacity-80' : ''
+                                            }`}
+                                            loading="lazy"
+                                            onError={(e) => {
+                                              e.currentTarget.style.display = 'none'
+                                              const fallback = e.currentTarget
+                                                .nextElementSibling as HTMLElement | null
+                                              if (fallback) fallback.style.display = 'flex'
+                                            }}
+                                          />
+                                        ) : null}
+                                        <div
+                                          className={`h-6 w-6 rounded-full bg-slate-100 border border-slate-200 flex items-center justify-center shrink-0 ${
+                                            match.teams.away.logo ? 'hidden' : 'flex'
+                                          }`}
+                                          title={match.teams.away.name}
+                                        >
+                                          {match.teams.away.name ? (
+                                            <span className="text-[10px] font-black uppercase text-slate-600">
+                                              {match.teams.away.name.substring(0, 2)}
+                                            </span>
+                                          ) : (
+                                            <Shield className="h-3.5 w-3.5 text-slate-400" />
+                                          )}
+                                        </div>
+                                        <span
+                                          className={`text-sm font-bold sm:text-base truncate ${
+                                            isPstOrCanc ? 'text-slate-600' : 'text-[#0F172A]'
+                                          }`}
+                                        >
+                                          {match.teams.away.name}
+                                        </span>
+                                      </div>
+                                      {/* Marcadores do VISITANTE logo abaixo do nome */}
+                                      {canShowScorers && awayScorers.length > 0 && (
+                                        <div className="mt-1 space-y-0.5 text-left w-full">
+                                          {awayScorers.map((s, idx) => (
+                                            <div
+                                              key={idx}
+                                              className="truncate text-slate-500 font-normal text-[11px]"
+                                              title={s}
+                                            >
+                                              {s}
+                                            </div>
+                                          ))}
+                                        </div>
+                                      )}
                                     </div>
                                   </div>
-                                </div>
+                                </>
                               )
                             })()}
                           </div>

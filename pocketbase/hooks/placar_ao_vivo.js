@@ -765,7 +765,46 @@ routerAdd('GET', '/backend/v1/placar-ao-vivo', (e) => {
             resDate.json &&
             Array.isArray(resDate.json.matches)
           ) {
-            result.dateFixtures = resDate.json.matches.map(mapFootballDataItem)
+            var rawDateMatches = resDate.json.matches
+            for (var rmi = 0; rmi < rawDateMatches.length; rmi++) {
+              var rm = rawDateMatches[rmi]
+              var rmHome = rm.score && rm.score.fullTime ? rm.score.fullTime.home : null
+              var rmAway = rm.score && rm.score.fullTime ? rm.score.fullTime.away : null
+              var rmHasScoreOrLive =
+                (typeof rmHome === 'number' && rmHome > 0) ||
+                (typeof rmAway === 'number' && rmAway > 0) ||
+                rm.status === 'IN_PLAY' ||
+                rm.status === 'PAUSED'
+              if (
+                rmHasScoreOrLive &&
+                (!Array.isArray(rm.goals) || rm.goals.length === 0) &&
+                rm.id &&
+                fdKey
+              ) {
+                try {
+                  var resDetailRm = $http.send({
+                    url: 'https://api.football-data.org/v4/matches/' + encodeURIComponent(rm.id),
+                    method: 'GET',
+                    headers: { 'X-Auth-Token': fdKey },
+                    timeout: 6,
+                  })
+                  if (
+                    resDetailRm &&
+                    resDetailRm.statusCode === 200 &&
+                    resDetailRm.json &&
+                    Array.isArray(resDetailRm.json.goals)
+                  ) {
+                    rm.goals = resDetailRm.json.goals
+                    if (resDetailRm.json.score && resDetailRm.json.score.fullTime) {
+                      rm.score = resDetailRm.json.score
+                    }
+                  }
+                } catch (errRmSingle) {
+                  console.log('[Football-Data Date Match Detail] Erro:', errRmSingle)
+                }
+              }
+            }
+            result.dateFixtures = rawDateMatches.map(mapFootballDataItem)
           }
         } catch (errDate) {
           console.log('Aviso ao consultar date Football-Data.org:', errDate)
@@ -2116,7 +2155,7 @@ routerAdd('GET', '/backend/v1/jogos-do-dia', (e) => {
     }
 
     // Função interna para normalizar dados do Football-Data.org para jogos-do-dia
-    var parseFootballDataToDayFixtures = function (fdMatches) {
+    var parseFootballDataToDayFixtures = function (fdMatches, fdAuthToken) {
       var convertedFixtures = []
       var hasLiveMatchFD = false
 
@@ -2132,6 +2171,56 @@ routerAdd('GET', '/backend/v1/jogos-do-dia', (e) => {
         var awayScore = m.score && m.score.fullTime ? m.score.fullTime.away : null
         var htHome = m.score && m.score.halfTime ? m.score.halfTime.home : null
         var htAway = m.score && m.score.halfTime ? m.score.halfTime.away : null
+
+        // Se a partida tem placar > 0 ou está ao vivo mas não possui o array goals detalhado,
+        // busca GET /v4/matches/{id} para extrair os marcadores detalhados
+        var mHasScoreOrLive =
+          (typeof homeScore === 'number' && homeScore > 0) ||
+          (typeof awayScore === 'number' && awayScore > 0) ||
+          m.status === 'IN_PLAY' ||
+          m.status === 'PAUSED'
+        if (
+          mHasScoreOrLive &&
+          (!Array.isArray(m.goals) || m.goals.length === 0) &&
+          m.id &&
+          fdAuthToken
+        ) {
+          try {
+            var detailMatchRes = $http.send({
+              url: 'https://api.football-data.org/v4/matches/' + encodeURIComponent(m.id),
+              method: 'GET',
+              headers: { 'X-Auth-Token': fdAuthToken },
+              timeout: 6,
+            })
+            if (
+              detailMatchRes &&
+              detailMatchRes.statusCode === 200 &&
+              detailMatchRes.json &&
+              Array.isArray(detailMatchRes.json.goals)
+            ) {
+              m.goals = detailMatchRes.json.goals
+              if (detailMatchRes.json.score && detailMatchRes.json.score.fullTime) {
+                if (
+                  detailMatchRes.json.score.fullTime.home !== null &&
+                  detailMatchRes.json.score.fullTime.home !== undefined
+                ) {
+                  homeScore = detailMatchRes.json.score.fullTime.home
+                }
+                if (
+                  detailMatchRes.json.score.fullTime.away !== null &&
+                  detailMatchRes.json.score.fullTime.away !== undefined
+                ) {
+                  awayScore = detailMatchRes.json.score.fullTime.away
+                }
+              }
+            }
+          } catch (errFdSingle) {
+            console.log(
+              '[Football-Data Detail Match] Erro ao buscar match ' + m.id + ':',
+              errFdSingle,
+            )
+          }
+        }
 
         var rawStatusFD = (m.status || '').toUpperCase().trim()
         var stShort = rawStatusFD
@@ -2315,7 +2404,7 @@ routerAdd('GET', '/backend/v1/jogos-do-dia', (e) => {
             resFDPrimary.json &&
             Array.isArray(resFDPrimary.json.matches)
           ) {
-            var parsedFD = parseFootballDataToDayFixtures(resFDPrimary.json.matches)
+            var parsedFD = parseFootballDataToDayFixtures(resFDPrimary.json.matches, fdPrimaryToken)
 
             // REGRA: Se retornar partidas, mescla com TheSportsDB para cobertura de copas secundárias e retorna
             if (parsedFD.fixtures.length > 0) {
@@ -2567,7 +2656,7 @@ routerAdd('GET', '/backend/v1/jogos-do-dia', (e) => {
         if (isRateLimitErrorDay(resFD.statusCode, resFD.json || resFD.raw)) {
           rateLimitHit = true
         } else if (resFD.statusCode === 200 && resFD.json && Array.isArray(resFD.json.matches)) {
-          var parsedContingency = parseFootballDataToDayFixtures(resFD.json.matches)
+          var parsedContingency = parseFootballDataToDayFixtures(resFD.json.matches, fallbackApiKey)
           if (parsedContingency.fixtures.length > 0) {
             contingencyUsed = true
             contingencyProvider = 'football_data'
@@ -2852,19 +2941,31 @@ routerAdd('GET', '/backend/v1/jogos-do-dia', (e) => {
     // Complementa eventos por fixture id se a API retornou fixture com placar mas sem events
     // Enriquecimento em lote com /fixtures?ids=id1-id2-... cobrindo TODAS as partidas com gols ou ao vivo
     var fixturesToEnrichEvents = []
+    var enrichSeenIds = {}
     for (var preI = 0; preI < allFixtures.length; preI++) {
       var preItem = allFixtures[preI]
       var preShort =
         (preItem.fixture && preItem.fixture.status && preItem.fixture.status.short) || ''
       var preIsLive = ['1H', 'HT', '2H', 'ET', 'BT', 'P', 'LIVE'].indexOf(preShort) !== -1
-      var preHasGoals = Boolean(
-        (preItem.goals && (preItem.goals.home > 0 || preItem.goals.away > 0)) ||
-        (preItem.score &&
-          preItem.score.fulltime &&
-          (preItem.score.fulltime.home > 0 || preItem.score.fulltime.away > 0)),
-      )
-      var preHasEvents = Array.isArray(preItem.events) && preItem.events.length > 0
-      if ((preIsLive || preHasGoals) && !preHasEvents && preItem.fixture && preItem.fixture.id) {
+      var preHomeGoals =
+        preItem.goals && preItem.goals.home != null
+          ? Number(preItem.goals.home)
+          : preItem.score && preItem.score.fulltime && preItem.score.fulltime.home != null
+            ? Number(preItem.score.fulltime.home)
+            : 0
+      var preAwayGoals =
+        preItem.goals && preItem.goals.away != null
+          ? Number(preItem.goals.away)
+          : preItem.score && preItem.score.fulltime && preItem.score.fulltime.away != null
+            ? Number(preItem.score.fulltime.away)
+            : 0
+      var preHasGoals = preHomeGoals > 0 || preAwayGoals > 0
+      var preHasEvents =
+        (Array.isArray(preItem.events) && preItem.events.length > 0) ||
+        (Array.isArray(preItem.scorers) && preItem.scorers.length > 0)
+      var preFixId = preItem.fixture && preItem.fixture.id
+      if ((preIsLive || preHasGoals) && !preHasEvents && preFixId && !enrichSeenIds[preFixId]) {
+        enrichSeenIds[preFixId] = true
         fixturesToEnrichEvents.push(preItem)
       }
     }
@@ -3145,8 +3246,31 @@ routerAdd('GET', '/backend/v1/jogos-do-dia', (e) => {
             ) {
               rf.goals.home = tFix.goals.home
               rf.goals.away = tFix.goals.away
-              rf.score.fulltime.home = tFix.score.fulltime.home
-              rf.score.fulltime.away = tFix.score.fulltime.away
+              if (!rf.score)
+                rf.score = {
+                  halftime: { home: null, away: null },
+                  fulltime: { home: null, away: null },
+                }
+              if (!rf.score.fulltime) rf.score.fulltime = { home: null, away: null }
+              rf.score.fulltime.home =
+                tFix.score && tFix.score.fulltime ? tFix.score.fulltime.home : tFix.goals.home
+              rf.score.fulltime.away =
+                tFix.score && tFix.score.fulltime ? tFix.score.fulltime.away : tFix.goals.away
+            }
+            // Propaga scorers e events se o jogo existente não os possuir preenchidos
+            if (
+              (!Array.isArray(rf.scorers) || rf.scorers.length === 0) &&
+              Array.isArray(tFix.scorers) &&
+              tFix.scorers.length > 0
+            ) {
+              rf.scorers = tFix.scorers
+            }
+            if (
+              (!Array.isArray(rf.events) || rf.events.length === 0) &&
+              Array.isArray(tFix.events) &&
+              tFix.events.length > 0
+            ) {
+              rf.events = tFix.events
             }
             if (tFix.isLive) {
               rf.isLive = true
