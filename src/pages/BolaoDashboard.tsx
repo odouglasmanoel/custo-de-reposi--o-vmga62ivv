@@ -16,6 +16,7 @@ import {
   Edit3,
   RefreshCcw,
   AlertCircle,
+  Vote,
 } from 'lucide-react'
 import pb from '@/lib/pocketbase/client'
 import { useAuth, BOLAO_MEMBERS } from '@/context/AuthContext'
@@ -1253,7 +1254,39 @@ export default function BolaoDashboard() {
           </div>
         </Card>
 
+        {/* Card de Atalho para Enquetes (Copa Coni) */}
+        <Card
+          onClick={() => navigate('/bolao/enquetes')}
+          role="button"
+          tabIndex={0}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+              e.preventDefault()
+              navigate('/bolao/enquetes')
+            }
+          }}
+          className="group cursor-pointer rounded-[14px] border-emerald-200 bg-linear-to-br from-emerald-50/40 via-white to-white p-4 shadow-xs transition duration-200 hover:-translate-y-0.5 hover:border-emerald-400 hover:shadow-md focus:outline-none focus:ring-2 focus:ring-emerald-400"
+          title="Acessar módulo de Enquetes da Copa Coni"
+        >
+          <div className="flex items-center justify-between">
+            <div>
+              <div className="flex items-center gap-1.5">
+                <p className="text-xs font-bold text-emerald-800">Enquetes da Rodada</p>
+                <ArrowRight className="h-3.5 w-3.5 text-emerald-600 opacity-0 group-hover:opacity-100 group-hover:translate-x-0.5 transition-all" />
+              </div>
+              <p className="mt-1 text-sm font-bold text-slate-900">Copa Coni</p>
+              <span className="text-[10px] font-semibold text-emerald-700 group-hover:underline">
+                Votar nos jogos &rarr;
+              </span>
+            </div>
+            <div className="rounded-lg bg-emerald-100 p-2.5 text-emerald-700 group-hover:bg-emerald-200 transition-colors">
+              <Vote className="h-5 w-5" />
+            </div>
+          </div>
+        </Card>
+
         <Card className="rounded-[14px] border-[#E2E8F0] bg-white p-4 shadow-xs transition hover:-translate-y-0.5 hover:shadow-md">
+          {' '}
           <div className="flex items-center justify-between">
             <div className="min-w-0 flex-1">
               <div className="flex items-center justify-between pr-2">

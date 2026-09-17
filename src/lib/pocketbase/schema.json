@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-09-17T13:25:02.678Z",
+  "generatedAt": "2026-09-17T13:38:25.763Z",
   "collections": [
     {
       "name": "users",
@@ -614,6 +614,251 @@
       "indexes": [
         "CREATE INDEX idx_jogos_manuais_data ON jogos_do_dia_manuais (data)",
         "CREATE INDEX idx_jogos_manuais_campeonato ON jogos_do_dia_manuais (campeonato)"
+      ]
+    },
+    {
+      "name": "enquetes",
+      "type": "base",
+      "apiRules": {
+        "list": "@request.auth.id != ''",
+        "view": "@request.auth.id != ''",
+        "create": "@request.auth.id != ''",
+        "update": "@request.auth.id != ''",
+        "delete": "@request.auth.id != ''"
+      },
+      "fields": [
+        {
+          "name": "titulo",
+          "type": "text",
+          "required": true,
+          "system": false
+        },
+        {
+          "name": "descricao",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "data_inicio",
+          "type": "text",
+          "required": true,
+          "system": false
+        },
+        {
+          "name": "data_fim",
+          "type": "text",
+          "required": true,
+          "system": false
+        },
+        {
+          "name": "status",
+          "type": "select",
+          "required": true,
+          "system": false,
+          "selectValues": ["aberta", "encerrada", "cadastrada"]
+        },
+        {
+          "name": "criado_por",
+          "type": "relation",
+          "required": false,
+          "system": false,
+          "collectionRef": "users"
+        },
+        {
+          "name": "limite_votos",
+          "type": "number",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "created",
+          "type": "autodate",
+          "required": false,
+          "system": false,
+          "autodateTriggers": ["onCreate"]
+        },
+        {
+          "name": "updated",
+          "type": "autodate",
+          "required": false,
+          "system": false,
+          "autodateTriggers": ["onCreate", "onUpdate"]
+        }
+      ],
+      "indexes": [
+        "CREATE INDEX idx_enquetes_status ON enquetes (status)",
+        "CREATE INDEX idx_enquetes_created ON enquetes (created DESC)"
+      ]
+    },
+    {
+      "name": "enquete_jogos",
+      "type": "base",
+      "apiRules": {
+        "list": "@request.auth.id != ''",
+        "view": "@request.auth.id != ''",
+        "create": "@request.auth.id != ''",
+        "update": "@request.auth.id != ''",
+        "delete": "@request.auth.id != ''"
+      },
+      "fields": [
+        {
+          "name": "enquete",
+          "type": "relation",
+          "required": true,
+          "system": false,
+          "collectionRef": "enquetes"
+        },
+        {
+          "name": "time_a",
+          "type": "text",
+          "required": true,
+          "system": false
+        },
+        {
+          "name": "time_b",
+          "type": "text",
+          "required": true,
+          "system": false
+        },
+        {
+          "name": "campeonato",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "regiao",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "data",
+          "type": "text",
+          "required": true,
+          "system": false
+        },
+        {
+          "name": "horario",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "fixture_id",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "logo_casa",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "logo_visitante",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "campeonato_logo",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "selecionado_admin",
+          "type": "bool",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "cadastrado_bolao",
+          "type": "bool",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "created",
+          "type": "autodate",
+          "required": false,
+          "system": false,
+          "autodateTriggers": ["onCreate"]
+        },
+        {
+          "name": "updated",
+          "type": "autodate",
+          "required": false,
+          "system": false,
+          "autodateTriggers": ["onCreate", "onUpdate"]
+        }
+      ],
+      "indexes": [
+        "CREATE INDEX idx_enquete_jogos_enquete ON enquete_jogos (enquete)",
+        "CREATE INDEX idx_enquete_jogos_data ON enquete_jogos (data)"
+      ]
+    },
+    {
+      "name": "enquete_votos",
+      "type": "base",
+      "apiRules": {
+        "list": "@request.auth.id != ''",
+        "view": "@request.auth.id != ''",
+        "create": "@request.auth.id != ''",
+        "update": "@request.auth.id != ''",
+        "delete": "@request.auth.id != ''"
+      },
+      "fields": [
+        {
+          "name": "enquete",
+          "type": "relation",
+          "required": true,
+          "system": false,
+          "collectionRef": "enquetes"
+        },
+        {
+          "name": "jogo",
+          "type": "relation",
+          "required": true,
+          "system": false,
+          "collectionRef": "enquete_jogos"
+        },
+        {
+          "name": "user",
+          "type": "relation",
+          "required": true,
+          "system": false,
+          "collectionRef": "users"
+        },
+        {
+          "name": "user_name",
+          "type": "text",
+          "required": true,
+          "system": false
+        },
+        {
+          "name": "created",
+          "type": "autodate",
+          "required": false,
+          "system": false,
+          "autodateTriggers": ["onCreate"]
+        },
+        {
+          "name": "updated",
+          "type": "autodate",
+          "required": false,
+          "system": false,
+          "autodateTriggers": ["onCreate", "onUpdate"]
+        }
+      ],
+      "indexes": [
+        "CREATE UNIQUE INDEX idx_enquete_votos_user_jogo ON enquete_votos (enquete, jogo, user)",
+        "CREATE INDEX idx_enquete_votos_enquete ON enquete_votos (enquete)",
+        "CREATE INDEX idx_enquete_votos_jogo ON enquete_votos (jogo)",
+        "CREATE INDEX idx_enquete_votos_user ON enquete_votos (user)"
       ]
     }
   ]

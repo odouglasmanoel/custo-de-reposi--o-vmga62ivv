@@ -11,6 +11,7 @@ import {
   User,
   BarChart2,
   Radio,
+  Vote,
 } from 'lucide-react'
 import { useAuth } from '@/context/AuthContext'
 import { useActivePool } from '@/context/ActivePoolContext'
@@ -38,6 +39,7 @@ export default function Layout({ children }: LayoutProps) {
   const isBolaoScreen = location.pathname.startsWith('/bolao') || location.pathname === '/inicio'
   const showBackButton =
     location.pathname === '/bolao/chat' ||
+    location.pathname === '/bolao/enquetes' ||
     location.pathname === '/bolao/palpites' ||
     location.pathname === '/bolao/meus-palpites' ||
     location.pathname === '/bolao/jogos-do-dia' ||
@@ -54,6 +56,7 @@ export default function Layout({ children }: LayoutProps) {
       location.pathname === '/bolao/admin/configuracoes' ||
       location.pathname === '/bolao/configuracoes' ||
       location.pathname === '/bolao/chat' ||
+      location.pathname === '/bolao/enquetes' ||
       location.pathname === '/bolao/palpites' ||
       location.pathname === '/bolao/meus-palpites' ||
       location.pathname === '/bolao/jogos-do-dia' ||
@@ -163,6 +166,18 @@ export default function Layout({ children }: LayoutProps) {
                       }`}
                     >
                       Histórico
+                    </Link>
+                    <Link
+                      to="/bolao/enquetes"
+                      className={`inline-flex items-center gap-1 rounded-md px-2.5 py-1 text-xs font-medium transition ${
+                        location.pathname === '/bolao/enquetes'
+                          ? 'bg-[#1B3A5C] text-emerald-300 font-bold'
+                          : 'text-slate-300 hover:text-white'
+                      }`}
+                      title="Enquetes para escolha dos jogos da rodada da Copa Coni"
+                    >
+                      <Vote className="h-3.5 w-3.5 text-emerald-400" />
+                      Enquetes
                     </Link>
                     <Link
                       to="/bolao/estatisticas"

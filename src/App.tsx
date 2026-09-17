@@ -18,6 +18,7 @@ import JogosDoDia from './pages/JogosDoDia'
 import Historico from './pages/Historico'
 import Estatisticas from './pages/Estatisticas'
 import Chat from './pages/Chat'
+import Enquetes from './pages/Enquetes'
 import NotFound from './pages/NotFound'
 
 const App = () => (
@@ -130,6 +131,18 @@ const App = () => (
                 <BolaoRoute>
                   <Layout>
                     <Chat />
+                  </Layout>
+                </BolaoRoute>
+              }
+            />
+
+            {/* Módulo de Enquetes da Copa Coni (Acessível por todos os participantes) */}
+            <Route
+              path="/bolao/enquetes"
+              element={
+                <BolaoRoute>
+                  <Layout>
+                    <Enquetes />
                   </Layout>
                 </BolaoRoute>
               }
