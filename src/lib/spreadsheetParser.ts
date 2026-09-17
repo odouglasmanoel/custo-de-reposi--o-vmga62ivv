@@ -194,6 +194,9 @@ export function calculateMatchScore(
   predScorersB: string[] = [],
   realScorersA: Array<{ nome: string; posicao: string; quantidade: number }> = [],
   realScorersB: Array<{ nome: string; posicao: string; quantidade: number }> = [],
+  temPenaltis = false,
+  vencedorPenaltisReal?: 'A' | 'B' | string,
+  predVencedorPenaltis?: 'A' | 'B' | 'N' | string,
 ): { pontos: number; detalhamento: string[] } {
   let pontos = 0
   const detalhamento: string[] = []
@@ -228,6 +231,16 @@ export function calculateMatchScore(
     if (predA === realA || predB === realB) {
       pontos += 1
       detalhamento.push('Metade do Placar (+1 pt)')
+    }
+  }
+
+  // Penalties scoring: +2 bonus points when participant predicts the penalty shootout winner
+  if (temPenaltis) {
+    const realPen = (vencedorPenaltisReal || '').toUpperCase().trim()
+    const predPen = (predVencedorPenaltis || '').toUpperCase().trim()
+    if (realPen && predPen && realPen === predPen && (predPen === 'A' || predPen === 'B')) {
+      pontos += 2
+      detalhamento.push('Vencedor nos Pênaltis (+2 pts)')
     }
   }
 

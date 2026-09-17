@@ -65,6 +65,46 @@ describe('calculateMatchScore', () => {
     const res = calculateMatchScore(1, 0, 1, 2)
     expect(res.pontos).toBe(1) // metade do placar
   })
+
+  it('adds +2 bonus points when participant correctly predicts penalty shootout winner (5x4)', () => {
+    // Game ended 1x1 in regular time, went to penalties: Team A won (5x4)
+    // Participant predicted 1x1, with Team A passing on penalties ('A')
+    const res = calculateMatchScore(
+      1,
+      1, // pred placar
+      1,
+      1, // real placar
+      [],
+      [], // pred scorers
+      [],
+      [], // real scorers
+      true, // temPenaltis
+      'A', // vencedorPenaltisReal (e.g. 5 x 4)
+      'A', // predVencedorPenaltis
+    )
+    // 8 (placar exato) + 2 (bônus vencedor pênaltis) = 10 pts
+    expect(res.pontos).toBe(10)
+    expect(res.detalhamento).toContain('Placar Exato (+8 pts)')
+    expect(res.detalhamento).toContain('Vencedor nos Pênaltis (+2 pts)')
+  })
+
+  it('does NOT add +2 bonus points when participant misses penalty shootout winner', () => {
+    // Game ended 1x1, penalties won by Team A ('A')
+    // Participant predicted 1x1, but chose Team B on penalties ('B')
+    const res = calculateMatchScore(1, 1, 1, 1, [], [], [], [], true, 'A', 'B')
+    // 8 (placar exato), sem bônus de pênaltis
+    expect(res.pontos).toBe(8)
+    expect(res.detalhamento).toContain('Placar Exato (+8 pts)')
+    expect(res.detalhamento).not.toContain('Vencedor nos Pênaltis (+2 pts)')
+  })
+
+  it('keeps score unchanged when match does not have penalties (temPenaltis = false)', () => {
+    // Normal game 2x1, no penalties
+    const res = calculateMatchScore(2, 1, 2, 1, [], [], [], [], false, '', 'N')
+    expect(res.pontos).toBe(8)
+    expect(res.detalhamento).toContain('Placar Exato (+8 pts)')
+    expect(res.detalhamento).not.toContain('Vencedor nos Pênaltis (+2 pts)')
+  })
 })
 
 describe('parseSpreadsheet with Copa Genilton structure', () => {

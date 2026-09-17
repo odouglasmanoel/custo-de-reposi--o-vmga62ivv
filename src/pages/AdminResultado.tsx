@@ -47,7 +47,8 @@ export default function AdminResultado() {
 
   // Penalties & API ID
   const [temPenaltis, setTemPenaltis] = useState(false)
-  const [vencedorPenaltis, setVencedorPenaltis] = useState<'A' | 'B' | ''>('')
+  const [penaltisA, setPenaltisA] = useState<number | string>('')
+  const [penaltisB, setPenaltisB] = useState<number | string>('')
   const [fixtureId, setFixtureId] = useState('')
 
   // Normalization mappings state
@@ -83,7 +84,21 @@ export default function AdminResultado() {
           : '',
       )
       setTemPenaltis(!!gameRecord.tem_penaltis)
-      setVencedorPenaltis((gameRecord.vencedor_penaltis as 'A' | 'B') || '')
+      if (gameRecord.tem_penaltis) {
+        if (gameRecord.vencedor_penaltis === 'A') {
+          setPenaltisA(1)
+          setPenaltisB(0)
+        } else if (gameRecord.vencedor_penaltis === 'B') {
+          setPenaltisA(0)
+          setPenaltisB(1)
+        } else {
+          setPenaltisA('')
+          setPenaltisB('')
+        }
+      } else {
+        setPenaltisA('')
+        setPenaltisB('')
+      }
       setFixtureId(gameRecord.fixture_id || '')
 
       // Real scorers
@@ -235,9 +250,25 @@ export default function AdminResultado() {
       return
     }
 
-    if (temPenaltis && !vencedorPenaltis) {
-      setError('Informe o vencedor na disputa por pênaltis.')
-      return
+    let derivedVencedorPenaltis: 'A' | 'B' | '' = ''
+    if (temPenaltis) {
+      if (penaltisA === '' || penaltisB === '') {
+        setError('Por favor, informe o placar dos pênaltis de ambos os times (ex: 5 x 4).')
+        return
+      }
+      const pA = Number(penaltisA)
+      const pB = Number(penaltisB)
+      if (isNaN(pA) || isNaN(pB) || pA < 0 || pB < 0) {
+        setError('Os valores de pênaltis devem ser números válidos maiores ou iguais a 0.')
+        return
+      }
+      if (pA === pB) {
+        setError(
+          'A disputa por pênaltis não pode terminar empatada. Um dos times deve ser o vencedor.',
+        )
+        return
+      }
+      derivedVencedorPenaltis = pA > pB ? 'A' : 'B'
     }
 
     setSaving(true)
@@ -250,7 +281,7 @@ export default function AdminResultado() {
         gols_time_a: golsA.filter((g) => g.nome.trim()),
         gols_time_b: golsB.filter((g) => g.nome.trim()),
         tem_penaltis: temPenaltis,
-        vencedor_penaltis: temPenaltis ? vencedorPenaltis : '',
+        vencedor_penaltis: temPenaltis ? derivedVencedorPenaltis : '',
         fixture_id: fixtureId.trim() || '',
       }
       await pb.collection('jogos').update<Jogo>(jogo.id, gamePayload)
@@ -633,33 +664,64 @@ export default function AdminResultado() {
 
         {temPenaltis && (
           <div className="mt-4 rounded-lg bg-amber-50 p-4 border border-amber-200">
-            <p className="text-xs font-semibold text-amber-900 mb-2">
-              Selecione o vencedor da disputa de pênaltis (+2 pontos para quem acertou):
+            <p className="text-xs font-semibold text-amber-900 mb-1">
+              Placar da Disputa de Pênaltis:
             </p>
-            <div className="flex items-center gap-6">
-              <label className="flex items-center gap-2 text-xs font-medium text-slate-800 cursor-pointer">
-                <input
-                  type="radio"
-                  name="vencedor_penaltis"
-                  value="A"
-                  checked={vencedorPenaltis === 'A'}
-                  onChange={() => setVencedorPenaltis('A')}
-                  className="text-emerald-600 focus:ring-emerald-500"
-                />
-                {jogo.time_a}
-              </label>
+            <p className="text-[11px] text-amber-800 mb-4">
+              Informe o placar das cobranças (ex: 5 x 4). O vencedor será calculado automaticamente
+              e renderá +2 pontos bônus para os participantes que acertaram a equipe vencedora.
+            </p>
 
-              <label className="flex items-center gap-2 text-xs font-medium text-slate-800 cursor-pointer">
-                <input
-                  type="radio"
-                  name="vencedor_penaltis"
-                  value="B"
-                  checked={vencedorPenaltis === 'B'}
-                  onChange={() => setVencedorPenaltis('B')}
-                  className="text-emerald-600 focus:ring-emerald-500"
+            <div className="flex flex-wrap items-center gap-4 sm:gap-6">
+              <div className="w-40">
+                <Label htmlFor="penaltis-a" className="text-xs font-bold text-slate-700">
+                  Pênaltis {jogo.time_a} (Mandante)
+                </Label>
+                <Input
+                  id="penaltis-a"
+                  type="number"
+                  min="0"
+                  value={penaltisA}
+                  onChange={(e) => setPenaltisA(e.target.value)}
+                  placeholder="Ex: 5"
+                  className="mt-1.5 h-11 border-[#CBD5E1] bg-white text-center text-lg font-bold text-[#0F2A43] focus-visible:border-[#10B981] focus-visible:ring-[#10B981]"
                 />
-                {jogo.time_b}
-              </label>
+              </div>
+
+              <div className="pt-6 text-xl font-bold text-slate-400">X</div>
+
+              <div className="w-40">
+                <Label htmlFor="penaltis-b" className="text-xs font-bold text-slate-700">
+                  Pênaltis {jogo.time_b} (Visitante)
+                </Label>
+                <Input
+                  id="penaltis-b"
+                  type="number"
+                  min="0"
+                  value={penaltisB}
+                  onChange={(e) => setPenaltisB(e.target.value)}
+                  placeholder="Ex: 4"
+                  className="mt-1.5 h-11 border-[#CBD5E1] bg-white text-center text-lg font-bold text-[#0F2A43] focus-visible:border-[#10B981] focus-visible:ring-[#10B981]"
+                />
+              </div>
+
+              {penaltisA !== '' && penaltisB !== '' && (
+                <div className="pt-6">
+                  {Number(penaltisA) > Number(penaltisB) ? (
+                    <Badge className="bg-emerald-100 text-emerald-800 border-emerald-300 font-bold px-3 py-1">
+                      Vencedor nos pênaltis: {jogo.time_a} ({penaltisA} x {penaltisB})
+                    </Badge>
+                  ) : Number(penaltisB) > Number(penaltisA) ? (
+                    <Badge className="bg-emerald-100 text-emerald-800 border-emerald-300 font-bold px-3 py-1">
+                      Vencedor nos pênaltis: {jogo.time_b} ({penaltisA} x {penaltisB})
+                    </Badge>
+                  ) : (
+                    <Badge variant="destructive" className="font-bold px-3 py-1">
+                      Empate não permitido nos pênaltis ({penaltisA} x {penaltisB})
+                    </Badge>
+                  )}
+                </div>
+              )}
             </div>
           </div>
         )}
