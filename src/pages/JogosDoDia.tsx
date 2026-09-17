@@ -696,7 +696,51 @@ export default function JogosDoDia() {
       }
     }
 
-    return { homeScorers, awayScorers }
+    // Agrupamento dos gols por jogador no formato solicitado: Jogador (12', 45')
+    const formatGroupedScorers = (list: string[]): string[] => {
+      if (list.length === 0) return []
+      const map = new Map<string, number[]>()
+      const noMinList: string[] = []
+      for (const item of list) {
+        const match = item.match(/^(.*?)(?:\s+(\d+)')?$/)
+        if (match) {
+          const playerName = match[1].trim()
+          const minuteStr = match[2]
+          if (minuteStr) {
+            const minNum = parseInt(minuteStr, 10)
+            if (!map.has(playerName)) {
+              map.set(playerName, [])
+            }
+            map.get(playerName)!.push(minNum)
+          } else {
+            if (!map.has(playerName)) {
+              map.set(playerName, [])
+            }
+          }
+        } else {
+          noMinList.push(item)
+        }
+      }
+
+      const formatted: string[] = []
+      map.forEach((minutes, name) => {
+        if (minutes.length > 0) {
+          const sorted = [...minutes].sort((a, b) => a - b)
+          formatted.push(`${name} (${sorted.map((m) => `${m}'`).join(', ')})`)
+        } else {
+          formatted.push(name)
+        }
+      })
+      for (const nm of noMinList) {
+        if (!formatted.includes(nm)) formatted.push(nm)
+      }
+      return formatted
+    }
+
+    return {
+      homeScorers: formatGroupedScorers(homeScorers),
+      awayScorers: formatGroupedScorers(awayScorers),
+    }
   }
 
   return (

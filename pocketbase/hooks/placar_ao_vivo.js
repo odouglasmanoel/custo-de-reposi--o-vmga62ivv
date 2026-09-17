@@ -1410,6 +1410,7 @@ routerAdd('GET', '/backend/v1/placar-ao-vivo', (e) => {
 
     // Adiciona partidas secundárias (Europa League, Conference, Libertadores, Sul-Americana) via TheSportsDB
     // se o provedor for Football-Data.org ou não houver partidas
+    // Aplica deduplicação por confronto (par de equipes em qualquer ordem + data)
     if (
       provedor === 'football_data' ||
       (directFixtures.length === 0 && liveFixtures.length === 0 && dateFixtures.length === 0)
@@ -1425,14 +1426,16 @@ routerAdd('GET', '/backend/v1/placar-ao-vivo', (e) => {
             var existingF = dateFixtures[dfi]
             var eHome = (existingF.teams && existingF.teams.home && existingF.teams.home.name) || ''
             var eAway = (existingF.teams && existingF.teams.away && existingF.teams.away.name) || ''
-            if (
-              eHome &&
-              eAway &&
-              eHome.toLowerCase() === tHome.toLowerCase() &&
-              eAway.toLowerCase() === tAway.toLowerCase()
-            ) {
-              tDup = true
-              break
+            if (eHome && eAway && tHome && tAway) {
+              var sHomeSame = eHome.toLowerCase() === tHome.toLowerCase()
+              var sAwaySame = eAway.toLowerCase() === tAway.toLowerCase()
+              var sInverted =
+                eHome.toLowerCase() === tAway.toLowerCase() &&
+                eAway.toLowerCase() === tHome.toLowerCase()
+              if ((sHomeSame && sAwaySame) || sInverted) {
+                tDup = true
+                break
+              }
             }
           }
           if (!tDup) {
@@ -2724,21 +2727,15 @@ routerAdd('GET', '/backend/v1/jogos-do-dia', (e) => {
 
     // Se o provedor principal for Football-Data.org (que não cobre Europa League, Conference nem CONMEBOL no plano gratuito)
     // ou se faltarem partidas secundárias no dia, busca no TheSportsDB para adicionar essas competições automaticamente.
+    // Aplica deduplicação rigorosa por data + par de equipes (ignorando ordem mandante/visitante).
     try {
       var tsdbFallbackFixtures = fetchConmebolFromTheSportsDb(dateQuery, theSportsDbKey)
       for (var tsi = 0; tsi < tsdbFallbackFixtures.length; tsi++) {
         var tFix = tsdbFallbackFixtures[tsi]
-        var dHome = (tFix.teams && tFix.teams.home && tFix.teams.home.name) || ''
-        var dAway = (tFix.teams && tFix.teams.away && tFix.teams.away.name) || ''
         var dupFound = false
         for (var rfi = 0; rfi < rawFixtures.length; rfi++) {
           var rf = rawFixtures[rfi]
-          var rfHome = (rf.teams && rf.teams.home && rf.teams.home.name) || ''
-          var rfAway = (rf.teams && rf.teams.away && rf.teams.away.name) || ''
-          if (
-            rfHome.toLowerCase() === dHome.toLowerCase() &&
-            rfAway.toLowerCase() === dAway.toLowerCase()
-          ) {
+          if (isSameMatchConfrontation(rf, tFix)) {
             dupFound = true
             break
           }
