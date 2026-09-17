@@ -239,6 +239,44 @@ routerAdd('GET', '/backend/v1/placar-ao-vivo', (e) => {
                 shortStatus = 'CANC'
               }
 
+              var tsdbScorers = []
+              var tsdbEvents = []
+              var parseTsdbGoalStr = function (detailStr, teamSide, teamId, teamName) {
+                if (typeof detailStr !== 'string' || !detailStr.trim()) return
+                var parts = detailStr.split(';')
+                for (var pi = 0; pi < parts.length; pi++) {
+                  var rawPart = parts[pi].trim()
+                  if (!rawPart) continue
+                  var minMatch = rawPart.match(/(\d+)'?/)
+                  var extractedMin = minMatch ? parseInt(minMatch[1], 10) : null
+                  var nameClean = rawPart
+                    .replace(/^\d+'?:?/, '')
+                    .replace(/\s*\d+'?$/, '')
+                    .trim()
+                  if (nameClean) {
+                    tsdbScorers.push({
+                      name: nameClean,
+                      minute: extractedMin,
+                      teamId: teamId || null,
+                      teamName: teamName || null,
+                      teamSide: teamSide,
+                    })
+                    tsdbEvents.push({
+                      type: 'Goal',
+                      detail: 'Normal Goal',
+                      time: { elapsed: extractedMin },
+                      team: { id: teamId || null, name: teamName || '' },
+                      player: { id: null, name: nameClean },
+                    })
+                  }
+                }
+              }
+
+              var hTeamId = parseInt(ev.idHomeTeam, 10) || null
+              var aTeamId = parseInt(ev.idAwayTeam, 10) || null
+              parseTsdbGoalStr(ev.strHomeGoalDetails, 'home', hTeamId, homeTeam)
+              parseTsdbGoalStr(ev.strAwayGoalDetails, 'away', aTeamId, awayTeam)
+
               conmebolFixtures.push({
                 fixture: {
                   id: 'tsdb_' + (ev.idEvent || cli + '_' + ei),
@@ -261,13 +299,13 @@ routerAdd('GET', '/backend/v1/placar-ao-vivo', (e) => {
                 },
                 teams: {
                   home: {
-                    id: parseInt(ev.idHomeTeam, 10) || 0,
+                    id: hTeamId || 0,
                     name: homeTeam,
                     logo: ev.strHomeTeamBadge || '',
                     country: cl.country || 'Europe',
                   },
                   away: {
-                    id: parseInt(ev.idAwayTeam, 10) || 0,
+                    id: aTeamId || 0,
                     name: awayTeam,
                     logo: ev.strAwayTeamBadge || '',
                     country: cl.country || 'Europe',
@@ -284,7 +322,8 @@ routerAdd('GET', '/backend/v1/placar-ao-vivo', (e) => {
                     away: !isNaN(aScore) ? aScore : null,
                   },
                 },
-                events: [],
+                events: tsdbEvents,
+                scorers: tsdbScorers,
                 isLive: ['1H', 'HT', '2H', 'LIVE'].indexOf(shortStatus) !== -1,
                 provider: 'thesportsdb',
               })
@@ -1821,6 +1860,75 @@ routerAdd('GET', '/backend/v1/jogos-do-dia', (e) => {
       } catch (_) {
         return null
       }
+    }
+
+    // Normalizador de nome de equipe para deduplicação sem falsos negativos
+    var normalizeTeamDedup = function (name) {
+      if (!name) return ''
+      var s = String(name).toLowerCase()
+      try {
+        s = s.normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+      } catch (_) {}
+      s = s.replace(/[^a-z0-9\s]/g, ' ')
+      var tokens = s.split(/\s+/).filter(function (t) {
+        return (
+          t &&
+          [
+            'fc',
+            'ec',
+            'cr',
+            'se',
+            'sc',
+            'clube',
+            'club',
+            'de',
+            'da',
+            'do',
+            'del',
+            'futbol',
+            'futebol',
+            'sport',
+            'afc',
+            'cf',
+          ].indexOf(t) === -1
+        )
+      })
+      if (tokens.length === 0) {
+        return s.replace(/[^a-z0-9]/g, '').trim()
+      }
+      return tokens.join(' ').trim()
+    }
+
+    // Compara se duas equipes são equivalentes
+    var isSameTeamName = function (nameA, nameB) {
+      var normA = normalizeTeamDedup(nameA)
+      var normB = normalizeTeamDedup(nameB)
+      if (!normA || !normB) return false
+      if (normA === normB) return true
+      if (normA.indexOf(normB) !== -1 || normB.indexOf(normA) !== -1) return true
+      return false
+    }
+
+    // Verifica se dois confrontos são o mesmo (mesma data + mesmo par de equipes, ordem invertida inclusa)
+    var isSameMatchConfrontation = function (fixA, fixB) {
+      if (!fixA || !fixB) return false
+      var dateA = toDateStringSaoPaulo(fixA.fixture && fixA.fixture.date)
+      var dateB = toDateStringSaoPaulo(fixB.fixture && fixB.fixture.date)
+      if (dateA && dateB && dateA !== dateB) return false
+
+      var homeA = (fixA.teams && fixA.teams.home && fixA.teams.home.name) || ''
+      var awayA = (fixA.teams && fixA.teams.away && fixA.teams.away.name) || ''
+      var homeB = (fixB.teams && fixB.teams.home && fixB.teams.home.name) || ''
+      var awayB = (fixB.teams && fixB.teams.away && fixB.teams.away.name) || ''
+
+      if (!homeA || !awayA || !homeB || !awayB) return false
+
+      // Ordem direta
+      var direct = isSameTeamName(homeA, homeB) && isSameTeamName(awayA, awayB)
+      // Ordem invertida (cadastro invertido entre fontes)
+      var inverted = isSameTeamName(homeA, awayB) && isSameTeamName(awayA, homeB)
+
+      return direct || inverted
     }
 
     // Função interna para normalizar dados do Football-Data.org para jogos-do-dia
