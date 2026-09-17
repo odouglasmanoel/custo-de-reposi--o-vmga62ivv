@@ -194,6 +194,7 @@ export default function Enquetes() {
 
   useEffect(() => {
     if (enqueteAtivaId) {
+      setFiltroCategoria('todos')
       carregarDetalhesEnquete(enqueteAtivaId, true)
     }
   }, [enqueteAtivaId, carregarDetalhesEnquete])
@@ -234,30 +235,36 @@ export default function Enquetes() {
     return comVotos.slice(0, 4)
   }, [jogosEnquete])
 
+  // Lista dinâmica de competições presentes nos jogos da enquete ativa, com contagem de jogos
+  const competicoesEnquete = useMemo(() => {
+    const counts = new Map<string, number>()
+    for (const j of jogosEnquete) {
+      const nomeComp = (j.campeonato || '').trim() || 'Outros'
+      counts.set(nomeComp, (counts.get(nomeComp) || 0) + 1)
+    }
+
+    // Ordena por contagem decrescente e em caso de empate, alfabeticamente
+    return Array.from(counts.entries())
+      .map(([nome, total]) => ({ nome, total }))
+      .sort((a, b) => {
+        if (b.total !== a.total) {
+          return b.total - a.total
+        }
+        return a.nome.localeCompare(b.nome, 'pt-BR')
+      })
+  }, [jogosEnquete])
+
   // Filtro de jogos na lista de votação
   const jogosFiltradosVotacao = useMemo(() => {
     if (filtroCategoria === 'todos') return jogosEnquete
-    if (filtroCategoria === 'brasileirao') {
-      return jogosEnquete.filter(
-        (j) =>
-          j.campeonato?.toLowerCase().includes('brasileir') ||
-          j.regiao?.toLowerCase().includes('brasileir'),
-      )
-    }
-    if (filtroCategoria === 'champions') {
-      return jogosEnquete.filter((j) => j.campeonato?.toLowerCase().includes('champions'))
-    }
-    if (filtroCategoria === 'europa') {
-      return jogosEnquete.filter(
-        (j) =>
-          !j.campeonato?.toLowerCase().includes('brasileir') &&
-          !j.campeonato?.toLowerCase().includes('champions'),
-      )
-    }
     if (filtroCategoria === 'meus-votos') {
       return jogosEnquete.filter((j) => meusVotosIds.has(j.id))
     }
-    return jogosEnquete
+    // Filtro dinâmico por competição exata
+    return jogosEnquete.filter((j) => {
+      const nomeComp = (j.campeonato || '').trim() || 'Outros'
+      return nomeComp === filtroCategoria
+    })
   }, [jogosEnquete, filtroCategoria, meusVotosIds])
 
   // Ação: Votar / Desmarcar Jogo
@@ -940,65 +947,53 @@ export default function Enquetes() {
 
           {/* ABA 1: Votação dos Participantes */}
           <TabsContent value="votacao" className="mt-4 space-y-4">
-            {/* Filtros rápidos da lista de votação */}
+            {/* Filtros rápidos da lista de votação gerados dinamicamente */}
             <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-slate-200 bg-white p-3 shadow-xs">
               <div className="flex flex-wrap items-center gap-1.5">
                 <span className="text-xs font-bold text-slate-500">Filtrar:</span>
+
+                {/* Botão Fixo: Todos */}
                 <Button
                   variant={filtroCategoria === 'todos' ? 'default' : 'ghost'}
                   size="sm"
                   onClick={() => setFiltroCategoria('todos')}
-                  className={`h-7 px-2.5 text-xs ${
+                  className={`h-7 px-2.5 text-xs font-medium transition ${
                     filtroCategoria === 'todos'
-                      ? 'bg-[#0F2A43] text-white'
+                      ? 'bg-[#0F2A43] text-white hover:bg-[#1B3A5C]'
                       : 'text-slate-600 hover:bg-slate-100'
                   }`}
                 >
                   Todos ({jogosEnquete.length})
                 </Button>
-                <Button
-                  variant={filtroCategoria === 'brasileirao' ? 'default' : 'ghost'}
-                  size="sm"
-                  onClick={() => setFiltroCategoria('brasileirao')}
-                  className={`h-7 px-2.5 text-xs ${
-                    filtroCategoria === 'brasileirao'
-                      ? 'bg-[#0F2A43] text-white'
-                      : 'text-slate-600 hover:bg-slate-100'
-                  }`}
-                >
-                  Brasileirão Série A
-                </Button>
-                <Button
-                  variant={filtroCategoria === 'champions' ? 'default' : 'ghost'}
-                  size="sm"
-                  onClick={() => setFiltroCategoria('champions')}
-                  className={`h-7 px-2.5 text-xs ${
-                    filtroCategoria === 'champions'
-                      ? 'bg-[#0F2A43] text-white'
-                      : 'text-slate-600 hover:bg-slate-100'
-                  }`}
-                >
-                  Champions League
-                </Button>
-                <Button
-                  variant={filtroCategoria === 'europa' ? 'default' : 'ghost'}
-                  size="sm"
-                  onClick={() => setFiltroCategoria('europa')}
-                  className={`h-7 px-2.5 text-xs ${
-                    filtroCategoria === 'europa'
-                      ? 'bg-[#0F2A43] text-white'
-                      : 'text-slate-600 hover:bg-slate-100'
-                  }`}
-                >
-                  Grandes da Europa
-                </Button>
+
+                {/* Botões Dinâmicos: Um para cada competição presente nos jogos */}
+                {competicoesEnquete.map((comp) => {
+                  const isSelected = filtroCategoria === comp.nome
+                  return (
+                    <Button
+                      key={comp.nome}
+                      variant={isSelected ? 'default' : 'ghost'}
+                      size="sm"
+                      onClick={() => setFiltroCategoria(comp.nome)}
+                      className={`h-7 px-2.5 text-xs font-medium transition ${
+                        isSelected
+                          ? 'bg-[#0F2A43] text-white hover:bg-[#1B3A5C]'
+                          : 'text-slate-600 hover:bg-slate-100'
+                      }`}
+                    >
+                      {comp.nome} ({comp.total})
+                    </Button>
+                  )
+                })}
+
+                {/* Botão Fixo: Meus Votos com contador de 8 */}
                 <Button
                   variant={filtroCategoria === 'meus-votos' ? 'default' : 'ghost'}
                   size="sm"
                   onClick={() => setFiltroCategoria('meus-votos')}
-                  className={`h-7 px-2.5 text-xs ${
+                  className={`h-7 px-2.5 text-xs font-medium transition ${
                     filtroCategoria === 'meus-votos'
-                      ? 'bg-emerald-600 text-white'
+                      ? 'bg-emerald-600 text-white hover:bg-emerald-700'
                       : 'text-emerald-700 hover:bg-emerald-50'
                   }`}
                 >
@@ -1010,6 +1005,31 @@ export default function Enquetes() {
                 Mostrando {jogosFiltradosVotacao.length} jogo(s)
               </div>
             </div>
+
+            {/* Mensagem amigável quando nenhum jogo bate com o filtro */}
+            {jogosFiltradosVotacao.length === 0 && (
+              <div className="rounded-lg border border-dashed border-slate-300 bg-slate-50/50 p-8 text-center">
+                <Vote className="mx-auto h-8 w-8 text-slate-400" />
+                <p className="mt-2 text-sm font-semibold text-slate-700">
+                  {filtroCategoria === 'meus-votos'
+                    ? 'Você ainda não votou em nenhuma partida nesta enquete.'
+                    : 'Nenhum jogo encontrado para o filtro selecionado.'}
+                </p>
+                <p className="mt-1 text-xs text-slate-500">
+                  {filtroCategoria === 'meus-votos'
+                    ? 'Clique nas partidas abaixo no filtro "Todos" para selecionar até 8 confrontos.'
+                    : 'Selecione "Todos" para visualizar todas as partidas disponíveis para votação.'}
+                </p>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setFiltroCategoria('todos')}
+                  className="mt-3 text-xs"
+                >
+                  Ver Todos os Jogos
+                </Button>
+              </div>
+            )}
 
             {/* Grade de Confrontos para Votação */}
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
