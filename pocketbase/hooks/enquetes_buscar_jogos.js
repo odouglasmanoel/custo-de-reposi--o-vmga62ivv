@@ -17,17 +17,31 @@ routerAdd(
         return e.unauthorizedError('Usuário não autenticado')
       }
 
-      // Coleta data_inicio e data_fim (formato YYYY-MM-DD)
-      var dataInicio = (e.requestInfo().query.data_inicio || '').trim()
-      var dataFim = (e.requestInfo().query.data_fim || '').trim()
+      // Helper para normalizar data para YYYY-MM-DD
+      var normalizeDateInput = function (raw) {
+        if (!raw) return ''
+        var s = String(raw).trim()
+        if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s
+        var br = s.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/)
+        if (br) {
+          var dia = ('0' + br[1]).slice(-2)
+          var mes = ('0' + br[2]).slice(-2)
+          var ano = br[3]
+          return ano + '-' + mes + '-' + dia
+        }
+        return s
+      }
+
+      // Coleta data_inicio e data_fim
+      var dataInicio = normalizeDateInput(e.requestInfo().query.data_inicio || '')
+      var dataFim = normalizeDateInput(e.requestInfo().query.data_fim || '')
 
       // Valida formato das datas
       if (!/^\d{4}-\d{2}-\d{2}$/.test(dataInicio) || !/^\d{4}-\d{2}-\d{2}$/.test(dataFim)) {
         return e.badRequestError(
-          'Formato de data inválido. Use YYYY-MM-DD para data_inicio e data_fim.',
+          'Formato de data inválido. Use YYYY-MM-DD ou DD/MM/YYYY para data_inicio e data_fim.',
         )
       }
-
       if (dataInicio > dataFim) {
         return e.badRequestError('data_inicio não pode ser posterior a data_fim.')
       }
@@ -192,6 +206,8 @@ routerAdd(
               'sport',
               'afc',
               'cf',
+              'ac',
+              'as',
             ].indexOf(t) === -1
           )
         })
@@ -204,13 +220,23 @@ routerAdd(
         if (!na || !nb) return false
         return na === nb || na.indexOf(nb) !== -1 || nb.indexOf(na) !== -1
       }
+      // Normalizador de texto para checagem flexível de ligas
+      var normalizeLeagueName = function (s) {
+        if (!s) return ''
+        var str = String(s).toLowerCase()
+        try {
+          str = str.normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+        } catch (_) {}
+        return str
+      }
 
       // Ligas prioritárias para Copa Coni:
       // 1. Série A do Brasileirão
       // 2. Champions League
       // 3. Grandes da Europa (Premier League, La Liga, Serie A Itália, Bundesliga, Ligue 1)
+      // 4. Copas e torneios sul-americanos (Libertadores, Copa do Brasil, Sul-Americana, Europa League)
       var isTargetCompetition = function (leagueId, leagueName, compCode) {
-        var name = (leagueName || '').toLowerCase()
+        var name = normalizeLeagueName(leagueName)
         var code = (compCode || '').toUpperCase()
 
         // Brasileirão Série A
@@ -219,7 +245,9 @@ routerAdd(
           leagueId === 2013 ||
           code === 'BSA' ||
           name.indexOf('brasileiro serie a') !== -1 ||
-          name.indexOf('brasileirão') !== -1
+          (name.indexOf('serie a') !== -1 &&
+            (name.indexOf('brasil') !== -1 || name.indexOf('brazil') !== -1)) ||
+          name.indexOf('brasileirao') !== -1
         ) {
           return { valid: true, categoria: 'Brasileirão Série A', prioridade: 1 }
         }
@@ -257,7 +285,7 @@ routerAdd(
           leagueId === 135 ||
           leagueId === 2019 ||
           code === 'SA' ||
-          (name.indexOf('serie a') !== -1 && name.indexOf('ital') !== -1)
+          (name.indexOf('serie a') !== -1 && (name.indexOf('ital') !== -1 || code === 'SA'))
         ) {
           return { valid: true, categoria: 'Serie A (Itália)', prioridade: 5 }
         }
@@ -280,12 +308,40 @@ routerAdd(
           return { valid: true, categoria: 'Ligue 1 (França)', prioridade: 7 }
         }
         // Libertadores
-        if (leagueId === 13 || name.indexOf('libertadores') !== -1) {
+        if (
+          leagueId === 13 ||
+          leagueId === 4501 ||
+          code === 'CLI' ||
+          name.indexOf('libertadores') !== -1
+        ) {
           return { valid: true, categoria: 'Copa Libertadores', prioridade: 8 }
         }
         // Copa do Brasil
-        if (leagueId === 73 || name.indexOf('copa do brasil') !== -1) {
+        if (
+          leagueId === 73 ||
+          name.indexOf('copa do brasil') !== -1 ||
+          name.indexOf('copa de brasil') !== -1
+        ) {
           return { valid: true, categoria: 'Copa do Brasil', prioridade: 9 }
+        }
+        // Europa League
+        if (
+          leagueId === 3 ||
+          leagueId === 2146 ||
+          leagueId === 4481 ||
+          code === 'EL' ||
+          name.indexOf('europa league') !== -1
+        ) {
+          return { valid: true, categoria: 'UEFA Europa League', prioridade: 10 }
+        }
+        // Copa Sudamericana
+        if (
+          leagueId === 11 ||
+          leagueId === 4724 ||
+          name.indexOf('sudamericana') !== -1 ||
+          name.indexOf('sul-americana') !== -1
+        ) {
+          return { valid: true, categoria: 'Copa Sul-Americana', prioridade: 11 }
         }
 
         return { valid: false, categoria: '', prioridade: 99 }
@@ -321,87 +377,10 @@ routerAdd(
           }
         }
 
-        // 2. Se não está em cache, faz chamada ao endpoint de API correspondente respeitando contingência
+        // 2. Se não está em cache, faz chamada aos provedores externos com contingência
         if (dayFixturesForDate.length === 0) {
-          // Tenta Football-Data.org para intervalo se configurado ou se API-Football não disponível
-          if (provedor === 'football_data' || !apiKey) {
-            var fdToken = apiKey || fallbackApiKey
-            if (fdToken) {
-              try {
-                var resFD = $http.send({
-                  url:
-                    'https://api.football-data.org/v4/matches?dateFrom=' +
-                    encodeURIComponent(targetDate) +
-                    '&dateTo=' +
-                    encodeURIComponent(targetDate),
-                  method: 'GET',
-                  headers: { 'X-Auth-Token': fdToken },
-                  timeout: 8,
-                })
-
-                if (
-                  resFD &&
-                  resFD.statusCode === 200 &&
-                  resFD.json &&
-                  Array.isArray(resFD.json.matches)
-                ) {
-                  for (var fmi = 0; fmi < resFD.json.matches.length; fmi++) {
-                    var m = resFD.json.matches[fmi]
-                    var mDateSP = toDateStringSaoPaulo(m.utcDate) || targetDate
-                    var mTimeSP = toTimeStringSaoPaulo(m.utcDate)
-                    var compCode = (m.competition && m.competition.code) || ''
-                    var compName = (m.competition && m.competition.name) || ''
-                    var compId = (m.competition && m.competition.id) || 0
-
-                    var targetCheck = isTargetCompetition(compId, compName, compCode)
-                    if (!targetCheck.valid) continue
-
-                    dayFixturesForDate.push({
-                      fixture: {
-                        id: String(m.id),
-                        date: m.utcDate,
-                        status: { short: m.status || 'NS' },
-                      },
-                      league: {
-                        id: compId,
-                        name: targetCheck.categoria,
-                        categoria: targetCheck.categoria,
-                        prioridade: targetCheck.prioridade,
-                        logo: (m.competition && m.competition.emblem) || '',
-                        region:
-                          targetCheck.categoria.indexOf('Brasileir') !== -1
-                            ? 'Brasileirão & Copas'
-                            : 'Futebol Europeu',
-                      },
-                      teams: {
-                        home: {
-                          id: m.homeTeam ? m.homeTeam.id : 0,
-                          name: (m.homeTeam && (m.homeTeam.name || m.homeTeam.shortName)) || '',
-                          logo: (m.homeTeam && m.homeTeam.crest) || '',
-                        },
-                        away: {
-                          id: m.awayTeam ? m.awayTeam.id : 0,
-                          name: (m.awayTeam && (m.awayTeam.name || m.awayTeam.shortName)) || '',
-                          logo: (m.awayTeam && m.awayTeam.crest) || '',
-                        },
-                      },
-                      dateSP: mDateSP,
-                      timeSP: mTimeSP,
-                      provider: 'football_data',
-                    })
-                  }
-                }
-              } catch (errFD) {
-                console.log(
-                  '[Enquetes] Erro ao consultar Football-Data para ' + targetDate + ':',
-                  errFD,
-                )
-              }
-            }
-          }
-
-          // Tenta API-Football se provedor for api_football ou se Football-Data retornou vazio
-          if (dayFixturesForDate.length === 0 && apiKey && apiKey !== fallbackApiKey) {
+          // A) API-Football: se configurada, tenta consultar a data
+          if (apiKey && apiKey !== fallbackApiKey) {
             var baseUrl = isRapidApi
               ? 'https://api-football-v1.p.rapidapi.com/v3/fixtures'
               : 'https://v3.football.api-sports.io/fixtures'
@@ -482,6 +461,185 @@ routerAdd(
                 '[Enquetes] Erro ao consultar API-Football para ' + targetDate + ':',
                 errAF,
               )
+            }
+          }
+
+          // B) Football-Data.org: se API-Football não retornou jogos (ou estourou cota/vazio), aciona contingência
+          var fdTokenToUse = fallbackApiKey || (provedor === 'football_data' ? apiKey : '')
+          if (dayFixturesForDate.length === 0 && fdTokenToUse) {
+            try {
+              // Converte data alvo para intervalo dateFrom/dateTo
+              var resFD = $http.send({
+                url:
+                  'https://api.football-data.org/v4/matches?dateFrom=' +
+                  encodeURIComponent(targetDate) +
+                  '&dateTo=' +
+                  encodeURIComponent(targetDate),
+                method: 'GET',
+                headers: { 'X-Auth-Token': fdTokenToUse },
+                timeout: 8,
+              })
+
+              if (
+                resFD &&
+                resFD.statusCode === 200 &&
+                resFD.json &&
+                Array.isArray(resFD.json.matches)
+              ) {
+                for (var fmi = 0; fmi < resFD.json.matches.length; fmi++) {
+                  var m = resFD.json.matches[fmi]
+                  var mDateSP = toDateStringSaoPaulo(m.utcDate) || targetDate
+                  var mTimeSP = toTimeStringSaoPaulo(m.utcDate)
+                  var compCode = (m.competition && m.competition.code) || ''
+                  var compName = (m.competition && m.competition.name) || ''
+                  var compId = (m.competition && m.competition.id) || 0
+
+                  var targetCheck = isTargetCompetition(compId, compName, compCode)
+                  if (!targetCheck.valid) continue
+
+                  dayFixturesForDate.push({
+                    fixture: {
+                      id: String(m.id),
+                      date: m.utcDate,
+                      status: { short: m.status || 'NS' },
+                    },
+                    league: {
+                      id: compId,
+                      name: targetCheck.categoria,
+                      categoria: targetCheck.categoria,
+                      prioridade: targetCheck.prioridade,
+                      logo: (m.competition && m.competition.emblem) || '',
+                      region:
+                        targetCheck.categoria.indexOf('Brasileir') !== -1
+                          ? 'Brasileirão & Copas'
+                          : 'Futebol Europeu',
+                    },
+                    teams: {
+                      home: {
+                        id: m.homeTeam ? m.homeTeam.id : 0,
+                        name: (m.homeTeam && (m.homeTeam.name || m.homeTeam.shortName)) || '',
+                        logo: (m.homeTeam && m.homeTeam.crest) || '',
+                      },
+                      away: {
+                        id: m.awayTeam ? m.awayTeam.id : 0,
+                        name: (m.awayTeam && (m.awayTeam.name || m.awayTeam.shortName)) || '',
+                        logo: (m.awayTeam && m.awayTeam.crest) || '',
+                      },
+                    },
+                    dateSP: mDateSP,
+                    timeSP: mTimeSP,
+                    provider: 'football_data',
+                  })
+                }
+              }
+            } catch (errFD) {
+              console.log(
+                '[Enquetes] Erro ao consultar Football-Data para ' + targetDate + ':',
+                errFD,
+              )
+            }
+          }
+
+          // C) TheSportsDB: se ainda assim estiver vazio, ou para complementar ligas secundárias / sul-americanas
+          try {
+            var tsdbKeyToUse = theSportsDbKey || '3'
+            var tsdbConmebolLeagues = [
+              { id: 4501, name: 'Copa Libertadores', cat: 'Copa Libertadores', prio: 8 },
+              { id: 4724, name: 'Copa Sudamericana', cat: 'Copa Sul-Americana', prio: 11 },
+              {
+                id: 4328,
+                name: 'English Premier League',
+                cat: 'Premier League (Inglaterra)',
+                prio: 3,
+              },
+              { id: 4335, name: 'Spanish La Liga', cat: 'La Liga (Espanha)', prio: 4 },
+              { id: 4332, name: 'Italian Serie A', cat: 'Serie A (Itália)', prio: 5 },
+              { id: 4331, name: 'German Bundesliga', cat: 'Bundesliga (Alemanha)', prio: 6 },
+              { id: 4334, name: 'French Ligue 1', cat: 'Ligue 1 (França)', prio: 7 },
+              { id: 4481, name: 'UEFA Europa League', cat: 'UEFA Europa League', prio: 10 },
+              { id: 4480, name: 'UEFA Champions League', cat: 'Champions League', prio: 2 },
+            ]
+
+            for (var tli = 0; tli < tsdbConmebolLeagues.length; tli++) {
+              var tLeague = tsdbConmebolLeagues[tli]
+              // Se já temos muitas partidas e a liga já está coberta, pode evitar chamadas excessivas
+              var resTsdb = $http.send({
+                url:
+                  'https://www.thesportsdb.com/api/v1/json/' +
+                  encodeURIComponent(tsdbKeyToUse) +
+                  '/eventsday.php?d=' +
+                  encodeURIComponent(targetDate) +
+                  '&l=' +
+                  encodeURIComponent(tLeague.id),
+                method: 'GET',
+                timeout: 8,
+              })
+
+              if (
+                resTsdb &&
+                resTsdb.statusCode === 200 &&
+                resTsdb.json &&
+                Array.isArray(resTsdb.json.events)
+              ) {
+                for (var tei = 0; tei < resTsdb.json.events.length; tei++) {
+                  var ev = resTsdb.json.events[tei]
+                  var hName = (ev.strHomeTeam || '').trim()
+                  var aName = (ev.strAwayTeam || '').trim()
+                  if (!hName || !aName) continue
+
+                  var evTimeStr = (ev.strTime || '20:00:00').slice(0, 5)
+
+                  dayFixturesForDate.push({
+                    fixture: {
+                      id: 'tsdb_' + (ev.idEvent || tLeague.id + '_' + tei),
+                      date: ev.dateEvent
+                        ? ev.dateEvent + 'T' + (ev.strTime || '20:00:00') + 'Z'
+                        : targetDate,
+                      status: { short: 'NS' },
+                    },
+                    league: {
+                      id: tLeague.id,
+                      name: tLeague.cat,
+                      categoria: tLeague.cat,
+                      prioridade: tLeague.prio,
+                      logo: ev.strLeagueBadge || ev.strBadge || '',
+                      region:
+                        tLeague.cat.indexOf('Brasileir') !== -1 ||
+                        tLeague.cat.indexOf('Copa') !== -1
+                          ? 'Brasileirão & Copas'
+                          : 'Futebol Europeu',
+                    },
+                    teams: {
+                      home: {
+                        id: parseInt(ev.idHomeTeam, 10) || 0,
+                        name: hName,
+                        logo: ev.strHomeTeamBadge || '',
+                      },
+                      away: {
+                        id: parseInt(ev.idAwayTeam, 10) || 0,
+                        name: aName,
+                        logo: ev.strAwayTeamBadge || '',
+                      },
+                    },
+                    dateSP: ev.dateEvent || targetDate,
+                    timeSP: evTimeStr || '20:00',
+                    provider: 'thesportsdb',
+                  })
+                }
+              }
+            }
+          } catch (errTsdb) {
+            console.log(
+              '[Enquetes] Erro ao consultar TheSportsDB para ' + targetDate + ':',
+              errTsdb,
+            )
+          }
+
+          // Se encontramos partidas para a data, grava no store em memória
+          if (dayStore && dayFixturesForDate.length > 0) {
+            dayStore[targetDate] = {
+              timestamp: nowMs,
+              payload: { fixtures: dayFixturesForDate },
             }
           }
         }

@@ -87,14 +87,55 @@ export function getDefaultDatasIntervalo(): { dataInicio: string; dataFim: strin
 /**
  * Busca jogos do intervalo via endpoint backend com cache e contingência
  */
+/**
+ * Converte qualquer formato de data (ex: DD/MM/YYYY, DD-MM-YYYY, YYYY-MM-DD)
+ * rigorosamente para o formato aceito pelas APIs: YYYY-MM-DD
+ */
+export function formatToISOQueryDate(input: string): string {
+  if (!input) return ''
+  const trimmed = input.trim()
+
+  // Se já está no formato YYYY-MM-DD
+  if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
+    return trimmed
+  }
+
+  // Se estiver no formato DD/MM/YYYY ou DD-MM-YYYY
+  const brMatch = trimmed.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{4})$/)
+  if (brMatch) {
+    const dia = ('0' + brMatch[1]).slice(-2)
+    const mes = ('0' + brMatch[2]).slice(-2)
+    const ano = brMatch[3]
+    return `${ano}-${mes}-${dia}`
+  }
+
+  // Tenta parse via Date
+  const parsed = new Date(trimmed)
+  if (!isNaN(parsed.getTime())) {
+    const y = parsed.getUTCFullYear()
+    const m = ('0' + (parsed.getUTCMonth() + 1)).slice(-2)
+    const d = ('0' + parsed.getUTCDate()).slice(-2)
+    return `${y}-${m}-${d}`
+  }
+
+  return trimmed
+}
+
+/**
+ * Busca jogos do intervalo via endpoint backend com cache e contingência
+ */
 export async function buscarJogosIntervalo(
   dataInicio: string,
   dataFim: string,
 ): Promise<JogoBuscado[]> {
   const token = pb.authStore.token
-  const baseUrl = import.meta.env.VITE_POCKETBASE_URL
+  const baseUrl = import.meta.env.VITE_POCKETBASE_URL || ''
+
+  const inicioISO = formatToISOQueryDate(dataInicio)
+  const fimISO = formatToISOQueryDate(dataFim)
+
   const res = await fetch(
-    `${baseUrl}/backend/v1/enquetes/buscar-jogos?data_inicio=${encodeURIComponent(dataInicio)}&data_fim=${encodeURIComponent(dataFim)}`,
+    `${baseUrl}/backend/v1/enquetes/buscar-jogos?data_inicio=${encodeURIComponent(inicioISO)}&data_fim=${encodeURIComponent(fimISO)}`,
     {
       headers: {
         Authorization: token ? `Bearer ${token}` : '',
