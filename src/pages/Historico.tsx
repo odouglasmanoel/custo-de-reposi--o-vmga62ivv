@@ -12,12 +12,9 @@ import { Badge } from '@/components/ui/badge'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { formatDataBR, formatHoraBR, formatDateTimeBR } from '@/lib/dateUtils'
-import {
-  formatPalpiteMarcadoresSummary,
-  getPalpiteMarcadoresPorTime,
-  splitMatchScorersByTeam,
-} from '@/lib/scorerUtils'
+import { getPalpiteMarcadoresPorTime, splitMatchScorersByTeam } from '@/lib/scorerUtils'
 import { AdminEditMarcadoresModal } from '@/components/AdminEditMarcadoresModal'
+import { getScoreBreakdownBadges } from '@/lib/scoreBadgeUtils'
 
 interface HistoricoPoolCache {
   participantes: Participante[]
@@ -592,6 +589,20 @@ export default function Historico() {
                     {jogos.map((jogo) => {
                       const gameBets = palpites.filter((p) => p.jogo === jogo.id)
 
+                      const penWinnerTeam =
+                        jogo.vencedor_penaltis === 'A'
+                          ? jogo.time_a
+                          : jogo.vencedor_penaltis === 'B'
+                            ? jogo.time_b
+                            : (jogo.vencedor_penaltis || '').trim()
+
+                      const shouldShowPenalties = Boolean(
+                        jogo.resultado_finalizado &&
+                        (jogo.tem_penaltis || penWinnerTeam) &&
+                        penWinnerTeam &&
+                        penWinnerTeam !== 'N',
+                      )
+
                       return (
                         <div key={jogo.id} className="p-4 bg-white hover:bg-slate-50/70">
                           <div className="flex flex-wrap items-center justify-between gap-2">
@@ -621,6 +632,15 @@ export default function Historico() {
                               {formatDataBR(jogo.data)} às {formatHoraBR(jogo.hora)}
                             </span>
                           </div>
+
+                          {/* Indicação de Vencedor nos Pênaltis / Classificado em mata-mata */}
+                          {shouldShowPenalties && (
+                            <div className="mt-1 flex items-center gap-1.5 text-xs font-semibold text-indigo-700">
+                              <span className="inline-flex items-center rounded-md border border-indigo-200 bg-indigo-50 px-2 py-0.5 text-[11px]">
+                                (Nos Pênaltis: {penWinnerTeam})
+                              </span>
+                            </div>
+                          )}
 
                           {/* Goal scorers if any: separados por mandante e visitante */}
                           {(() => {
@@ -794,8 +814,55 @@ export default function Historico() {
                                             )
                                           })()}
                                           {jogo.resultado_finalizado && (
-                                            <div className="mt-1 font-semibold text-emerald-700">
-                                              +{bet.pontuacao_jogo} pts
+                                            <div className="mt-1.5 pt-1 border-t border-slate-200/50">
+                                              <div className="font-bold text-emerald-700 text-xs">
+                                                +{bet.pontuacao_jogo} pts
+                                              </div>
+
+                                              {/* Badges discriminando as regras atingidas */}
+                                              {(() => {
+                                                const badges = getScoreBreakdownBadges(bet, jogo)
+                                                if (badges.length === 0) return null
+
+                                                return (
+                                                  <div className="mt-1.5 flex flex-wrap gap-1">
+                                                    {badges.map((b) => {
+                                                      let styleClass =
+                                                        'bg-slate-100 text-slate-700 border-slate-200'
+                                                      if (b.variant === 'exact') {
+                                                        styleClass =
+                                                          'bg-amber-100 text-amber-900 border-amber-300 font-semibold'
+                                                      } else if (b.variant === 'winner') {
+                                                        styleClass =
+                                                          'bg-emerald-100 text-emerald-900 border-emerald-300'
+                                                      } else if (b.variant === 'penalties') {
+                                                        styleClass =
+                                                          'bg-indigo-100 text-indigo-900 border-indigo-300'
+                                                      } else if (b.variant === 'half') {
+                                                        styleClass =
+                                                          'bg-blue-100 text-blue-900 border-blue-300'
+                                                      } else if (b.variant === 'scorer') {
+                                                        styleClass =
+                                                          'bg-violet-100 text-violet-900 border-violet-300'
+                                                      }
+
+                                                      return (
+                                                        <span
+                                                          key={b.id}
+                                                          className={`inline-flex items-center rounded border px-1.5 py-0.5 text-[9px] leading-tight ${styleClass}`}
+                                                          title={
+                                                            b.pointsText
+                                                              ? `${b.label} (${b.pointsText} pts)`
+                                                              : b.label
+                                                          }
+                                                        >
+                                                          {b.label}
+                                                        </span>
+                                                      )
+                                                    })}
+                                                  </div>
+                                                )
+                                              })()}
                                             </div>
                                           )}
                                         </div>
