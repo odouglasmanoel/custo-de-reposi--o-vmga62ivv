@@ -134,15 +134,41 @@ routerAdd('GET', '/backend/v1/placar-ao-vivo', (e) => {
       apiKey = theSportsDbKey
     }
 
-    // Função utilitária para buscar partidas da Copa Sudamericana e Copa Libertadores no TheSportsDB
+    // Função utilitária para buscar partidas no TheSportsDB (CONMEBOL + UEFA secundárias)
     // Converte para a estrutura esperada de rawFixtures (formato API-Football)
     var fetchConmebolFromTheSportsDb = function (targetDate, apiKeyTsdb) {
       if (!targetDate) return []
       var key = apiKeyTsdb || '3'
       var conmebolFixtures = []
       var conmebolLeagues = [
-        { id: 4501, name: 'Copa Libertadores', shortId: 13 },
-        { id: 4724, name: 'Copa Sudamericana', shortId: 11 },
+        {
+          id: 4501,
+          name: 'Copa Libertadores',
+          shortId: 13,
+          region: 'Sul-Americana',
+          country: 'South America',
+        },
+        {
+          id: 4724,
+          name: 'Copa Sudamericana',
+          shortId: 11,
+          region: 'Sul-Americana',
+          country: 'South America',
+        },
+        {
+          id: 4481,
+          name: 'UEFA Europa League',
+          shortId: 3,
+          region: 'Futebol Europeu',
+          country: 'Europe',
+        },
+        {
+          id: 5071,
+          name: 'UEFA Europa Conference League',
+          shortId: 848,
+          region: 'Futebol Europeu',
+          country: 'Europe',
+        },
       ]
 
       for (var cli = 0; cli < conmebolLeagues.length; cli++) {
@@ -227,24 +253,24 @@ routerAdd('GET', '/backend/v1/placar-ao-vivo', (e) => {
                 league: {
                   id: cl.shortId,
                   name: ev.strLeague || cl.name,
-                  country: 'South America',
+                  country: cl.country || 'Europe',
                   logo: ev.strLeagueBadge || ev.strBadge || '',
                   flag: '',
                   round: ev.strRound || '',
-                  region: 'Sul-Americana',
+                  region: cl.region || 'Sul-Americana',
                 },
                 teams: {
                   home: {
                     id: parseInt(ev.idHomeTeam, 10) || 0,
                     name: homeTeam,
                     logo: ev.strHomeTeamBadge || '',
-                    country: 'South America',
+                    country: cl.country || 'Europe',
                   },
                   away: {
                     id: parseInt(ev.idAwayTeam, 10) || 0,
                     name: awayTeam,
                     logo: ev.strAwayTeamBadge || '',
-                    country: 'South America',
+                    country: cl.country || 'Europe',
                   },
                 },
                 goals: {
@@ -265,7 +291,7 @@ routerAdd('GET', '/backend/v1/placar-ao-vivo', (e) => {
             }
           }
         } catch (errTsdbLeague) {
-          console.log('[TheSportsDB Conmebol] Erro ao buscar liga ' + cl.name + ':', errTsdbLeague)
+          console.log('[TheSportsDB Fallback] Erro ao buscar liga ' + cl.name + ':', errTsdbLeague)
         }
       }
 
@@ -1343,7 +1369,8 @@ routerAdd('GET', '/backend/v1/placar-ao-vivo', (e) => {
       }
     }
 
-    // Adiciona partidas da CONMEBOL via TheSportsDB se o provedor for Football-Data.org ou não houver partidas CONMEBOL
+    // Adiciona partidas secundárias (Europa League, Conference, Libertadores, Sul-Americana) via TheSportsDB
+    // se o provedor for Football-Data.org ou não houver partidas
     if (
       provedor === 'football_data' ||
       (directFixtures.length === 0 && liveFixtures.length === 0 && dateFixtures.length === 0)
@@ -1352,13 +1379,32 @@ routerAdd('GET', '/backend/v1/placar-ao-vivo', (e) => {
         var tsdbConmebolLive = fetchConmebolFromTheSportsDb(hoje, theSportsDbKey)
         for (var tcl = 0; tcl < tsdbConmebolLive.length; tcl++) {
           var conmebolF = tsdbConmebolLive[tcl]
-          dateFixtures.push(conmebolF)
-          if (conmebolF.isLive) {
-            liveFixtures.push(conmebolF)
+          var tHome = (conmebolF.teams && conmebolF.teams.home && conmebolF.teams.home.name) || ''
+          var tAway = (conmebolF.teams && conmebolF.teams.away && conmebolF.teams.away.name) || ''
+          var tDup = false
+          for (var dfi = 0; dfi < dateFixtures.length; dfi++) {
+            var existingF = dateFixtures[dfi]
+            var eHome = (existingF.teams && existingF.teams.home && existingF.teams.home.name) || ''
+            var eAway = (existingF.teams && existingF.teams.away && existingF.teams.away.name) || ''
+            if (
+              eHome &&
+              eAway &&
+              eHome.toLowerCase() === tHome.toLowerCase() &&
+              eAway.toLowerCase() === tAway.toLowerCase()
+            ) {
+              tDup = true
+              break
+            }
+          }
+          if (!tDup) {
+            dateFixtures.push(conmebolF)
+            if (conmebolF.isLive) {
+              liveFixtures.push(conmebolF)
+            }
           }
         }
       } catch (errConmebolLive) {
-        console.log('[TheSportsDB Conmebol placar-ao-vivo] Erro:', errConmebolLive)
+        console.log('[TheSportsDB Fallback placar-ao-vivo] Erro:', errConmebolLive)
       }
     }
 
@@ -2568,55 +2614,36 @@ routerAdd('GET', '/backend/v1/jogos-do-dia', (e) => {
       updatedAt: new Date().toISOString(),
     }
 
-    // Se o provedor principal for Football-Data.org ou nenhuma partida CONMEBOL estiver na lista,
-    // busca TheSportsDB para adicionar os jogos de Sul-Americana e Libertadores
+    // Se o provedor principal for Football-Data.org (que não cobre Europa League, Conference nem CONMEBOL no plano gratuito)
+    // ou se faltarem partidas secundárias no dia, busca no TheSportsDB para adicionar essas competições automaticamente.
     try {
-      var hasConmebolDay = false
-      for (var fchk = 0; fchk < rawFixtures.length; fchk++) {
-        var fixC = rawFixtures[fchk]
-        var fixR = fixC.league ? fixC.league.region : ''
-        var fixLName = fixC.league ? (fixC.league.name || '').toLowerCase() : ''
-        if (
-          fixR === 'Sul-Americana' ||
-          fixLName.indexOf('sudamericana') !== -1 ||
-          fixLName.indexOf('libertadores') !== -1
-        ) {
-          hasConmebolDay = true
-          break
-        }
-      }
-
-      // Se não encontrou partidas de CONMEBOL do dia e temos TheSportsDB disponível (chave ou pública "3")
-      if (!hasConmebolDay) {
-        var tsdbConmebol = fetchConmebolFromTheSportsDb(dateQuery, theSportsDbKey)
-        for (var tsi = 0; tsi < tsdbConmebol.length; tsi++) {
-          var tFix = tsdbConmebol[tsi]
-          // Evita duplicar se por acaso já existir
-          var dHome = (tFix.teams && tFix.teams.home && tFix.teams.home.name) || ''
-          var dAway = (tFix.teams && tFix.teams.away && tFix.teams.away.name) || ''
-          var dupFound = false
-          for (var rfi = 0; rfi < rawFixtures.length; rfi++) {
-            var rf = rawFixtures[rfi]
-            var rfHome = (rf.teams && rf.teams.home && rf.teams.home.name) || ''
-            var rfAway = (rf.teams && rf.teams.away && rf.teams.away.name) || ''
-            if (
-              rfHome.toLowerCase() === dHome.toLowerCase() &&
-              rfAway.toLowerCase() === dAway.toLowerCase()
-            ) {
-              dupFound = true
-              break
-            }
+      var tsdbFallbackFixtures = fetchConmebolFromTheSportsDb(dateQuery, theSportsDbKey)
+      for (var tsi = 0; tsi < tsdbFallbackFixtures.length; tsi++) {
+        var tFix = tsdbFallbackFixtures[tsi]
+        var dHome = (tFix.teams && tFix.teams.home && tFix.teams.home.name) || ''
+        var dAway = (tFix.teams && tFix.teams.away && tFix.teams.away.name) || ''
+        var dupFound = false
+        for (var rfi = 0; rfi < rawFixtures.length; rfi++) {
+          var rf = rawFixtures[rfi]
+          var rfHome = (rf.teams && rf.teams.home && rf.teams.home.name) || ''
+          var rfAway = (rf.teams && rf.teams.away && rf.teams.away.name) || ''
+          if (
+            rfHome.toLowerCase() === dHome.toLowerCase() &&
+            rfAway.toLowerCase() === dAway.toLowerCase()
+          ) {
+            dupFound = true
+            break
           }
-          if (!dupFound) {
-            rawFixtures.push(tFix)
-            if (tFix.isLive) {
-              hasLiveMatch = true
-            }
+        }
+        if (!dupFound) {
+          rawFixtures.push(tFix)
+          if (tFix.isLive) {
+            hasLiveMatch = true
           }
         }
       }
     } catch (errTsdbDay) {
-      console.log('[TheSportsDB Conmebol Jogos-do-Dia] Erro:', errTsdbDay)
+      console.log('[TheSportsDB Fallback Jogos-do-Dia] Erro:', errTsdbDay)
     }
 
     // Recalcula/reaplica os jogos manuais diretamente do banco no momento da resposta

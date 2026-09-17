@@ -939,7 +939,7 @@ export default function JogosDoDia() {
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
-          {/* Seletor de data */}
+          {/* Seletor de data e botão discreto de inserção manual */}
           <div className="flex items-center gap-1.5 rounded-lg border border-slate-200 bg-slate-50 px-2 py-1">
             <Calendar className="h-4 w-4 text-slate-500" />
             <input
@@ -953,6 +953,20 @@ export default function JogosDoDia() {
               className="bg-transparent text-xs font-semibold text-slate-800 outline-none"
             />
           </div>
+
+          {/* Botão discreto de Inserir Jogo Manual imediatamente ao lado do seletor de data */}
+          {isAdmin && (
+            <Button
+              type="button"
+              variant="outline"
+              size="icon"
+              onClick={openNewManualModal}
+              className="h-8 w-8 border-slate-300 text-slate-600 hover:text-amber-700 hover:bg-amber-50 hover:border-amber-300"
+              title="Inserir Jogo Manual"
+            >
+              <PlusCircle className="h-4 w-4" />
+            </Button>
+          )}
 
           <Button
             type="button"
@@ -968,20 +982,6 @@ export default function JogosDoDia() {
             />
             <span>Atualizar</span>
           </Button>
-
-          {/* Botão de Inserir Jogo Manual (Garantia Total do Admin) */}
-          {isAdmin && (
-            <Button
-              type="button"
-              size="sm"
-              onClick={openNewManualModal}
-              className="h-8 gap-1.5 text-xs font-bold bg-amber-600 hover:bg-amber-700 text-white shadow-xs"
-              title="Inserir / Editar Jogo do Dia Manualmente"
-            >
-              <PlusCircle className="h-3.5 w-3.5" />
-              <span>Inserir Jogo Manual</span>
-            </Button>
-          )}
         </div>
       </div>
 
@@ -1240,8 +1240,29 @@ export default function JogosDoDia() {
                     const matchIsCancelled = isFixtureCancelled(stMatch, longMatch)
                     const isPstOrCanc = matchIsPostponed || matchIsCancelled
 
-                    const homeScore = match.goals?.home ?? '-'
-                    const awayScore = match.goals?.away ?? '-'
+                    // Regra de exibição do placar central:
+                    // Se o status da partida for agendado/não iniciado (NS / Scheduled / Em Breve) ou gols null/indefinidos,
+                    // exibe "- : -". "0 : 0" só aparece se estiver Ao Vivo ou Finalizado com o placar zerado.
+                    const isUpcomingMatch =
+                      !match.isLive &&
+                      !['FT', 'AET', 'PEN'].includes(stMatch) &&
+                      !matchIsPostponed &&
+                      !matchIsCancelled
+
+                    const hasExplicitHomeScore =
+                      match.goals?.home !== null &&
+                      match.goals?.home !== undefined &&
+                      !isNaN(Number(match.goals?.home))
+                    const hasExplicitAwayScore =
+                      match.goals?.away !== null &&
+                      match.goals?.away !== undefined &&
+                      !isNaN(Number(match.goals?.away))
+
+                    const showDash =
+                      isUpcomingMatch || !hasExplicitHomeScore || !hasExplicitAwayScore
+
+                    const homeScore = showDash ? '-' : match.goals?.home
+                    const awayScore = showDash ? '-' : match.goals?.away
 
                     return (
                       <div
