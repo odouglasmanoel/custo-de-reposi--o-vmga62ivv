@@ -260,18 +260,114 @@ export default function JogosDoDia() {
         observacao: manualFormData.observacao.trim(),
       }
 
+      let savedRecord: { id: string } | null = null
       if (editingManualRecordId) {
-        await pb.collection('jogos_do_dia_manuais').update(editingManualRecordId, payload)
+        savedRecord = await pb
+          .collection('jogos_do_dia_manuais')
+          .update(editingManualRecordId, payload)
         toast({
           title: 'Jogo manual atualizado!',
           description: `${payload.time_casa} x ${payload.time_visitante} atualizado com prioridade.`,
         })
       } else {
-        await pb.collection('jogos_do_dia_manuais').create(payload)
+        savedRecord = await pb.collection('jogos_do_dia_manuais').create(payload)
         toast({
           title: 'Jogo manual adicionado!',
           description: `${payload.time_casa} x ${payload.time_visitante} garantido na exibição.`,
         })
+      }
+
+      // -------------------------------------------------------------
+      // FORÇAR RE-RENDER DO ESTADO NO FRONTEND IMEDIATAMENTE:
+      // Monta o objeto DayFixture localmente e insere/atualiza no topo do array fixtures
+      // sem depender de chamadas externas de cache que possam demorar ou falhar.
+      // -------------------------------------------------------------
+      const manualId = savedRecord?.id || editingManualRecordId || `local_${Date.now()}`
+      const targetDate = payload.data || selectedDate
+      const horarioStr = payload.horario || '20:00'
+      const isoDateTime = `${targetDate}T${horarioStr.length === 5 ? horarioStr + ':00' : horarioStr}-03:00`
+      const isLiveStatus = ['1H', 'HT', '2H', 'LIVE'].includes(payload.status)
+
+      const optimisticManualFixture: DayFixture = {
+        fixture: {
+          id: `manual_${manualId}`,
+          manualId: manualId,
+          isManual: true,
+          date: isoDateTime,
+          timestamp: Math.floor(new Date(isoDateTime).getTime() / 1000) || 0,
+          status: {
+            short: payload.status,
+            long:
+              payload.status === 'FT'
+                ? 'Encerrado'
+                : isLiveStatus
+                  ? 'Ao Vivo'
+                  : payload.status === 'PST'
+                    ? 'Adiado'
+                    : payload.status === 'CANC'
+                      ? 'Cancelado'
+                      : 'Agendado',
+            elapsed: null,
+          },
+        },
+        league: {
+          id: 99990,
+          name: payload.campeonato || 'Amistoso',
+          country: 'América do Sul',
+          logo: '',
+          flag: '',
+          round: payload.observacao || 'Manual',
+          region: payload.regiao as DayFixture['league']['region'],
+        },
+        teams: {
+          home: {
+            id: 999000,
+            name: payload.time_casa,
+            logo: '',
+            country: 'América do Sul',
+          },
+          away: {
+            id: 999001,
+            name: payload.time_visitante,
+            logo: '',
+            country: 'América do Sul',
+          },
+        },
+        goals: {
+          home: payload.placar_casa,
+          away: payload.placar_visitante,
+        },
+        score: {
+          halftime: { home: null, away: null },
+          fulltime: {
+            home: payload.placar_casa,
+            away: payload.placar_visitante,
+          },
+        },
+        scorers: [],
+        isLive: isLiveStatus,
+        isManual: true,
+        manualRecordId: manualId,
+      }
+
+      setFixtures((prev) => {
+        // Remove versão anterior se já existia na lista
+        const filtered = prev.filter(
+          (m) =>
+            m.manualRecordId !== manualId &&
+            m.fixture?.id !== `manual_${manualId}` &&
+            !(
+              m.teams?.home?.name?.trim().toLowerCase() === payload.time_casa.toLowerCase() &&
+              m.teams?.away?.name?.trim().toLowerCase() === payload.time_visitante.toLowerCase()
+            ),
+        )
+        // Coloca o novo/atualizado no TOPO imediato do array
+        return [optimisticManualFixture, ...filtered]
+      })
+
+      // Se a data do jogo for diferente da selecionada, navega até ela para que o usuário veja
+      if (payload.data && payload.data !== selectedDate) {
+        setSelectedDate(payload.data)
       }
 
       // Purge imediato do cache de partidas do dia via endpoint Admin
@@ -291,8 +387,8 @@ export default function JogosDoDia() {
       }
 
       setManualModalOpen(false)
-      // Recarrega jogos do dia (com forçamento)
-      await fetchJogos(selectedDate, true)
+      // Recarrega jogos do dia (com forçamento em segundo plano para obter escudos automáticos)
+      fetchJogos(payload.data || selectedDate, true)
     } catch (err: unknown) {
       console.error('Erro ao salvar jogo manual:', err)
       toast({
@@ -328,6 +424,16 @@ export default function JogosDoDia() {
       } catch (errCache) {
         console.warn('Aviso ao disparar limpeza de cache imediata na exclusão:', errCache)
       }
+
+      // Atualização imediata do estado local removendo a partida excluída
+      setFixtures((prev) =>
+        prev.filter(
+          (m) =>
+            m.manualRecordId !== recordId &&
+            m.fixture?.id !== `manual_${recordId}` &&
+            m.fixture?.manualId !== recordId,
+        ),
+      )
 
       toast({
         title: 'Jogo manual removido',
@@ -475,6 +581,14 @@ export default function JogosDoDia() {
     ])
 
     return fixtures.filter((item) => {
+      // Jogos manuais cadastrados pelo Admin têm passe livre e NUNCA devem ser descartados
+      const isManualMatch = Boolean(
+        item.isManual ||
+        item.fixture?.isManual ||
+        item.manualRecordId ||
+        (typeof item.fixture?.id === 'string' && item.fixture.id.startsWith('manual_')),
+      )
+
       // FILTRO ESTRITO DE FUSO HORÁRIO (America/Sao_Paulo - UTC-3):
       // Converte o horário da partida para a data no fuso de Brasília.
       // Se a partida pertence a outro dia que não a selectedDate selecionada no datepicker,
@@ -485,6 +599,11 @@ export default function JogosDoDia() {
         if (fixtureDateSP && fixtureDateSP !== selectedDate) {
           return false
         }
+      }
+
+      // Se for jogo manual cadastrado na data correta, exibe sempre no topo sem exigir fixture_id externo ou ligas da API
+      if (isManualMatch) {
+        return true
       }
 
       const lid = item.league?.id
@@ -592,7 +711,7 @@ export default function JogosDoDia() {
   // Filtragem e busca baseadas no conjunto de ligas relevantes
   const filteredFixtures = useMemo(() => {
     return relevantFixtures.filter((f) => {
-      // Filtro de região
+      // Filtro de região: se o usuário selecionou uma região específica, confere
       if (selectedRegion !== 'todos') {
         if (f.league.region !== selectedRegion) {
           return false

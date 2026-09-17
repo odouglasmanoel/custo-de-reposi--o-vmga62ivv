@@ -1417,6 +1417,178 @@ routerAdd('GET', '/backend/v1/jogos-do-dia', (e) => {
       dateQuery = now.getUTCFullYear() + '-' + ym + '-' + yd
     }
 
+    // -------------------------------------------------------------
+    // BYPASS TOTAL DE CACHE PARA JOGOS MANUAIS:
+    // Consulta direta e imediata ao banco (coleção jogos_do_dia_manuais) para a data selecionada.
+    // Jogos manuais são buscados em TODA resposta, sem depender de cache externo.
+    // -------------------------------------------------------------
+    var fetchManualGamesForDate = function (targetDateStr) {
+      var manualList = []
+      try {
+        var mRecs = $app.findRecordsByFilter(
+          'jogos_do_dia_manuais',
+          "data = '" + targetDateStr + "'",
+          'horario',
+          100,
+          0,
+        )
+        for (var mi = 0; mi < mRecs.length; mi++) {
+          var mRec = mRecs[mi]
+          var mTimeCasa = (mRec.getString('time_casa') || '').trim()
+          var mTimeVisitante = (mRec.getString('time_visitante') || '').trim()
+          var mHorario = (mRec.getString('horario') || '20:00').trim()
+          var mCampeonato = (mRec.getString('campeonato') || 'Amistoso').trim()
+          var mRegiao = (mRec.getString('regiao') || 'Brasileirão & Copas').trim()
+          var mPlacarCasa = mRec.getInt('placar_casa')
+          var mPlacarVisitante = mRec.getInt('placar_visitante')
+          var mStatus = (mRec.getString('status') || 'NS').trim().toUpperCase()
+          var mLogoCasa = (mRec.getString('logo_casa') || '').trim()
+          var mLogoVisitante = (mRec.getString('logo_visitante') || '').trim()
+          var mObs = (mRec.getString('observacao') || '').trim()
+
+          var mIso =
+            targetDateStr + 'T' + (mHorario.length === 5 ? mHorario + ':00' : mHorario) + '-03:00'
+          var mIsLive = ['1H', 'HT', '2H', 'LIVE'].indexOf(mStatus) !== -1
+
+          var mLeagueLogo = ''
+          if (mCampeonato) {
+            var cLower = mCampeonato.toLowerCase()
+            if (
+              typeof globalThis !== 'undefined' &&
+              globalThis.__tsdbLeagueCache &&
+              globalThis.__tsdbLeagueCache[cLower] !== undefined
+            ) {
+              mLeagueLogo = globalThis.__tsdbLeagueCache[cLower] || ''
+            }
+          }
+
+          manualList.push({
+            fixture: {
+              id: 'manual_' + mRec.id,
+              manualId: mRec.id,
+              isManual: true,
+              date: mIso,
+              timestamp: Math.floor(new Date(mIso).getTime() / 1000) || 0,
+              status: {
+                short: mStatus,
+                long:
+                  mStatus === 'FT'
+                    ? 'Encerrado'
+                    : mIsLive
+                      ? 'Ao Vivo'
+                      : mStatus === 'PST'
+                        ? 'Adiado'
+                        : mStatus === 'CANC'
+                          ? 'Cancelado'
+                          : 'Agendado',
+                elapsed: null,
+              },
+            },
+            league: {
+              id: 99990 + mi,
+              name: mCampeonato,
+              country: 'América do Sul',
+              logo: mLeagueLogo,
+              flag: '',
+              round: mObs || 'Manual',
+              region: mRegiao,
+            },
+            teams: {
+              home: {
+                id: 999000 + mi * 2,
+                name: mTimeCasa,
+                logo: mLogoCasa,
+                country: 'América do Sul',
+              },
+              away: {
+                id: 999001 + mi * 2,
+                name: mTimeVisitante,
+                logo: mLogoVisitante,
+                country: 'América do Sul',
+              },
+            },
+            goals: {
+              home:
+                mRec.get('placar_casa') !== null && mRec.get('placar_casa') !== undefined
+                  ? mPlacarCasa
+                  : null,
+              away:
+                mRec.get('placar_visitante') !== null && mRec.get('placar_visitante') !== undefined
+                  ? mPlacarVisitante
+                  : null,
+            },
+            score: {
+              halftime: { home: null, away: null },
+              fulltime: {
+                home:
+                  mRec.get('placar_casa') !== null && mRec.get('placar_casa') !== undefined
+                    ? mPlacarCasa
+                    : null,
+                away:
+                  mRec.get('placar_visitante') !== null &&
+                  mRec.get('placar_visitante') !== undefined
+                    ? mPlacarVisitante
+                    : null,
+              },
+            },
+            scorers: [],
+            isLive: mIsLive,
+            isManual: true,
+            manualRecordId: mRec.id,
+          })
+        }
+      } catch (errDbMan) {
+        console.log('[Jogos Manuais Bypass] Erro ao consultar jogos_do_dia_manuais:', errDbMan)
+      }
+      return manualList
+    }
+
+    // Helper para mesclar jogos manuais sempre no TOPO e sem duplicação de confronto
+    var mergeManualFixturesOnTop = function (manualItems, externalFixtures) {
+      var merged = []
+      var mCount = manualItems ? manualItems.length : 0
+      for (var mi = 0; mi < mCount; mi++) {
+        merged.push(manualItems[mi])
+      }
+
+      if (Array.isArray(externalFixtures)) {
+        for (var ei = 0; ei < externalFixtures.length; ei++) {
+          var extItem = externalFixtures[ei]
+          if (extItem.isManual || (extItem.fixture && extItem.fixture.isManual)) {
+            continue // Evita reutilizar manuais que possam ter ficado em snapshot de cache
+          }
+          var eHome = (extItem.teams && extItem.teams.home && extItem.teams.home.name) || ''
+          var eAway = (extItem.teams && extItem.teams.away && extItem.teams.away.name) || ''
+          var collidesWithManual = false
+          for (var mj = 0; mj < mCount; mj++) {
+            var mObj = manualItems[mj]
+            var mHome = (mObj.teams && mObj.teams.home && mObj.teams.home.name) || ''
+            var mAway = (mObj.teams && mObj.teams.away && mObj.teams.away.name) || ''
+            if (
+              eHome &&
+              mHome &&
+              eAway &&
+              mAway &&
+              (eHome.toLowerCase().indexOf(mHome.toLowerCase()) !== -1 ||
+                mHome.toLowerCase().indexOf(eHome.toLowerCase()) !== -1) &&
+              (eAway.toLowerCase().indexOf(mAway.toLowerCase()) !== -1 ||
+                mAway.toLowerCase().indexOf(eAway.toLowerCase()) !== -1)
+            ) {
+              collidesWithManual = true
+              break
+            }
+          }
+          if (!collidesWithManual) {
+            merged.push(extItem)
+          }
+        }
+      }
+      return merged
+    }
+
+    // Busca os jogos manuais diretamente do banco de dados agora
+    var liveManualFixtures = fetchManualGamesForDate(dateQuery)
+
     // Inicializa store global de cache de jogos do dia
     if (typeof globalThis !== 'undefined' && !globalThis.__jogosDoDiaStore) {
       globalThis.__jogosDoDiaStore = {}
@@ -1431,17 +1603,26 @@ routerAdd('GET', '/backend/v1/jogos-do-dia', (e) => {
     var maxAgeMs = entryHasLive ? 5 * 60 * 1000 : 30 * 60 * 1000
 
     // REGRA DE ON-DEMAND FETCHING E CARREGAMENTO PASSIVO:
-    // Carregamento passivo da página deve servir SEMPRE do cache interno do servidor se válido.
-    // O botão Atualizar (forceRefresh) pode forçar revalidação apenas quando o TTL já expirou;
-    // se o TTL ainda estiver válido, mostra os dados em cache imediatamente.
-    // CRÍTICO: Se o cache estiver corrompido com 0 jogos (resultado de falha anterior), NÃO serve dele e força revalidação!
+    // Se há cache válido para a API externa, concatenamos SEMPRE os jogos manuais do banco no TOPO
+    // garantindo bypass absoluto para qualquer jogo manual cadastrado ou alterado recentemente.
     if (dayEntry && dayEntry.payload) {
       var cachedFixturesCount = Array.isArray(dayEntry.payload.fixtures)
         ? dayEntry.payload.fixtures.length
         : 0
       if (cachedFixturesCount > 0) {
         if (!forceRefresh || cacheAgeMs < maxAgeMs) {
+          var combinedCachedList = mergeManualFixturesOnTop(
+            liveManualFixtures,
+            dayEntry.payload.fixtures,
+          )
           var cachedResp = Object.assign({}, dayEntry.payload, {
+            total: combinedCachedList.length,
+            fixtures: combinedCachedList,
+            hasLive:
+              entryHasLive ||
+              liveManualFixtures.some(function (m) {
+                return m.isLive
+              }),
             cached: true,
             cacheAgeSeconds: Math.round(cacheAgeMs / 1000),
             ttlSeconds: Math.round(maxAgeMs / 1000),
@@ -1459,7 +1640,15 @@ routerAdd('GET', '/backend/v1/jogos-do-dia', (e) => {
     // Deduplicação de requisições externas para o mesmo dia (janela mínima de 10s)
     if (dayEntry && dayEntry.fetching && nowMs - dayEntry.fetching < 10000) {
       if (dayEntry.payload) {
+        var dedupCombined = mergeManualFixturesOnTop(liveManualFixtures, dayEntry.payload.fixtures)
         var dedupResp = Object.assign({}, dayEntry.payload, {
+          total: dedupCombined.length,
+          fixtures: dedupCombined,
+          hasLive:
+            entryHasLive ||
+            liveManualFixtures.some(function (m) {
+              return m.isLive
+            }),
           cached: true,
           deduplicated: true,
           cacheAgeSeconds: Math.round(cacheAgeMs / 1000),
@@ -2430,207 +2619,16 @@ routerAdd('GET', '/backend/v1/jogos-do-dia', (e) => {
       console.log('[TheSportsDB Conmebol Jogos-do-Dia] Erro:', errTsdbDay)
     }
 
-    // Busca jogos manuais criados pelo Admin para esta data
-    var manualDayFixtures = []
-    try {
-      var manualRecords = $app.findRecordsByFilter(
-        'jogos_do_dia_manuais',
-        "data = '" + dateQuery + "'",
-        'horario',
-        100,
-        0,
-      )
-      for (var mi = 0; mi < manualRecords.length; mi++) {
-        var mRec = manualRecords[mi]
-        var mTimeCasa = mRec.getString('time_casa') || ''
-        var mTimeVisitante = mRec.getString('time_visitante') || ''
-        var mHorario = mRec.getString('horario') || '20:00'
-        var mCampeonato = mRec.getString('campeonato') || 'Amistoso'
-        var mRegiao = mRec.getString('regiao') || 'Brasileirão & Copas'
-        var mPlacarCasa = mRec.getInt('placar_casa')
-        var mPlacarVisitante = mRec.getInt('placar_visitante')
-        var mStatus = (mRec.getString('status') || 'NS').trim().toUpperCase()
-        var mLogoCasa = mRec.getString('logo_casa') || ''
-        var mLogoVisitante = mRec.getString('logo_visitante') || ''
-        var mObs = mRec.getString('observacao') || ''
-
-        var mIso =
-          dateQuery + 'T' + (mHorario.length === 5 ? mHorario + ':00' : mHorario) + '-03:00'
-        var mIsLive = ['1H', 'HT', '2H', 'LIVE'].indexOf(mStatus) !== -1
-
-        manualDayFixtures.push({
-          fixture: {
-            id: 'manual_' + mRec.id,
-            manualId: mRec.id,
-            isManual: true,
-            date: mIso,
-            timestamp: Math.floor(new Date(mIso).getTime() / 1000) || 0,
-            status: {
-              short: mStatus,
-              long:
-                mStatus === 'FT'
-                  ? 'Encerrado'
-                  : mIsLive
-                    ? 'Ao Vivo'
-                    : mStatus === 'PST'
-                      ? 'Adiado'
-                      : mStatus === 'CANC'
-                        ? 'Cancelado'
-                        : 'Agendado',
-              elapsed: null,
-            },
-          },
-          league: {
-            id: 99990 + mi,
-            name: mCampeonato,
-            country: 'América do Sul',
-            logo: (function (cName) {
-              if (!cName) return ''
-              var cLower = cName.toLowerCase()
-              if (
-                typeof globalThis !== 'undefined' &&
-                globalThis.__tsdbLeagueCache &&
-                globalThis.__tsdbLeagueCache[cLower] !== undefined
-              ) {
-                return globalThis.__tsdbLeagueCache[cLower] || ''
-              }
-              try {
-                var lTsdbKey = '3'
-                try {
-                  var lRec = $app.findFirstRecordByData(
-                    'config_integracoes',
-                    'chave',
-                    'thesportsdb_fallback',
-                  )
-                  if (lRec && lRec.getString('api_key')) {
-                    lTsdbKey = lRec.getString('api_key').trim() || '3'
-                  }
-                } catch (_) {}
-                var lRes = $http.send({
-                  url:
-                    'https://www.thesportsdb.com/api/v1/json/' +
-                    encodeURIComponent(lTsdbKey) +
-                    '/search_all_leagues.php?s=Soccer',
-                  method: 'GET',
-                  timeout: 4,
-                })
-                var foundLogo = ''
-                if (lRes.statusCode === 200 && lRes.json && Array.isArray(lRes.json.countries)) {
-                  for (var cli = 0; cli < lRes.json.countries.length; cli++) {
-                    var lItem = lRes.json.countries[cli]
-                    var strL = (lItem.strLeague || '').toLowerCase()
-                    var strA = (lItem.strLeagueAlternate || '').toLowerCase()
-                    if (
-                      strL.indexOf(cLower) !== -1 ||
-                      cLower.indexOf(strL) !== -1 ||
-                      (strA && strA.indexOf(cLower) !== -1)
-                    ) {
-                      foundLogo = (lItem.strBadge || lItem.strLogo || '').trim()
-                      if (foundLogo) break
-                    }
-                  }
-                }
-                if (typeof globalThis !== 'undefined') {
-                  if (!globalThis.__tsdbLeagueCache) globalThis.__tsdbLeagueCache = {}
-                  globalThis.__tsdbLeagueCache[cLower] = foundLogo
-                }
-                return foundLogo
-              } catch (_) {
-                return ''
-              }
-            })(mCampeonato),
-            flag: '',
-            round: mObs || 'Manual',
-            region: mRegiao,
-          },
-          teams: {
-            home: {
-              id: 999000 + mi * 2,
-              name: mTimeCasa,
-              logo: mLogoCasa,
-              country: 'América do Sul',
-            },
-            away: {
-              id: 999001 + mi * 2,
-              name: mTimeVisitante,
-              logo: mLogoVisitante,
-              country: 'América do Sul',
-            },
-          },
-          goals: {
-            home:
-              mRec.get('placar_casa') !== null && mRec.get('placar_casa') !== undefined
-                ? mPlacarCasa
-                : null,
-            away:
-              mRec.get('placar_visitante') !== null && mRec.get('placar_visitante') !== undefined
-                ? mPlacarVisitante
-                : null,
-          },
-          score: {
-            halftime: { home: null, away: null },
-            fulltime: {
-              home:
-                mRec.get('placar_casa') !== null && mRec.get('placar_casa') !== undefined
-                  ? mPlacarCasa
-                  : null,
-              away:
-                mRec.get('placar_visitante') !== null && mRec.get('placar_visitante') !== undefined
-                  ? mPlacarVisitante
-                  : null,
-            },
-          },
-          scorers: [],
-          isLive: mIsLive,
-          isManual: true,
-          manualRecordId: mRec.id,
-        })
-      }
-    } catch (errMan) {
-      console.log('[Jogos Manuais] Aviso ao ler jogos_do_dia_manuais:', errMan)
-    }
-
-    // Mescla jogos manuais com PRIORIDADE TOTAL:
-    // Começa com os manuais. Adiciona os da API que não colidem com nenhum manual por times parecidos.
-    var finalFixtures = []
-    for (var mfi = 0; mfi < manualDayFixtures.length; mfi++) {
-      finalFixtures.push(manualDayFixtures[mfi])
-    }
-
-    for (var rfi2 = 0; rfi2 < rawFixtures.length; rfi2++) {
-      var rfItem = rawFixtures[rfi2]
-      var rHome = (rfItem.teams && rfItem.teams.home && rfItem.teams.home.name) || ''
-      var rAway = (rfItem.teams && rfItem.teams.away && rfItem.teams.away.name) || ''
-      var matchCollides = false
-      for (var mj = 0; mj < manualDayFixtures.length; mj++) {
-        var mItem = manualDayFixtures[mj]
-        var mHome = (mItem.teams && mItem.teams.home && mItem.teams.home.name) || ''
-        var mAway = (mItem.teams && mItem.teams.away && mItem.teams.away.name) || ''
-        if (
-          rHome &&
-          mHome &&
-          rAway &&
-          mAway &&
-          (rHome.toLowerCase().indexOf(mHome.toLowerCase()) !== -1 ||
-            mHome.toLowerCase().indexOf(rHome.toLowerCase()) !== -1) &&
-          (rAway.toLowerCase().indexOf(mAway.toLowerCase()) !== -1 ||
-            mAway.toLowerCase().indexOf(rAway.toLowerCase()) !== -1)
-        ) {
-          matchCollides = true
-          break
-        }
-      }
-      if (!matchCollides) {
-        finalFixtures.push(rfItem)
-      }
-    }
+    // Recalcula/reaplica os jogos manuais diretamente do banco no momento da resposta
+    var freshManualList = fetchManualGamesForDate(dateQuery)
+    var finalFixtures = mergeManualFixturesOnTop(freshManualList, rawFixtures)
 
     var finalPayload = Object.assign({}, payload, {
       total: finalFixtures.length,
       fixtures: finalFixtures,
       hasLive:
         hasLiveMatch ||
-        manualDayFixtures.some(function (m) {
+        freshManualList.some(function (m) {
           return m.isLive
         }),
     })
@@ -2644,15 +2642,25 @@ routerAdd('GET', '/backend/v1/jogos-do-dia', (e) => {
     )
   } catch (err) {
     console.log('Erro capturado no endpoint jogos-do-dia:', err)
+    // Mesmo no bloco de erro/catch, busca jogos manuais do banco para exibir com prioridade
+    var fallbackManuals = []
+    try {
+      fallbackManuals = fetchManualGamesForDate(dateQuery)
+    } catch (_) {}
+
     if (
       typeof globalThis !== 'undefined' &&
       globalThis.__jogosDoDiaStore &&
       globalThis.__jogosDoDiaStore[dateQuery] &&
       globalThis.__jogosDoDiaStore[dateQuery].payload
     ) {
+      var cachedPayload = globalThis.__jogosDoDiaStore[dateQuery].payload
+      var mergedCatch = mergeManualFixturesOnTop(fallbackManuals, cachedPayload.fixtures)
       return e.json(
         200,
-        Object.assign({}, globalThis.__jogosDoDiaStore[dateQuery].payload, {
+        Object.assign({}, cachedPayload, {
+          total: mergedCatch.length,
+          fixtures: mergedCatch,
           cached: true,
           fallback: true,
         }),
@@ -2662,10 +2670,15 @@ routerAdd('GET', '/backend/v1/jogos-do-dia', (e) => {
     return e.json(200, {
       configured: true,
       date: dateQuery || '',
-      total: 0,
-      hasLive: false,
-      fixtures: [],
-      error: 'Não foi possível carregar as partidas agora. Tente novamente mais tarde.',
+      total: fallbackManuals.length,
+      hasLive: fallbackManuals.some(function (m) {
+        return m.isLive
+      }),
+      fixtures: fallbackManuals,
+      error:
+        fallbackManuals.length > 0
+          ? null
+          : 'Não foi possível carregar as partidas agora. Tente novamente mais tarde.',
     })
   }
 })
