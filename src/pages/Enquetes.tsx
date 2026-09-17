@@ -48,6 +48,7 @@ import {
   formatDataHoraSaoPaulo,
   satisfiesEnqueteMinTimeMargin,
 } from '@/lib/dateUtils'
+import { Skeleton } from '@/components/ui/skeleton'
 import {
   type EnqueteModel,
   type JogoComVotos,
@@ -66,20 +67,57 @@ import {
   adicionarJogoManualNaEnquete,
   editarJogoEnquete,
   excluirJogoEnquete,
+  readListaEnquetesCache,
+  readEnqueteDetalhesCache,
 } from '@/services/enquetes'
 
 export default function Enquetes() {
   const { user, isAdmin, participantName } = useAuth()
   const { toast } = useToast()
 
+  // Inicialização instantânea a partir do cache (dois níveis)
+  const initialListaCached = useMemo(() => readListaEnquetesCache() || [], [])
+  const initialEnqueteId = useMemo(() => {
+    if (initialListaCached.length > 0) {
+      const aberta = initialListaCached.find((e) => e.status === 'aberta') || initialListaCached[0]
+      return aberta.id
+    }
+    return ''
+  }, [initialListaCached])
+
   // Estados principais
-  const [enquetes, setEnquetes] = useState<EnqueteModel[]>([])
-  const [enqueteAtivaId, setEnqueteAtivaId] = useState<string>('')
-  const [enqueteAtiva, setEnqueteAtiva] = useState<EnqueteModel | null>(null)
-  const [jogosEnquete, setJogosEnquete] = useState<JogoComVotos[]>([])
-  const [meusVotosIds, setMeusVotosIds] = useState<Set<string>>(new Set())
-  const [loading, setLoading] = useState(true)
+  const [enquetes, setEnquetes] = useState<EnqueteModel[]>(initialListaCached)
+  const [enqueteAtivaId, setEnqueteAtivaId] = useState<string>(initialEnqueteId)
+  const [enqueteAtiva, setEnqueteAtiva] = useState<EnqueteModel | null>(() => {
+    if (initialEnqueteId) {
+      const cached = readEnqueteDetalhesCache(initialEnqueteId, user?.id)
+      if (cached) return cached.enquete
+      return initialListaCached.find((e) => e.id === initialEnqueteId) || null
+    }
+    return null
+  })
+  const [jogosEnquete, setJogosEnquete] = useState<JogoComVotos[]>(() => {
+    if (initialEnqueteId) {
+      const cached = readEnqueteDetalhesCache(initialEnqueteId, user?.id)
+      if (cached) return cached.jogos
+    }
+    return []
+  })
+  const [meusVotosIds, setMeusVotosIds] = useState<Set<string>>(() => {
+    if (initialEnqueteId) {
+      const cached = readEnqueteDetalhesCache(initialEnqueteId, user?.id)
+      if (cached) return cached.meusVotosIds
+    }
+    return new Set()
+  })
+  // Se tínhamos cache inicial para a enquete ativa, não bloqueia a tela!
+  const hasInitialCache = Boolean(initialEnqueteId && jogosEnquete.length > 0)
+  const [loading, setLoading] = useState(!hasInitialCache)
+  const [isSyncing, setIsSyncing] = useState(false)
   const [votandoJogoId, setVotandoJogoId] = useState<string | null>(null)
+
+  // Paginação incremental / Lazy Loading de Cards de Jogos para alta performance de renderização
+  const [visibleCount, setVisibleCount] = useState(15)
 
   // Painel Admin: Criação de Nova Enquete
   const [dialogNovaEnqueteOpen, setDialogNovaEnqueteOpen] = useState(false)
@@ -170,9 +208,17 @@ export default function Enquetes() {
     carregarListaEnquetes(false)
   })
 
-  // Carrega lista de enquetes
+  // Carrega lista de enquetes com SWR
   const carregarListaEnquetes = useCallback(
     async (selectFirst = true) => {
+      // 1. Tenta cache imediato se ainda não tivermos lista
+      const cached = readListaEnquetesCache()
+      if (cached && cached.length > 0) {
+        setEnquetes((prev) => (prev.length === 0 ? cached : prev))
+      }
+
+      // Revalidação em background (sem bloquear se já temos dados)
+      setIsSyncing(true)
       try {
         const lista = await listarEnquetes()
         setEnquetes(lista)
@@ -191,16 +237,29 @@ export default function Enquetes() {
         console.error('Erro ao carregar enquetes:', err)
       } finally {
         setLoading(false)
+        setIsSyncing(false)
       }
     },
     [enqueteAtivaId],
   )
 
-  // Carrega detalhes da enquete selecionada
+  // Carrega detalhes da enquete selecionada com SWR
   const carregarDetalhesEnquete = useCallback(
     async (enqueteId: string, showSpinner = true) => {
       if (!enqueteId) return
-      if (showSpinner) setLoading(true)
+
+      // 1. Lê do cache local/memória imediatamente
+      const cached = readEnqueteDetalhesCache(enqueteId, user?.id)
+      if (cached) {
+        setEnqueteAtiva(cached.enquete)
+        setJogosEnquete(cached.jogos)
+        setMeusVotosIds(cached.meusVotosIds)
+        setLoading(false) // Dados exibidos instantaneamente!
+        setIsSyncing(true)
+      } else if (showSpinner) {
+        setLoading(true)
+      }
+
       try {
         const dados = await obterDadosEnquete(enqueteId, user?.id)
         setEnqueteAtiva(dados.enquete)
@@ -220,7 +279,8 @@ export default function Enquetes() {
       } catch (err) {
         console.error('Erro ao obter detalhes da enquete:', err)
       } finally {
-        if (showSpinner) setLoading(false)
+        setLoading(false)
+        setIsSyncing(false)
       }
     },
     [user?.id],
@@ -304,6 +364,16 @@ export default function Enquetes() {
       return nomeComp === filtroCategoria
     })
   }, [jogosEnquete, filtroCategoria, meusVotosIds])
+
+  // Reseta paginação de cards quando a categoria de filtro ou enquete ativa mudar
+  useEffect(() => {
+    setVisibleCount(15)
+  }, [filtroCategoria, enqueteAtivaId])
+
+  // Jogos visíveis renderizados incrementalmente no DOM (Lazy Loading)
+  const jogosVisiveis = useMemo(() => {
+    return jogosFiltradosVotacao.slice(0, visibleCount)
+  }, [jogosFiltradosVotacao, visibleCount])
 
   // Ação: Votar / Desmarcar Jogo
   const handleToggleVoto = async (jogoId: string) => {
@@ -1167,6 +1237,12 @@ export default function Enquetes() {
                 >
                   Jogos da Rodada
                 </Badge>
+                {isSyncing && (
+                  <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-50 border border-amber-200 px-2 py-0.5 text-[11px] font-semibold text-amber-700 animate-pulse">
+                    <RefreshCw className="h-3 w-3 animate-spin text-amber-600" />
+                    Sincronizando...
+                  </span>
+                )}
               </div>
               <p className="text-xs text-[#64748B]">
                 Votação colaborativa do grupo para escolher as partidas aleatórias que entrarão na
@@ -1207,12 +1283,7 @@ export default function Enquetes() {
           {/* Botão Admin: Nova Enquete */}
           {isAdmin && (
             <Button
-              onClick={() => {
-                setDialogNovaEnqueteOpen(true)
-                if (jogosEncontrados.length === 0) {
-                  handleBuscarJogosIntervalo()
-                }
-              }}
+              onClick={() => setDialogNovaEnqueteOpen(true)}
               size="sm"
               className="bg-amber-600 font-bold text-white shadow-xs hover:bg-amber-700"
             >
@@ -1222,6 +1293,49 @@ export default function Enquetes() {
           )}
         </div>
       </div>
+
+      {/* Skeleton de Carregamento Instantâneo quando ainda não temos dados */}
+      {loading && !enqueteAtiva && (
+        <div className="space-y-6">
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+            {[1, 2, 3].map((i) => (
+              <Card key={i} className="border-slate-200 bg-white p-4 shadow-xs">
+                <div className="flex items-center justify-between">
+                  <div className="space-y-2">
+                    <Skeleton className="h-3 w-28" />
+                    <Skeleton className="h-7 w-20" />
+                    <Skeleton className="h-3 w-40" />
+                  </div>
+                  <Skeleton className="h-12 w-12 rounded-full" />
+                </div>
+              </Card>
+            ))}
+          </div>
+
+          <div className="space-y-3">
+            <Skeleton className="h-9 w-64 rounded-md" />
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+              {[1, 2, 3, 4, 5, 6].map((i) => (
+                <Card key={i} className="border-slate-200 bg-white p-4">
+                  <div className="flex justify-between border-b border-slate-100 pb-2">
+                    <Skeleton className="h-3 w-24" />
+                    <Skeleton className="h-3 w-20" />
+                  </div>
+                  <div className="my-3 flex items-center justify-between gap-2">
+                    <Skeleton className="h-6 w-24" />
+                    <Skeleton className="h-4 w-4 rounded-full" />
+                    <Skeleton className="h-6 w-24" />
+                  </div>
+                  <div className="flex justify-between border-t border-slate-100 pt-2">
+                    <Skeleton className="h-4 w-28" />
+                    <Skeleton className="h-4 w-16" />
+                  </div>
+                </Card>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Trava de votação e Contador Reativo */}
       {enqueteAtiva && (
@@ -1339,10 +1453,7 @@ export default function Enquetes() {
           </p>
           {isAdmin && (
             <Button
-              onClick={() => {
-                setDialogNovaEnqueteOpen(true)
-                handleBuscarJogosIntervalo()
-              }}
+              onClick={() => setDialogNovaEnqueteOpen(true)}
               className="mt-5 bg-amber-600 font-bold text-white hover:bg-amber-700"
             >
               <Plus className="mr-1.5 h-4 w-4" />
@@ -1498,9 +1609,9 @@ export default function Enquetes() {
               </div>
             )}
 
-            {/* Grade de Confrontos para Votação */}
+            {/* Grade de Confrontos para Votação com Lazy Loading / Paginação Incremental */}
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-              {jogosFiltradosVotacao.map((jogo) => {
+              {jogosVisiveis.map((jogo) => {
                 const votado = meusVotosIds.has(jogo.id)
                 const isTop4 = top4JogosIds.has(jogo.id)
                 const isBlocked = !votado && limiteAtingido
@@ -1713,6 +1824,24 @@ export default function Enquetes() {
                 )
               })}
             </div>
+
+            {/* Botão para carregar mais jogos se houver mais que o visível */}
+            {jogosFiltradosVotacao.length > visibleCount && (
+              <div className="mt-4 flex flex-col items-center justify-center gap-2 pt-2">
+                <p className="text-xs text-slate-500">
+                  Exibindo {visibleCount} de {jogosFiltradosVotacao.length} confrontos
+                </p>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setVisibleCount((prev) => prev + 15)}
+                  className="border-slate-300 bg-white text-xs font-bold text-slate-700 shadow-xs hover:bg-slate-50 hover:text-slate-900"
+                >
+                  <ChevronDown className="mr-1.5 h-3.5 w-3.5" />
+                  Carregar mais {Math.min(15, jogosFiltradosVotacao.length - visibleCount)} jogos
+                </Button>
+              </div>
+            )}
           </TabsContent>
 
           {/* ABA 2: Apurador e Decisão do Admin */}

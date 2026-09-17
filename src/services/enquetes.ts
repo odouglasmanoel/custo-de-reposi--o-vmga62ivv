@@ -207,16 +207,146 @@ export async function criarEnquete(params: {
     }
   }
 
+  invalidateEnqueteCache()
   return enquete
+}
+
+// -------------------------------------------------------------
+// Cache de Enquetes em Dois Níveis (Memória + LocalStorage/SessionStorage)
+// -------------------------------------------------------------
+export interface EnqueteCachePayload {
+  enquete: EnqueteModel
+  jogos: JogoComVotos[]
+  meusVotosIds: string[]
+  timestamp: number
+}
+
+const CACHE_ENQUETE_PREFIX = 'cr_enquete_detalhe_v1'
+const CACHE_LISTA_ENQUETES_KEY = 'cr_enquetes_lista_v1'
+
+const enqueteMemoryCache = new Map<string, EnqueteCachePayload>()
+let listaEnquetesMemoryCache: { lista: EnqueteModel[]; timestamp: number } | null = null
+
+export function readListaEnquetesCache(): EnqueteModel[] | null {
+  if (listaEnquetesMemoryCache) {
+    return listaEnquetesMemoryCache.lista
+  }
+  try {
+    const raw = localStorage.getItem(CACHE_LISTA_ENQUETES_KEY)
+    if (raw) {
+      const parsed = JSON.parse(raw) as { lista: EnqueteModel[]; timestamp: number }
+      listaEnquetesMemoryCache = parsed
+      return parsed.lista
+    }
+  } catch {
+    // LocalStorage indisponível
+  }
+  return null
+}
+
+export function writeListaEnquetesCache(lista: EnqueteModel[]): void {
+  const payload = { lista, timestamp: Date.now() }
+  listaEnquetesMemoryCache = payload
+  try {
+    localStorage.setItem(CACHE_LISTA_ENQUETES_KEY, JSON.stringify(payload))
+  } catch {
+    // Ignora quota cheia
+  }
+}
+
+export function readEnqueteDetalhesCache(
+  enqueteId: string,
+  userId?: string,
+): { enquete: EnqueteModel; jogos: JogoComVotos[]; meusVotosIds: Set<string> } | null {
+  const cacheKey = `${enqueteId}_${userId || 'anon'}`
+  const fromMem = enqueteMemoryCache.get(cacheKey)
+  if (fromMem) {
+    return {
+      enquete: fromMem.enquete,
+      jogos: fromMem.jogos,
+      meusVotosIds: new Set(fromMem.meusVotosIds),
+    }
+  }
+
+  try {
+    const raw = localStorage.getItem(`${CACHE_ENQUETE_PREFIX}_${cacheKey}`)
+    if (raw) {
+      const parsed = JSON.parse(raw) as EnqueteCachePayload
+      enqueteMemoryCache.set(cacheKey, parsed)
+      return {
+        enquete: parsed.enquete,
+        jogos: parsed.jogos,
+        meusVotosIds: new Set(parsed.meusVotosIds),
+      }
+    }
+  } catch {
+    // LocalStorage indisponível
+  }
+  return null
+}
+
+export function writeEnqueteDetalhesCache(
+  enqueteId: string,
+  userId: string | undefined,
+  data: { enquete: EnqueteModel; jogos: JogoComVotos[]; meusVotosIds: Set<string> },
+): void {
+  const cacheKey = `${enqueteId}_${userId || 'anon'}`
+  const payload: EnqueteCachePayload = {
+    enquete: data.enquete,
+    jogos: data.jogos,
+    meusVotosIds: Array.from(data.meusVotosIds),
+    timestamp: Date.now(),
+  }
+
+  enqueteMemoryCache.set(cacheKey, payload)
+  try {
+    localStorage.setItem(`${CACHE_ENQUETE_PREFIX}_${cacheKey}`, JSON.stringify(payload))
+  } catch {
+    // Ignora quota cheia
+  }
+}
+
+/**
+ * Invalida cache de uma enquete (útil após criação, voto ou edição)
+ */
+export function invalidateEnqueteCache(enqueteId?: string): void {
+  if (enqueteId) {
+    for (const key of Array.from(enqueteMemoryCache.keys())) {
+      if (key.startsWith(enqueteId)) {
+        enqueteMemoryCache.delete(key)
+        try {
+          localStorage.removeItem(`${CACHE_ENQUETE_PREFIX}_${key}`)
+        } catch {
+          /* intentionally ignored */
+        }
+      }
+    }
+  } else {
+    enqueteMemoryCache.clear()
+    listaEnquetesMemoryCache = null
+    try {
+      localStorage.removeItem(CACHE_LISTA_ENQUETES_KEY)
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i)
+        if (k && k.startsWith(CACHE_ENQUETE_PREFIX)) {
+          localStorage.removeItem(k)
+        }
+      }
+    } catch {
+      /* intentionally ignored */
+    }
+  }
 }
 
 /**
  * Lista enquetes cadastradas (mais recentes primeiro)
  */
 export async function listarEnquetes(): Promise<EnqueteModel[]> {
-  return pb.collection('enquetes').getFullList<EnqueteModel>({
+  const records = await pb.collection('enquetes').getFullList<EnqueteModel>({
     sort: '-created',
   })
+  writeListaEnquetesCache(records)
+  return records
 }
 
 /**
@@ -273,7 +403,10 @@ export async function obterDadosEnquete(
     }
   })
 
-  return { enquete, jogos: jogosCompletos, meusVotosIds }
+  const resultado = { enquete, jogos: jogosCompletos, meusVotosIds }
+  writeEnqueteDetalhesCache(enqueteId, currentUserId, resultado)
+
+  return resultado
 }
 
 /**
@@ -316,6 +449,7 @@ export async function toggleVotoJogo(
       user: userId,
       user_name: userName,
     })
+    invalidateEnqueteCache(enqueteId)
     return { voted: true, totalVotosUsuario: meusVotos.length + 1 }
   }
 }
@@ -335,7 +469,7 @@ export async function adicionarJogoManualNaEnquete(params: {
   logo_visitante?: string
   campeonato_logo?: string
 }): Promise<EnqueteJogoModel> {
-  return pb.collection('enquete_jogos').create<EnqueteJogoModel>({
+  const novoJogo = await pb.collection('enquete_jogos').create<EnqueteJogoModel>({
     enquete: params.enqueteId,
     time_a: params.time_a.trim(),
     time_b: params.time_b.trim(),
@@ -351,6 +485,8 @@ export async function adicionarJogoManualNaEnquete(params: {
     cadastrado_bolao: false,
     origem: 'manual',
   })
+  invalidateEnqueteCache(params.enqueteId)
+  return novoJogo
 }
 
 /**
@@ -361,9 +497,71 @@ export async function adicionarJogoManualNaEnquete(params: {
  * Busca escudo de um clube através do endpoint backend
  * Fallback seguro: se falhar ou não encontrar, retorna string vazia
  */
+// -------------------------------------------------------------
+// Cache de Escudos em Dois Níveis (Memória + LocalStorage)
+// -------------------------------------------------------------
+const ESCUDO_CACHE_PREFIX = 'cr_escudo_cache_v1'
+const escudoMemoryCache = new Map<string, string>()
+
+function normalizeEscudoKey(name: string): string {
+  try {
+    return name
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/[^a-z0-9]/g, '')
+      .trim()
+  } catch {
+    return name.toLowerCase().trim()
+  }
+}
+
+export function readEscudoCache(teamName: string): string | null {
+  const key = normalizeEscudoKey(teamName)
+  if (!key) return null
+
+  // 1. Memória RAM
+  const fromMem = escudoMemoryCache.get(key)
+  if (fromMem !== undefined) return fromMem
+
+  // 2. LocalStorage
+  try {
+    const raw = localStorage.getItem(`${ESCUDO_CACHE_PREFIX}_${key}`)
+    if (raw !== null) {
+      escudoMemoryCache.set(key, raw)
+      return raw
+    }
+  } catch {
+    // LocalStorage indisponível
+  }
+  return null
+}
+
+export function writeEscudoCache(teamName: string, badgeUrl: string): void {
+  const key = normalizeEscudoKey(teamName)
+  if (!key) return
+
+  escudoMemoryCache.set(key, badgeUrl)
+  try {
+    localStorage.setItem(`${ESCUDO_CACHE_PREFIX}_${key}`, badgeUrl)
+  } catch {
+    // LocalStorage indisponível ou cheio
+  }
+}
+
+/**
+ * Busca escudo de um clube através do endpoint backend com cache de dois níveis
+ * Fallback seguro: se falhar ou não encontrar, retorna string vazia
+ */
 export async function buscarEscudoTime(teamName: string): Promise<string> {
   const trimmed = (teamName || '').trim()
   if (!trimmed) return ''
+
+  // Consulta cache de dois níveis primeiro
+  const cached = readEscudoCache(trimmed)
+  if (cached !== null && cached !== '') {
+    return cached
+  }
 
   try {
     const token = pb.authStore.token
@@ -379,7 +577,11 @@ export async function buscarEscudoTime(teamName: string): Promise<string> {
 
     if (!res.ok) return ''
     const data = await res.json()
-    return data && typeof data.badgeUrl === 'string' ? data.badgeUrl.trim() : ''
+    const badge = data && typeof data.badgeUrl === 'string' ? data.badgeUrl.trim() : ''
+    if (badge) {
+      writeEscudoCache(trimmed, badge)
+    }
+    return badge
   } catch (err) {
     console.warn('[buscarEscudoTime] Erro na requisição:', err)
     return ''
@@ -419,7 +621,9 @@ export async function editarJogoEnquete(
     payload.logo_visitante = params.logo_visitante.trim()
   }
 
-  return pb.collection('enquete_jogos').update<EnqueteJogoModel>(jogoId, payload)
+  const atualizado = await pb.collection('enquete_jogos').update<EnqueteJogoModel>(jogoId, payload)
+  invalidateEnqueteCache()
+  return atualizado
 }
 
 /**
@@ -443,6 +647,7 @@ export async function excluirJogoEnquete(jogoId: string): Promise<void> {
   }
 
   await pb.collection('enquete_jogos').delete(jogoId)
+  invalidateEnqueteCache()
 }
 
 /**
@@ -452,6 +657,7 @@ export async function toggleAdminSelecaoJogo(jogoId: string, selecionado: boolea
   await pb.collection('enquete_jogos').update(jogoId, {
     selecionado_admin: selecionado,
   })
+  invalidateEnqueteCache()
 }
 
 /**
@@ -462,6 +668,8 @@ export async function atualizarStatusEnquete(
   status: 'aberta' | 'encerrada' | 'cadastrada',
 ): Promise<void> {
   await pb.collection('enquetes').update(enqueteId, { status })
+  invalidateEnqueteCache(enqueteId)
+  writeListaEnquetesCache([]) // Força revalidação da lista
 }
 
 /**
@@ -547,4 +755,5 @@ export async function cadastrarJogosAprovadosNaCopaConi(
  */
 export async function excluirEnquete(enqueteId: string): Promise<void> {
   await pb.collection('enquetes').delete(enqueteId)
+  invalidateEnqueteCache(enqueteId)
 }
