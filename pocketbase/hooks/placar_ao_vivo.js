@@ -1424,16 +1424,41 @@ routerAdd('GET', '/backend/v1/placar-ao-vivo', (e) => {
           var evType = ev && ev.type ? String(ev.type).toLowerCase() : ''
           var evDetail = ev && ev.detail ? String(ev.detail).toLowerCase() : ''
           if (ev && (evType === 'goal' || evType === 'gol')) {
-            var rawName =
-              (ev.player && (ev.player.name || ev.player.shortName)) ||
-              ev.player_name ||
-              (ev.scorer && (ev.scorer.name || ev.scorer.shortName)) ||
-              ev.name ||
-              ev.strPlayer ||
-              ''
-            if (rawName && String(rawName).trim()) {
+            var candidates = [
+              ev.player && ev.player.name,
+              ev.player && ev.player.shortName,
+              ev.event_player,
+              ev.strPlayer,
+              ev.player_name,
+              ev.scorer && ev.scorer.name,
+              ev.scorer && ev.scorer.shortName,
+              typeof ev.scorer === 'string' ? ev.scorer : null,
+              ev.name,
+              ev.strScorer,
+              ev.strEvent,
+              ev.detail,
+            ]
+            var rawName = ''
+            for (var ci = 0; ci < candidates.length; ci++) {
+              var cand = candidates[ci]
+              if (cand && typeof cand === 'string') {
+                var cleanCand = cand.trim().toLowerCase()
+                if (
+                  cleanCand &&
+                  cleanCand !== 'gol' &&
+                  cleanCand !== 'goal' &&
+                  cleanCand !== 'normal goal' &&
+                  cleanCand !== 'penalty' &&
+                  cleanCand !== 'own goal'
+                ) {
+                  rawName = cand.trim()
+                  break
+                }
+              }
+            }
+            if (rawName) {
               var isOwnGoal = evDetail.indexOf('own') !== -1 || evType === 'own'
-              var scorerNameStr = String(rawName).trim()
+              var scorerNameStr = rawName
               if (isOwnGoal && scorerNameStr.toLowerCase().indexOf('contra') === -1) {
                 scorerNameStr += ' (contra)'
               }
@@ -3836,16 +3861,41 @@ routerAdd('GET', '/backend/v1/jogos-do-dia', (e) => {
           var evType = ev && ev.type ? String(ev.type).toLowerCase() : ''
           var evDetail = ev && ev.detail ? String(ev.detail).toLowerCase() : ''
           if (ev && (evType === 'goal' || evType === 'gol')) {
-            var rawName =
-              (ev.player && (ev.player.name || ev.player.shortName)) ||
-              ev.player_name ||
-              (ev.scorer && (ev.scorer.name || ev.scorer.shortName)) ||
-              ev.name ||
-              ev.strPlayer ||
-              ''
-            if (rawName && String(rawName).trim()) {
+            var candidates = [
+              ev.player && ev.player.name,
+              ev.player && ev.player.shortName,
+              ev.event_player,
+              ev.strPlayer,
+              ev.player_name,
+              ev.scorer && ev.scorer.name,
+              ev.scorer && ev.scorer.shortName,
+              typeof ev.scorer === 'string' ? ev.scorer : null,
+              ev.name,
+              ev.strScorer,
+              ev.strEvent,
+              ev.detail,
+            ]
+            var rawName = ''
+            for (var ci = 0; ci < candidates.length; ci++) {
+              var cand = candidates[ci]
+              if (cand && typeof cand === 'string') {
+                var cleanCand = cand.trim().toLowerCase()
+                if (
+                  cleanCand &&
+                  cleanCand !== 'gol' &&
+                  cleanCand !== 'goal' &&
+                  cleanCand !== 'normal goal' &&
+                  cleanCand !== 'penalty' &&
+                  cleanCand !== 'own goal'
+                ) {
+                  rawName = cand.trim()
+                  break
+                }
+              }
+            }
+            if (rawName) {
               var isOwnGoal = evDetail.indexOf('own') !== -1 || evType === 'own'
-              var scorerNameStr = String(rawName).trim()
+              var scorerNameStr = rawName
               if (isOwnGoal && scorerNameStr.toLowerCase().indexOf('contra') === -1) {
                 scorerNameStr += ' (contra)'
               }

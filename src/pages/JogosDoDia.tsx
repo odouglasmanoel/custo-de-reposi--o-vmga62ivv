@@ -847,6 +847,24 @@ export default function JogosDoDia() {
     )
   }
 
+  const GENERIC_GOAL_TERMS = new Set([
+    'gol',
+    'goal',
+    'normal goal',
+    'penalty',
+    'own goal',
+    'pênalti',
+    'penalti',
+    'contra',
+    'autogol',
+    'missed penalty',
+  ])
+  function isGenericScorerName(name?: string | null): boolean {
+    if (!name || typeof name !== 'string') return true
+    const clean = name.trim().toLowerCase()
+    return !clean || GENERIC_GOAL_TERMS.has(clean)
+  }
+
   // Agrupar marcadores por time para exibição visual, consumindo:
   // - events da API-Football
   // - goals / goalEvents do Football-Data.org
@@ -878,9 +896,9 @@ export default function JogosDoDia() {
       cleanName = cleanName.replace(/\s*\((contra|own\s*goal|o\.?g\.?)\)/gi, '').trim()
       // Remove minutagem residual no final (ex: "27'", "45+2'", "27")
       cleanName = cleanName.replace(/\s*\d+(\+\d+)?'?$/, '').trim()
-      if (!cleanName) return
 
-      const finalDisplayName = isOwnGoal ? `${cleanName} (contra)` : cleanName
+      const hasRealName = !isGenericScorerName(cleanName)
+      const finalDisplayName = hasRealName ? (isOwnGoal ? `${cleanName} (contra)` : cleanName) : ''
 
       let parsedMin = minute != null && !isNaN(Number(minute)) ? Number(minute) : null
       let parsedExtra =
@@ -889,7 +907,7 @@ export default function JogosDoDia() {
           : null
 
       // Se minute não veio separado mas estava no nome original
-      if (parsedMin == null) {
+      if (parsedMin == null && name) {
         const rawMinMatch = name.match(/(\d+)\s*\+\s*(\d+)/)
         if (rawMinMatch) {
           parsedMin = parseInt(rawMinMatch[1], 10)
@@ -914,8 +932,13 @@ export default function JogosDoDia() {
         }
       }
 
-      // Monte a string final UMA única vez: `⚽ ${nomeLimpo}${minuto ? ' ' + minuto + "'" : ''}`
-      const entry = `⚽ ${finalDisplayName}${minFormatted}`
+      // Se não houver nome real: entry = minFormatted ? `⚽${minFormatted}` : '⚽' — NUNCA incluir "Gol"
+      // Com nome real: `⚽ Nome 38'` (e "(contra)" quando for gol contra)
+      const entry = hasRealName
+        ? `⚽ ${finalDisplayName}${minFormatted}`
+        : minFormatted
+          ? `⚽${minFormatted}`
+          : '⚽'
 
       // Chave de deduplicação composta:
       // ${lado}__${nomeNormalizado}__${minuto}__${acrescimos||0}__${tipo||''}__${indiceDoEvento}
@@ -988,20 +1011,32 @@ export default function JogosDoDia() {
     }
 
     // Leitura tolerante de autor do gol
+    // Ordem exata: ev.player?.name, ev.player?.shortName, ev.event_player, ev.strPlayer,
+    // ev.player_name, ev.player (se string), ev.scorer?.name, ev.scorer?.shortName,
+    // ev.scorer (se string), ev.name, ev.strScorer, ev.strEvent, ev.detail
     const extractNameFromEv = (ev: any): string => {
       if (!ev) return ''
-      return (
-        ev.player?.name ||
-        ev.player?.shortName ||
-        ev.player_name ||
-        ev.scorer?.name ||
-        ev.scorer?.shortName ||
-        (typeof ev.scorer === 'string' ? ev.scorer : '') ||
-        ev.name ||
-        ev.strPlayer ||
-        ev.strScorer ||
-        ''
-      )
+      const candidates = [
+        ev.player?.name,
+        ev.player?.shortName,
+        ev.event_player,
+        ev.strPlayer,
+        ev.player_name,
+        typeof ev.player === 'string' ? ev.player : null,
+        ev.scorer?.name,
+        ev.scorer?.shortName,
+        typeof ev.scorer === 'string' ? ev.scorer : null,
+        ev.name,
+        ev.strScorer,
+        ev.strEvent,
+        ev.detail,
+      ]
+      for (const cand of candidates) {
+        if (typeof cand === 'string' && !isGenericScorerName(cand)) {
+          return cand.trim()
+        }
+      }
+      return ''
     }
 
     const extractMinuteFromEv = (ev: any): { minute: number | null; extra: number | null } => {
@@ -1169,17 +1204,17 @@ export default function JogosDoDia() {
     }
 
     // 2. Se a quantidade de marcadores visíveis for menor que os gols do placar (ex: faltam autores),
-    // preenche marcadores genéricos "⚽ Gol" para que a contagem seja estritamente igual ao placar
+    // preenche marcadores genéricos "⚽" para que a contagem seja estritamente igual ao placar
     if (hGoals != null && hGoals > 0 && finalHomeScorers.length < hGoals) {
       const missingHome = hGoals - finalHomeScorers.length
       for (let i = 0; i < missingHome; i++) {
-        finalHomeScorers.push('⚽ Gol')
+        finalHomeScorers.push('⚽')
       }
     }
     if (aGoals != null && aGoals > 0 && finalAwayScorers.length < aGoals) {
       const missingAway = aGoals - finalAwayScorers.length
       for (let i = 0; i < missingAway; i++) {
-        finalAwayScorers.push('⚽ Gol')
+        finalAwayScorers.push('⚽')
       }
     }
 
