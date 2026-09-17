@@ -26,6 +26,8 @@ import {
   getFixtureDateSaoPaulo,
   isFixturePostponed,
   isFixtureCancelled,
+  isFixtureLive,
+  isFixtureFinished,
 } from '@/lib/apiFootballMatcher'
 import { getRegionAndCountryByTournament } from '@/lib/tournamentRegionMatcher'
 
@@ -696,26 +698,22 @@ export default function JogosDoDia() {
       }
     }
 
-    // Agrupamento dos gols por jogador no formato solicitado: Jogador (12', 45')
+    // Agrupamento dos gols por jogador no formato solicitado: ⚽ Jogador (12', 45')
     const formatGroupedScorers = (list: string[]): string[] => {
       if (list.length === 0) return []
-      const map = new Map<string, number[]>()
+      const map = new Map<string, string[]>()
       const noMinList: string[] = []
       for (const item of list) {
-        const match = item.match(/^(.*?)(?:\s+(\d+)')?$/)
+        // Suporta tanto 45' quanto acréscimos 45+2'
+        const match = item.match(/^(.*?)(?:\s+(\d+(?:\+\d+)?)\s*')?$/)
         if (match) {
           const playerName = match[1].trim()
           const minuteStr = match[2]
+          if (!map.has(playerName)) {
+            map.set(playerName, [])
+          }
           if (minuteStr) {
-            const minNum = parseInt(minuteStr, 10)
-            if (!map.has(playerName)) {
-              map.set(playerName, [])
-            }
-            map.get(playerName)!.push(minNum)
-          } else {
-            if (!map.has(playerName)) {
-              map.set(playerName, [])
-            }
+            map.get(playerName)!.push(minuteStr)
           }
         } else {
           noMinList.push(item)
@@ -725,14 +723,22 @@ export default function JogosDoDia() {
       const formatted: string[] = []
       map.forEach((minutes, name) => {
         if (minutes.length > 0) {
-          const sorted = [...minutes].sort((a, b) => a - b)
-          formatted.push(`${name} (${sorted.map((m) => `${m}'`).join(', ')})`)
+          const sorted = [...minutes].sort((a, b) => {
+            const numA = parseInt(a.split('+')[0], 10)
+            const numB = parseInt(b.split('+')[0], 10)
+            if (numA !== numB) return numA - numB
+            const extraA = parseInt(a.split('+')[1] || '0', 10)
+            const extraB = parseInt(b.split('+')[1] || '0', 10)
+            return extraA - extraB
+          })
+          formatted.push(`⚽ ${name} (${sorted.map((m) => `${m}'`).join(', ')})`)
         } else {
-          formatted.push(name)
+          formatted.push(`⚽ ${name}`)
         }
       })
       for (const nm of noMinList) {
-        if (!formatted.includes(nm)) formatted.push(nm)
+        const cleanNm = nm.startsWith('⚽') ? nm : `⚽ ${nm}`
+        if (!formatted.includes(cleanNm)) formatted.push(cleanNm)
       }
       return formatted
     }
@@ -1204,37 +1210,36 @@ export default function JogosDoDia() {
 
                             {/* Marcadores dos gols com minutagem: exibido apenas para partidas Ao Vivo ou Finalizadas */}
                             {(() => {
-                              const canShow =
-                                (match.isLive || ['FT', 'AET', 'PEN'].includes(stMatch)) &&
-                                !isPstOrCanc
+                              const isFinishedMatch = isFixtureFinished(stMatch, longMatch)
+                              const isLiveMatch = match.isLive || isFixtureLive(stMatch)
+                              const canShow = (isLiveMatch || isFinishedMatch) && !isPstOrCanc
                               const hasScorers = homeScorers.length > 0 || awayScorers.length > 0
                               if (!canShow || !hasScorers) return null
 
                               return (
-                                <div className="mt-2.5 border-t border-slate-100 pt-2 text-[11px] text-slate-600">
-                                  <div className="flex items-center justify-center gap-1 mb-1 text-[10px] font-bold uppercase tracking-wider text-slate-400">
-                                    <span>Gols:</span>
-                                  </div>
-                                  <div className="grid grid-cols-2 gap-3">
-                                    <div className="text-right space-y-0.5">
+                                <div className="mt-2.5 border-t border-slate-100/80 pt-2 text-[11px] text-slate-600">
+                                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 sm:gap-4">
+                                    {/* Mandante: alinhado à esquerda no mobile, à direita no desktop */}
+                                    <div className="sm:text-right space-y-1 min-w-0">
                                       {homeScorers.map((s, idx) => (
                                         <div
                                           key={idx}
-                                          className="truncate text-slate-700 font-medium text-[11px]"
-                                          title={`Gols: ⚽ ${s}`}
+                                          className="truncate text-slate-600 font-medium text-[11px] sm:text-right"
+                                          title={s}
                                         >
-                                          ⚽ {s}
+                                          {s}
                                         </div>
                                       ))}
                                     </div>
-                                    <div className="text-left space-y-0.5">
+                                    {/* Visitante: alinhado à esquerda */}
+                                    <div className="text-left space-y-1 min-w-0">
                                       {awayScorers.map((s, idx) => (
                                         <div
                                           key={idx}
-                                          className="truncate text-slate-700 font-medium text-[11px]"
-                                          title={`Gols: ⚽ ${s}`}
+                                          className="truncate text-slate-600 font-medium text-[11px]"
+                                          title={s}
                                         >
-                                          ⚽ {s}
+                                          {s}
                                         </div>
                                       ))}
                                     </div>

@@ -2081,6 +2081,8 @@ routerAdd('GET', '/backend/v1/jogos-do-dia', (e) => {
             halftime: { home: htHome, away: htAway },
             fulltime: { home: homeScore, away: awayScore },
           },
+          events: m.goals,
+          goalEvents: m.goals,
           scorers: scorersListFD,
           isLive: isLive,
         })
@@ -2678,6 +2680,7 @@ routerAdd('GET', '/backend/v1/jogos-do-dia', (e) => {
         teams: item.teams,
         goals: item.goals,
         score: item.score,
+        events: item.events,
         scorers: scorersList,
         isLive: isLive,
       })
