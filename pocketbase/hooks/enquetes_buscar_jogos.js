@@ -35,6 +35,10 @@ routerAdd(
       // Coleta data_inicio e data_fim
       var dataInicio = normalizeDateInput(e.requestInfo().query.data_inicio || '')
       var dataFim = normalizeDateInput(e.requestInfo().query.data_fim || '')
+      // Parâmetro sem_corte: quando true ou "1", não descarta jogos passados ou que começam em menos de 3h
+      // Utilizado pela aba Jogos do Dia (/jogos-do-dia) para visualização completa de partidas do dia
+      var semCorte =
+        e.requestInfo().query.sem_corte === '1' || e.requestInfo().query.sem_corte === 'true'
 
       // Valida formato das datas
       if (!/^\d{4}-\d{2}-\d{2}$/.test(dataInicio) || !/^\d{4}-\d{2}-\d{2}$/.test(dataFim)) {
@@ -708,10 +712,11 @@ routerAdd(
           // busca/enquete é criada."
           // Cutoff: agora + 3 horas.
           // O jogo só é incluído se kickoffTimestamp >= agora + 3 horas.
+          // Se semCorte == true (usado por Jogos do Dia), NÃO aplica o descarte de 3h!
           // -----------------------------------------------------------------
           var kickoffTs = getKickoffTimestampSaoPaulo(gameDate, gameTime, rawDateSource)
           var minAllowedKickoff = nowMs + 3 * 3600 * 1000
-          if (kickoffTs !== null && kickoffTs < minAllowedKickoff) {
+          if (!semCorte && kickoffTs !== null && kickoffTs < minAllowedKickoff) {
             // Partida começa em menos de 3 horas (ou já começou/terminou): filtrar fora
             continue
           }

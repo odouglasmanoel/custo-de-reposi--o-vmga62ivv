@@ -129,15 +129,17 @@ export function formatToISOQueryDate(input: string): string {
 export async function buscarJogosIntervalo(
   dataInicio: string,
   dataFim: string,
+  semCorte: boolean = false,
 ): Promise<JogoBuscado[]> {
   const token = pb.authStore.token
   const baseUrl = import.meta.env.VITE_POCKETBASE_URL || ''
 
   const inicioISO = formatToISOQueryDate(dataInicio)
   const fimISO = formatToISOQueryDate(dataFim)
+  const corteParam = semCorte ? '&sem_corte=1' : ''
 
   const res = await fetch(
-    `${baseUrl}/backend/v1/enquetes/buscar-jogos?data_inicio=${encodeURIComponent(inicioISO)}&data_fim=${encodeURIComponent(fimISO)}`,
+    `${baseUrl}/backend/v1/enquetes/buscar-jogos?data_inicio=${encodeURIComponent(inicioISO)}&data_fim=${encodeURIComponent(fimISO)}${corteParam}`,
     {
       headers: {
         Authorization: token ? `Bearer ${token}` : '',

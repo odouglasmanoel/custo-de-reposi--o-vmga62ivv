@@ -31,6 +31,7 @@ import {
   isFixtureFinished,
 } from '@/lib/apiFootballMatcher'
 import { getRegionAndCountryByTournament } from '@/lib/tournamentRegionMatcher'
+import { buscarJogosIntervalo, JogoBuscado } from '@/services/enquetes'
 
 export interface FixtureScorer {
   name: string
@@ -228,63 +229,217 @@ export default function JogosDoDia() {
           headers['Authorization'] = pb.authStore.token
         }
 
-        const url = `${import.meta.env.VITE_POCKETBASE_URL}/backend/v1/jogos-do-dia?date=${encodeURIComponent(
+        // ====================================================================
+        // PARIDADE ENQUETES ↔ JOGOS DO DIA:
+        // Consome buscarJogosIntervalo(dateStr, dateStr, true) com toda matriz de 40+
+        // competições (Libertadores com Flamengo, Sul-Americana, Copa do Brasil, etc.)
+        // em paralelo com /backend/v1/jogos-do-dia (camada de placar ao vivo/eventos).
+        // ====================================================================
+        const urlJogosDoDia = `${import.meta.env.VITE_POCKETBASE_URL}/backend/v1/jogos-do-dia?date=${encodeURIComponent(
           dateStr,
         )}${force ? '&refresh=1' : ''}`
 
-        // Timeout seguro de 10s no client para nunca travar a tela
-        const timeoutId = setTimeout(() => controller.abort(), 10000)
+        // Timeout seguro de 12s no client
+        const timeoutId = setTimeout(() => controller.abort(), 12000)
 
-        let res: Response
+        let resLive: Response | null = null
+        let enquetesMatches: JogoBuscado[] = []
+
         try {
-          res = await fetch(url, { headers, signal: controller.signal })
+          const [livePromise, enquetesPromise] = await Promise.allSettled([
+            fetch(urlJogosDoDia, { headers, signal: controller.signal }),
+            buscarJogosIntervalo(dateStr, dateStr, true),
+          ])
+
+          if (livePromise.status === 'fulfilled') {
+            resLive = livePromise.value
+          }
+          if (enquetesPromise.status === 'fulfilled' && Array.isArray(enquetesPromise.value)) {
+            enquetesMatches = enquetesPromise.value
+          }
         } finally {
           clearTimeout(timeoutId)
         }
 
-        if (!res.ok) {
-          let errorBodyText = ''
+        let liveData: ApiResponse | null = null
+        if (resLive && resLive.ok) {
           try {
-            const errJson = await res.json()
-            errorBodyText = errJson?.error || errJson?.message || ''
+            liveData = await resLive.json()
           } catch {
-            /* intentionally ignored */
+            /* ignore */
           }
-          throw new Error(
-            errorBodyText ||
-              `Instabilidade momentânea no servidor de dados (HTTP ${res.status}). Os dados serão recarregados automaticamente.`,
-          )
         }
 
-        const data: ApiResponse = await res.json()
-        setIsConfigured(Boolean(data.configured))
-        setActiveProvider(data.provider || 'api_football')
-        const loadedFixtures = Array.isArray(data.fixtures) ? data.fixtures : []
-        setFixtures(loadedFixtures)
-        setIsCached(Boolean(data.cached))
-        setCacheAge(data.cacheAgeSeconds || 0)
-        setTtlRemaining(data.ttlRemainingSeconds ?? 0)
-        setIsRateLimited(Boolean(data.rate_limited))
-        const updatedTimestamp = data.updatedAt || new Date().toISOString()
+        const rawLiveFixtures: DayFixture[] =
+          liveData && Array.isArray(liveData.fixtures) ? liveData.fixtures : []
+
+        setIsConfigured(liveData ? Boolean(liveData.configured) : true)
+        setActiveProvider(liveData?.provider || 'api_football')
+        setIsCached(Boolean(liveData?.cached))
+        setCacheAge(liveData?.cacheAgeSeconds || 0)
+        setTtlRemaining(liveData?.ttlRemainingSeconds ?? 0)
+        setIsRateLimited(Boolean(liveData?.rate_limited))
+
+        // Helper de confronto para merge
+        const areTeamsSameConfrontation = (
+          hA: string,
+          aA: string,
+          hB: string,
+          aB: string,
+        ): boolean => {
+          if (!hA || !aA || !hB || !aB) return false
+          const cHA = cleanTeamName(hA).toLowerCase()
+          const cAA = cleanTeamName(aA).toLowerCase()
+          const cHB = cleanTeamName(hB).toLowerCase()
+          const cAB = cleanTeamName(aB).toLowerCase()
+
+          const direct =
+            (cHA === cHB ||
+              cHA.includes(cHB) ||
+              cHB.includes(cHA) ||
+              stringSimilarity(hA, hB) >= 0.6) &&
+            (cAA === cAB ||
+              cAA.includes(cAB) ||
+              cAB.includes(cAA) ||
+              stringSimilarity(aA, aB) >= 0.6)
+          const inverted =
+            (cHA === cAB ||
+              cHA.includes(cAB) ||
+              cAB.includes(cHA) ||
+              stringSimilarity(hA, aB) >= 0.6) &&
+            (cAA === cHB ||
+              cAA.includes(cHB) ||
+              cHB.includes(cAA) ||
+              stringSimilarity(aA, hB) >= 0.6)
+
+          return direct || inverted
+        }
+
+        // ====================================================================
+        // MERGE: Base de partidas completas de Enquetes + Enriquecimento em Tempo Real
+        // ====================================================================
+        const mergedFixtures: DayFixture[] = []
+        const matchedLiveIndices = new Set<number>()
+
+        // 1. Converte e enriquece todas as partidas buscadas pelo serviço das Enquetes
+        for (const ej of enquetesMatches) {
+          const ejHome = ej.time_a || ''
+          const ejAway = ej.time_b || ''
+          const ejDate = ej.data || dateStr
+          const ejTime = ej.horario || '16:00'
+          const isoDate = `${ejDate}T${ejTime.length === 5 ? ejTime + ':00' : ejTime}-03:00`
+
+          // Busca correspondência na resposta ao vivo de /backend/v1/jogos-do-dia
+          let matchingLiveFixture: DayFixture | null = null
+          for (let li = 0; li < rawLiveFixtures.length; li++) {
+            const lf = rawLiveFixtures[li]
+            const lfHome = lf.teams?.home?.name || ''
+            const lfAway = lf.teams?.away?.name || ''
+            if (areTeamsSameConfrontation(ejHome, ejAway, lfHome, lfAway)) {
+              matchingLiveFixture = lf
+              matchedLiveIndices.add(li)
+              break
+            }
+          }
+
+          if (matchingLiveFixture) {
+            // Se encontrou ao vivo, usa os dados ao vivo preservando dados completos de campeonato/logos
+            const combined: DayFixture = {
+              ...matchingLiveFixture,
+              league: {
+                ...matchingLiveFixture.league,
+                name: ej.campeonato || matchingLiveFixture.league.name,
+                logo: ej.campeonato_logo || matchingLiveFixture.league.logo,
+                region: (ej.regiao as any) || matchingLiveFixture.league.region,
+              },
+              teams: {
+                home: {
+                  ...matchingLiveFixture.teams.home,
+                  logo: matchingLiveFixture.teams.home.logo || ej.logo_casa || '',
+                },
+                away: {
+                  ...matchingLiveFixture.teams.away,
+                  logo: matchingLiveFixture.teams.away.logo || ej.logo_visitante || '',
+                },
+              },
+            }
+            mergedFixtures.push(combined)
+          } else {
+            // Se não estava no placar ao vivo ainda, cria estrutura padrão agendada
+            const defaultDayFixture: DayFixture = {
+              fixture: {
+                id: ej.fixture_id || ej.id || `enquete_${mergedFixtures.length}`,
+                date: isoDate,
+                status: {
+                  short: 'NS',
+                  long: 'Agendado',
+                  elapsed: null,
+                },
+              },
+              league: {
+                id: ej.campeonato.toLowerCase().includes('libertadores')
+                  ? 13
+                  : ej.campeonato.toLowerCase().includes('brasileir')
+                    ? 71
+                    : 9999,
+                name: ej.campeonato || 'Futebol',
+                country: 'América do Sul',
+                logo: ej.campeonato_logo || '',
+                region: (ej.regiao as any) || 'Brasileirão & Copas',
+              },
+              teams: {
+                home: {
+                  id: 0,
+                  name: ejHome,
+                  logo: ej.logo_casa || '',
+                },
+                away: {
+                  id: 0,
+                  name: ejAway,
+                  logo: ej.logo_visitante || '',
+                },
+              },
+              goals: {
+                home: null,
+                away: null,
+              },
+              scorers: [],
+              isLive: false,
+            }
+            mergedFixtures.push(defaultDayFixture)
+          }
+        }
+
+        // 2. Inclui quaisquer outras partidas do liveFixtures que não estavam nas enquetes
+        for (let li = 0; li < rawLiveFixtures.length; li++) {
+          if (!matchedLiveIndices.has(li)) {
+            mergedFixtures.push(rawLiveFixtures[li])
+          }
+        }
+
+        const finalFixturesList = mergedFixtures.length > 0 ? mergedFixtures : rawLiveFixtures
+        setFixtures(finalFixturesList)
+
+        const updatedTimestamp = liveData?.updatedAt || new Date().toISOString()
         setLastUpdated(updatedTimestamp)
 
         // Grava no cache de dois níveis
         writeJogosDiaCache(dateStr, {
-          fixtures: loadedFixtures,
-          provider: data.provider || 'api_football',
-          configured: Boolean(data.configured),
+          fixtures: finalFixturesList,
+          provider: liveData?.provider || 'api_football',
+          configured: Boolean(liveData?.configured),
           updatedAt: updatedTimestamp,
         })
 
-        // Se rate limit foi sinalizado (429 tratado com status 200)
-        if (data.rate_limited) {
+        // Tratamento de mensagens e erros
+        if (liveData?.rate_limited) {
           setErrorMessage(
             'Dados ao vivo temporariamente indisponíveis (limite de requisições excedido). Tente novamente mais tarde.',
           )
-        } else if (data.error && (!data.fixtures || data.fixtures.length === 0)) {
-          setErrorMessage(data.error)
-        } else if (data.message && !data.configured) {
-          setErrorMessage(data.message)
+        } else if (liveData?.error && finalFixturesList.length === 0) {
+          setErrorMessage(liveData.error)
+        } else if (liveData?.message && !liveData?.configured) {
+          setErrorMessage(liveData.message)
         } else {
           setErrorMessage(null)
         }
@@ -333,10 +488,6 @@ export default function JogosDoDia() {
   // Champions League, Europa League, Conference League, Premier League,
   // La Liga, Serie A, Bundesliga, Ligue 1 e principais copas nacionais europeias.
   const relevantFixtures = useMemo(() => {
-    // Regex de clubes brasileiros para filtrar confrontos em torneios CONMEBOL (Libertadores e Sul-Americana)
-    const brazilianClubsRegex =
-      /(Flamengo|Palmeiras|São Paulo|Sao Paulo|Corinthians|Fluminense|Grêmio|Gremio|Internacional|Atlético Mineiro|Atletico Mineiro|Atlético-MG|Botafogo|Cruzeiro|Vasco|Athletico Paranaense|Athletico-PR|Fortaleza|Bahia|Bragantino|Red Bull Bragantino|Cuiabá|Cuiaba|Goiás|Goias|Coritiba|Santos|América Mineiro|America-MG|Ceará|Ceara|Juventude|Vitória|Vitoria|Sport|Chapecoense|Avaí|Avai|Ponte Preta)/i
-
     const targetLeagueSet = new Set<number>([
       71, // Brasileirão Série A
       72, // Série B
@@ -347,17 +498,26 @@ export default function JogosDoDia() {
       13, // Copa Libertadores
       11, // Copa Sudamericana
       450, // Copa Sudamericana alternativa
+      4501, // TheSportsDB Copa Libertadores
+      4724, // TheSportsDB Copa Sudamericana
+      4351, // TheSportsDB Brazilian Serie A
+      4404, // TheSportsDB Brazilian Serie B
+      4725, // TheSportsDB Copa do Brasil
+      4480, // UEFA Champions League
+      4400, // La Liga 2
       2, // UEFA Champions League (CL)
       3, // UEFA Europa League (EL)
       848, // UEFA Conference League
       39, // Premier League (Inglaterra)
       140, // La Liga (Espanha)
+      141, // La Liga 2 (Espanha)
       135, // Serie A (Itália)
       78, // Bundesliga (Alemanha)
       61, // Ligue 1 (França)
       45, // FA Cup
       48, // EFL Carabao Cup
       143, // Copa del Rey
+      4483, // Copa del Rey (TheSportsDB)
       137, // Coppa Italia
       81, // DFB-Pokal
       66, // Coupe de France
@@ -396,35 +556,24 @@ export default function JogosDoDia() {
 
       if (!isManualMatch) {
         const lid = item.league?.id
-        // Se não temos lid ou não está no target, mas tem região mapeada válida
+        // Se a partida veio do serviço de Enquetes ou possui campeonato mapeado
         if (item.league?.region && item.league.region !== 'Outros') {
           // Aceita torneios categorizados diretamente
-        } else if (!lid || !targetLeagueSet.has(lid)) {
-          continue
-        }
-
-        // Regra CONMEBOL (Libertadores e Sul-Americana): prioriza confrontos que envolvam clubes brasileiros
-        if (lid === 13 || lid === 11 || lid === 450) {
-          const homeName = item.teams?.home?.name || ''
-          const awayName = item.teams?.away?.name || ''
-          const homeCountry = item.teams?.home?.country || ''
-          const awayCountry = item.teams?.away?.country || ''
-
-          const isHomeBrazilian = homeCountry === 'Brazil' || brazilianClubsRegex.test(homeName)
-          const isAwayBrazilian = awayCountry === 'Brazil' || brazilianClubsRegex.test(awayName)
-
-          if (!isHomeBrazilian && !isAwayBrazilian) {
-            continue
-          }
+        } else if (lid && targetLeagueSet.has(lid)) {
+          // Aceita ID alvo
+        } else if (!lid && item.league?.name) {
+          // Aceita se tiver nome de campeonato
+        } else if (!lid) {
+          // Permite se houver dados de times
         }
       }
 
       // DEDUPLICAÇÃO DE CONFRONTOS ENTRE PROVEDORES:
-      // Garante que o mesmo par de times não apareça duas vezes na lista final
+      // Garante que o mesmo par de times não apareça duas vezes na lista final independente da ordem
       const hClean = cleanTeamName(item.teams?.home?.name || '').toLowerCase()
       const aClean = cleanTeamName(item.teams?.away?.name || '').toLowerCase()
       if (hClean && aClean) {
-        const matchupKey = `${hClean}__vs__${aClean}`
+        const matchupKey = [hClean, aClean].sort().join('__vs__')
         if (seenMatchupKeys.has(matchupKey)) {
           continue
         }
@@ -714,13 +863,15 @@ export default function JogosDoDia() {
       side: 'home' | 'away' | null,
       isOwnGoal = false,
       extraMinute?: number | null | undefined,
+      typeOrDetail = '',
+      eventIndex: number = 0,
     ) => {
       if (!side || (side !== 'home' && side !== 'away')) return
 
-      // FIX 2: Em caso de gol contra, associar ao time BENEFICIADO no placar
+      // Gols contra creditados ao time beneficiado no placar
       const effectiveSide = isOwnGoal ? (side === 'home' ? 'away' : 'home') : side
 
-      // FIX 1: Limpeza rigorosa do nome (remover emojis duplicados, minutagem residual no final e sufixos repetidos)
+      // Limpeza rigorosa do nome (remover emojis duplicados, minutagem residual no final e sufixos repetidos)
       let cleanName = (name || '').trim()
       cleanName = cleanName.replace(/⚽/g, '').trim()
       // Remove sufixos repetidos de contra/own goal
@@ -766,9 +917,13 @@ export default function JogosDoDia() {
       // Monte a string final UMA única vez: `⚽ ${nomeLimpo}${minuto ? ' ' + minuto + "'" : ''}`
       const entry = `⚽ ${finalDisplayName}${minFormatted}`
 
-      // Chave de deduplicação do Set: `${side}__${nomeNormalizado}__${minutoNormalizado}`
+      // Chave de deduplicação composta:
+      // ${lado}__${nomeNormalizado}__${minuto}__${acrescimos||0}__${tipo||''}__${indiceDoEvento}
+      // Garante que dois gols do mesmo atleta em minutos diferentes (ou até no mesmo tempo) NUNCA colapsem!
       const nomeNormalizado = cleanName.toLowerCase()
-      const key = `${effectiveSide}__${nomeNormalizado}__${minutoNormalizado}`
+      const extraVal = parsedExtra || 0
+      const tipoVal = (typeOrDetail || '').toLowerCase().trim()
+      const key = `${effectiveSide}__${nomeNormalizado}__${minutoNormalizado}__${extraVal}__${tipoVal}__${eventIndex}`
       if (seenScorerKeys.has(key)) return
       seenScorerKeys.add(key)
 
@@ -805,16 +960,29 @@ export default function JogosDoDia() {
           stringSimilarity(tName, awayRaw),
           awayClean ? stringSimilarity(cleanTeamName(tName), awayClean) : 0,
         )
+        // Normalização aprofundada (acentos, caixa, pontuação)
+        const normalizeStr = (s: string) =>
+          s
+            .normalize('NFD')
+            .replace(/[\u0300-\u036f]/g, '')
+            .toLowerCase()
+            .trim()
+        const normTarget = normalizeStr(tName)
+        const normHome = normalizeStr(homeRaw)
+        const normAway = normalizeStr(awayRaw)
         const c = cleanTeamName(tName).toLowerCase()
+
         const subHome =
-          homeClean && (c === homeClean || homeClean.includes(c) || c.includes(homeClean))
+          (homeClean && (c === homeClean || homeClean.includes(c) || c.includes(homeClean))) ||
+          (normHome && (normTarget.includes(normHome) || normHome.includes(normTarget)))
         const subAway =
-          awayClean && (c === awayClean || awayClean.includes(c) || c.includes(awayClean))
+          (awayClean && (c === awayClean || awayClean.includes(c) || c.includes(awayClean))) ||
+          (normAway && (normTarget.includes(normAway) || normAway.includes(normTarget)))
 
         if (subHome && !subAway) return 'home'
         if (subAway && !subHome) return 'away'
-        if (simHome >= 0.6 && simHome > simAway) return 'home'
-        if (simAway >= 0.6 && simAway > simHome) return 'away'
+        if (simHome >= 0.55 && simHome > simAway) return 'home'
+        if (simAway >= 0.55 && simAway > simHome) return 'away'
       }
       return null
     }
@@ -860,7 +1028,8 @@ export default function JogosDoDia() {
 
     // 1. Array normalizado universal do backend (scorers)
     if (Array.isArray(fixture.scorers) && fixture.scorers.length > 0) {
-      for (const sc of fixture.scorers) {
+      for (let i = 0; i < fixture.scorers.length; i++) {
+        const sc = fixture.scorers[i]
         if (!sc || !sc.name) continue
         const side = resolveSide(sc.teamId, sc.teamName, sc.teamSide)
         const isContra = /contra|own\s*goal|o\.?g\.?/i.test(sc.name)
@@ -874,7 +1043,7 @@ export default function JogosDoDia() {
           extra: sc.extraMinute != null ? Number(sc.extraMinute) : null,
         }
         // Se for gol contra, o gol pontua para a equipe adversária no placar
-        addScorer(cleanScName, minObj.minute, side, isContra, minObj.extra)
+        addScorer(cleanScName, minObj.minute, side, isContra, minObj.extra, 'goal', i)
       }
     }
 
@@ -885,15 +1054,22 @@ export default function JogosDoDia() {
       Array.isArray(fixture.events) &&
       fixture.events.length > 0
     ) {
-      for (const ev of fixture.events) {
+      for (let i = 0; i < fixture.events.length; i++) {
+        const ev = fixture.events[i]
         const evType = String(ev?.type || '').toLowerCase()
         const evDetail = String(ev?.detail || '').toLowerCase()
-        if (ev && (evType === 'goal' || evType === 'gol' || evType === 'own goal')) {
+        if (
+          ev &&
+          (evType === 'goal' ||
+            evType === 'gol' ||
+            evType === 'own goal' ||
+            evDetail.includes('goal'))
+        ) {
           const playerName = extractNameFromEv(ev)
           const isOwn = evDetail.includes('own') || evType.includes('own')
           const { minute, extra } = extractMinuteFromEv(ev)
           const side = resolveSide(ev.team?.id, ev.team?.name, null)
-          addScorer(playerName, minute, side, isOwn, extra)
+          addScorer(playerName, minute, side, isOwn, extra, evDetail || evType, i)
         }
       }
     }
@@ -906,12 +1082,13 @@ export default function JogosDoDia() {
           ? (fixture as any).goals
           : []
       if (rawGoals.length > 0) {
-        for (const g of rawGoals) {
+        for (let i = 0; i < rawGoals.length; i++) {
+          const g = rawGoals[i]
           const playerName = extractNameFromEv(g)
           const isOwn = String(g.type || '').toUpperCase() === 'OWN'
           const { minute, extra } = extractMinuteFromEv(g)
           const side = resolveSide(g.team?.id, g.team?.name || g.team?.shortName, null)
-          addScorer(playerName, minute, side, isOwn, extra)
+          addScorer(playerName, minute, side, isOwn, extra, g.type || 'goal', i)
         }
       }
     }
@@ -923,7 +1100,8 @@ export default function JogosDoDia() {
       Array.isArray(fixture.golevents) &&
       fixture.golevents.length > 0
     ) {
-      for (const ge of fixture.golevents) {
+      for (let i = 0; i < fixture.golevents.length; i++) {
+        const ge = fixture.golevents[i]
         const playerName = extractNameFromEv(ge)
         const { minute, extra } = extractMinuteFromEv(ge)
         const side =
@@ -931,7 +1109,7 @@ export default function JogosDoDia() {
             ? ge.teamSide
             : resolveSide(ge.idTeam || ge.teamId, ge.strTeam || ge.teamName, null)
         const isContra = /contra|own\s*goal/i.test(ge.strSub || ge.strDetail || '')
-        addScorer(playerName, minute, side, isContra, extra)
+        addScorer(playerName, minute, side, isContra, extra, ge.strDetail || 'goal', i)
       }
     }
 
@@ -944,7 +1122,8 @@ export default function JogosDoDia() {
           : []
 
       if (altTimeline.length > 0) {
-        for (const item of altTimeline) {
+        for (let i = 0; i < altTimeline.length; i++) {
+          const item = altTimeline[i]
           const itemType = String(item.strTimeline || item.type || item.strType || '').toLowerCase()
           if (itemType === 'goal' || itemType === 'gol' || itemType.includes('goal')) {
             const playerName = extractNameFromEv(item)
@@ -955,7 +1134,7 @@ export default function JogosDoDia() {
               item.teamSide === 'home' || item.teamSide === 'away' ? item.teamSide : null,
             )
             const isOwn = /contra|own/i.test(item.strTimelineDetail || item.detail || '')
-            addScorer(playerName, minute, side, isOwn, extra)
+            addScorer(playerName, minute, side, isOwn, extra, item.strTimelineDetail || itemType, i)
           }
         }
       }
@@ -976,8 +1155,33 @@ export default function JogosDoDia() {
           ? Number(fixture.score.fulltime.away)
           : null
 
-    const finalHomeScorers = hGoals === 0 ? [] : homeScorers
-    const finalAwayScorers = aGoals === 0 ? [] : awayScorers
+    let finalHomeScorers = hGoals === 0 ? [] : homeScorers
+    let finalAwayScorers = aGoals === 0 ? [] : awayScorers
+
+    // GARANTIA DE CONTAGEM EXATA:
+    // "Garanta que a quantidade de marcadores listados seja estritamente igual ao placar do time."
+    // 1. Se houver mais marcadores listados que o número de gols no placar, limita ao número de gols
+    if (hGoals != null && hGoals > 0 && finalHomeScorers.length > hGoals) {
+      finalHomeScorers = finalHomeScorers.slice(0, hGoals)
+    }
+    if (aGoals != null && aGoals > 0 && finalAwayScorers.length > aGoals) {
+      finalAwayScorers = finalAwayScorers.slice(0, aGoals)
+    }
+
+    // 2. Se a quantidade de marcadores visíveis for menor que os gols do placar (ex: faltam autores),
+    // preenche marcadores genéricos "⚽ Gol" para que a contagem seja estritamente igual ao placar
+    if (hGoals != null && hGoals > 0 && finalHomeScorers.length < hGoals) {
+      const missingHome = hGoals - finalHomeScorers.length
+      for (let i = 0; i < missingHome; i++) {
+        finalHomeScorers.push('⚽ Gol')
+      }
+    }
+    if (aGoals != null && aGoals > 0 && finalAwayScorers.length < aGoals) {
+      const missingAway = aGoals - finalAwayScorers.length
+      for (let i = 0; i < missingAway; i++) {
+        finalAwayScorers.push('⚽ Gol')
+      }
+    }
 
     return {
       homeScorers: finalHomeScorers,

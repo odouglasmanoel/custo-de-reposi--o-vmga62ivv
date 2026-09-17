@@ -156,6 +156,34 @@ routerAdd('GET', '/backend/v1/placar-ao-vivo', (e) => {
           country: 'South America',
         },
         {
+          id: 4351,
+          name: 'Brazilian Serie A',
+          shortId: 71,
+          region: 'Brasileirão & Copas',
+          country: 'Brazil',
+        },
+        {
+          id: 4404,
+          name: 'Brazilian Serie B',
+          shortId: 72,
+          region: 'Brasileirão & Copas',
+          country: 'Brazil',
+        },
+        {
+          id: 4725,
+          name: 'Copa do Brasil',
+          shortId: 73,
+          region: 'Brasileirão & Copas',
+          country: 'Brazil',
+        },
+        {
+          id: 4480,
+          name: 'UEFA Champions League',
+          shortId: 2,
+          region: 'Futebol Europeu',
+          country: 'Europe',
+        },
+        {
           id: 4481,
           name: 'UEFA Europa League',
           shortId: 3,
@@ -173,6 +201,20 @@ routerAdd('GET', '/backend/v1/placar-ao-vivo', (e) => {
           id: 4335,
           name: 'La Liga',
           shortId: 140,
+          region: 'Futebol Europeu',
+          country: 'Spain',
+        },
+        {
+          id: 4400,
+          name: 'Spanish La Liga 2',
+          shortId: 141,
+          region: 'Futebol Europeu',
+          country: 'Spain',
+        },
+        {
+          id: 4483,
+          name: 'Copa del Rey',
+          shortId: 143,
           region: 'Futebol Europeu',
           country: 'Spain',
         },
@@ -3585,7 +3627,7 @@ routerAdd('GET', '/backend/v1/jogos-do-dia', (e) => {
       }
     }
 
-    // FIX 3: Fallback TheSportsDB para TODAS as ligas quando a API primária vier sem eventos e houver placar > 0
+    // FIX 3: Fallback TheSportsDB / Football-Data para TODAS as partidas com placar > 0 ou ao vivo sem eventos
     var stillNeedEvents = []
     for (var sneI = 0; sneI < fixturesToEnrichEvents.length; sneI++) {
       var sneFix = fixturesToEnrichEvents[sneI]
@@ -3597,6 +3639,7 @@ routerAdd('GET', '/backend/v1/jogos-do-dia', (e) => {
       }
     }
 
+    // 1. Tenta recuperar eventos via TheSportsDB
     if (stillNeedEvents.length > 0 && theSportsDbKey) {
       try {
         var tsdbEnrichFixtures = fetchConmebolFromTheSportsDb(dateQuery, theSportsDbKey)
@@ -3617,6 +3660,74 @@ routerAdd('GET', '/backend/v1/jogos-do-dia', (e) => {
         }
       } catch (errTsdbEnrichFallback) {
         console.log('[TheSportsDB Enrich Fallback] Erro:', errTsdbEnrichFallback)
+      }
+    }
+
+    // 2. Se alguma partida com gols ainda estiver sem eventos, tenta buscar match details no Football-Data.org
+    if (fallbackApiKey) {
+      for (var fdiCheck = 0; fdiCheck < stillNeedEvents.length; fdiCheck++) {
+        var sneFixRemaining = stillNeedEvents[fdiCheck]
+        var stillEmpty =
+          (!Array.isArray(sneFixRemaining.events) || sneFixRemaining.events.length === 0) &&
+          (!Array.isArray(sneFixRemaining.scorers) || sneFixRemaining.scorers.length === 0)
+        if (stillEmpty) {
+          try {
+            // Tenta consultar Football-Data matches do dia para casar confronto
+            var pFDCheck = dateQuery.split('-')
+            var yFDC = parseInt(pFDCheck[0], 10)
+            var mFDC = parseInt(pFDCheck[1], 10) - 1
+            var dFDC = parseInt(pFDCheck[2], 10)
+            var prevFDC = new Date(Date.UTC(yFDC, mFDC, dFDC - 1))
+            var dateFromC =
+              prevFDC.getUTCFullYear() +
+              '-' +
+              ('0' + (prevFDC.getUTCMonth() + 1)).slice(-2) +
+              '-' +
+              ('0' + prevFDC.getUTCDate()).slice(-2)
+            var nextFDC = new Date(Date.UTC(yFDC, mFDC, dFDC + 1))
+            var dateToC =
+              nextFDC.getUTCFullYear() +
+              '-' +
+              ('0' + (nextFDC.getUTCMonth() + 1)).slice(-2) +
+              '-' +
+              ('0' + nextFDC.getUTCDate()).slice(-2)
+            var resFDSingleSearch = $http.send({
+              url:
+                'https://api.football-data.org/v4/matches?dateFrom=' +
+                encodeURIComponent(dateFromC) +
+                '&dateTo=' +
+                encodeURIComponent(dateToC),
+              method: 'GET',
+              headers: { 'X-Auth-Token': fallbackApiKey },
+              timeout: 6,
+            })
+            if (
+              resFDSingleSearch &&
+              resFDSingleSearch.statusCode === 200 &&
+              resFDSingleSearch.json &&
+              Array.isArray(resFDSingleSearch.json.matches)
+            ) {
+              var fdParsedCheck = parseFootballDataToDayFixtures(
+                resFDSingleSearch.json.matches,
+                fallbackApiKey,
+              )
+              for (var fpi = 0; fpi < fdParsedCheck.fixtures.length; fpi++) {
+                var fFix = fdParsedCheck.fixtures[fpi]
+                if (isSameMatchConfrontation(sneFixRemaining, fFix)) {
+                  if (Array.isArray(fFix.events) && fFix.events.length > 0) {
+                    sneFixRemaining.events = fFix.events
+                  }
+                  if (Array.isArray(fFix.scorers) && fFix.scorers.length > 0) {
+                    sneFixRemaining.scorers = fFix.scorers
+                  }
+                  break
+                }
+              }
+            }
+          } catch (errFDSne) {
+            console.log('[Football-Data Event Fallback] Erro ao buscar eventos:', errFDSne)
+          }
+        }
       }
     }
 
