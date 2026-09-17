@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { History, Loader2, Lock, Power, RotateCcw, ShieldAlert, Edit3 } from 'lucide-react'
 import pb from '@/lib/pocketbase/client'
 import { normalizeMemberName } from '@/lib/statsCalculator'
@@ -9,6 +9,7 @@ import { toast } from '@/hooks/use-toast'
 import { Card } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
+import { Skeleton } from '@/components/ui/skeleton'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { formatDataBR, formatHoraBR, formatDateTimeBR } from '@/lib/dateUtils'
 import {
@@ -17,6 +18,57 @@ import {
   splitMatchScorersByTeam,
 } from '@/lib/scorerUtils'
 import { AdminEditMarcadoresModal } from '@/components/AdminEditMarcadoresModal'
+
+interface HistoricoPoolCache {
+  participantes: Participante[]
+  jogos: Jogo[]
+  palpites: Palpite[]
+  timestamp: number
+}
+
+const CACHE_HISTORICO_PREFIX = 'cr_historico_cache_v1'
+const memoryCache = new Map<string, HistoricoPoolCache>()
+
+function readPoolCache(bolaoId: string): HistoricoPoolCache | null {
+  if (!bolaoId) return null
+  const fromMem = memoryCache.get(bolaoId)
+  if (fromMem && Array.isArray(fromMem.jogos)) {
+    return fromMem
+  }
+  try {
+    const raw = localStorage.getItem(`${CACHE_HISTORICO_PREFIX}_${bolaoId}`)
+    if (!raw) return null
+    const parsed = JSON.parse(raw) as HistoricoPoolCache
+    if (parsed && Array.isArray(parsed.jogos)) {
+      memoryCache.set(bolaoId, parsed)
+      return parsed
+    }
+  } catch {
+    // localStorage indisponível ou erro no parse
+  }
+  return null
+}
+
+function writePoolCache(
+  bolaoId: string,
+  data: {
+    participantes: Participante[]
+    jogos: Jogo[]
+    palpites: Palpite[]
+  },
+) {
+  if (!bolaoId) return
+  const payload: HistoricoPoolCache = {
+    ...data,
+    timestamp: Date.now(),
+  }
+  memoryCache.set(bolaoId, payload)
+  try {
+    localStorage.setItem(`${CACHE_HISTORICO_PREFIX}_${bolaoId}`, JSON.stringify(payload))
+  } catch {
+    // localStorage indisponível ou cota cheia
+  }
+}
 
 export default function Historico() {
   const { isAdmin } = useAuth()
@@ -37,7 +89,12 @@ export default function Historico() {
 
   const [loadingBoloes, setLoadingBoloes] = useState(true)
   const [loadingDetails, setLoadingDetails] = useState(false)
+  const [isRevalidating, setIsRevalidating] = useState(false)
+  const [hasLoadedCurrentPool, setHasLoadedCurrentPool] = useState(false)
   const [updatingStatusId, setUpdatingStatusId] = useState<string | null>(null)
+
+  const activeFetchPromiseRef = useRef<Promise<void> | null>(null)
+  const currentBolaoIdRef = useRef<string | null>(null)
 
   // Load all available boloes
   useEffect(() => {
@@ -45,6 +102,7 @@ export default function Historico() {
       try {
         const records = await pb.collection('boloes').getFullList<Bolao>({
           sort: 'nome',
+          fields: 'id,nome,ativo,ultima_atualizacao,foco',
         })
         setBoloes(records)
         if (records.length > 0) {
@@ -59,95 +117,145 @@ export default function Historico() {
     fetchBoloes()
   }, [])
 
-  // Load details for selected pool
+  // Função pura para computar o ranking consolidado mantendo a regra idêntica
+  const computeRanking = useCallback((parts: Participante[], games: Jogo[], bets: Palpite[]) => {
+    const finishedGameIds = new Set(games.filter((g) => g.resultado_finalizado).map((g) => g.id))
+
+    const grouped = new Map<
+      string,
+      {
+        primaryPart: Participante
+        totalImported: number
+        allPartIds: Set<string>
+      }
+    >()
+
+    for (const part of parts) {
+      const norm = normalizeMemberName(part.nome)
+      const existing = grouped.get(norm)
+      const imp =
+        part.pontos_importados !== undefined && part.pontos_importados !== null
+          ? Number(part.pontos_importados)
+          : Number(part.pontuacao_total) || 0
+
+      if (!existing) {
+        grouped.set(norm, {
+          primaryPart: part,
+          totalImported: imp,
+          allPartIds: new Set([part.id]),
+        })
+      } else {
+        existing.totalImported += imp
+        existing.allPartIds.add(part.id)
+      }
+    }
+
+    const calculatedParts: Participante[] = []
+    for (const [normName, group] of grouped.entries()) {
+      const sumPalpites = bets
+        .filter((p) => group.allPartIds.has(p.participante) && finishedGameIds.has(p.jogo))
+        .reduce((acc, p) => acc + (Number(p.pontuacao_jogo) || 0), 0)
+
+      calculatedParts.push({
+        ...group.primaryPart,
+        nome: normName,
+        pontos_importados: group.totalImported,
+        pontuacao_total: group.totalImported + sumPalpites,
+      })
+    }
+
+    calculatedParts.sort((a, b) => {
+      if (b.pontuacao_total !== a.pontuacao_total) {
+        return b.pontuacao_total - a.pontuacao_total
+      }
+      return a.nome.localeCompare(b.nome)
+    })
+
+    return calculatedParts
+  }, [])
+
+  // Load details for selected pool with SWR (Instant render from cache + background revalidation)
   useEffect(() => {
     if (!selectedBolao) return
+    const targetBolaoId = selectedBolao.id
+    currentBolaoIdRef.current = targetBolaoId
 
-    const loadPoolData = async () => {
+    // 1. Tentar ler do cache local para renderização instantânea (SWR)
+    const cached = readPoolCache(targetBolaoId)
+    if (cached) {
+      setJogos(cached.jogos)
+      setParticipantes(cached.participantes)
+      setPalpites(cached.palpites)
+      setLoadingDetails(false)
+      setIsRevalidating(true)
+      setHasLoadedCurrentPool(true)
+    } else {
+      // Sem cache: ativa loading skeleton completo e esvazia estados anteriores
+      setJogos([])
+      setParticipantes([])
+      setPalpites([])
       setLoadingDetails(true)
+      setIsRevalidating(false)
+      setHasLoadedCurrentPool(false)
+    }
+
+    // 2. Busca consolidada e em paralelo no backend (apenas 1 query por coleção)
+    const loadPoolData = async () => {
       try {
         const [parts, games, bets] = await Promise.all([
           pb.collection('participantes').getFullList<Participante>({
-            filter: `bolao = '${selectedBolao.id}'`,
+            filter: `bolao = '${targetBolaoId}'`,
             sort: 'nome',
+            fields: 'id,bolao,nome,pontuacao_total,pontos_importados',
           }),
           pb.collection('jogos').getFullList<Jogo>({
-            filter: `bolao = '${selectedBolao.id}'`,
+            filter: `bolao = '${targetBolaoId}'`,
             sort: 'data,hora',
+            fields:
+              'id,bolao,time_a,time_b,data,hora,placar_a,placar_b,resultado_finalizado,gols_time_a,gols_time_b,tem_penaltis,vencedor_penaltis,competicao,fixture_id',
           }),
           pb.collection('palpites').getFullList<Palpite>({
-            filter: `bolao = '${selectedBolao.id}'`,
+            filter: `bolao = '${targetBolaoId}'`,
+            fields:
+              'id,bolao,jogo,participante,placar_a,placar_b,goleadores_a,goleadores_b,vencedor_penaltis,pontuacao_jogo,detalhamento',
           }),
         ])
 
-        // Dynamically calculate ranking: sum valid finished games + pontos_importados (or existing pontuacao_total if no imported field)
-        // Deduplicação estrita por participante (nome normalizado) para garantir que cada participante apareça uma única vez
-        const finishedGameIds = new Set(
-          games.filter((g) => g.resultado_finalizado).map((g) => g.id),
-        )
-
-        const grouped = new Map<
-          string,
-          {
-            primaryPart: Participante
-            totalImported: number
-            allPartIds: Set<string>
-          }
-        >()
-
-        for (const part of parts) {
-          const norm = normalizeMemberName(part.nome)
-          const existing = grouped.get(norm)
-          const imp =
-            part.pontos_importados !== undefined && part.pontos_importados !== null
-              ? Number(part.pontos_importados)
-              : Number(part.pontuacao_total) || 0
-
-          if (!existing) {
-            grouped.set(norm, {
-              primaryPart: part,
-              totalImported: imp,
-              allPartIds: new Set([part.id]),
-            })
-          } else {
-            existing.totalImported += imp
-            existing.allPartIds.add(part.id)
-          }
+        // Se o usuário já mudou de bolão enquanto a requisição rodava, ignora a resposta obsoleta
+        if (currentBolaoIdRef.current !== targetBolaoId) {
+          return
         }
 
-        const calculatedParts: Participante[] = []
-        for (const [normName, group] of grouped.entries()) {
-          const sumPalpites = bets
-            .filter((p) => group.allPartIds.has(p.participante) && finishedGameIds.has(p.jogo))
-            .reduce((acc, p) => acc + (Number(p.pontuacao_jogo) || 0), 0)
-
-          calculatedParts.push({
-            ...group.primaryPart,
-            nome: normName,
-            pontos_importados: group.totalImported,
-            pontuacao_total: group.totalImported + sumPalpites,
-          })
-        }
-
-        calculatedParts.sort((a, b) => {
-          if (b.pontuacao_total !== a.pontuacao_total) {
-            return b.pontuacao_total - a.pontuacao_total
-          }
-          return a.nome.localeCompare(b.nome)
-        })
+        const calculatedParts = computeRanking(parts, games, bets)
 
         setParticipantes(calculatedParts)
         setJogos(games)
         setPalpites(bets)
+        setHasLoadedCurrentPool(true)
+
+        // Salva no cache particionado para renderização instantânea na próxima visita
+        writePoolCache(targetBolaoId, {
+          participantes: calculatedParts,
+          jogos: games,
+          palpites: bets,
+        })
       } catch (err) {
-        console.error('Erro ao carregar detalhes do bolão selecionado:', err)
+        if (currentBolaoIdRef.current === targetBolaoId) {
+          console.error('Erro ao carregar detalhes do bolão selecionado:', err)
+        }
       } finally {
-        setLoadingDetails(false)
+        if (currentBolaoIdRef.current === targetBolaoId) {
+          setLoadingDetails(false)
+          setIsRevalidating(false)
+          setHasLoadedCurrentPool(true)
+          activeFetchPromiseRef.current = null
+        }
       }
     }
 
-    loadPoolData()
-  }, [selectedBolao])
+    const promise = loadPoolData()
+    activeFetchPromiseRef.current = promise
+  }, [selectedBolao, computeRanking])
 
   const handleToggleStatus = async (bolaoToToggle: Bolao, e: React.MouseEvent) => {
     e.stopPropagation()
@@ -221,8 +329,26 @@ export default function Historico() {
         </h2>
 
         {loadingBoloes ? (
-          <div className="py-8 text-center text-xs text-slate-500">
-            Carregando lista de bolões...
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 md:grid-cols-3">
+            {[1, 2, 3].map((i) => (
+              <Card
+                key={i}
+                className="rounded-[14px] border border-slate-200 p-5 bg-white space-y-3"
+              >
+                <div className="flex justify-between items-start">
+                  <div className="space-y-2 w-2/3">
+                    <Skeleton className="h-5 w-32" />
+                    <Skeleton className="h-3 w-20" />
+                    <Skeleton className="h-3 w-40" />
+                  </div>
+                  <Skeleton className="h-5 w-16 rounded-full" />
+                </div>
+                <div className="pt-3 border-t border-slate-100 flex justify-between items-center">
+                  <Skeleton className="h-3 w-20" />
+                  <Skeleton className="h-7 w-24 rounded-md" />
+                </div>
+              </Card>
+            ))}
           </div>
         ) : (
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 md:grid-cols-3">
@@ -347,19 +473,44 @@ export default function Historico() {
                     Tema: {selectedBolao.foco}
                   </Badge>
                 )}
+                {isRevalidating && (
+                  <span className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-medium text-slate-600">
+                    <Loader2 className="h-2.5 w-2.5 animate-spin" />
+                    Sincronizando...
+                  </span>
+                )}
               </div>
               <p className="text-xs text-[#64748B]">
                 Dados consolidados no banco de dados da Skip Cloud (somente leitura).
               </p>
             </div>
-            <Badge variant="outline" className="border-slate-300 text-xs text-slate-700">
-              {jogos.length} jogos registrados
-            </Badge>
+
+            {loadingDetails || !hasLoadedCurrentPool ? (
+              <Skeleton className="h-6 w-32 rounded-full" />
+            ) : (
+              <Badge variant="outline" className="border-slate-300 text-xs text-slate-700">
+                {jogos.length} jogos registrados
+              </Badge>
+            )}
           </div>
 
-          {loadingDetails ? (
-            <div className="flex min-h-[250px] items-center justify-center">
-              <Loader2 className="h-7 w-7 animate-spin text-[#0F2A43]" />
+          {loadingDetails && !hasLoadedCurrentPool ? (
+            <div className="space-y-4">
+              <div className="flex gap-2 max-w-sm">
+                <Skeleton className="h-8 w-1/2 rounded-lg" />
+                <Skeleton className="h-8 w-1/2 rounded-lg" />
+              </div>
+              <div className="rounded-xl border border-slate-200 overflow-hidden divide-y divide-slate-100">
+                {[1, 2, 3, 4].map((i) => (
+                  <div key={i} className="flex items-center justify-between px-5 py-4 bg-white">
+                    <div className="flex items-center gap-3">
+                      <Skeleton className="h-8 w-8 rounded-full" />
+                      <Skeleton className="h-4 w-32" />
+                    </div>
+                    <Skeleton className="h-6 w-16" />
+                  </div>
+                ))}
+              </div>
             </div>
           ) : (
             <Tabs defaultValue="classificacao" className="w-full">
@@ -418,10 +569,24 @@ export default function Historico() {
               {/* Tab 2: Resultados */}
               <TabsContent value="resultados" className="space-y-4">
                 {jogos.length === 0 ? (
-                  <div className="rounded-xl border border-dashed border-slate-300 bg-slate-50 py-10 text-center text-xs text-slate-500">
-                    Nenhum jogo cadastrado para esta edição histórica. As planilhas históricas devem
-                    ser importadas via painel da Skip Cloud / PocketBase.
-                  </div>
+                  hasLoadedCurrentPool ? (
+                    <div className="rounded-xl border border-dashed border-slate-300 bg-slate-50 py-10 text-center text-xs text-slate-500">
+                      Nenhum jogo cadastrado para esta edição histórica. As planilhas históricas
+                      devem ser importadas via painel da Skip Cloud / PocketBase.
+                    </div>
+                  ) : (
+                    <div className="divide-y divide-slate-200 rounded-xl border border-slate-200 overflow-hidden">
+                      {[1, 2, 3].map((i) => (
+                        <div key={i} className="p-4 bg-white space-y-2">
+                          <div className="flex justify-between items-center">
+                            <Skeleton className="h-5 w-48" />
+                            <Skeleton className="h-4 w-28" />
+                          </div>
+                          <Skeleton className="h-4 w-64" />
+                        </div>
+                      ))}
+                    </div>
+                  )
                 ) : (
                   <div className="divide-y divide-slate-200 rounded-xl border border-slate-200 overflow-hidden">
                     {jogos.map((jogo) => {
@@ -662,7 +827,19 @@ export default function Historico() {
         timeA={editingPalpite?.timeA}
         timeB={editingPalpite?.timeB}
         onSuccess={(updated) => {
-          setPalpites((prev) => prev.map((p) => (p.id === updated.id ? updated : p)))
+          setPalpites((prev) => {
+            const nextBets = prev.map((p) => (p.id === updated.id ? updated : p))
+            if (selectedBolao) {
+              const recalculated = computeRanking(participantes, jogos, nextBets)
+              setParticipantes(recalculated)
+              writePoolCache(selectedBolao.id, {
+                participantes: recalculated,
+                jogos,
+                palpites: nextBets,
+              })
+            }
+            return nextBets
+          })
         }}
       />
     </div>

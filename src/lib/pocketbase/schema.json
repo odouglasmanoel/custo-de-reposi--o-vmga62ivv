@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-09-17T13:00:45.623Z",
+  "generatedAt": "2026-09-17T13:22:10.538Z",
   "collections": [
     {
       "name": "users",
@@ -310,7 +310,8 @@
       "indexes": [
         "CREATE INDEX idx_jogos_bolao ON jogos (bolao)",
         "CREATE INDEX idx_jogos_data ON jogos (data)",
-        "CREATE INDEX idx_jogos_resultado ON jogos (resultado_finalizado)"
+        "CREATE INDEX idx_jogos_resultado ON jogos (resultado_finalizado)",
+        "CREATE INDEX `idx_jogos_status_data` ON `jogos` (resultado_finalizado, data)"
       ]
     },
     {
@@ -406,7 +407,9 @@
         "CREATE UNIQUE INDEX idx_palpites_jogo_participante ON palpites (jogo, participante)",
         "CREATE INDEX idx_palpites_bolao ON palpites (bolao)",
         "CREATE INDEX idx_palpites_jogo ON palpites (jogo)",
-        "CREATE INDEX idx_palpites_participante ON palpites (participante)"
+        "CREATE INDEX idx_palpites_participante ON palpites (participante)",
+        "CREATE INDEX `idx_palpites_part_jogo` ON `palpites` (participante, jogo)",
+        "CREATE INDEX `idx_palpites_bolao_jogo` ON `palpites` (bolao, jogo)"
       ]
     },
     {
