@@ -1,5 +1,5 @@
-import { useState, useEffect, useMemo } from 'react'
-import { Link, useSearchParams } from 'react-router-dom'
+import { useState, useEffect, useMemo, useRef, useCallback } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import {
   Trophy,
   Target,
@@ -10,7 +10,6 @@ import {
   TrendingUp,
   Info,
   Loader2,
-  Calendar,
   Sparkles,
   Globe,
 } from 'lucide-react'
@@ -30,10 +29,12 @@ import { useActivePool } from '@/context/ActivePoolContext'
 import { useRealtime } from '@/hooks/use-realtime'
 import type { Bolao, Jogo, Palpite, Participante } from '@/types/bolao'
 import { formatBolaoLabel, GERAL_BOLAO_ID } from '@/types/bolao'
-import { calculateStatistics } from '@/lib/statsCalculator'
+import { type StatsCalculationResult } from '@/lib/statsCalculator'
+import { readStatsCache, fetchStatisticsData, invalidateStatsCache } from '@/services/stats'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
+import { Skeleton } from '@/components/ui/skeleton'
 
 // Cores temáticas para cada um dos 4 participantes no gráfico
 const PARTICIPANT_COLORS: Record<string, { stroke: string; bg: string; border: string }> = {
@@ -65,13 +66,11 @@ export default function Estatisticas() {
   const [searchParams, setSearchParams] = useSearchParams()
 
   const [boloes, setBoloes] = useState<Bolao[]>([])
-  const [participantes, setParticipantes] = useState<Participante[]>([])
-  const [jogos, setJogos] = useState<Jogo[]>([])
-  const [palpites, setPalpites] = useState<Palpite[]>([])
+  const [statsData, setStatsData] = useState<StatsCalculationResult | null>(null)
   const [loading, setLoading] = useState(true)
+  const [isRevalidating, setIsRevalidating] = useState(false)
 
   // Filtro de competição: 'geral' | 'todas' | id do bolão
-  // Inicializado a partir da URL (?bolao=...), ou do contexto ativo do app, ou 'geral'
   const initialCompetitionId = useMemo(() => {
     const fromParam = searchParams.get('bolao')
     if (fromParam) return fromParam
@@ -80,20 +79,7 @@ export default function Estatisticas() {
   }, [])
 
   const [selectedCompetitionId, setSelectedCompetitionId] = useState<string>(initialCompetitionId)
-
-  // Real-time synchronization
-  useRealtime<Participante>('participantes', () => {
-    loadData(selectedCompetitionId)
-  })
-  useRealtime<Jogo>('jogos', () => {
-    loadData(selectedCompetitionId)
-  })
-  useRealtime<Palpite>('palpites', () => {
-    loadData(selectedCompetitionId)
-  })
-  useRealtime<Bolao>('boloes', () => {
-    loadData(selectedCompetitionId)
-  })
+  const currentCompIdRef = useRef<string>(initialCompetitionId)
 
   // Sincronizar caso o query param da URL mude externamente
   useEffect(() => {
@@ -103,64 +89,73 @@ export default function Estatisticas() {
     }
   }, [searchParams])
 
-  const loadData = async (compFilter: string = selectedCompetitionId) => {
-    try {
-      const isGeralSelection =
-        !compFilter || compFilter === GERAL_BOLAO_ID || compFilter === 'todas'
+  // Função core de carregamento com cache SWR de dois níveis
+  const loadStats = useCallback(
+    async (compFilter: string, forceBackground: boolean = false) => {
+      currentCompIdRef.current = compFilter
 
-      // 1. Sempre buscar todos os bolões para o seletor de competição e mapeamento de nomes
-      const boloesList = await pb.collection('boloes').getFullList<Bolao>({
-        sort: '-ativo,nome',
-      })
-      setBoloes(boloesList)
-
-      // 2. Se for visão Geral ('geral' ou 'todas'), buscar SEM filtro de bolão (agrega todas as copas)
-      // Se for copa específica, buscar dados direcionados para aquela copa (com fallback global se necessário)
-      if (isGeralSelection) {
-        const [partList, jogosList, palpitesList] = await Promise.all([
-          pb.collection('participantes').getFullList<Participante>({
-            sort: 'nome',
-          }),
-          pb.collection('jogos').getFullList<Jogo>({
-            sort: 'data,hora',
-          }),
-          pb.collection('palpites').getFullList<Palpite>(),
-        ])
-
-        setParticipantes(partList)
-        setJogos(jogosList)
-        setPalpites(palpitesList)
-      } else {
-        // Copa específica: busca jogos, participantes e palpites da copa selecionada
-        const [partList, jogosList, palpitesList] = await Promise.all([
-          pb.collection('participantes').getFullList<Participante>({
-            filter: `bolao = '${compFilter}'`,
-            sort: 'nome',
-          }),
-          pb.collection('jogos').getFullList<Jogo>({
-            filter: `bolao = '${compFilter}'`,
-            sort: 'data,hora',
-          }),
-          pb.collection('palpites').getFullList<Palpite>({
-            filter: `bolao = '${compFilter}'`,
-          }),
-        ])
-
-        setParticipantes(partList)
-        setJogos(jogosList)
-        setPalpites(palpitesList)
+      // 1. Verificar cache de 2 níveis (memória primeiro, depois localStorage)
+      const cached = readStatsCache(compFilter)
+      if (cached) {
+        setStatsData(cached.stats)
+        if (cached.boloes && cached.boloes.length > 0) {
+          setBoloes(cached.boloes)
+        }
+        setLoading(false)
+        setIsRevalidating(true)
+      } else if (!forceBackground) {
+        setLoading(true)
+        setIsRevalidating(false)
       }
-    } catch (err) {
-      console.error('Erro ao carregar dados de estatísticas:', err)
-    } finally {
-      setLoading(false)
-    }
-  }
+
+      // 2. Busca e revalidação em segundo plano sem N+1 (em lote e com projeção de campos mínimos)
+      try {
+        const result = await fetchStatisticsData(compFilter, {
+          boloesList: boloes.length > 0 ? boloes : undefined,
+        })
+
+        // Ignora resposta caso o usuário tenha trocado o filtro de competição no meio da requisição
+        if (currentCompIdRef.current !== compFilter) {
+          return
+        }
+
+        setBoloes(result.boloes)
+        setStatsData(result.stats)
+      } catch (err) {
+        if (currentCompIdRef.current === compFilter) {
+          console.error('Erro ao buscar dados de estatísticas:', err)
+        }
+      } finally {
+        if (currentCompIdRef.current === compFilter) {
+          setLoading(false)
+          setIsRevalidating(false)
+        }
+      }
+    },
+    [boloes],
+  )
 
   useEffect(() => {
-    setLoading(true)
-    loadData(selectedCompetitionId)
+    loadStats(selectedCompetitionId)
   }, [selectedCompetitionId])
+
+  // Real-time synchronization com background revalidate silencioso
+  useRealtime<Participante>('participantes', () => {
+    invalidateStatsCache(selectedCompetitionId)
+    loadStats(selectedCompetitionId, true)
+  })
+  useRealtime<Jogo>('jogos', () => {
+    invalidateStatsCache(selectedCompetitionId)
+    loadStats(selectedCompetitionId, true)
+  })
+  useRealtime<Palpite>('palpites', () => {
+    invalidateStatsCache(selectedCompetitionId)
+    loadStats(selectedCompetitionId, true)
+  })
+  useRealtime<Bolao>('boloes', () => {
+    invalidateStatsCache()
+    loadStats(selectedCompetitionId, true)
+  })
 
   const handleSelectCompetition = (newCompId: string) => {
     setSelectedCompetitionId(newCompId)
@@ -181,26 +176,6 @@ export default function Estatisticas() {
     }
   }
 
-  // Estatísticas calculadas dinamicamente com filtro
-  const stats = useMemo(() => {
-    return calculateStatistics({
-      boloes,
-      participantes,
-      jogos,
-      palpites,
-      filtroBolaoId: selectedCompetitionId,
-    })
-  }, [boloes, participantes, jogos, palpites, selectedCompetitionId])
-
-  const { tabela, recordes, evolucao, totalJogosEncerrados, totalPalpitesValidos } = stats
-
-  const getPositionBadge = (pos: number) => {
-    if (pos === 1) return { bg: 'bg-[#F59E0B] text-slate-950 font-black', text: '1º', trophy: '🏆' }
-    if (pos === 2) return { bg: 'bg-[#94A3B8] text-white font-black', text: '2º', trophy: '🥈' }
-    if (pos === 3) return { bg: 'bg-[#B45309] text-white font-black', text: '3º', trophy: '🥉' }
-    return { bg: 'bg-[#0F2A43] text-white font-bold', text: `${pos}º`, trophy: '' }
-  }
-
   const isGeralSelected =
     !selectedCompetitionId ||
     selectedCompetitionId === GERAL_BOLAO_ID ||
@@ -213,9 +188,22 @@ export default function Estatisticas() {
     return b ? formatBolaoLabel(b) : 'Competição Selecionada'
   }, [boloes, selectedCompetitionId, isGeralSelected])
 
+  const getPositionBadge = (pos: number) => {
+    if (pos === 1) return { bg: 'bg-[#F59E0B] text-slate-950 font-black', text: '1º', trophy: '🏆' }
+    if (pos === 2) return { bg: 'bg-[#94A3B8] text-white font-black', text: '2º', trophy: '🥈' }
+    if (pos === 3) return { bg: 'bg-[#B45309] text-white font-black', text: '3º', trophy: '🥉' }
+    return { bg: 'bg-[#0F2A43] text-white font-bold', text: `${pos}º`, trophy: '' }
+  }
+
+  const tabela = statsData?.tabela || []
+  const recordes = statsData?.recordes
+  const evolucao = statsData?.evolucao || []
+  const totalJogosEncerrados = statsData?.totalJogosEncerrados ?? 0
+  const totalPalpitesValidos = statsData?.totalPalpitesValidos ?? 0
+
   return (
     <div className="space-y-6">
-      {/* Header Section com Título e Filtro por Competição */}
+      {/* Header Section com Título e Filtro por Competição — renderiza no PRIMEIRO FRAME */}
       <div className="flex flex-col justify-between gap-4 rounded-[14px] border border-[#E2E8F0] bg-white p-6 shadow-xs sm:flex-row sm:items-center">
         <div>
           <div className="flex items-center gap-3">
@@ -231,6 +219,12 @@ export default function Estatisticas() {
                   <Sparkles className="mr-1 h-3 w-3 text-amber-600" />
                   Hall da Fama
                 </Badge>
+                {isRevalidating && (
+                  <span className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-medium text-slate-600">
+                    <Loader2 className="h-2.5 w-2.5 animate-spin" />
+                    Sincronizando...
+                  </span>
+                )}
               </div>
               <p className="mt-0.5 text-xs text-[#64748B]">
                 Dados consolidados, recordes históricos e métricas de desempenho dos participantes.
@@ -264,12 +258,89 @@ export default function Estatisticas() {
         </div>
       </div>
 
-      {loading ? (
-        <div className="flex min-h-[300px] items-center justify-center rounded-[14px] border border-[#E2E8F0] bg-white p-12">
-          <div className="flex flex-col items-center gap-3">
-            <Loader2 className="h-8 w-8 animate-spin text-[#0F2A43]" />
-            <p className="text-xs font-medium text-slate-500">Calculando métricas e recordes...</p>
+      {/* Se estiver em carregamento inicial (sem cache ainda), exibe Skeletons idênticos ao layout final */}
+      {loading && !statsData ? (
+        <div className="space-y-6">
+          {/* Subheader Informativo Skeleton */}
+          <div className="flex flex-wrap items-center justify-between gap-2 px-1">
+            <div className="flex items-center gap-2">
+              <Skeleton className="h-4 w-20" />
+              <Skeleton className="h-5 w-36 rounded-full" />
+            </div>
+            <div className="flex items-center gap-4">
+              <Skeleton className="h-4 w-28" />
+              <Skeleton className="h-4 w-28" />
+            </div>
           </div>
+
+          {/* 1. Cards de Recordes Skeleton */}
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            {[1, 2, 3, 4].map((i) => (
+              <Card
+                key={i}
+                className="rounded-[14px] border border-[#E2E8F0] bg-white p-5 shadow-xs"
+              >
+                <div className="flex items-start justify-between">
+                  <div className="space-y-2 w-3/4">
+                    <Skeleton className="h-3 w-24" />
+                    <Skeleton className="h-6 w-32" />
+                    <Skeleton className="h-5 w-28" />
+                  </div>
+                  <Skeleton className="h-12 w-12 rounded-xl" />
+                </div>
+              </Card>
+            ))}
+          </div>
+
+          {/* 2. Tabela Detalhada Skeleton */}
+          <Card className="rounded-[14px] border border-[#E2E8F0] bg-white p-6 shadow-xs">
+            <div className="mb-4 flex flex-col justify-between gap-2 sm:flex-row sm:items-center">
+              <div className="space-y-1.5">
+                <Skeleton className="h-5 w-56" />
+                <Skeleton className="h-3 w-72" />
+              </div>
+              <Skeleton className="h-5 w-28 rounded-full" />
+            </div>
+            <div className="rounded-xl border border-slate-200 overflow-hidden divide-y divide-slate-100">
+              <div className="h-10 bg-[#0F2A43]/10" />
+              {[1, 2, 3, 4].map((i) => (
+                <div key={i} className="flex items-center justify-between px-5 py-4 bg-white">
+                  <div className="flex items-center gap-3">
+                    <Skeleton className="h-7 w-7 rounded-full" />
+                    <Skeleton className="h-4 w-28" />
+                  </div>
+                  <Skeleton className="h-5 w-20" />
+                  <Skeleton className="h-5 w-16" />
+                  <Skeleton className="h-5 w-16" />
+                  <Skeleton className="h-5 w-20" />
+                  <Skeleton className="h-5 w-24" />
+                </div>
+              ))}
+            </div>
+          </Card>
+
+          {/* 3. Gráfico Skeleton */}
+          <Card className="rounded-[14px] border border-[#E2E8F0] bg-white p-6 shadow-xs">
+            <div className="mb-4 flex flex-col justify-between gap-2 sm:flex-row sm:items-center">
+              <div className="space-y-1.5">
+                <Skeleton className="h-5 w-52" />
+                <Skeleton className="h-3 w-64" />
+              </div>
+              <div className="flex gap-2">
+                {[1, 2, 3, 4].map((i) => (
+                  <Skeleton key={i} className="h-4 w-16 rounded-full" />
+                ))}
+              </div>
+            </div>
+            <div className="h-72 w-full flex items-center justify-center rounded-xl bg-slate-50 border border-slate-100">
+              <div className="flex flex-col items-center gap-2">
+                <Loader2 className="h-6 w-6 animate-spin text-[#0F2A43]" />
+                <span className="text-xs text-slate-500 font-medium">
+                  Carregando evolução dos pontos...
+                </span>
+              </div>
+            </div>
+          </Card>
         </div>
       ) : (
         <>
@@ -302,165 +373,167 @@ export default function Estatisticas() {
           </div>
 
           {/* 1. Cards Principais de Recordes (Destaques) */}
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-            {/* Card 1: Rei da Cravada */}
-            <Card className="relative overflow-hidden rounded-[14px] border-l-4 border-l-[#F59E0B] border-t border-r border-b border-[#E2E8F0] bg-white p-5 shadow-xs transition duration-200 hover:-translate-y-1 hover:shadow-md">
-              <div className="flex items-start justify-between">
-                <div>
-                  <div className="flex items-center gap-1.5">
-                    <span className="text-xs font-black uppercase tracking-wider text-amber-700">
-                      Rei da Cravada
-                    </span>
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <Info className="h-3.5 w-3.5 cursor-pointer text-slate-400 hover:text-slate-600" />
-                      </TooltipTrigger>
-                      <TooltipContent className="max-w-xs text-xs">
-                        Participante com o maior número de placares exatos acertados (8 pontos
-                        cada).
-                      </TooltipContent>
-                    </Tooltip>
-                  </div>
-                  <h3 className="mt-2 text-xl font-black text-[#0F172A]">
-                    {recordes.reiDaCravada.participante}
-                  </h3>
-                  <p className="mt-1 flex items-baseline gap-1 text-xs text-slate-600">
-                    <span className="text-2xl font-black text-[#0F2A43]">
-                      {recordes.reiDaCravada.valor}
-                    </span>
-                    <span className="font-semibold text-slate-500">cravada(s) exata(s)</span>
-                  </p>
-                  {recordes.reiDaCravada.empate && (
-                    <p className="mt-1 text-[11px] font-medium text-amber-700">
-                      Empate: {recordes.reiDaCravada.empate.join(', ')}
+          {recordes && (
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+              {/* Card 1: Rei da Cravada */}
+              <Card className="relative overflow-hidden rounded-[14px] border-l-4 border-l-[#F59E0B] border-t border-r border-b border-[#E2E8F0] bg-white p-5 shadow-xs transition duration-200 hover:-translate-y-1 hover:shadow-md">
+                <div className="flex items-start justify-between">
+                  <div>
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-xs font-black uppercase tracking-wider text-amber-700">
+                        Rei da Cravada
+                      </span>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Info className="h-3.5 w-3.5 cursor-pointer text-slate-400 hover:text-slate-600" />
+                        </TooltipTrigger>
+                        <TooltipContent className="max-w-xs text-xs">
+                          Participante com o maior número de placares exatos acertados (8 pontos
+                          cada).
+                        </TooltipContent>
+                      </Tooltip>
+                    </div>
+                    <h3 className="mt-2 text-xl font-black text-[#0F172A]">
+                      {recordes.reiDaCravada.participante}
+                    </h3>
+                    <p className="mt-1 flex items-baseline gap-1 text-xs text-slate-600">
+                      <span className="text-2xl font-black text-[#0F2A43]">
+                        {recordes.reiDaCravada.valor}
+                      </span>
+                      <span className="font-semibold text-slate-500">cravada(s) exata(s)</span>
                     </p>
-                  )}
-                </div>
-                <div className="rounded-xl bg-amber-50 p-3 text-[#F59E0B]">
-                  <Target className="h-6 w-6" />
-                </div>
-              </div>
-            </Card>
-
-            {/* Card 2: Mestre do Vencedor/Empate */}
-            <Card className="relative overflow-hidden rounded-[14px] border-l-4 border-l-[#10B981] border-t border-r border-b border-[#E2E8F0] bg-white p-5 shadow-xs transition duration-200 hover:-translate-y-1 hover:shadow-md">
-              <div className="flex items-start justify-between">
-                <div>
-                  <div className="flex items-center gap-1.5">
-                    <span className="text-xs font-black uppercase tracking-wider text-emerald-700">
-                      Mestre do Resultado
-                    </span>
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <Info className="h-3.5 w-3.5 cursor-pointer text-slate-400 hover:text-slate-600" />
-                      </TooltipTrigger>
-                      <TooltipContent className="max-w-xs text-xs">
-                        Participante com a maior quantidade de acertos de resultado final (vencedor
-                        do jogo ou empate).
-                      </TooltipContent>
-                    </Tooltip>
+                    {recordes.reiDaCravada.empate && (
+                      <p className="mt-1 text-[11px] font-medium text-amber-700">
+                        Empate: {recordes.reiDaCravada.empate.join(', ')}
+                      </p>
+                    )}
                   </div>
-                  <h3 className="mt-2 text-xl font-black text-[#0F172A]">
-                    {recordes.mestreDoResultado.participante}
-                  </h3>
-                  <p className="mt-1 flex items-baseline gap-1 text-xs text-slate-600">
-                    <span className="text-2xl font-black text-[#0F2A43]">
-                      {recordes.mestreDoResultado.valor}
-                    </span>
-                    <span className="font-semibold text-slate-500">resultado(s) acertado(s)</span>
-                  </p>
-                  {recordes.mestreDoResultado.empate && (
-                    <p className="mt-1 text-[11px] font-medium text-emerald-700">
-                      Empate: {recordes.mestreDoResultado.empate.join(', ')}
+                  <div className="rounded-xl bg-amber-50 p-3 text-[#F59E0B]">
+                    <Target className="h-6 w-6" />
+                  </div>
+                </div>
+              </Card>
+
+              {/* Card 2: Mestre do Vencedor/Empate */}
+              <Card className="relative overflow-hidden rounded-[14px] border-l-4 border-l-[#10B981] border-t border-r border-b border-[#E2E8F0] bg-white p-5 shadow-xs transition duration-200 hover:-translate-y-1 hover:shadow-md">
+                <div className="flex items-start justify-between">
+                  <div>
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-xs font-black uppercase tracking-wider text-emerald-700">
+                        Mestre do Resultado
+                      </span>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Info className="h-3.5 w-3.5 cursor-pointer text-slate-400 hover:text-slate-600" />
+                        </TooltipTrigger>
+                        <TooltipContent className="max-w-xs text-xs">
+                          Participante com a maior quantidade de acertos de resultado final
+                          (vencedor do jogo ou empate).
+                        </TooltipContent>
+                      </Tooltip>
+                    </div>
+                    <h3 className="mt-2 text-xl font-black text-[#0F172A]">
+                      {recordes.mestreDoResultado.participante}
+                    </h3>
+                    <p className="mt-1 flex items-baseline gap-1 text-xs text-slate-600">
+                      <span className="text-2xl font-black text-[#0F2A43]">
+                        {recordes.mestreDoResultado.valor}
+                      </span>
+                      <span className="font-semibold text-slate-500">resultado(s) acertado(s)</span>
                     </p>
-                  )}
-                </div>
-                <div className="rounded-xl bg-emerald-50 p-3 text-[#10B981]">
-                  <CheckCircle className="h-6 w-6" />
-                </div>
-              </div>
-            </Card>
-
-            {/* Card 3: Matador de Aposta (Gols) */}
-            <Card className="relative overflow-hidden rounded-[14px] border-l-4 border-l-rose-500 border-t border-r border-b border-[#E2E8F0] bg-white p-5 shadow-xs transition duration-200 hover:-translate-y-1 hover:shadow-md">
-              <div className="flex items-start justify-between">
-                <div>
-                  <div className="flex items-center gap-1.5">
-                    <span className="text-xs font-black uppercase tracking-wider text-rose-700">
-                      Matador de Aposta (Gols)
-                    </span>
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <Info className="h-3.5 w-3.5 cursor-pointer text-slate-400 hover:text-slate-600" />
-                      </TooltipTrigger>
-                      <TooltipContent className="max-w-xs text-xs">
-                        Participante que mais somou pontos acertando os marcadores de gols das
-                        partidas.
-                      </TooltipContent>
-                    </Tooltip>
+                    {recordes.mestreDoResultado.empate && (
+                      <p className="mt-1 text-[11px] font-medium text-emerald-700">
+                        Empate: {recordes.mestreDoResultado.empate.join(', ')}
+                      </p>
+                    )}
                   </div>
-                  <h3 className="mt-2 text-xl font-black text-[#0F172A]">
-                    {recordes.matadorDeAposta.participante}
-                  </h3>
-                  <p className="mt-1 flex items-baseline gap-1 text-xs text-slate-600">
-                    <span className="text-2xl font-black text-[#0F2A43]">
-                      {recordes.matadorDeAposta.valor}
-                    </span>
-                    <span className="font-semibold text-slate-500">pts de marcadores</span>
-                  </p>
-                  {recordes.matadorDeAposta.empate && (
-                    <p className="mt-1 text-[11px] font-medium text-rose-700">
-                      Empate: {recordes.matadorDeAposta.empate.join(', ')}
+                  <div className="rounded-xl bg-emerald-50 p-3 text-[#10B981]">
+                    <CheckCircle className="h-6 w-6" />
+                  </div>
+                </div>
+              </Card>
+
+              {/* Card 3: Matador de Aposta (Gols) */}
+              <Card className="relative overflow-hidden rounded-[14px] border-l-4 border-l-rose-500 border-t border-r border-b border-[#E2E8F0] bg-white p-5 shadow-xs transition duration-200 hover:-translate-y-1 hover:shadow-md">
+                <div className="flex items-start justify-between">
+                  <div>
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-xs font-black uppercase tracking-wider text-rose-700">
+                        Matador de Aposta (Gols)
+                      </span>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Info className="h-3.5 w-3.5 cursor-pointer text-slate-400 hover:text-slate-600" />
+                        </TooltipTrigger>
+                        <TooltipContent className="max-w-xs text-xs">
+                          Participante que mais somou pontos acertando os marcadores de gols das
+                          partidas.
+                        </TooltipContent>
+                      </Tooltip>
+                    </div>
+                    <h3 className="mt-2 text-xl font-black text-[#0F172A]">
+                      {recordes.matadorDeAposta.participante}
+                    </h3>
+                    <p className="mt-1 flex items-baseline gap-1 text-xs text-slate-600">
+                      <span className="text-2xl font-black text-[#0F2A43]">
+                        {recordes.matadorDeAposta.valor}
+                      </span>
+                      <span className="font-semibold text-slate-500">pts de marcadores</span>
                     </p>
-                  )}
-                </div>
-                <div className="rounded-xl bg-rose-50 p-3 text-rose-600">
-                  <Flame className="h-6 w-6" />
-                </div>
-              </div>
-            </Card>
-
-            {/* Card 4: Maior Pontuador de Rodada */}
-            <Card className="relative overflow-hidden rounded-[14px] border-l-4 border-l-indigo-600 border-t border-r border-b border-[#E2E8F0] bg-white p-5 shadow-xs transition duration-200 hover:-translate-y-1 hover:shadow-md">
-              <div className="flex items-start justify-between">
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-1.5">
-                    <span className="text-xs font-black uppercase tracking-wider text-indigo-700">
-                      Maior em Rodada
-                    </span>
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <Info className="h-3.5 w-3.5 cursor-pointer text-slate-400 hover:text-slate-600" />
-                      </TooltipTrigger>
-                      <TooltipContent className="max-w-xs text-xs">
-                        A maior pontuação atingida por um único usuário em um único
-                        confronto/rodada.
-                      </TooltipContent>
-                    </Tooltip>
+                    {recordes.matadorDeAposta.empate && (
+                      <p className="mt-1 text-[11px] font-medium text-rose-700">
+                        Empate: {recordes.matadorDeAposta.empate.join(', ')}
+                      </p>
+                    )}
                   </div>
-                  <h3 className="mt-2 text-xl font-black text-[#0F172A] truncate">
-                    {recordes.maiorPontuadorRodada.participante}
-                  </h3>
-                  <p className="mt-1 flex items-baseline gap-1 text-xs text-slate-600">
-                    <span className="text-2xl font-black text-[#0F2A43]">
-                      {recordes.maiorPontuadorRodada.pontos}
-                    </span>
-                    <span className="font-semibold text-slate-500">pontos no confronto</span>
-                  </p>
-                  <p
-                    className="mt-1 truncate text-[11px] font-medium text-slate-500"
-                    title={recordes.maiorPontuadorRodada.jogoLabel}
-                  >
-                    {recordes.maiorPontuadorRodada.rodadaLabel ||
-                      recordes.maiorPontuadorRodada.jogoLabel}
-                  </p>
+                  <div className="rounded-xl bg-rose-50 p-3 text-rose-600">
+                    <Flame className="h-6 w-6" />
+                  </div>
                 </div>
-                <div className="ml-2 rounded-xl bg-indigo-50 p-3 text-indigo-600">
-                  <Award className="h-6 w-6" />
+              </Card>
+
+              {/* Card 4: Maior Pontuador de Rodada */}
+              <Card className="relative overflow-hidden rounded-[14px] border-l-4 border-l-indigo-600 border-t border-r border-b border-[#E2E8F0] bg-white p-5 shadow-xs transition duration-200 hover:-translate-y-1 hover:shadow-md">
+                <div className="flex items-start justify-between">
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-xs font-black uppercase tracking-wider text-indigo-700">
+                        Maior em Rodada
+                      </span>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Info className="h-3.5 w-3.5 cursor-pointer text-slate-400 hover:text-slate-600" />
+                        </TooltipTrigger>
+                        <TooltipContent className="max-w-xs text-xs">
+                          A maior pontuação atingida por um único usuário em um único
+                          confronto/rodada.
+                        </TooltipContent>
+                      </Tooltip>
+                    </div>
+                    <h3 className="mt-2 text-xl font-black text-[#0F172A] truncate">
+                      {recordes.maiorPontuadorRodada.participante}
+                    </h3>
+                    <p className="mt-1 flex items-baseline gap-1 text-xs text-slate-600">
+                      <span className="text-2xl font-black text-[#0F2A43]">
+                        {recordes.maiorPontuadorRodada.pontos}
+                      </span>
+                      <span className="font-semibold text-slate-500">pontos no confronto</span>
+                    </p>
+                    <p
+                      className="mt-1 truncate text-[11px] font-medium text-slate-500"
+                      title={recordes.maiorPontuadorRodada.jogoLabel}
+                    >
+                      {recordes.maiorPontuadorRodada.rodadaLabel ||
+                        recordes.maiorPontuadorRodada.jogoLabel}
+                    </p>
+                  </div>
+                  <div className="ml-2 rounded-xl bg-indigo-50 p-3 text-indigo-600">
+                    <Award className="h-6 w-6" />
+                  </div>
                 </div>
-              </div>
-            </Card>
-          </div>
+              </Card>
+            </div>
+          )}
 
           {/* 2. Módulos Visuais e Comparativos: Tabela Detalhada */}
           <Card className="rounded-[14px] border-[#E2E8F0] bg-white p-6 shadow-xs">
