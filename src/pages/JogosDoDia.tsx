@@ -901,6 +901,32 @@ export default function JogosDoDia() {
       }
     }
 
+    // 5. Suporte adicional a fixture.timeline (lookuptimeline) e fixture.match_events
+    if (homeScorers.length === 0 && awayScorers.length === 0) {
+      const altTimeline = Array.isArray((fixture as any).timeline)
+        ? (fixture as any).timeline
+        : Array.isArray((fixture as any).match_events)
+          ? (fixture as any).match_events
+          : []
+
+      if (altTimeline.length > 0) {
+        for (const item of altTimeline) {
+          const itemType = String(item.strTimeline || item.type || item.strType || '').toLowerCase()
+          if (itemType === 'goal' || itemType === 'gol' || itemType.includes('goal')) {
+            const playerName = extractNameFromEv(item)
+            const { minute, extra } = extractMinuteFromEv(item)
+            const side = resolveSide(
+              item.idTeam || item.teamId || item.team?.id,
+              item.strTeam || item.teamName || item.team?.name,
+              item.teamSide === 'home' || item.teamSide === 'away' ? item.teamSide : null,
+            )
+            const isOwn = /contra|own/i.test(item.strTimelineDetail || item.detail || '')
+            addScorer(playerName, minute, side, isOwn, extra)
+          }
+        }
+      }
+    }
+
     return {
       homeScorers,
       awayScorers,

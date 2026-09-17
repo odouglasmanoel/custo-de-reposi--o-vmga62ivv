@@ -291,6 +291,121 @@ routerAdd('GET', '/backend/v1/placar-ao-vivo', (e) => {
               parseTsdbGoalStr(ev.strHomeGoalDetails, 'home', hTeamId, homeTeam)
               parseTsdbGoalStr(ev.strAwayGoalDetails, 'away', aTeamId, awayTeam)
 
+              // FIX 1: Se houver gols marcados no placar mas nenhum marcador veio em strHomeGoalDetails/strAwayGoalDetails
+              var needsTimelineLookup =
+                ((hScore !== null && hScore > 0) || (aScore !== null && aScore > 0)) &&
+                tsdbScorers.length === 0 &&
+                ev.idEvent
+
+              if (needsTimelineLookup) {
+                try {
+                  // Tenta lookuptimeline.php?id={idEvent}
+                  var tlUrl =
+                    'https://www.thesportsdb.com/api/v1/json/' +
+                    encodeURIComponent(key) +
+                    '/lookuptimeline.php?id=' +
+                    encodeURIComponent(ev.idEvent)
+                  var tlRes = $http.send({
+                    url: tlUrl,
+                    method: 'GET',
+                    timeout: 4,
+                  })
+                  var tlItems =
+                    tlRes &&
+                    tlRes.statusCode === 200 &&
+                    tlRes.json &&
+                    Array.isArray(tlRes.json.timeline)
+                      ? tlRes.json.timeline
+                      : null
+
+                  // Fallback para lookupevent.php?id={idEvent} se lookuptimeline não retornar timeline
+                  if (!tlItems || tlItems.length === 0) {
+                    var lkUrl =
+                      'https://www.thesportsdb.com/api/v1/json/' +
+                      encodeURIComponent(key) +
+                      '/lookupevent.php?id=' +
+                      encodeURIComponent(ev.idEvent)
+                    var lkRes = $http.send({
+                      url: lkUrl,
+                      method: 'GET',
+                      timeout: 4,
+                    })
+                    if (
+                      lkRes &&
+                      lkRes.statusCode === 200 &&
+                      lkRes.json &&
+                      Array.isArray(lkRes.json.events) &&
+                      lkRes.json.events[0]
+                    ) {
+                      var singleEv = lkRes.json.events[0]
+                      parseTsdbGoalStr(singleEv.strHomeGoalDetails, 'home', hTeamId, homeTeam)
+                      parseTsdbGoalStr(singleEv.strAwayGoalDetails, 'away', aTeamId, awayTeam)
+                    }
+                  } else {
+                    for (var tli = 0; tli < tlItems.length; tli++) {
+                      var itemTl = tlItems[tli]
+                      var tlType = String(itemTl.strTimeline || itemTl.strType || '')
+                        .trim()
+                        .toLowerCase()
+                      if (tlType === 'goal' || tlType === 'gol' || tlType.indexOf('goal') !== -1) {
+                        var pName = (itemTl.strPlayer || itemTl.strPlayerName || '').trim()
+                        if (!pName) continue
+                        var tlTime =
+                          itemTl.intTime !== null && itemTl.intTime !== undefined
+                            ? parseInt(itemTl.intTime, 10)
+                            : itemTl.intMinute !== null && itemTl.intMinute !== undefined
+                              ? parseInt(itemTl.intMinute, 10)
+                              : null
+                        var tlTeamId = parseInt(itemTl.idTeam, 10) || null
+                        var tlSide = null
+                        if (tlTeamId && hTeamId && tlTeamId === hTeamId) {
+                          tlSide = 'home'
+                        } else if (tlTeamId && aTeamId && tlTeamId === aTeamId) {
+                          tlSide = 'away'
+                        } else {
+                          var tlSideStr = String(
+                            itemTl.strTimelineDetail || itemTl.strSide || '',
+                          ).toLowerCase()
+                          if (tlSideStr.indexOf('home') !== -1) tlSide = 'home'
+                          else if (tlSideStr.indexOf('away') !== -1) tlSide = 'away'
+                        }
+                        var tlIsOwn = /contra|own/i.test(itemTl.strTimelineDetail || '')
+                        var scDisplayName =
+                          '⚽ ' +
+                          pName +
+                          (tlTime !== null && !isNaN(tlTime) ? ' ' + tlTime + "'" : '')
+                        tsdbScorers.push({
+                          name: scDisplayName,
+                          rawName: pName,
+                          minute: tlTime,
+                          extraMinute: null,
+                          teamId: tlTeamId || (tlSide === 'home' ? hTeamId : aTeamId),
+                          teamName: tlSide === 'home' ? homeTeam : awayTeam,
+                          teamSide: tlSide || 'home',
+                        })
+                        tsdbEvents.push({
+                          type: 'Goal',
+                          detail: tlIsOwn ? 'Own Goal' : 'Normal Goal',
+                          time: { elapsed: tlTime, extra: null },
+                          team: {
+                            id: tlTeamId || (tlSide === 'home' ? hTeamId : aTeamId),
+                            name: tlSide === 'home' ? homeTeam : awayTeam,
+                          },
+                          player: { id: null, name: pName },
+                        })
+                      }
+                    }
+                  }
+                } catch (errTimeline) {
+                  console.log(
+                    '[TheSportsDB Timeline] Erro ignorado ao consultar timeline do evento ' +
+                      ev.idEvent +
+                      ':',
+                    errTimeline,
+                  )
+                }
+              }
+
               conmebolFixtures.push({
                 fixture: {
                   id: 'tsdb_' + (ev.idEvent || cli + '_' + ei),
@@ -2518,6 +2633,121 @@ routerAdd('GET', '/backend/v1/jogos-do-dia', (e) => {
               parseTsdbGoalStr(ev.strHomeGoalDetails, 'home', hTeamId, homeTeam)
               parseTsdbGoalStr(ev.strAwayGoalDetails, 'away', aTeamId, awayTeam)
 
+              // FIX 1: Se houver gols marcados no placar mas nenhum marcador veio em strHomeGoalDetails/strAwayGoalDetails
+              var needsTimelineLookup =
+                ((hScore !== null && hScore > 0) || (aScore !== null && aScore > 0)) &&
+                tsdbScorers.length === 0 &&
+                ev.idEvent
+
+              if (needsTimelineLookup) {
+                try {
+                  // Tenta lookuptimeline.php?id={idEvent}
+                  var tlUrl =
+                    'https://www.thesportsdb.com/api/v1/json/' +
+                    encodeURIComponent(key) +
+                    '/lookuptimeline.php?id=' +
+                    encodeURIComponent(ev.idEvent)
+                  var tlRes = $http.send({
+                    url: tlUrl,
+                    method: 'GET',
+                    timeout: 4,
+                  })
+                  var tlItems =
+                    tlRes &&
+                    tlRes.statusCode === 200 &&
+                    tlRes.json &&
+                    Array.isArray(tlRes.json.timeline)
+                      ? tlRes.json.timeline
+                      : null
+
+                  // Fallback para lookupevent.php?id={idEvent} se lookuptimeline não retornar timeline
+                  if (!tlItems || tlItems.length === 0) {
+                    var lkUrl =
+                      'https://www.thesportsdb.com/api/v1/json/' +
+                      encodeURIComponent(key) +
+                      '/lookupevent.php?id=' +
+                      encodeURIComponent(ev.idEvent)
+                    var lkRes = $http.send({
+                      url: lkUrl,
+                      method: 'GET',
+                      timeout: 4,
+                    })
+                    if (
+                      lkRes &&
+                      lkRes.statusCode === 200 &&
+                      lkRes.json &&
+                      Array.isArray(lkRes.json.events) &&
+                      lkRes.json.events[0]
+                    ) {
+                      var singleEv = lkRes.json.events[0]
+                      parseTsdbGoalStr(singleEv.strHomeGoalDetails, 'home', hTeamId, homeTeam)
+                      parseTsdbGoalStr(singleEv.strAwayGoalDetails, 'away', aTeamId, awayTeam)
+                    }
+                  } else {
+                    for (var tli = 0; tli < tlItems.length; tli++) {
+                      var itemTl = tlItems[tli]
+                      var tlType = String(itemTl.strTimeline || itemTl.strType || '')
+                        .trim()
+                        .toLowerCase()
+                      if (tlType === 'goal' || tlType === 'gol' || tlType.indexOf('goal') !== -1) {
+                        var pName = (itemTl.strPlayer || itemTl.strPlayerName || '').trim()
+                        if (!pName) continue
+                        var tlTime =
+                          itemTl.intTime !== null && itemTl.intTime !== undefined
+                            ? parseInt(itemTl.intTime, 10)
+                            : itemTl.intMinute !== null && itemTl.intMinute !== undefined
+                              ? parseInt(itemTl.intMinute, 10)
+                              : null
+                        var tlTeamId = parseInt(itemTl.idTeam, 10) || null
+                        var tlSide = null
+                        if (tlTeamId && hTeamId && tlTeamId === hTeamId) {
+                          tlSide = 'home'
+                        } else if (tlTeamId && aTeamId && tlTeamId === aTeamId) {
+                          tlSide = 'away'
+                        } else {
+                          var tlSideStr = String(
+                            itemTl.strTimelineDetail || itemTl.strSide || '',
+                          ).toLowerCase()
+                          if (tlSideStr.indexOf('home') !== -1) tlSide = 'home'
+                          else if (tlSideStr.indexOf('away') !== -1) tlSide = 'away'
+                        }
+                        var tlIsOwn = /contra|own/i.test(itemTl.strTimelineDetail || '')
+                        var scDisplayName =
+                          '⚽ ' +
+                          pName +
+                          (tlTime !== null && !isNaN(tlTime) ? ' ' + tlTime + "'" : '')
+                        tsdbScorers.push({
+                          name: scDisplayName,
+                          rawName: pName,
+                          minute: tlTime,
+                          extraMinute: null,
+                          teamId: tlTeamId || (tlSide === 'home' ? hTeamId : aTeamId),
+                          teamName: tlSide === 'home' ? homeTeam : awayTeam,
+                          teamSide: tlSide || 'home',
+                        })
+                        tsdbEvents.push({
+                          type: 'Goal',
+                          detail: tlIsOwn ? 'Own Goal' : 'Normal Goal',
+                          time: { elapsed: tlTime, extra: null },
+                          team: {
+                            id: tlTeamId || (tlSide === 'home' ? hTeamId : aTeamId),
+                            name: tlSide === 'home' ? homeTeam : awayTeam,
+                          },
+                          player: { id: null, name: pName },
+                        })
+                      }
+                    }
+                  }
+                } catch (errTimeline) {
+                  console.log(
+                    '[TheSportsDB Timeline] Erro ignorado ao consultar timeline do evento ' +
+                      ev.idEvent +
+                      ':',
+                    errTimeline,
+                  )
+                }
+              }
+
               conmebolFixtures.push({
                 fixture: {
                   id: 'tsdb_' + (ev.idEvent || cli + '_' + ei),
@@ -2923,11 +3153,60 @@ routerAdd('GET', '/backend/v1/jogos-do-dia', (e) => {
     }
 
     if (contingencyUsed && contingencyFixtures.length > 0) {
+      // FIX 2: Deep merge da contingência com o cache existente preservando ligas já obtidas
+      var mergedWithExisting = contingencyFixtures.slice(0)
+      if (
+        dayEntry &&
+        dayEntry.payload &&
+        Array.isArray(dayEntry.payload.fixtures) &&
+        dayEntry.payload.fixtures.length > 0
+      ) {
+        var existingCachedList = dayEntry.payload.fixtures
+        for (var exi = 0; exi < existingCachedList.length; exi++) {
+          var exFix = existingCachedList[exi]
+          var matchFound = false
+          for (var cmi = 0; cmi < mergedWithExisting.length; cmi++) {
+            var cFix = mergedWithExisting[cmi]
+            if (isSameMatchConfrontation(exFix, cFix)) {
+              matchFound = true
+              // Atualiza placar se cFix tiver gols e exFix não
+              if (
+                (exFix.goals.home === null || exFix.goals.home === undefined) &&
+                cFix.goals.home !== null &&
+                cFix.goals.home !== undefined
+              ) {
+                exFix.goals.home = cFix.goals.home
+                exFix.goals.away = cFix.goals.away
+              }
+              // Propaga scorers se exFix não tiver
+              if (
+                (!Array.isArray(exFix.scorers) || exFix.scorers.length === 0) &&
+                Array.isArray(cFix.scorers) &&
+                cFix.scorers.length > 0
+              ) {
+                exFix.scorers = cFix.scorers
+              }
+              // Propaga status ao vivo
+              if (cFix.isLive) {
+                exFix.isLive = true
+                contingencyHasLive = true
+              }
+              break
+            }
+          }
+          // Se a partida do cache (ex: La Liga, Brasileirão, Premier League) não estiver na contingência, PRESERVA!
+          if (!matchFound) {
+            mergedWithExisting.push(exFix)
+            if (exFix.isLive) contingencyHasLive = true
+          }
+        }
+      }
+
       // Mescla com eventuais jogos manuais cadastrados
       var freshManualsContingency = fetchManualGamesForDate(dateQuery)
       var finalContingencyFixtures = mergeManualFixturesOnTop(
         freshManualsContingency,
-        contingencyFixtures,
+        mergedWithExisting,
       )
 
       var contingencyPayload = {
@@ -2937,8 +3216,8 @@ routerAdd('GET', '/backend/v1/jogos-do-dia', (e) => {
         original_provider: provedor,
         message:
           contingencyProvider === 'football_data'
-            ? 'Contingência ativada: jogos providos via Football-Data.org e TheSportsDB.'
-            : 'Contingência ativada: jogos providos via TheSportsDB.',
+            ? 'Contingência ativada: jogos providos via Football-Data.org e TheSportsDB (mesclados com ligas existentes).'
+            : 'Contingência ativada: jogos providos via TheSportsDB (mesclados com ligas existentes).',
         date: dateQuery,
         total: finalContingencyFixtures.length,
         hasLive:
@@ -3521,8 +3800,37 @@ routerAdd('GET', '/backend/v1/jogos-do-dia', (e) => {
         }),
     })
 
+    // FIX 2: Deep merge também antes de salvar no cache se houver partidas prévias válidas de outras ligas
+    var combinedStoreFixtures = finalFixtures.slice(0)
+    if (
+      dayEntry &&
+      dayEntry.payload &&
+      Array.isArray(dayEntry.payload.fixtures) &&
+      dayEntry.payload.fixtures.length > 0
+    ) {
+      var prevFixturesToMerge = dayEntry.payload.fixtures
+      for (var pfi = 0; pfi < prevFixturesToMerge.length; pfi++) {
+        var pf = prevFixturesToMerge[pfi]
+        var pfMatched = false
+        for (var csi = 0; csi < combinedStoreFixtures.length; csi++) {
+          if (isSameMatchConfrontation(pf, combinedStoreFixtures[csi])) {
+            pfMatched = true
+            break
+          }
+        }
+        if (!pfMatched) {
+          combinedStoreFixtures.push(pf)
+          if (pf.isLive) {
+            finalPayload.hasLive = true
+          }
+        }
+      }
+      finalPayload.fixtures = combinedStoreFixtures
+      finalPayload.total = combinedStoreFixtures.length
+    }
+
     // Grava no cache se houver pelo menos 1 partida!
-    if (dayStore && finalFixtures.length > 0) {
+    if (dayStore && combinedStoreFixtures.length > 0) {
       dayStore[dateQuery] = {
         timestamp: Date.now(),
         payload: finalPayload,

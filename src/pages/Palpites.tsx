@@ -40,6 +40,7 @@ import {
   sortJogosCadastrados,
 } from '@/lib/dateUtils'
 import { formatPalpiteMarcadoresSummary, getPalpiteMarcadoresPorTime } from '@/lib/scorerUtils'
+import { buscarEscudoTime, readEscudoCache } from '@/services/enquetes'
 
 interface PalpiteFormData {
   placar_a: number | string
@@ -154,6 +155,7 @@ export default function Palpites() {
   const [totalPages, setTotalPages] = useState<number>(() => initialCache?.totalPages || 1)
   const [totalItems, setTotalItems] = useState<number>(() => initialCache?.totalItems || 0)
   const [isLoadingMore, setIsLoadingMore] = useState<boolean>(false)
+  const [escudosMap, setEscudosMap] = useState<Record<string, string>>({})
   const [allBoloes, setAllBoloes] = useState<Bolao[]>([])
   const [participantesList, setParticipantesList] = useState<Participante[]>([])
   const [allGroupPalpites, setAllGroupPalpites] = useState<Palpite[]>([])
@@ -201,6 +203,62 @@ export default function Palpites() {
     }, 15000)
     return () => clearInterval(timer)
   }, [])
+
+  // Carregamento de escudos para os times exibidos nos cards
+  useEffect(() => {
+    if (!jogos || jogos.length === 0) return
+
+    const teamNames = new Set<string>()
+    for (const j of jogos) {
+      if (j.time_a && j.time_a.trim()) teamNames.add(j.time_a.trim())
+      if (j.time_b && j.time_b.trim()) teamNames.add(j.time_b.trim())
+    }
+
+    const missingTeams: string[] = []
+    const initialFound: Record<string, string> = {}
+
+    teamNames.forEach((t) => {
+      const cached = readEscudoCache(t)
+      if (cached) {
+        initialFound[t] = cached
+      } else {
+        missingTeams.push(t)
+      }
+    })
+
+    if (Object.keys(initialFound).length > 0) {
+      setEscudosMap((prev) => ({ ...prev, ...initialFound }))
+    }
+
+    if (missingTeams.length > 0) {
+      let isMounted = true
+      Promise.all(
+        missingTeams.map(async (time) => {
+          try {
+            const url = await buscarEscudoTime(time)
+            return { time, url }
+          } catch {
+            return { time, url: '' }
+          }
+        }),
+      ).then((results) => {
+        if (!isMounted) return
+        setEscudosMap((prev) => {
+          const next = { ...prev }
+          for (const res of results) {
+            if (res.url) {
+              next[res.time] = res.url
+            }
+          }
+          return next
+        })
+      })
+
+      return () => {
+        isMounted = false
+      }
+    }
+  }, [jogos])
 
   // Sincronizar filtro se a query string mudar na navegação
   useEffect(() => {
@@ -898,7 +956,8 @@ export default function Palpites() {
   }, [participantesList])
 
   const displayedJogos = useMemo(() => {
-    return sortJogosCadastrados(jogos)
+    // FIX 4 (b): Ordenação decrescente por data/hora (mais recentes/próximos no topo)
+    return [...sortJogosCadastrados(jogos)].reverse()
   }, [jogos])
   const hasMore = currentPage < totalPages
 
@@ -1063,28 +1122,25 @@ export default function Palpites() {
       )}
 
       {loading && displayedJogos.length === 0 ? (
-        <div className="space-y-4">
-          <div className="flex items-center gap-2 text-xs text-slate-500 py-1">
-            <Loader2 className="h-4 w-4 animate-spin text-[#0F2A43]" />
-            <span>Carregando partidas e palpites pela primeira vez...</span>
-          </div>
-          {[1, 2, 3].map((idx) => (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          {[1, 2, 3, 4, 5, 6].map((idx) => (
             <Card
               key={idx}
-              className="overflow-hidden rounded-[14px] border-[#E2E8F0] bg-white p-6 shadow-xs"
+              className="overflow-hidden rounded-[14px] border-[#E2E8F0] bg-white p-4 shadow-xs"
             >
-              <div className="flex items-center justify-between pb-3 border-b border-slate-100">
-                <Skeleton className="h-4 w-40" />
-                <Skeleton className="h-5 w-24 rounded-full" />
+              <div className="flex items-center justify-between pb-2 border-b border-slate-100">
+                <Skeleton className="h-4 w-28" />
+                <Skeleton className="h-4 w-16 rounded-full" />
               </div>
-              <div className="py-6 flex justify-center items-center gap-6">
-                <Skeleton className="h-6 w-32" />
-                <Skeleton className="h-4 w-8" />
-                <Skeleton className="h-6 w-32" />
+              <div className="py-4 flex justify-center items-center gap-3">
+                <Skeleton className="h-7 w-7 rounded-full" />
+                <Skeleton className="h-9 w-12 rounded-lg" />
+                <Skeleton className="h-4 w-4" />
+                <Skeleton className="h-9 w-12 rounded-lg" />
+                <Skeleton className="h-7 w-7 rounded-full" />
               </div>
-              <div className="flex justify-center gap-4 pt-2">
-                <Skeleton className="h-12 w-20 rounded-lg" />
-                <Skeleton className="h-12 w-20 rounded-lg" />
+              <div className="pt-2 flex justify-end">
+                <Skeleton className="h-8 w-24 rounded-lg" />
               </div>
             </Card>
           ))}
@@ -1096,7 +1152,7 @@ export default function Palpites() {
             : 'Nenhuma partida disponível. Os jogos serão cadastrados pelo administrador Douglas.'}
         </Card>
       ) : (
-        <div className="space-y-4">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {displayedJogos.map((jogo) => {
             const bolaoOrigem = bolaoMap.get(jogo.bolao)
             const palpite = palpites[jogo.id]
@@ -1112,102 +1168,107 @@ export default function Palpites() {
             const pontos = palpite ? palpite.pontuacao_jogo : 0
             const detalhamento = palpite?.detalhamento || []
 
+            const escudoA = escudosMap[jogo.time_a?.trim()]
+            const escudoB = escudosMap[jogo.time_b?.trim()]
+            const initialsA = (jogo.time_a || '').slice(0, 2).toUpperCase()
+            const initialsB = (jogo.time_b || '').slice(0, 2).toUpperCase()
+
             return (
               <Card
                 key={jogo.id}
-                className="overflow-hidden rounded-[14px] border-[#E2E8F0] bg-white shadow-xs transition hover:shadow-sm"
+                className="overflow-hidden rounded-[14px] border-[#E2E8F0] bg-white shadow-xs transition hover:shadow-sm flex flex-col justify-between"
               >
                 {/* Match header */}
-                <div className="flex flex-wrap items-center justify-between border-b border-slate-100 bg-slate-50/70 px-6 py-3">
-                  <div className="flex flex-wrap items-center gap-2 text-xs text-slate-600">
-                    {/* Badge da Copa / Bolão de origem (especialmente valioso na lista unificada) */}
+                <div className="flex flex-wrap items-center justify-between border-b border-slate-100 bg-slate-50/70 px-4 py-2.5 gap-1.5">
+                  <div className="flex flex-wrap items-center gap-1.5 text-[11px] text-slate-600">
+                    {/* Badge da Copa / Bolão de origem */}
                     {bolaoOrigem && (
                       <Badge
                         variant="secondary"
-                        className="border border-[#CBD5E1] bg-white text-[#0F2A43] font-bold text-[11px] px-2 py-0.5 shadow-2xs"
+                        className="border border-[#CBD5E1] bg-white text-[#0F2A43] font-bold text-[10px] px-1.5 py-0 shadow-2xs"
                       >
-                        🏆 {bolaoOrigem.nome} {bolaoOrigem.ativo === false ? '(Encerrado)' : ''}
+                        🏆 {bolaoOrigem.nome}
                       </Badge>
                     )}
                     <span className="flex items-center gap-1">
-                      <Calendar className="h-3.5 w-3.5 text-slate-400" />
+                      <Calendar className="h-3 w-3 text-slate-400" />
                       <span>{formatDataBR(jogo.data)}</span>
                     </span>
                     <span>•</span>
                     <span className="flex items-center gap-1">
-                      <Clock className="h-3.5 w-3.5 text-slate-400" />
+                      <Clock className="h-3 w-3 text-slate-400" />
                       <span>{formatHoraBR(jogo.hora)}</span>
                     </span>
                   </div>
                   {finalizado ? (
-                    <div className="flex items-center gap-2">
-                      <span className="rounded bg-slate-900 px-2 py-0.5 text-xs font-black text-white">
-                        Resultado Real: {jogo.placar_a} x {jogo.placar_b}
+                    <div className="flex items-center gap-1.5">
+                      <span className="rounded bg-slate-900 px-1.5 py-0.5 text-[10px] font-black text-white">
+                        Real: {jogo.placar_a}x{jogo.placar_b}
                       </span>
                       <span
-                        className={`rounded-full px-2.5 py-0.5 text-xs font-bold ${
+                        className={`rounded-full px-2 py-0.2 text-[10px] font-bold ${
                           pontos > 0
                             ? 'bg-emerald-100 text-emerald-800'
                             : 'bg-slate-200 text-slate-700'
                         }`}
                       >
-                        {pontos > 0 ? `+${pontos} pontos` : '0 pontos'}
+                        {pontos > 0 ? `+${pontos} pts` : '0 pts'}
                       </span>
                     </div>
                   ) : isPalpiteEncerrado(jogo.data, jogo.hora, nowMs) ? (
                     <Badge
                       variant="outline"
-                      className="border-rose-300 bg-rose-50 text-rose-800 text-[11px] font-semibold gap-1"
+                      className="border-rose-300 bg-rose-50 text-rose-800 text-[10px] font-semibold gap-1 px-1.5 py-0"
                     >
-                      <Lock className="h-3 w-3 text-rose-600" />
-                      Palpites encerrados para esta partida
+                      <Lock className="h-2.5 w-2.5 text-rose-600" />
+                      Encerrado
                     </Badge>
                   ) : palpite && !editingGames[jogo.id] ? (
                     <Badge
                       variant="outline"
-                      className="border-emerald-300 bg-emerald-50 text-emerald-800 text-[11px] font-semibold gap-1"
+                      className="border-emerald-300 bg-emerald-50 text-emerald-800 text-[10px] font-semibold gap-1 px-1.5 py-0"
                     >
-                      <CheckCircle2 className="h-3 w-3 text-emerald-600" />
-                      Palpite Registrado
+                      <CheckCircle2 className="h-2.5 w-2.5 text-emerald-600" />
+                      Registrado
                     </Badge>
                   ) : palpite && editingGames[jogo.id] ? (
                     <Badge
                       variant="outline"
-                      className="border-blue-300 bg-blue-50 text-blue-800 text-[11px] font-semibold gap-1"
+                      className="border-blue-300 bg-blue-50 text-blue-800 text-[10px] font-semibold gap-1 px-1.5 py-0"
                     >
-                      <Edit3 className="h-3 w-3 text-blue-600" />
-                      Editando Palpite
+                      <Edit3 className="h-2.5 w-2.5 text-blue-600" />
+                      Editando
                     </Badge>
                   ) : (
                     <Badge
                       variant="outline"
-                      className="border-amber-300 bg-amber-50 text-amber-800 text-[11px]"
+                      className="border-amber-300 bg-amber-50 text-amber-800 text-[10px] px-1.5 py-0"
                     >
-                      Aberto para palpites
+                      Aberto
                     </Badge>
-                  )}{' '}
+                  )}
                 </div>
 
-                <div className="p-6">
-                  {/* Teams vs block */}
-                  <div className="flex flex-col items-center justify-center gap-1.5 py-2">
-                    <div className="flex items-center justify-center gap-6">
-                      <span className="text-base font-bold text-[#0F172A] sm:text-lg">
-                        {jogo.time_a}
-                      </span>
-                      <span className="text-xs font-bold uppercase text-slate-400">VS</span>
-                      <span className="text-base font-bold text-[#0F172A] sm:text-lg">
-                        {jogo.time_b}
-                      </span>
-                    </div>
-                    {jogo.competicao && (
+                <div className="p-4 flex-1 flex flex-col justify-between">
+                  {/* Competition label if any */}
+                  {jogo.competicao && (
+                    <div className="text-center mb-2">
                       <Badge
                         variant="secondary"
-                        className="border border-indigo-200 bg-indigo-50 text-[11px] font-semibold text-indigo-700 px-2 py-0.5"
+                        className="border border-indigo-200 bg-indigo-50 text-[10px] font-semibold text-indigo-700 px-1.5 py-0"
                       >
                         {jogo.competicao}
                       </Badge>
-                    )}
+                    </div>
+                  )}
+                  {/* Team names row */}
+                  <div className="grid grid-cols-2 gap-2 text-center items-center mb-3">
+                    <span className="text-xs font-bold text-[#0F172A] truncate" title={jogo.time_a}>
+                      {jogo.time_a}
+                    </span>
+                    <span className="text-xs font-bold text-[#0F172A] truncate" title={jogo.time_b}>
+                      {jogo.time_b}
+                    </span>
                   </div>
                   {/* Grupo de palpites liberados para partidas encerradas ou com horário de kickoff atingido */}
                   {(() => {
@@ -1574,42 +1635,70 @@ export default function Palpites() {
                             </div>
                           )}
 
-                          {/* Score inputs */}
-                          <div className="flex items-center justify-center gap-4">
-                            <div className="w-24 text-center">
-                              <Label className="text-[11px] font-bold text-slate-600">
-                                Gols {jogo.time_a}
-                              </Label>
-                              <Input
-                                type="number"
-                                min="0"
-                                disabled={isLocked}
-                                placeholder="0"
-                                value={form.placar_a ?? ''}
-                                onChange={(e) => handleScoreChange(jogo.id, 'a', e.target.value)}
-                                className={`mt-1 h-12 text-center text-xl font-black text-[#0F2A43] focus-visible:border-[#10B981] focus-visible:ring-[#10B981] ${
-                                  isLocked ? 'bg-slate-100 cursor-not-allowed opacity-90' : ''
-                                }`}
-                              />
+                          {/* Score inputs with compact team shields: [Escudo A] [input placar A] x [input placar B] [Escudo B] */}
+                          <div className="flex items-center justify-center gap-2 py-1">
+                            {/* Escudo Mandante */}
+                            <div className="flex flex-col items-center shrink-0">
+                              {escudoA ? (
+                                <img
+                                  src={escudoA}
+                                  alt={jogo.time_a}
+                                  className="h-7 w-7 object-contain drop-shadow-2xs"
+                                  onError={(e) => {
+                                    ;(e.currentTarget as HTMLElement).style.display = 'none'
+                                  }}
+                                />
+                              ) : (
+                                <div className="h-7 w-7 rounded-full bg-slate-200 border border-slate-300 flex items-center justify-center text-[10px] font-bold text-slate-700">
+                                  {initialsA}
+                                </div>
+                              )}
                             </div>
 
-                            <span className="pt-5 text-xl font-bold text-slate-300">X</span>
+                            {/* Input Placar Mandante */}
+                            <Input
+                              type="number"
+                              min="0"
+                              disabled={isLocked}
+                              placeholder="0"
+                              value={form.placar_a ?? ''}
+                              onChange={(e) => handleScoreChange(jogo.id, 'a', e.target.value)}
+                              className={`h-9 w-12 p-0 text-center text-base font-black text-[#0F2A43] focus-visible:border-[#10B981] focus-visible:ring-[#10B981] ${
+                                isLocked ? 'bg-slate-100 cursor-not-allowed opacity-90' : ''
+                              }`}
+                            />
 
-                            <div className="w-24 text-center">
-                              <Label className="text-[11px] font-bold text-slate-600">
-                                Gols {jogo.time_b}
-                              </Label>
-                              <Input
-                                type="number"
-                                min="0"
-                                disabled={isLocked}
-                                placeholder="0"
-                                value={form.placar_b ?? ''}
-                                onChange={(e) => handleScoreChange(jogo.id, 'b', e.target.value)}
-                                className={`mt-1 h-12 text-center text-xl font-black text-[#0F2A43] focus-visible:border-[#10B981] focus-visible:ring-[#10B981] ${
-                                  isLocked ? 'bg-slate-100 cursor-not-allowed opacity-90' : ''
-                                }`}
-                              />
+                            <span className="text-xs font-bold text-slate-400 px-0.5">X</span>
+
+                            {/* Input Placar Visitante */}
+                            <Input
+                              type="number"
+                              min="0"
+                              disabled={isLocked}
+                              placeholder="0"
+                              value={form.placar_b ?? ''}
+                              onChange={(e) => handleScoreChange(jogo.id, 'b', e.target.value)}
+                              className={`h-9 w-12 p-0 text-center text-base font-black text-[#0F2A43] focus-visible:border-[#10B981] focus-visible:ring-[#10B981] ${
+                                isLocked ? 'bg-slate-100 cursor-not-allowed opacity-90' : ''
+                              }`}
+                            />
+
+                            {/* Escudo Visitante */}
+                            <div className="flex flex-col items-center shrink-0">
+                              {escudoB ? (
+                                <img
+                                  src={escudoB}
+                                  alt={jogo.time_b}
+                                  className="h-7 w-7 object-contain drop-shadow-2xs"
+                                  onError={(e) => {
+                                    ;(e.currentTarget as HTMLElement).style.display = 'none'
+                                  }}
+                                />
+                              ) : (
+                                <div className="h-7 w-7 rounded-full bg-slate-200 border border-slate-300 flex items-center justify-center text-[10px] font-bold text-slate-700">
+                                  {initialsB}
+                                </div>
+                              )}
                             </div>
                           </div>
 
