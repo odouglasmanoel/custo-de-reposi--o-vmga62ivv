@@ -14,6 +14,7 @@ import {
   EyeOff,
   Database,
   RefreshCw,
+  Zap,
 } from 'lucide-react'
 import pb from '@/lib/pocketbase/client'
 import { useAuth } from '@/context/AuthContext'
@@ -32,6 +33,9 @@ interface ConfigState {
   hasDbKey: boolean
   hasSecretFallback: boolean
   maskedKey: string
+  hasFallbackKey?: boolean
+  hasFallbackDbKey?: boolean
+  maskedFallbackKey?: string
   ativo: boolean
 }
 
@@ -42,23 +46,38 @@ export default function AdminConfiguracoes() {
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [testing, setTesting] = useState(false)
+  const [testingFallback, setTestingFallback] = useState(false)
 
   const [config, setConfig] = useState<ConfigState>({
-    provedor: 'football_data',
+    provedor: 'api_football',
     hasKey: false,
     hasDbKey: false,
     hasSecretFallback: false,
     maskedKey: '',
+    hasFallbackKey: false,
+    hasFallbackDbKey: false,
+    maskedFallbackKey: '',
     ativo: true,
   })
 
-  const [selectedProvedor, setSelectedProvedor] = useState<ProvedorKey>('football_data')
+  const [selectedProvedor, setSelectedProvedor] = useState<ProvedorKey>('api_football')
   const [apiKeyInput, setApiKeyInput] = useState('')
   const [showKeyText, setShowKeyText] = useState(false)
+
+  // Campo específico para chave secundária de contingência (Football-Data.org)
+  const [fallbackApiKeyInput, setFallbackApiKeyInput] = useState('')
+  const [showFallbackKeyText, setShowFallbackKeyText] = useState(false)
+
   const [ativoInput, setAtivoInput] = useState(true)
 
-  // Status feedback do teste
+  // Status feedback do teste primário
   const [testResult, setTestResult] = useState<{
+    success: boolean
+    message: string
+  } | null>(null)
+
+  // Status feedback do teste secundário (contingência)
+  const [fallbackTestResult, setFallbackTestResult] = useState<{
     success: boolean
     message: string
   } | null>(null)
@@ -77,7 +96,7 @@ export default function AdminConfiguracoes() {
       if (res.ok) {
         const data = await res.json()
         setConfig(data)
-        setSelectedProvedor(data.provedor || 'football_data')
+        setSelectedProvedor(data.provedor || 'api_football')
         setAtivoInput(data.ativo !== false)
       } else {
         const err = await res.json().catch(() => ({}))
@@ -107,6 +126,7 @@ export default function AdminConfiguracoes() {
     e.preventDefault()
     setSaving(true)
     setTestResult(null)
+    setFallbackTestResult(null)
     try {
       const headers: Record<string, string> = {
         'Content-Type': 'application/json',
@@ -118,15 +138,21 @@ export default function AdminConfiguracoes() {
       const payload: {
         provedor: ProvedorKey
         api_key?: string
+        fallback_api_key?: string
         ativo: boolean
       } = {
         provedor: selectedProvedor,
         ativo: ativoInput,
       }
 
-      // Se o usuário digitou uma nova chave no input, envia para salvar
+      // Se o usuário digitou uma nova chave no input primário
       if (apiKeyInput.trim()) {
         payload.api_key = apiKeyInput.trim()
+      }
+
+      // Se o usuário digitou uma nova chave de contingência (Football-Data.org)
+      if (fallbackApiKeyInput.trim()) {
+        payload.fallback_api_key = fallbackApiKeyInput.trim()
       }
 
       const res = await fetch(
@@ -143,7 +169,7 @@ export default function AdminConfiguracoes() {
         toast({
           title: 'Configurações salvas!',
           description:
-            'A chave da API e o provedor foram gravados no banco de dados com segurança.',
+            'As chaves de API principal e de contingência foram gravadas com segurança no banco de dados.',
         })
         setConfig({
           provedor: data.provedor,
@@ -151,9 +177,13 @@ export default function AdminConfiguracoes() {
           hasDbKey: true,
           hasSecretFallback: config.hasSecretFallback,
           maskedKey: data.maskedKey,
+          hasFallbackKey: data.hasFallbackKey,
+          hasFallbackDbKey: data.hasFallbackKey,
+          maskedFallbackKey: data.maskedFallbackKey,
           ativo: data.ativo,
         })
-        setApiKeyInput('') // Limpa campo de edição para não deixar em aberto
+        setApiKeyInput('') // Limpa campo de edição
+        setFallbackApiKeyInput('') // Limpa campo de edição
       } else {
         const err = await res.json().catch(() => ({}))
         toast({
@@ -204,7 +234,7 @@ export default function AdminConfiguracoes() {
         })
         toast({
           title: 'Conexão bem-sucedida! 🎉',
-          description: data.message || 'API externa validada com êxito.',
+          description: data.message || 'API principal validada com êxito.',
         })
       } else {
         setTestResult({
@@ -212,9 +242,9 @@ export default function AdminConfiguracoes() {
           message: data.message || 'Falha ao conectar com o provedor.',
         })
         toast({
-          title: 'Falha no teste de conexão',
+          title: data.rate_limited ? 'Limite da API atingido' : 'Falha no teste de conexão',
           description: data.message || 'Verifique a chave informada.',
-          variant: 'destructive',
+          variant: data.rate_limited ? 'default' : 'destructive',
         })
       }
     } catch (err: unknown) {
@@ -224,6 +254,63 @@ export default function AdminConfiguracoes() {
       })
     } finally {
       setTesting(false)
+    }
+  }
+
+  // Teste de conexão específico para a chave secundária de contingência (Football-Data.org)
+  const handleTestFallbackConnection = async () => {
+    setTestingFallback(true)
+    setFallbackTestResult(null)
+    try {
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+      }
+      if (pb.authStore.token) {
+        headers['Authorization'] = pb.authStore.token
+      }
+
+      const res = await fetch(
+        `${import.meta.env.VITE_POCKETBASE_URL}/backend/v1/placar-ao-vivo/test`,
+        {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({
+            provedor: 'football_data',
+            is_fallback: true,
+            api_key: fallbackApiKeyInput.trim() || undefined,
+          }),
+        },
+      )
+
+      const data = await res.json().catch(() => ({}))
+      if (res.ok && data.success) {
+        setFallbackTestResult({
+          success: true,
+          message: data.message || 'Conexão de contingência testada com sucesso!',
+        })
+        toast({
+          title: 'Contingência Validada! 🛡️',
+          description:
+            'A chave secundária do Football-Data.org está funcionando e pronta para assumir.',
+        })
+      } else {
+        setFallbackTestResult({
+          success: false,
+          message: data.message || 'Falha ao conectar com a Football-Data.org.',
+        })
+        toast({
+          title: 'Falha no teste da contingência',
+          description: data.message || 'Verifique o token do Football-Data.org.',
+          variant: 'destructive',
+        })
+      }
+    } catch (err: unknown) {
+      setFallbackTestResult({
+        success: false,
+        message: err instanceof Error ? err.message : 'Erro de rede ou timeout.',
+      })
+    } finally {
+      setTestingFallback(false)
     }
   }
 
@@ -247,7 +334,7 @@ export default function AdminConfiguracoes() {
             <div>
               <div className="flex flex-wrap items-center gap-2">
                 <h1 className="text-2xl font-bold tracking-tight text-[#0F172A]">
-                  Configurações de Admin — Placar Ao Vivo
+                  Configurações de Admin — Placar Ao Vivo & Contingência
                 </h1>
                 <Badge
                   variant="secondary"
@@ -257,8 +344,9 @@ export default function AdminConfiguracoes() {
                 </Badge>
               </div>
               <p className="text-xs text-[#64748B]">
-                Gerencie as fontes de dados de futebol e insira a API Key diretamente pelo
-                aplicativo, sem depender de painéis externos.
+                Gerencie as fontes de dados de futebol, configure a contingência automática para
+                Football-Data.org e mantenha os placares ativos mesmo quando a API-Football estourar
+                a cota diária de 100 requisições.
               </p>
             </div>
           </div>
@@ -296,11 +384,11 @@ export default function AdminConfiguracoes() {
             <CardHeader className="p-0 pb-4">
               <CardTitle className="flex items-center gap-2 text-lg font-bold text-[#0F172A]">
                 <KeyRound className="h-5 w-5 text-emerald-600" />
-                Integração do Placar Ao Vivo
+                Provedor Principal & Chave de Contingência
               </CardTitle>
               <p className="text-xs text-[#64748B]">
-                Escolha o provedor de dados de futebol e salve sua chave. O app consultará os
-                placares ao vivo em tempo real nos jogos em andamento.
+                Defina o provedor primário e a chave secundária (fallback) para redirecionamento
+                automático quando a cota gratuita da API-Football for excedida (Status 429).
               </p>
             </CardHeader>
 
@@ -313,45 +401,86 @@ export default function AdminConfiguracoes() {
               ) : (
                 <form onSubmit={handleSave} className="space-y-5">
                   {/* Status atual no banco */}
-                  <div className="flex items-center justify-between rounded-lg border border-slate-200 bg-slate-50/70 p-3 text-xs">
-                    <div className="flex items-center gap-2">
-                      <Database className="h-4 w-4 text-[#0F2A43]" />
-                      <span className="font-semibold text-slate-700">Chave no banco de dados:</span>
+                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                    <div className="flex items-center justify-between rounded-lg border border-slate-200 bg-slate-50/70 p-3 text-xs">
+                      <div className="flex items-center gap-2">
+                        <Database className="h-4 w-4 text-[#0F2A43]" />
+                        <span className="font-semibold text-slate-700">Chave Principal:</span>
+                        {config.hasDbKey ? (
+                          <span className="font-mono font-bold text-emerald-700">
+                            {config.maskedKey || 'Salva'}
+                          </span>
+                        ) : (
+                          <span className="italic text-slate-400">Vazia</span>
+                        )}
+                      </div>
                       {config.hasDbKey ? (
-                        <span className="font-mono font-bold text-emerald-700">
-                          {config.maskedKey || 'Chave salva'}
-                        </span>
+                        <Badge className="bg-emerald-100 text-emerald-800 hover:bg-emerald-100 text-[10px]">
+                          OK
+                        </Badge>
                       ) : (
-                        <span className="italic text-slate-400">Nenhuma chave salva ainda</span>
+                        <Badge variant="outline" className="text-slate-400 text-[10px]">
+                          Pendente
+                        </Badge>
                       )}
                     </div>
 
-                    {config.hasDbKey ? (
-                      <Badge className="bg-emerald-100 text-emerald-800 hover:bg-emerald-100">
-                        Configurada
-                      </Badge>
-                    ) : config.hasSecretFallback ? (
-                      <Badge
-                        variant="outline"
-                        className="border-amber-300 bg-amber-50 text-amber-800"
-                        title="Há um secret legado configurado como fallback temporário"
-                      >
-                        Fallback Secrets Ativo
-                      </Badge>
-                    ) : (
-                      <Badge variant="outline" className="border-slate-300 text-slate-500">
-                        Não configurada
-                      </Badge>
-                    )}
+                    <div className="flex items-center justify-between rounded-lg border border-emerald-200 bg-emerald-50/50 p-3 text-xs">
+                      <div className="flex items-center gap-2">
+                        <Zap className="h-4 w-4 text-emerald-600" />
+                        <span className="font-semibold text-slate-700">Contingência (FD.org):</span>
+                        {config.hasFallbackKey ? (
+                          <span className="font-mono font-bold text-emerald-700">
+                            {config.maskedFallbackKey || 'Salva'}
+                          </span>
+                        ) : (
+                          <span className="italic text-slate-400">Vazia</span>
+                        )}
+                      </div>
+                      {config.hasFallbackKey ? (
+                        <Badge className="bg-emerald-100 text-emerald-800 hover:bg-emerald-100 text-[10px]">
+                          Ativa
+                        </Badge>
+                      ) : (
+                        <Badge
+                          variant="outline"
+                          className="border-amber-300 text-amber-700 text-[10px]"
+                        >
+                          Opcional
+                        </Badge>
+                      )}
+                    </div>
                   </div>
 
-                  {/* Seleção do Provedor */}
+                  {/* Seleção do Provedor Primário */}
                   <div className="space-y-2">
                     <Label className="text-xs font-bold text-[#0F172A]">
-                      Provedor de Dados de Futebol
+                      Provedor Principal (Consultado Primeiro)
                     </Label>
                     <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-3">
-                      {/* Football-Data.org (Recomendada) */}
+                      {/* API-Football (Padrão com contingência automática) */}
+                      <button
+                        type="button"
+                        onClick={() => setSelectedProvedor('api_football')}
+                        className={`flex flex-col items-start rounded-xl border p-3 text-left transition ${
+                          selectedProvedor === 'api_football'
+                            ? 'border-emerald-500 bg-emerald-50/60 ring-2 ring-emerald-500'
+                            : 'border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50'
+                        }`}
+                      >
+                        <div className="flex w-full items-center justify-between">
+                          <span className="text-xs font-bold text-[#0F172A]">API-Football</span>
+                          <span className="rounded bg-emerald-100 px-1.5 py-0.2 text-[9px] font-bold text-emerald-800">
+                            Principal
+                          </span>
+                        </div>
+                        <p className="mt-1 text-[11px] text-slate-500">
+                          Ampla cobertura de ligas. Se estourar 100 req/dia, chave secundária
+                          assume.
+                        </p>
+                      </button>
+
+                      {/* Football-Data.org */}
                       <button
                         type="button"
                         onClick={() => setSelectedProvedor('football_data')}
@@ -365,12 +494,12 @@ export default function AdminConfiguracoes() {
                           <span className="text-xs font-bold text-[#0F172A]">
                             Football-Data.org
                           </span>
-                          <span className="rounded bg-emerald-100 px-1.5 py-0.2 text-[9px] font-black text-emerald-800">
-                            Recomendada
+                          <span className="rounded bg-blue-100 px-1.5 py-0.2 text-[9px] font-bold text-blue-800">
+                            Direto
                           </span>
                         </div>
                         <p className="mt-1 text-[11px] text-slate-500">
-                          Plano gratuito com partidas do dia e placares ao vivo.
+                          Usar Football-Data.org como fonte primária única de dados.
                         </p>
                       </button>
 
@@ -386,43 +515,28 @@ export default function AdminConfiguracoes() {
                       >
                         <div className="flex w-full items-center justify-between">
                           <span className="text-xs font-bold text-[#0F172A]">TheSportsDB</span>
-                          <span className="rounded bg-blue-100 px-1.5 py-0.2 text-[9px] font-bold text-blue-800">
-                            Sem chave / Grátis
+                          <span className="rounded bg-slate-100 px-1.5 py-0.2 text-[9px] font-medium text-slate-600">
+                            Grátis (3)
                           </span>
                         </div>
                         <p className="mt-1 text-[11px] text-slate-500">
                           Base livre em JSON (chave de teste pública 3).
                         </p>
                       </button>
-
-                      {/* API-Football (Legado / Fallback) */}
-                      <button
-                        type="button"
-                        onClick={() => setSelectedProvedor('api_football')}
-                        className={`flex flex-col items-start rounded-xl border p-3 text-left transition ${
-                          selectedProvedor === 'api_football'
-                            ? 'border-emerald-500 bg-emerald-50/60 ring-2 ring-emerald-500'
-                            : 'border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50'
-                        }`}
-                      >
-                        <div className="flex w-full items-center justify-between">
-                          <span className="text-xs font-bold text-[#0F172A]">API-Football</span>
-                          <span className="rounded bg-slate-100 px-1.5 py-0.2 text-[9px] font-medium text-slate-600">
-                            Legado / Fallback
-                          </span>
-                        </div>
-                        <p className="mt-1 text-[11px] text-slate-500">
-                          Integração anterior via API-Sports ou RapidAPI.
-                        </p>
-                      </button>
                     </div>
                   </div>
 
-                  {/* Campo de texto da Chave de API */}
+                  {/* Campo de texto da Chave de API Principal */}
                   <div className="space-y-1.5">
                     <div className="flex items-center justify-between">
                       <Label htmlFor="api-key-input" className="text-xs font-bold text-[#0F172A]">
-                        Chave da API (API Key / Token)
+                        Chave do Provedor Principal (
+                        {selectedProvedor === 'api_football'
+                          ? 'API-Football'
+                          : selectedProvedor === 'football_data'
+                            ? 'Football-Data.org'
+                            : 'TheSportsDB'}
+                        )
                       </Label>
                       {selectedProvedor === 'thesportsdb' && (
                         <span className="text-[11px] text-slate-500">
@@ -437,10 +551,10 @@ export default function AdminConfiguracoes() {
                         type={showKeyText ? 'text' : 'password'}
                         placeholder={
                           config.hasDbKey
-                            ? `Chave salva (${config.maskedKey}). Deixe em branco para manter.`
+                            ? `Chave principal salva (${config.maskedKey}). Deixe em branco para manter.`
                             : selectedProvedor === 'thesportsdb'
                               ? 'Ex: 3 (ou sua chave privada)'
-                              : 'Cole sua API Key aqui...'
+                              : 'Cole sua API Key principal aqui...'
                         }
                         value={apiKeyInput}
                         onChange={(e) => setApiKeyInput(e.target.value)}
@@ -456,10 +570,143 @@ export default function AdminConfiguracoes() {
                       </button>
                     </div>
 
-                    <p className="text-[11px] text-slate-500">
-                      A chave fica armazenada com segurança no banco de dados e nunca é exposta
-                      abertamente para os participantes comuns do bolão.
+                    {/* Botão de Teste da Chave Principal */}
+                    <div className="flex items-center justify-between pt-1">
+                      <p className="text-[11px] text-slate-500">
+                        Consultada primeiramente respeitando o cache do servidor.
+                      </p>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={handleTestConnection}
+                        disabled={testing || saving}
+                        className="h-7 border-slate-300 text-xs font-semibold text-[#0F2A43] hover:bg-slate-50"
+                      >
+                        {testing ? (
+                          <>
+                            <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin text-slate-600" />
+                            Testando...
+                          </>
+                        ) : (
+                          <>
+                            <Radio className="mr-1.5 h-3.5 w-3.5 text-emerald-600" />
+                            Testar Conexão Principal
+                          </>
+                        )}
+                      </Button>
+                    </div>
+
+                    {testResult && (
+                      <div
+                        className={`flex items-start gap-2 rounded-lg border p-2.5 text-xs ${
+                          testResult.success
+                            ? 'border-emerald-300 bg-emerald-50 text-emerald-900'
+                            : 'border-red-300 bg-red-50 text-red-900'
+                        }`}
+                      >
+                        {testResult.success ? (
+                          <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-600 mt-0.5" />
+                        ) : (
+                          <AlertCircle className="h-4 w-4 shrink-0 text-red-600 mt-0.5" />
+                        )}
+                        <p className="leading-relaxed">{testResult.message}</p>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* BLOCO DE CONTINGÊNCIA AUTOMÁTICA (FOOTBALL-DATA.ORG) */}
+                  <div className="rounded-xl border border-emerald-300 bg-emerald-50/40 p-4 space-y-3">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <Zap className="h-4 w-4 text-emerald-600" />
+                        <Label
+                          htmlFor="fallback-key-input"
+                          className="text-xs font-bold text-emerald-950"
+                        >
+                          Chave Secundária de Contingência (Football-Data.org)
+                        </Label>
+                      </div>
+                      <Badge className="bg-emerald-600 text-white font-semibold text-[10px]">
+                        Fallback Automático
+                      </Badge>
+                    </div>
+
+                    <p className="text-[11px] text-slate-600 leading-relaxed">
+                      Quando a chamada para a API-Football retornar erro de cota excedida (Status
+                      429 ou limite atingido), a consulta é automaticamente redirecionada para a
+                      Football-Data.org utilizando esta chave.
                     </p>
+
+                    <div className="relative">
+                      <Input
+                        id="fallback-key-input"
+                        type={showFallbackKeyText ? 'text' : 'password'}
+                        placeholder={
+                          config.hasFallbackKey
+                            ? `Chave de contingência salva (${config.maskedFallbackKey || 'Salva'}). Deixe em branco para manter.`
+                            : 'Cole o token da Football-Data.org aqui (ex: a1b2c3d4...)'
+                        }
+                        value={fallbackApiKeyInput}
+                        onChange={(e) => setFallbackApiKeyInput(e.target.value)}
+                        className="h-10 pr-10 font-mono text-xs border-emerald-200 bg-white focus-visible:border-emerald-500 focus-visible:ring-emerald-500"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowFallbackKeyText(!showFallbackKeyText)}
+                        className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                        title={showFallbackKeyText ? 'Ocultar' : 'Exibir'}
+                      >
+                        {showFallbackKeyText ? (
+                          <EyeOff className="h-4 w-4" />
+                        ) : (
+                          <Eye className="h-4 w-4" />
+                        )}
+                      </button>
+                    </div>
+
+                    <div className="flex items-center justify-between pt-1">
+                      <span className="text-[11px] text-emerald-800">
+                        Chave gratuita enviada por e-mail no cadastro em football-data.org.
+                      </span>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={handleTestFallbackConnection}
+                        disabled={testingFallback || saving}
+                        className="h-7 border-emerald-300 bg-white text-xs font-semibold text-emerald-900 hover:bg-emerald-50"
+                      >
+                        {testingFallback ? (
+                          <>
+                            <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin text-emerald-700" />
+                            Testando contingência...
+                          </>
+                        ) : (
+                          <>
+                            <Radio className="mr-1.5 h-3.5 w-3.5 text-emerald-600" />
+                            Testar Conexão de Contingência
+                          </>
+                        )}
+                      </Button>
+                    </div>
+
+                    {fallbackTestResult && (
+                      <div
+                        className={`flex items-start gap-2 rounded-lg border p-2.5 text-xs ${
+                          fallbackTestResult.success
+                            ? 'border-emerald-300 bg-emerald-50 text-emerald-900'
+                            : 'border-red-300 bg-red-50 text-red-900'
+                        }`}
+                      >
+                        {fallbackTestResult.success ? (
+                          <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-600 mt-0.5" />
+                        ) : (
+                          <AlertCircle className="h-4 w-4 shrink-0 text-red-600 mt-0.5" />
+                        )}
+                        <p className="leading-relaxed">{fallbackTestResult.message}</p>
+                      </div>
+                    )}
                   </div>
 
                   {/* Toggle Ativo */}
@@ -479,61 +726,17 @@ export default function AdminConfiguracoes() {
                     </Label>
                   </div>
 
-                  {/* Feedback do Teste de Conexão */}
-                  {testResult && (
-                    <div
-                      className={`flex items-start gap-2 rounded-lg border p-3 text-xs ${
-                        testResult.success
-                          ? 'border-emerald-300 bg-emerald-50 text-emerald-900'
-                          : 'border-red-300 bg-red-50 text-red-900'
-                      }`}
-                    >
-                      {testResult.success ? (
-                        <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-600 mt-0.5" />
-                      ) : (
-                        <AlertCircle className="h-4 w-4 shrink-0 text-red-600 mt-0.5" />
-                      )}
-                      <div>
-                        <p className="font-bold">
-                          {testResult.success ? 'Conexão validada:' : 'Falha na conexão:'}
-                        </p>
-                        <p className="mt-0.5 leading-relaxed">{testResult.message}</p>
-                      </div>
-                    </div>
-                  )}
-
                   {/* Botões de Ação */}
-                  <div className="flex flex-wrap items-center justify-between gap-3 pt-3 border-t border-slate-100">
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      onClick={handleTestConnection}
-                      disabled={testing || saving}
-                      className="h-10 border-slate-300 text-xs font-semibold text-[#0F2A43] hover:bg-slate-50"
-                    >
-                      {testing ? (
-                        <>
-                          <Loader2 className="mr-2 h-4 w-4 animate-spin text-slate-600" />
-                          Testando conexão...
-                        </>
-                      ) : (
-                        <>
-                          <Radio className="mr-2 h-4 w-4 text-emerald-600" />
-                          Testar Conexão
-                        </>
-                      )}
-                    </Button>
-
+                  <div className="flex flex-wrap items-center justify-end gap-3 pt-3 border-t border-slate-100">
                     <Button
                       type="submit"
-                      disabled={saving || testing}
+                      disabled={saving || testing || testingFallback}
                       className="h-10 rounded-lg bg-[#0F2A43] px-6 text-xs font-semibold text-white shadow-xs hover:bg-[#1B3A5C]"
                     >
                       {saving ? (
                         <>
                           <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                          Salvando...
+                          Salvando chaves no banco...
                         </>
                       ) : (
                         <>
@@ -560,10 +763,13 @@ export default function AdminConfiguracoes() {
             </div>
 
             <div className="mt-4 space-y-4 text-xs">
-              {/* Football-Data.org */}
-              <div className="rounded-lg border border-emerald-200 bg-emerald-50/50 p-3.5 space-y-1.5">
+              {/* Football-Data.org (Chave de contingência gratuita) */}
+              <div className="rounded-lg border border-emerald-300 bg-emerald-50/70 p-3.5 space-y-1.5 shadow-2xs">
                 <div className="flex items-center justify-between">
-                  <span className="font-bold text-emerald-950">1. Football-Data.org (Melhor)</span>
+                  <span className="font-bold text-emerald-950 flex items-center gap-1.5">
+                    <Zap className="h-3.5 w-3.5 text-emerald-700" />
+                    Football-Data.org (Contingência)
+                  </span>
                   <a
                     href="https://www.football-data.org/client/register"
                     target="_blank"
@@ -574,16 +780,43 @@ export default function AdminConfiguracoes() {
                     <ExternalLink className="h-3 w-3" />
                   </a>
                 </div>
+                <p className="text-slate-700 leading-relaxed">
+                  <strong>Cadastro 100% gratuito:</strong> Acesse o link, informe seu nome e e-mail.
+                  O token da API chega diretamente na sua caixa de entrada em instantes. Cole esse
+                  token no campo de contingência acima.
+                </p>
+                <div className="rounded bg-white/80 p-2 text-[11px] text-emerald-900 border border-emerald-200">
+                  🛡️ <strong>Como funciona o fallback:</strong> O servidor tenta primeiro a
+                  API-Football com cache severo (30m calendário / 5m ao vivo). Se ela retornar erro
+                  429 (cota de 100 req diárias esgotada), o sistema consulta a Football-Data.org sem
+                  interrupção para os usuários do bolão.
+                </div>
+              </div>
+
+              {/* API-Football */}
+              <div className="rounded-lg border border-slate-200 bg-slate-50 p-3.5 space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <span className="font-bold text-slate-800">API-Football (API-Sports)</span>
+                  <a
+                    href="https://www.api-football.com/"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1 font-semibold text-slate-600 hover:underline"
+                  >
+                    <span>api-sports.io</span>
+                    <ExternalLink className="h-3 w-3" />
+                  </a>
+                </div>
                 <p className="text-slate-600 leading-relaxed">
-                  Cadastre seu e-mail gratuitamente no site. A chave de API chega instantaneamente
-                  por e-mail. Cole-a no campo acima para ativar partidas ao vivo e do dia.
+                  Plano gratuito inclui 100 requisições por dia. O sistema utiliza timeout curto
+                  (8s), deduplicação (mínimo 10s) e revalidação sob demanda para poupar o consumo.
                 </p>
               </div>
 
               {/* TheSportsDB */}
               <div className="rounded-lg border border-blue-200 bg-blue-50/50 p-3.5 space-y-1.5">
                 <div className="flex items-center justify-between">
-                  <span className="font-bold text-blue-950">2. TheSportsDB</span>
+                  <span className="font-bold text-blue-950">TheSportsDB</span>
                   <a
                     href="https://www.thesportsdb.com/free_sports_api"
                     target="_blank"
@@ -596,38 +829,16 @@ export default function AdminConfiguracoes() {
                 </div>
                 <p className="text-slate-600 leading-relaxed">
                   Utiliza a chave pública gratuita (padrão <strong>3</strong>) sem necessidade de
-                  cadastro complexo. Também suporta chaves personalizadas caso você possua plano de
-                  apoiador.
-                </p>
-              </div>
-
-              {/* API-Football */}
-              <div className="rounded-lg border border-slate-200 bg-slate-50 p-3.5 space-y-1.5">
-                <div className="flex items-center justify-between">
-                  <span className="font-bold text-slate-800">3. API-Football (Fallback)</span>
-                  <a
-                    href="https://www.api-football.com/"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="inline-flex items-center gap-1 font-semibold text-slate-600 hover:underline"
-                  >
-                    <span>API-Sports</span>
-                    <ExternalLink className="h-3 w-3" />
-                  </a>
-                </div>
-                <p className="text-slate-600 leading-relaxed">
-                  Mantida como opção para quem já utilizava plano via RapidAPI ou chave direta da
-                  API-Sports.
+                  cadastro complexo.
                 </p>
               </div>
             </div>
 
             {/* Comportamento silencioso garantido */}
             <div className="mt-4 rounded-lg bg-slate-100 p-3 text-[11px] text-slate-600 leading-relaxed">
-              <strong>Nota sobre funcionamento:</strong> Se nenhuma chave estiver configurada ou se
-              a API estiver temporariamente fora do ar, o aplicativo opera normalmente em silêncio:
-              nenhum erro é exibido e os resultados oficiais continuam sendo lançados pelo
-              administrador na tela de Gestão de Jogos.
+              <strong>Prioridade de exibição garantida:</strong> Sobrescrita manual do Admin Douglas
+              → Dados da API ativa / contingência → Placar salvo no banco. Nunca é inventado 0x0
+              falso, e se todas as APIs falharem os palpites e pontuações continuam 100% intactos.
             </div>
           </Card>
         </div>

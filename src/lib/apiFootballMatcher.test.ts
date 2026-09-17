@@ -138,6 +138,41 @@ describe('apiFootballMatcher', () => {
       )
     })
 
+    it('deve suportar contingência do Football-Data.org com separação por equipe mandante/visitante', () => {
+      const contingencyFixtures: ApiFootballFixture[] = [
+        {
+          provider: 'football_data',
+          fixture: {
+            id: 50012,
+            status: { short: '2H', long: 'IN_PLAY', elapsed: 68 },
+          },
+          teams: {
+            home: { id: 100, name: 'Flamengo' },
+            away: { id: 200, name: 'Palmeiras' },
+          },
+          goals: { home: 2, away: 1 },
+          scorers: [
+            { name: 'Pedro', minute: 14, teamSide: 'home', teamId: 100 },
+            { name: 'Raphael Veiga', minute: 35, teamSide: 'away', teamId: 200 },
+            { name: 'Arrascaeta', minute: 60, teamSide: 'home', teamId: 100 },
+          ],
+        },
+      ]
+
+      const match = matchGameWithApiFixtures('Flamengo', 'Palmeiras', contingencyFixtures)
+      expect(match).not.toBeNull()
+      expect(match?.found).toBe(true)
+      expect(match?.provider).toBe('football_data')
+      expect(match?.placarA).toBe(2)
+      expect(match?.placarB).toBe(1)
+      expect(match?.isLive).toBe(true)
+      expect(match?.elapsed).toBe(68)
+      expect(match?.scorers).toHaveLength(3)
+      expect(match?.scorers[0].teamSide).toBe('home')
+      expect(match?.scorers[1].teamSide).toBe('away')
+      expect(match?.scorers[2].teamSide).toBe('home')
+    })
+
     it('deve extrair marcadores formatados de API-Football / TheSportsDB', () => {
       const fixtureWithScorers: ApiFootballFixture[] = [
         {
