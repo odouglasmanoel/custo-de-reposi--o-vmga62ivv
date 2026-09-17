@@ -155,8 +155,14 @@ export default function Palpites() {
       try {
         if (isGeralParam) {
           const [allParts, allGroupBets] = await Promise.all([
-            pb.collection('participantes').getFullList<Participante>({ sort: 'nome' }),
-            pb.collection('palpites').getFullList<Palpite>(),
+            pb.collection('participantes').getFullList<Participante>({
+              sort: 'nome',
+              fields: 'id,nome,bolao',
+            }),
+            pb.collection('palpites').getFullList<Palpite>({
+              fields:
+                'id,bolao,jogo,participante,placar_a,placar_b,goleadores_a,goleadores_b,pontuacao_jogo,vencedor_penaltis',
+            }),
           ])
           setParticipantesList(allParts)
           setAllGroupPalpites(allGroupBets)
@@ -170,9 +176,12 @@ export default function Palpites() {
               pb.collection('participantes').getFullList<Participante>({
                 filter: `bolao = '${currentTargetBolaoId}'`,
                 sort: 'nome',
+                fields: 'id,nome,bolao',
               }),
               pb.collection('palpites').getFullList<Palpite>({
                 filter: `bolao = '${currentTargetBolaoId}'`,
+                fields:
+                  'id,bolao,jogo,participante,placar_a,placar_b,goleadores_a,goleadores_b,pontuacao_jogo,vencedor_penaltis',
               }),
             ])
             setParticipantesList(parts)
@@ -194,7 +203,7 @@ export default function Palpites() {
   }, [loadedGroupBets, isGeralParam, activeBolaoId, boloes])
 
   // Carregamento principal dos jogos e palpites do usuário logado
-  // Tolerante a timeout (10s), deduplicado e com cache em sessionStorage
+  // Tolerante a timeout (10s), deduplicado e com payload otimizado (campos estritamente necessários)
   const loadData = useCallback(
     async (isManualRefresh: boolean = false) => {
       if (!user) return
@@ -229,23 +238,29 @@ export default function Palpites() {
             (user.name as string) ||
             (user.email ? (user.email as string).split('@')[0] : '')
 
-          // Buscar lista de todos os bolões para exibir nome e tema
+          // Buscar lista de bolões com campos essenciais para exibir nome e tema
           const loadedBoloes =
             boloes.length > 0
               ? boloes
-              : await pb.collection('boloes').getFullList<Bolao>({ sort: 'nome' })
+              : await pb.collection('boloes').getFullList<Bolao>({
+                  sort: 'nome',
+                  fields: 'id,nome,foco,ativo',
+                })
           setAllBoloes(loadedBoloes)
 
           if (isGeralParam) {
             // MODO GERAL: Carregamento otimizado — buscar jogos + participantes do usuário + palpites do próprio usuário
-            // Em vez de buscar todos os milhares de palpites de uma vez, busca apenas do usuário logado
+            // Retorna apenas dados estritamente necessários do usuário logado, reduzindo o payload drasticamente
             const allGamesPromise = pb.collection('jogos').getFullList<Jogo>({
               sort: 'data,hora',
+              fields:
+                'id,bolao,time_a,time_b,data,hora,competicao,resultado_finalizado,placar_a,placar_b,tem_penaltis,vencedor_penaltis',
             })
 
             // Buscar apenas os registros de participante deste usuário
             const myPartsPromise = pb.collection('participantes').getFullList<Participante>({
               filter: `nome ~ '${searchName.replace(/'/g, "\\'")}'`,
+              fields: 'id,nome,bolao',
             })
 
             const [allGames, myParts] = await Promise.race([
@@ -267,12 +282,14 @@ export default function Palpites() {
               myPalpites = await Promise.race([
                 pb.collection('palpites').getFullList<Palpite>({
                   filter: filterUserBets,
+                  fields:
+                    'id,bolao,jogo,participante,placar_a,placar_b,goleadores_a,goleadores_b,vencedor_penaltis,pontuacao_jogo,detalhamento',
                 }),
                 timeoutPromise,
               ])
             }
 
-            if (Array.isArray(allGames) && allGames.length > 0) {
+            if (Array.isArray(allGames)) {
               setJogos(allGames)
 
               const mapPalpites: Record<string, Palpite> = {}
@@ -313,6 +330,7 @@ export default function Palpites() {
                 try {
                   const parts = await pb.collection('participantes').getFullList<Participante>({
                     filter: `bolao = '${currentTargetBolaoId}' && (nome ~ '${searchName.replace(/'/g, "\\'")}')`,
+                    fields: 'id,nome,bolao',
                   })
                   const exact = parts.find((p) => p.nome.toLowerCase() === searchName.toLowerCase())
                   const partial = parts.find(
@@ -333,16 +351,20 @@ export default function Palpites() {
               setUserParticipantsMap({ [currentTargetBolaoId]: currentParticipante })
             }
 
-            // Buscar apenas jogos do bolão e palpites deste participante
+            // Buscar apenas jogos do bolão e palpites deste participante com campos enxutos
             const gamesPromise = pb.collection('jogos').getFullList<Jogo>({
               filter: `bolao = '${currentTargetBolaoId}'`,
               sort: 'data,hora',
+              fields:
+                'id,bolao,time_a,time_b,data,hora,competicao,resultado_finalizado,placar_a,placar_b,tem_penaltis,vencedor_penaltis',
             })
 
             let myPalpitesPromise: Promise<Palpite[]> = Promise.resolve([])
             if (participanteId) {
               myPalpitesPromise = pb.collection('palpites').getFullList<Palpite>({
                 filter: `bolao = '${currentTargetBolaoId}' && participante = '${participanteId}'`,
+                fields:
+                  'id,bolao,jogo,participante,placar_a,placar_b,goleadores_a,goleadores_b,vencedor_penaltis,pontuacao_jogo,detalhamento',
               })
             }
 
@@ -351,7 +373,7 @@ export default function Palpites() {
               timeoutPromise,
             ])
 
-            if (Array.isArray(gamesList) && gamesList.length > 0) {
+            if (Array.isArray(gamesList)) {
               setJogos(gamesList)
 
               const mapPalpites: Record<string, Palpite> = {}

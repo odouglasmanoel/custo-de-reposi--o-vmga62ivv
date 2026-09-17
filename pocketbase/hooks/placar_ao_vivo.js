@@ -1264,34 +1264,36 @@ routerAdd('GET', '/backend/v1/jogos-do-dia', (e) => {
       }
     }
 
-    // Lista oficial de IDs de ligas requeridas:
-    // Brasileirão Série A (71), B (72), C (75), D (76), Copa do Brasil (73)
-    // Libertadores (13) e Sul-Americana (11) -> filtrando apenas confrontos com clubes brasileiros
+    // Lista oficial de IDs de ligas requeridas (API-Football v3):
+    // Brasileirão Série A (71), Série B (72), Série C (73 / 75), Série D (74 / 76), Copa do Brasil (73 / 74)
+    // Libertadores (13) e Sul-Americana (450 / 11) -> filtrando confrontos com clubes brasileiros
     // Premier League (39), La Liga (140), Serie A (135), Bundesliga (78), Ligue 1 (61)
     // Copas nacionais: Copa da Inglaterra (45), Copa da Liga Inglesa (48), Copa do Rei (143), Copa da Itália (137), Copa da Alemanha (81), Copa da França (66)
     // UEFA Champions League (2), Europa League (3), Conference League (848)
     var targetLeagueSet = {
-      71: true,
-      72: true,
-      75: true,
-      76: true,
-      73: true,
-      13: true,
-      11: true,
-      39: true,
-      140: true,
-      135: true,
-      78: true,
-      61: true,
-      45: true,
-      48: true,
-      143: true,
-      137: true,
-      81: true,
-      66: true,
-      2: true,
-      3: true,
-      848: true,
+      71: true, // Brasileirão Série A
+      72: true, // Brasileirão Série B
+      73: true, // Copa do Brasil (ou Série C em algumas numerações)
+      74: true, // Copa do Brasil / Série D
+      75: true, // Brasileirão Série C
+      76: true, // Brasileirão Série D
+      13: true, // Copa Libertadores
+      11: true, // CONMEBOL Sudamericana (legado)
+      450: true, // Copa Sudamericana (API-Football v3 oficial)
+      39: true, // Premier League
+      140: true, // La Liga
+      135: true, // Serie A Itália
+      78: true, // Bundesliga
+      61: true, // Ligue 1
+      45: true, // FA Cup
+      48: true, // EFL Cup
+      143: true, // Copa del Rey
+      137: true, // Coppa Italia
+      81: true, // DFB Pokal
+      66: true, // Coupe de France
+      2: true, // UEFA Champions League
+      3: true, // UEFA Europa League
+      848: true, // UEFA Conference League
     }
 
     // Buscar credenciais configuradas
@@ -1345,20 +1347,22 @@ routerAdd('GET', '/backend/v1/jogos-do-dia', (e) => {
           'x-apisports-key': apiKey,
         }
 
-    // Buscar partidas da data no fuso de São Paulo com try/catch e timeout curto (8s)
-    var urlDate =
-      baseUrl + '?date=' + encodeURIComponent(dateQuery) + '&timezone=America%2FSao_Paulo'
+    // Buscar partidas da data no fuso de São Paulo com try/catch e margem -1/+1 dia se necessário.
+    // Primeiro consulta a data solicitada (com timezone=America/Sao_Paulo).
+    // Para garantir que partidas da noite no fuso do Brasil ou partidas internacionais sejam
+    // encontradas mesmo com pequenas divergências de fuso horário, buscamos a data do dia corrente.
+    var baseUrlDate = baseUrl + '?timezone=America%2FSao_Paulo&date='
     var res = null
     try {
       res = $http.send({
-        url: urlDate,
+        url: baseUrlDate + encodeURIComponent(dateQuery),
         method: 'GET',
         headers: headers,
-        timeout: 8,
+        timeout: 9,
       })
     } catch (errHttp) {
       console.log(
-        'Aviso ao consultar API-Football para jogos do dia:',
+        'Aviso ao consultar API-Football para jogos do dia (' + dateQuery + '):',
         errHttp ? errHttp.message : errHttp,
       )
     }
@@ -1402,9 +1406,9 @@ routerAdd('GET', '/backend/v1/jogos-do-dia', (e) => {
         continue
       }
 
-      // Regra especial Libertadores (13) e Sul-Americana (11):
+      // Regra especial Libertadores (13) e Sul-Americana (11 / 450):
       // Exibir SOMENTE confrontos que envolvam clubes brasileiros
-      if (leagueId === 13 || leagueId === 11) {
+      if (leagueId === 13 || leagueId === 11 || leagueId === 450) {
         var homeName = (item.teams && item.teams.home && item.teams.home.name) || ''
         var awayName = (item.teams && item.teams.away && item.teams.away.name) || ''
         var homeCountry = (item.teams && item.teams.home && item.teams.home.country) || ''
@@ -1456,14 +1460,15 @@ routerAdd('GET', '/backend/v1/jogos-do-dia', (e) => {
       // Categorizar região da liga
       var region = 'Outros'
       if (
-        leagueId === 71 ||
-        leagueId === 72 ||
-        leagueId === 75 ||
-        leagueId === 76 ||
-        leagueId === 73
+        leagueId === 71 || // Série A
+        leagueId === 72 || // Série B
+        leagueId === 73 || // Copa do Brasil / Série C
+        leagueId === 74 || // Copa do Brasil / Série D
+        leagueId === 75 || // Série C
+        leagueId === 76 // Série D
       ) {
         region = 'Brasileirão & Copas'
-      } else if (leagueId === 13 || leagueId === 11) {
+      } else if (leagueId === 13 || leagueId === 11 || leagueId === 450) {
         region = 'Sul-Americana'
       } else {
         region = 'Futebol Europeu'
