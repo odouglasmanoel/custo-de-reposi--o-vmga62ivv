@@ -715,37 +715,67 @@ export default function JogosDoDia() {
       isOwnGoal = false,
       extraMinute?: number | null | undefined,
     ) => {
-      const cleanName = (name || '').trim()
+      if (!side || (side !== 'home' && side !== 'away')) return
+
+      // FIX 2: Em caso de gol contra, associar ao time BENEFICIADO no placar
+      const effectiveSide = isOwnGoal ? (side === 'home' ? 'away' : 'home') : side
+
+      // FIX 1: Limpeza rigorosa do nome (remover emojis duplicados, minutagem residual no final e sufixos repetidos)
+      let cleanName = (name || '').trim()
+      cleanName = cleanName.replace(/⚽/g, '').trim()
+      // Remove sufixos repetidos de contra/own goal
+      cleanName = cleanName.replace(/\s*\((contra|own\s*goal|o\.?g\.?)\)/gi, '').trim()
+      // Remove minutagem residual no final (ex: "27'", "45+2'", "27")
+      cleanName = cleanName.replace(/\s*\d+(\+\d+)?'?$/, '').trim()
       if (!cleanName) return
-      const finalName = isOwnGoal ? `${cleanName} (contra)` : cleanName
-      let minText = ''
-      if (minute != null && !isNaN(Number(minute))) {
-        if (extraMinute != null && !isNaN(Number(extraMinute)) && Number(extraMinute) > 0) {
-          minText = `${minute}+${extraMinute}'`
+
+      const finalDisplayName = isOwnGoal ? `${cleanName} (contra)` : cleanName
+
+      let parsedMin = minute != null && !isNaN(Number(minute)) ? Number(minute) : null
+      let parsedExtra =
+        extraMinute != null && !isNaN(Number(extraMinute)) && Number(extraMinute) > 0
+          ? Number(extraMinute)
+          : null
+
+      // Se minute não veio separado mas estava no nome original
+      if (parsedMin == null) {
+        const rawMinMatch = name.match(/(\d+)\s*\+\s*(\d+)/)
+        if (rawMinMatch) {
+          parsedMin = parseInt(rawMinMatch[1], 10)
+          parsedExtra = parseInt(rawMinMatch[2], 10)
         } else {
-          minText = `${minute}'`
+          const singleMinMatch = name.match(/(\d+)'?$/)
+          if (singleMinMatch) {
+            parsedMin = parseInt(singleMinMatch[1], 10)
+          }
         }
       }
-      const entry = minText ? `⚽ ${finalName} ${minText}` : `⚽ ${finalName}`
-      const key = `${side || 'any'}__${finalName.toLowerCase()}__${minText}`
+
+      let minFormatted = ''
+      let minutoNormalizado = ''
+      if (parsedMin != null) {
+        if (parsedExtra != null) {
+          minFormatted = ` ${parsedMin}+${parsedExtra}'`
+          minutoNormalizado = `${parsedMin}+${parsedExtra}`
+        } else {
+          minFormatted = ` ${parsedMin}'`
+          minutoNormalizado = `${parsedMin}`
+        }
+      }
+
+      // Monte a string final UMA única vez: `⚽ ${nomeLimpo}${minuto ? ' ' + minuto + "'" : ''}`
+      const entry = `⚽ ${finalDisplayName}${minFormatted}`
+
+      // Chave de deduplicação do Set: `${side}__${nomeNormalizado}__${minutoNormalizado}`
+      const nomeNormalizado = cleanName.toLowerCase()
+      const key = `${effectiveSide}__${nomeNormalizado}__${minutoNormalizado}`
       if (seenScorerKeys.has(key)) return
       seenScorerKeys.add(key)
 
-      if (side === 'away') {
+      if (effectiveSide === 'away') {
         awayScorers.push(entry)
-      } else if (side === 'home') {
+      } else if (effectiveSide === 'home') {
         homeScorers.push(entry)
-      } else {
-        // Sem lado identificado, se houver placar de mandante e não de visitante, vai pro mandante
-        const hGoalCount = fixture.goals?.home || 0
-        const aGoalCount = fixture.goals?.away || 0
-        if (hGoalCount > 0 && aGoalCount === 0) {
-          homeScorers.push(entry)
-        } else if (aGoalCount > 0 && hGoalCount === 0) {
-          awayScorers.push(entry)
-        } else {
-          homeScorers.push(entry)
-        }
       }
     }
 
@@ -834,7 +864,11 @@ export default function JogosDoDia() {
         if (!sc || !sc.name) continue
         const side = resolveSide(sc.teamId, sc.teamName, sc.teamSide)
         const isContra = /contra|own\s*goal|o\.?g\.?/i.test(sc.name)
-        const cleanScName = sc.name.replace(/\s*\(contra\)/i, '').trim()
+        const cleanScName = sc.name
+          .replace(/⚽/g, '')
+          .replace(/\s*\(contra\)/gi, '')
+          .replace(/\s*\d+(\+\d+)?'?$/, '')
+          .trim()
         const minObj = {
           minute: sc.minute != null ? Number(sc.minute) : null,
           extra: sc.extraMinute != null ? Number(sc.extraMinute) : null,
@@ -927,9 +961,27 @@ export default function JogosDoDia() {
       }
     }
 
+    // FIX 2: Regra de placar: se gols do mandante === 0, homeScorers fica estritamente vazio []; mesmo para o visitante.
+    // Ex.: Lech Poznań 0x4 → coluna do Lech vazia.
+    const hGoals =
+      fixture.goals?.home != null
+        ? Number(fixture.goals.home)
+        : fixture.score?.fulltime?.home != null
+          ? Number(fixture.score.fulltime.home)
+          : null
+    const aGoals =
+      fixture.goals?.away != null
+        ? Number(fixture.goals.away)
+        : fixture.score?.fulltime?.away != null
+          ? Number(fixture.score.fulltime.away)
+          : null
+
+    const finalHomeScorers = hGoals === 0 ? [] : homeScorers
+    const finalAwayScorers = aGoals === 0 ? [] : awayScorers
+
     return {
-      homeScorers,
-      awayScorers,
+      homeScorers: finalHomeScorers,
+      awayScorers: finalAwayScorers,
     }
   }
 

@@ -169,6 +169,41 @@ routerAdd('GET', '/backend/v1/placar-ao-vivo', (e) => {
           region: 'Futebol Europeu',
           country: 'Europe',
         },
+        {
+          id: 4335,
+          name: 'La Liga',
+          shortId: 140,
+          region: 'Futebol Europeu',
+          country: 'Spain',
+        },
+        {
+          id: 4328,
+          name: 'Premier League',
+          shortId: 39,
+          region: 'Futebol Europeu',
+          country: 'England',
+        },
+        {
+          id: 4332,
+          name: 'Serie A',
+          shortId: 135,
+          region: 'Futebol Europeu',
+          country: 'Italy',
+        },
+        {
+          id: 4331,
+          name: 'Bundesliga',
+          shortId: 78,
+          region: 'Futebol Europeu',
+          country: 'Germany',
+        },
+        {
+          id: 4334,
+          name: 'Ligue 1',
+          shortId: 61,
+          region: 'Futebol Europeu',
+          country: 'France',
+        },
       ]
 
       for (var cli = 0; cli < conmebolLeagues.length; cli++) {
@@ -370,12 +405,12 @@ routerAdd('GET', '/backend/v1/placar-ao-vivo', (e) => {
                           else if (tlSideStr.indexOf('away') !== -1) tlSide = 'away'
                         }
                         var tlIsOwn = /contra|own/i.test(itemTl.strTimelineDetail || '')
-                        var scDisplayName =
-                          '⚽ ' +
-                          pName +
-                          (tlTime !== null && !isNaN(tlTime) ? ' ' + tlTime + "'" : '')
+                        var pureScorerName = pName
+                        if (tlIsOwn && pureScorerName.toLowerCase().indexOf('contra') === -1) {
+                          pureScorerName += ' (contra)'
+                        }
                         tsdbScorers.push({
-                          name: scDisplayName,
+                          name: pureScorerName,
                           rawName: pName,
                           minute: tlTime,
                           extraMinute: null,
@@ -2511,6 +2546,41 @@ routerAdd('GET', '/backend/v1/jogos-do-dia', (e) => {
           region: 'Futebol Europeu',
           country: 'Europe',
         },
+        {
+          id: 4335,
+          name: 'La Liga',
+          shortId: 140,
+          region: 'Futebol Europeu',
+          country: 'Spain',
+        },
+        {
+          id: 4328,
+          name: 'Premier League',
+          shortId: 39,
+          region: 'Futebol Europeu',
+          country: 'England',
+        },
+        {
+          id: 4332,
+          name: 'Serie A',
+          shortId: 135,
+          region: 'Futebol Europeu',
+          country: 'Italy',
+        },
+        {
+          id: 4331,
+          name: 'Bundesliga',
+          shortId: 78,
+          region: 'Futebol Europeu',
+          country: 'Germany',
+        },
+        {
+          id: 4334,
+          name: 'Ligue 1',
+          shortId: 61,
+          region: 'Futebol Europeu',
+          country: 'France',
+        },
       ]
 
       for (var cli = 0; cli < conmebolLeagues.length; cli++) {
@@ -2712,12 +2782,12 @@ routerAdd('GET', '/backend/v1/jogos-do-dia', (e) => {
                           else if (tlSideStr.indexOf('away') !== -1) tlSide = 'away'
                         }
                         var tlIsOwn = /contra|own/i.test(itemTl.strTimelineDetail || '')
-                        var scDisplayName =
-                          '⚽ ' +
-                          pName +
-                          (tlTime !== null && !isNaN(tlTime) ? ' ' + tlTime + "'" : '')
+                        var pureScorerName = pName
+                        if (tlIsOwn && pureScorerName.toLowerCase().indexOf('contra') === -1) {
+                          pureScorerName += ' (contra)'
+                        }
                         tsdbScorers.push({
-                          name: scDisplayName,
+                          name: pureScorerName,
                           rawName: pName,
                           minute: tlTime,
                           extraMinute: null,
@@ -3512,6 +3582,41 @@ routerAdd('GET', '/backend/v1/jogos-do-dia', (e) => {
         } catch (enrichErr) {
           console.log('[Enrich Fixture Events Batch] Erro ao buscar eventos em lote:', enrichErr)
         }
+      }
+    }
+
+    // FIX 3: Fallback TheSportsDB para TODAS as ligas quando a API primária vier sem eventos e houver placar > 0
+    var stillNeedEvents = []
+    for (var sneI = 0; sneI < fixturesToEnrichEvents.length; sneI++) {
+      var sneFix = fixturesToEnrichEvents[sneI]
+      var sneHasEvents =
+        (Array.isArray(sneFix.events) && sneFix.events.length > 0) ||
+        (Array.isArray(sneFix.scorers) && sneFix.scorers.length > 0)
+      if (!sneHasEvents) {
+        stillNeedEvents.push(sneFix)
+      }
+    }
+
+    if (stillNeedEvents.length > 0 && theSportsDbKey) {
+      try {
+        var tsdbEnrichFixtures = fetchConmebolFromTheSportsDb(dateQuery, theSportsDbKey)
+        for (var sneJ = 0; sneJ < stillNeedEvents.length; sneJ++) {
+          var targetFixWithoutEvents = stillNeedEvents[sneJ]
+          for (var tsei2 = 0; tsei2 < tsdbEnrichFixtures.length; tsei2++) {
+            var tsdbFixMatch = tsdbEnrichFixtures[tsei2]
+            if (isSameMatchConfrontation(targetFixWithoutEvents, tsdbFixMatch)) {
+              if (Array.isArray(tsdbFixMatch.events) && tsdbFixMatch.events.length > 0) {
+                targetFixWithoutEvents.events = tsdbFixMatch.events
+              }
+              if (Array.isArray(tsdbFixMatch.scorers) && tsdbFixMatch.scorers.length > 0) {
+                targetFixWithoutEvents.scorers = tsdbFixMatch.scorers
+              }
+              break
+            }
+          }
+        }
+      } catch (errTsdbEnrichFallback) {
+        console.log('[TheSportsDB Enrich Fallback] Erro:', errTsdbEnrichFallback)
       }
     }
 
