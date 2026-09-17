@@ -357,6 +357,39 @@ export async function adicionarJogoManualNaEnquete(params: {
  * Admin: Atualiza informações de um confronto da enquete
  * Mantém os votos computados intactos sem tocar na coleção de votos
  */
+/**
+ * Busca escudo de um clube através do endpoint backend
+ * Fallback seguro: se falhar ou não encontrar, retorna string vazia
+ */
+export async function buscarEscudoTime(teamName: string): Promise<string> {
+  const trimmed = (teamName || '').trim()
+  if (!trimmed) return ''
+
+  try {
+    const token = pb.authStore.token
+    const baseUrl = import.meta.env.VITE_POCKETBASE_URL || ''
+    const res = await fetch(
+      `${baseUrl}/backend/v1/enquetes/buscar-escudo?team=${encodeURIComponent(trimmed)}`,
+      {
+        headers: {
+          Authorization: token ? `Bearer ${token}` : '',
+        },
+      },
+    )
+
+    if (!res.ok) return ''
+    const data = await res.json()
+    return data && typeof data.badgeUrl === 'string' ? data.badgeUrl.trim() : ''
+  } catch (err) {
+    console.warn('[buscarEscudoTime] Erro na requisição:', err)
+    return ''
+  }
+}
+
+/**
+ * Admin: Atualiza informações de um confronto da enquete
+ * Mantém os votos computados intactos sem tocar na coleção de votos
+ */
 export async function editarJogoEnquete(
   jogoId: string,
   params: {
@@ -366,16 +399,27 @@ export async function editarJogoEnquete(
     regiao?: string
     data: string
     horario?: string
+    logo_casa?: string
+    logo_visitante?: string
   },
 ): Promise<EnqueteJogoModel> {
-  return pb.collection('enquete_jogos').update<EnqueteJogoModel>(jogoId, {
+  const payload: Record<string, any> = {
     time_a: params.time_a.trim(),
     time_b: params.time_b.trim(),
     campeonato: params.campeonato?.trim() || 'Futebol',
     regiao: params.regiao?.trim() || 'Brasileirão & Copas',
     data: params.data,
     horario: params.horario || '16:00',
-  })
+  }
+
+  if (params.logo_casa !== undefined) {
+    payload.logo_casa = params.logo_casa.trim()
+  }
+  if (params.logo_visitante !== undefined) {
+    payload.logo_visitante = params.logo_visitante.trim()
+  }
+
+  return pb.collection('enquete_jogos').update<EnqueteJogoModel>(jogoId, payload)
 }
 
 /**

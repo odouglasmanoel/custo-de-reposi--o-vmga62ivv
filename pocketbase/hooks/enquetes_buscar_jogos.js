@@ -771,3 +771,509 @@ routerAdd(
   },
   $apis.requireAuth(),
 )
+
+// -------------------------------------------------------------
+// Endpoint para busca de escudos por nome de time (team search)
+// Cascata: Cache em memória -> TheSportsDB -> API-Football
+// Usado na adição/edição manual de jogos na Enquete
+// -------------------------------------------------------------
+routerAdd(
+  'GET',
+  '/backend/v1/enquetes/buscar-escudo',
+  (e) => {
+    try {
+      const authRecord = e.auth
+      if (!authRecord) {
+        return e.unauthorizedError('Usuário não autenticado')
+      }
+
+      var teamName = (e.requestInfo().query.team || '').trim()
+      if (!teamName) {
+        return e.badRequestError('Parâmetro "team" é obrigatório.')
+      }
+
+      var cleanKey = teamName.toLowerCase().trim()
+      try {
+        cleanKey = cleanKey.normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+      } catch (_) {}
+
+      // Cache em memória compartilhado
+      if (typeof globalThis !== 'undefined' && !globalThis.__tsdbBadgeCache) {
+        globalThis.__tsdbBadgeCache = {}
+      }
+      if (
+        typeof globalThis !== 'undefined' &&
+        globalThis.__tsdbBadgeCache &&
+        globalThis.__tsdbBadgeCache[cleanKey] !== undefined
+      ) {
+        return e.json(200, {
+          team: teamName,
+          badgeUrl: globalThis.__tsdbBadgeCache[cleanKey] || '',
+          cached: true,
+        })
+      }
+
+      // Lê chaves de integração
+      var tsdbKey = ''
+      try {
+        var tsdbRec = $app.findFirstRecordByData(
+          'config_integracoes',
+          'chave',
+          'thesportsdb_fallback',
+        )
+        if (tsdbRec) {
+          tsdbKey = (tsdbRec.getString('api_key') || '').trim()
+        }
+      } catch (_) {}
+      if (!tsdbKey) {
+        try {
+          if ($secrets && $secrets.has && $secrets.has('THESPORTSDB_KEY')) {
+            tsdbKey = ($secrets.get('THESPORTSDB_KEY') || '').trim()
+          } else if ($os && $os.getenv) {
+            tsdbKey = ($os.getenv('THESPORTSDB_KEY') || '').trim()
+          }
+        } catch (_) {}
+      }
+      if (!tsdbKey) {
+        tsdbKey = '3'
+      }
+
+      var badgeFound = ''
+
+      // 1. Consulta TheSportsDB searchteams.php (timeout curto de 4s)
+      try {
+        var resTsdb = $http.send({
+          url:
+            'https://www.thesportsdb.com/api/v1/json/' +
+            encodeURIComponent(tsdbKey) +
+            '/searchteams.php?t=' +
+            encodeURIComponent(teamName),
+          method: 'GET',
+          timeout: 4,
+        })
+
+        if (
+          resTsdb.statusCode === 200 &&
+          resTsdb.json &&
+          Array.isArray(resTsdb.json.teams) &&
+          resTsdb.json.teams.length > 0
+        ) {
+          var tObj = resTsdb.json.teams[0]
+          badgeFound = (tObj.strBadge || tObj.strTeamBadge || tObj.strLogo || '').trim()
+        }
+      } catch (errTsdb) {
+        console.log('[TSDB Escudo Enquete endpoint] Erro na busca por ' + teamName + ':', errTsdb)
+      }
+
+      // 2. Se não encontrou no TheSportsDB, tenta API-Football se disponível
+      if (!badgeFound) {
+        var afKey = ''
+        var isRapid = false
+        try {
+          var cfg = $app.findFirstRecordByData('config_integracoes', 'chave', 'placar_ao_vivo')
+          if (cfg) {
+            afKey = (cfg.getString('api_key') || '').trim()
+          }
+        } catch (_) {}
+        if (!afKey) {
+          try {
+            if ($secrets && $secrets.has && $secrets.has('API_FOOTBALL_KEY')) {
+              afKey = $secrets.get('API_FOOTBALL_KEY')
+            } else if ($secrets && $secrets.has && $secrets.has('RAPIDAPI_KEY')) {
+              afKey = $secrets.get('RAPIDAPI_KEY')
+              isRapid = true
+            } else if ($os && $os.getenv) {
+              afKey = $os.getenv('API_FOOTBALL_KEY') || $os.getenv('RAPIDAPI_KEY') || ''
+              if ($os.getenv('RAPIDAPI_KEY')) isRapid = true
+            }
+          } catch (_) {}
+        }
+        if (afKey.length > 40) isRapid = true
+
+        if (afKey) {
+          try {
+            var urlAF = isRapid
+              ? 'https://api-football-v1.p.rapidapi.com/v3/teams?search=' +
+                encodeURIComponent(teamName)
+              : 'https://v3.football.api-sports.io/teams?search=' + encodeURIComponent(teamName)
+            var hdrs = isRapid
+              ? { 'x-rapidapi-key': afKey, 'x-rapidapi-host': 'api-football-v1.p.rapidapi.com' }
+              : { 'x-apisports-key': afKey }
+
+            var resAF = $http.send({
+              url: urlAF,
+              method: 'GET',
+              headers: hdrs,
+              timeout: 4,
+            })
+
+            if (
+              resAF.statusCode === 200 &&
+              resAF.json &&
+              Array.isArray(resAF.json.response) &&
+              resAF.json.response.length > 0
+            ) {
+              var tAfObj = resAF.json.response[0]
+              if (tAfObj && tAfObj.team && tAfObj.team.logo) {
+                badgeFound = String(tAfObj.team.logo).trim()
+              }
+            }
+          } catch (errAF) {
+            console.log(
+              '[API-Football Escudo Enquete endpoint] Erro na busca por ' + teamName + ':',
+              errAF,
+            )
+          }
+        }
+      }
+
+      // Armazena no cache se globalThis estiver disponível
+      if (typeof globalThis !== 'undefined' && globalThis.__tsdbBadgeCache) {
+        globalThis.__tsdbBadgeCache[cleanKey] = badgeFound
+      }
+
+      return e.json(200, {
+        team: teamName,
+        badgeUrl: badgeFound,
+        cached: false,
+      })
+    } catch (err) {
+      console.log('[Enquetes Escudo] Erro geral ao buscar escudo:', err)
+      return e.json(500, {
+        team: (e.requestInfo().query.team || '').trim(),
+        badgeUrl: '',
+        error: err ? err.message : 'Falha ao buscar escudo',
+      })
+    }
+  },
+  $apis.requireAuth(),
+)
+
+// -------------------------------------------------------------
+// Hooks do Ciclo de Vida de Jogos da Enquete (enquete_jogos):
+// Busca automática de escudos via TheSportsDB / API-Football
+// quando logo_casa / logo_visitante estiverem vazios na criação ou edição.
+// -------------------------------------------------------------
+
+onRecordCreate((e) => {
+  var rec = e.record
+  try {
+    var logoCasa = (rec.getString('logo_casa') || '').trim()
+    var logoVis = (rec.getString('logo_visitante') || '').trim()
+    var timeCasa = (rec.getString('time_a') || '').trim()
+    var timeVis = (rec.getString('time_b') || '').trim()
+
+    if (!logoCasa || !logoVis) {
+      if (typeof globalThis !== 'undefined' && !globalThis.__tsdbBadgeCache) {
+        globalThis.__tsdbBadgeCache = {}
+      }
+
+      var tsdbKey = ''
+      try {
+        var cRec = $app.findFirstRecordByData('config_integracoes', 'chave', 'thesportsdb_fallback')
+        if (cRec) {
+          tsdbKey = (cRec.getString('api_key') || '').trim()
+        }
+      } catch (_) {}
+
+      if (!tsdbKey) {
+        try {
+          if ($secrets && $secrets.has && $secrets.has('THESPORTSDB_KEY')) {
+            tsdbKey = ($secrets.get('THESPORTSDB_KEY') || '').trim()
+          } else if ($os && $os.getenv) {
+            tsdbKey = ($os.getenv('THESPORTSDB_KEY') || '').trim()
+          }
+        } catch (_) {}
+      }
+      if (!tsdbKey) {
+        tsdbKey = '3'
+      }
+
+      var fetchBadgeInline = function (teamName) {
+        if (!teamName) return ''
+        var cleanKey = teamName.toLowerCase().trim()
+        try {
+          cleanKey = cleanKey.normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+        } catch (_) {}
+
+        if (
+          typeof globalThis !== 'undefined' &&
+          globalThis.__tsdbBadgeCache &&
+          globalThis.__tsdbBadgeCache[cleanKey] !== undefined
+        ) {
+          return globalThis.__tsdbBadgeCache[cleanKey] || ''
+        }
+
+        var found = ''
+        // 1. TheSportsDB
+        try {
+          var res = $http.send({
+            url:
+              'https://www.thesportsdb.com/api/v1/json/' +
+              encodeURIComponent(tsdbKey) +
+              '/searchteams.php?t=' +
+              encodeURIComponent(teamName),
+            method: 'GET',
+            timeout: 4,
+          })
+
+          if (
+            res.statusCode === 200 &&
+            res.json &&
+            Array.isArray(res.json.teams) &&
+            res.json.teams.length > 0
+          ) {
+            var teamObj = res.json.teams[0]
+            found = (teamObj.strBadge || teamObj.strTeamBadge || teamObj.strLogo || '').trim()
+          }
+        } catch (errSearch) {
+          console.log('[TSDB Escudo enquete_jogos] Erro na busca por ' + teamName + ':', errSearch)
+        }
+
+        // 2. Fallback API-Football se vazio
+        if (!found) {
+          try {
+            var afKey = ''
+            var isRapid = false
+            try {
+              var cfg = $app.findFirstRecordByData('config_integracoes', 'chave', 'placar_ao_vivo')
+              if (cfg) afKey = (cfg.getString('api_key') || '').trim()
+            } catch (_) {}
+            if (!afKey) {
+              if ($secrets && $secrets.has && $secrets.has('API_FOOTBALL_KEY')) {
+                afKey = $secrets.get('API_FOOTBALL_KEY')
+              } else if ($secrets && $secrets.has && $secrets.has('RAPIDAPI_KEY')) {
+                afKey = $secrets.get('RAPIDAPI_KEY')
+                isRapid = true
+              } else if ($os && $os.getenv) {
+                afKey = $os.getenv('API_FOOTBALL_KEY') || $os.getenv('RAPIDAPI_KEY') || ''
+                if ($os.getenv('RAPIDAPI_KEY')) isRapid = true
+              }
+            }
+            if (afKey.length > 40) isRapid = true
+
+            if (afKey) {
+              var urlAF = isRapid
+                ? 'https://api-football-v1.p.rapidapi.com/v3/teams?search=' +
+                  encodeURIComponent(teamName)
+                : 'https://v3.football.api-sports.io/teams?search=' + encodeURIComponent(teamName)
+              var hdrs = isRapid
+                ? { 'x-rapidapi-key': afKey, 'x-rapidapi-host': 'api-football-v1.p.rapidapi.com' }
+                : { 'x-apisports-key': afKey }
+
+              var resAF = $http.send({
+                url: urlAF,
+                method: 'GET',
+                headers: hdrs,
+                timeout: 4,
+              })
+
+              if (
+                resAF.statusCode === 200 &&
+                resAF.json &&
+                Array.isArray(resAF.json.response) &&
+                resAF.json.response.length > 0
+              ) {
+                var tAfObj = resAF.json.response[0]
+                if (tAfObj && tAfObj.team && tAfObj.team.logo) {
+                  found = String(tAfObj.team.logo).trim()
+                }
+              }
+            }
+          } catch (errAF) {
+            console.log(
+              '[API-Football Escudo enquete_jogos] Erro na busca por ' + teamName + ':',
+              errAF,
+            )
+          }
+        }
+
+        if (typeof globalThis !== 'undefined' && globalThis.__tsdbBadgeCache) {
+          globalThis.__tsdbBadgeCache[cleanKey] = found
+        }
+        return found
+      }
+
+      if (!logoCasa && timeCasa) {
+        var foundCasa = fetchBadgeInline(timeCasa)
+        if (foundCasa) {
+          rec.set('logo_casa', foundCasa)
+        }
+      }
+
+      if (!logoVis && timeVis) {
+        var foundVis = fetchBadgeInline(timeVis)
+        if (foundVis) {
+          rec.set('logo_visitante', foundVis)
+        }
+      }
+    }
+  } catch (errBadge) {
+    console.log('[Escudo enquete_jogos onRecordCreate] Aviso:', errBadge)
+  }
+
+  e.next()
+}, 'enquete_jogos')
+
+onRecordUpdate((e) => {
+  var rec = e.record
+  try {
+    var logoCasa = (rec.getString('logo_casa') || '').trim()
+    var logoVis = (rec.getString('logo_visitante') || '').trim()
+    var timeCasa = (rec.getString('time_a') || '').trim()
+    var timeVis = (rec.getString('time_b') || '').trim()
+
+    if (!logoCasa || !logoVis) {
+      if (typeof globalThis !== 'undefined' && !globalThis.__tsdbBadgeCache) {
+        globalThis.__tsdbBadgeCache = {}
+      }
+
+      var tsdbKey = ''
+      try {
+        var cRec = $app.findFirstRecordByData('config_integracoes', 'chave', 'thesportsdb_fallback')
+        if (cRec) {
+          tsdbKey = (cRec.getString('api_key') || '').trim()
+        }
+      } catch (_) {}
+
+      if (!tsdbKey) {
+        try {
+          if ($secrets && $secrets.has && $secrets.has('THESPORTSDB_KEY')) {
+            tsdbKey = ($secrets.get('THESPORTSDB_KEY') || '').trim()
+          } else if ($os && $os.getenv) {
+            tsdbKey = ($os.getenv('THESPORTSDB_KEY') || '').trim()
+          }
+        } catch (_) {}
+      }
+      if (!tsdbKey) {
+        tsdbKey = '3'
+      }
+
+      var fetchBadgeInline = function (teamName) {
+        if (!teamName) return ''
+        var cleanKey = teamName.toLowerCase().trim()
+        try {
+          cleanKey = cleanKey.normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+        } catch (_) {}
+
+        if (
+          typeof globalThis !== 'undefined' &&
+          globalThis.__tsdbBadgeCache &&
+          globalThis.__tsdbBadgeCache[cleanKey] !== undefined
+        ) {
+          return globalThis.__tsdbBadgeCache[cleanKey] || ''
+        }
+
+        var found = ''
+        // 1. TheSportsDB
+        try {
+          var res = $http.send({
+            url:
+              'https://www.thesportsdb.com/api/v1/json/' +
+              encodeURIComponent(tsdbKey) +
+              '/searchteams.php?t=' +
+              encodeURIComponent(teamName),
+            method: 'GET',
+            timeout: 4,
+          })
+
+          if (
+            res.statusCode === 200 &&
+            res.json &&
+            Array.isArray(res.json.teams) &&
+            res.json.teams.length > 0
+          ) {
+            var teamObj = res.json.teams[0]
+            found = (teamObj.strBadge || teamObj.strTeamBadge || teamObj.strLogo || '').trim()
+          }
+        } catch (errSearch) {
+          console.log(
+            '[TSDB Escudo enquete_jogos update] Erro na busca por ' + teamName + ':',
+            errSearch,
+          )
+        }
+
+        // 2. Fallback API-Football se vazio
+        if (!found) {
+          try {
+            var afKey = ''
+            var isRapid = false
+            try {
+              var cfg = $app.findFirstRecordByData('config_integracoes', 'chave', 'placar_ao_vivo')
+              if (cfg) afKey = (cfg.getString('api_key') || '').trim()
+            } catch (_) {}
+            if (!afKey) {
+              if ($secrets && $secrets.has && $secrets.has('API_FOOTBALL_KEY')) {
+                afKey = $secrets.get('API_FOOTBALL_KEY')
+              } else if ($secrets && $secrets.has && $secrets.has('RAPIDAPI_KEY')) {
+                afKey = $secrets.get('RAPIDAPI_KEY')
+                isRapid = true
+              } else if ($os && $os.getenv) {
+                afKey = $os.getenv('API_FOOTBALL_KEY') || $os.getenv('RAPIDAPI_KEY') || ''
+                if ($os.getenv('RAPIDAPI_KEY')) isRapid = true
+              }
+            }
+            if (afKey.length > 40) isRapid = true
+
+            if (afKey) {
+              var urlAF = isRapid
+                ? 'https://api-football-v1.p.rapidapi.com/v3/teams?search=' +
+                  encodeURIComponent(teamName)
+                : 'https://v3.football.api-sports.io/teams?search=' + encodeURIComponent(teamName)
+              var hdrs = isRapid
+                ? { 'x-rapidapi-key': afKey, 'x-rapidapi-host': 'api-football-v1.p.rapidapi.com' }
+                : { 'x-apisports-key': afKey }
+
+              var resAF = $http.send({
+                url: urlAF,
+                method: 'GET',
+                headers: hdrs,
+                timeout: 4,
+              })
+
+              if (
+                resAF.statusCode === 200 &&
+                resAF.json &&
+                Array.isArray(resAF.json.response) &&
+                resAF.json.response.length > 0
+              ) {
+                var tAfObj = resAF.json.response[0]
+                if (tAfObj && tAfObj.team && tAfObj.team.logo) {
+                  found = String(tAfObj.team.logo).trim()
+                }
+              }
+            }
+          } catch (errAF) {
+            console.log(
+              '[API-Football Escudo enquete_jogos update] Erro na busca por ' + teamName + ':',
+              errAF,
+            )
+          }
+        }
+
+        if (typeof globalThis !== 'undefined' && globalThis.__tsdbBadgeCache) {
+          globalThis.__tsdbBadgeCache[cleanKey] = found
+        }
+        return found
+      }
+
+      if (!logoCasa && timeCasa) {
+        var foundCasa = fetchBadgeInline(timeCasa)
+        if (foundCasa) {
+          rec.set('logo_casa', foundCasa)
+        }
+      }
+
+      if (!logoVis && timeVis) {
+        var foundVis = fetchBadgeInline(timeVis)
+        if (foundVis) {
+          rec.set('logo_visitante', foundVis)
+        }
+      }
+    }
+  } catch (errBadge) {
+    console.log('[Escudo enquete_jogos onRecordUpdate] Aviso:', errBadge)
+  }
+
+  e.next()
+}, 'enquete_jogos')

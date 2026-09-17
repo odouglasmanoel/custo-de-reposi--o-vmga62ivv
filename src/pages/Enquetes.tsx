@@ -54,6 +54,7 @@ import {
   type JogoBuscado,
   getDefaultDatasIntervalo,
   buscarJogosIntervalo,
+  buscarEscudoTime,
   criarEnquete,
   listarEnquetes,
   obterDadosEnquete,
@@ -97,6 +98,8 @@ export default function Enquetes() {
   const [formManualAberto, setFormManualAberto] = useState(false)
   const [manualTimeA, setManualTimeA] = useState('')
   const [manualTimeB, setManualTimeB] = useState('')
+  const [manualLogoCasa, setManualLogoCasa] = useState('')
+  const [manualLogoVisitante, setManualLogoVisitante] = useState('')
   const [manualCompeticao, setManualCompeticao] = useState('')
   const [manualData, setManualData] = useState(datasPadrao.dataInicio)
   const [manualHorario, setManualHorario] = useState('16:00')
@@ -108,6 +111,8 @@ export default function Enquetes() {
   const [salvandoJogoAtiva, setSalvandoJogoAtiva] = useState(false)
   const [ativaManualMandante, setAtivaManualMandante] = useState('')
   const [ativaManualVisitante, setAtivaManualVisitante] = useState('')
+  const [ativaManualLogoCasa, setAtivaManualLogoCasa] = useState('')
+  const [ativaManualLogoVisitante, setAtivaManualLogoVisitante] = useState('')
   const [ativaManualCompeticao, setAtivaManualCompeticao] = useState('')
   const [ativaManualData, setAtivaManualData] = useState('')
   const [ativaManualHorario, setAtivaManualHorario] = useState('16:00')
@@ -119,6 +124,8 @@ export default function Enquetes() {
   const [dialogEditarJogoOpen, setDialogEditarJogoOpen] = useState(false)
   const [editMandante, setEditMandante] = useState('')
   const [editVisitante, setEditVisitante] = useState('')
+  const [editLogoCasa, setEditLogoCasa] = useState('')
+  const [editLogoVisitante, setEditLogoVisitante] = useState('')
   const [editCompeticao, setEditCompeticao] = useState('')
   const [editData, setEditData] = useState('')
   const [editHorario, setEditHorario] = useState('16:00')
@@ -438,12 +445,14 @@ export default function Enquetes() {
   }
 
   // Admin: Adicionar jogo manualmente no modal de criação
-  const handleAdicionarJogoManual = () => {
+  const handleAdicionarJogoManual = async () => {
     const timeA = manualTimeA.trim()
     const timeB = manualTimeB.trim()
     const competicao = manualCompeticao.trim() || 'Amistoso / Outros'
     const dataJogo = manualData.trim()
     const horarioJogo = manualHorario.trim() || '16:00'
+    const customLogoA = manualLogoCasa.trim()
+    const customLogoB = manualLogoVisitante.trim()
 
     // Validações obrigatórias
     if (!timeA || !timeB) {
@@ -509,6 +518,34 @@ export default function Enquetes() {
       setManualAvisoDuplicado(null)
     }
 
+    // Resolução de escudos: URL digitada pelo Admin > API automática por nome de time > vazio
+    let logoAFinal = customLogoA
+    let logoBFinal = customLogoB
+
+    const buscamPromessas: Promise<void>[] = []
+    if (!logoAFinal) {
+      buscamPromessas.push(
+        buscarEscudoTime(timeA)
+          .then((badge) => {
+            if (badge) logoAFinal = badge
+          })
+          .catch(() => {}),
+      )
+    }
+    if (!logoBFinal) {
+      buscamPromessas.push(
+        buscarEscudoTime(timeB)
+          .then((badge) => {
+            if (badge) logoBFinal = badge
+          })
+          .catch(() => {}),
+      )
+    }
+
+    if (buscamPromessas.length > 0) {
+      await Promise.all(buscamPromessas)
+    }
+
     const regiaoCalculada =
       competicao.toLowerCase().includes('brasileir') || competicao.toLowerCase().includes('copa')
         ? 'Brasileirão & Copas'
@@ -518,6 +555,8 @@ export default function Enquetes() {
       id: `manual_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
       time_a: timeA,
       time_b: timeB,
+      logo_casa: logoAFinal,
+      logo_visitante: logoBFinal,
       campeonato: competicao,
       prioridade: 5,
       regiao: regiaoCalculada,
@@ -543,6 +582,8 @@ export default function Enquetes() {
     // Limpa campos do time mas mantém data e competição se admin quiser cadastrar mais jogos
     setManualTimeA('')
     setManualTimeB('')
+    setManualLogoCasa('')
+    setManualLogoVisitante('')
   }
 
   // Admin: Remover jogo da lista de criação (seja manual ou api)
@@ -622,6 +663,8 @@ export default function Enquetes() {
   const handleAbrirModalAdicionarManualAtiva = () => {
     setAtivaManualMandante('')
     setAtivaManualVisitante('')
+    setAtivaManualLogoCasa('')
+    setAtivaManualLogoVisitante('')
     setAtivaManualCompeticao('')
     setAtivaManualData(enqueteAtiva?.data_inicio || datasPadrao.dataInicio)
     setAtivaManualHorario('16:00')
@@ -639,6 +682,8 @@ export default function Enquetes() {
     const competicao = ativaManualCompeticao.trim() || 'Amistoso / Outros'
     const dataJogo = ativaManualData.trim()
     const horarioJogo = ativaManualHorario.trim() || '16:00'
+    const customLogoA = ativaManualLogoCasa.trim()
+    const customLogoB = ativaManualLogoVisitante.trim()
 
     // Validações obrigatórias
     if (!timeA || !timeB) {
@@ -704,6 +749,34 @@ export default function Enquetes() {
       setAtivaManualAvisoDuplicado(null)
     }
 
+    // Resolução prévia de escudos: URL digitada > busca automática via API
+    let logoAFinal = customLogoA
+    let logoBFinal = customLogoB
+
+    const buscamPromessas: Promise<void>[] = []
+    if (!logoAFinal) {
+      buscamPromessas.push(
+        buscarEscudoTime(timeA)
+          .then((badge) => {
+            if (badge) logoAFinal = badge
+          })
+          .catch(() => {}),
+      )
+    }
+    if (!logoBFinal) {
+      buscamPromessas.push(
+        buscarEscudoTime(timeB)
+          .then((badge) => {
+            if (badge) logoBFinal = badge
+          })
+          .catch(() => {}),
+      )
+    }
+
+    if (buscamPromessas.length > 0) {
+      await Promise.all(buscamPromessas)
+    }
+
     const regiaoCalculada =
       competicao.toLowerCase().includes('brasileir') || competicao.toLowerCase().includes('copa')
         ? 'Brasileirão & Copas'
@@ -715,6 +788,8 @@ export default function Enquetes() {
         enqueteId: enqueteAtiva.id,
         time_a: timeA,
         time_b: timeB,
+        logo_casa: logoAFinal,
+        logo_visitante: logoBFinal,
         campeonato: competicao,
         regiao: regiaoCalculada,
         data: dataFinal,
@@ -725,6 +800,8 @@ export default function Enquetes() {
       const spNovo = formatDataHoraSaoPaulo(novoRegistro.data, novoRegistro.horario)
       const novoJogoComVotos: JogoComVotos = {
         ...novoRegistro,
+        logo_casa: novoRegistro.logo_casa || logoAFinal,
+        logo_visitante: novoRegistro.logo_visitante || logoBFinal,
         data: spNovo.data || novoRegistro.data,
         horario: spNovo.horario || novoRegistro.horario || '16:00',
         totalVotos: 0,
@@ -760,6 +837,8 @@ export default function Enquetes() {
     setJogoEmEdicao(jogo)
     setEditMandante(jogo.time_a)
     setEditVisitante(jogo.time_b)
+    setEditLogoCasa(jogo.logo_casa || '')
+    setEditLogoVisitante(jogo.logo_visitante || '')
     setEditCompeticao(jogo.campeonato || '')
     setEditData(jogo.data)
     setEditHorario(jogo.horario || '16:00')
@@ -776,6 +855,8 @@ export default function Enquetes() {
     const competicao = editCompeticao.trim() || 'Amistoso / Outros'
     const dataJogo = editData.trim()
     const horarioJogo = editHorario.trim() || '16:00'
+    const customLogoA = editLogoCasa.trim()
+    const customLogoB = editLogoVisitante.trim()
 
     if (!timeA || !timeB) {
       toast({
@@ -819,6 +900,34 @@ export default function Enquetes() {
       setEditAvisoMargem(null)
     }
 
+    // Resolução prévia de escudos: se não preenchido manualmente e alterou o time, busca via API
+    let logoAFinal = customLogoA
+    let logoBFinal = customLogoB
+
+    const buscamPromessas: Promise<void>[] = []
+    if (!logoAFinal) {
+      buscamPromessas.push(
+        buscarEscudoTime(timeA)
+          .then((badge) => {
+            if (badge) logoAFinal = badge
+          })
+          .catch(() => {}),
+      )
+    }
+    if (!logoBFinal) {
+      buscamPromessas.push(
+        buscarEscudoTime(timeB)
+          .then((badge) => {
+            if (badge) logoBFinal = badge
+          })
+          .catch(() => {}),
+      )
+    }
+
+    if (buscamPromessas.length > 0) {
+      await Promise.all(buscamPromessas)
+    }
+
     const regiaoCalculada =
       competicao.toLowerCase().includes('brasileir') || competicao.toLowerCase().includes('copa')
         ? 'Brasileirão & Copas'
@@ -829,6 +938,8 @@ export default function Enquetes() {
       const atualizado = await editarJogoEnquete(jogoEmEdicao.id, {
         time_a: timeA,
         time_b: timeB,
+        logo_casa: logoAFinal,
+        logo_visitante: logoBFinal,
         campeonato: competicao,
         regiao: regiaoCalculada,
         data: dataFinal,
@@ -843,6 +954,8 @@ export default function Enquetes() {
               ...j,
               time_a: atualizado.time_a,
               time_b: atualizado.time_b,
+              logo_casa: atualizado.logo_casa || logoAFinal,
+              logo_visitante: atualizado.logo_visitante || logoBFinal,
               campeonato: atualizado.campeonato,
               regiao: atualizado.regiao,
               data: dataFinal,
