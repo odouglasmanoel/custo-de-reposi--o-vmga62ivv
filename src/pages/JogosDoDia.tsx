@@ -187,16 +187,7 @@ export default function JogosDoDia() {
     fetchJogos(selectedDate)
   }, [selectedDate, fetchJogos])
 
-  // Polling automático inteligente a cada 60s
-  useEffect(() => {
-    const timer = setInterval(() => {
-      // Faz refresh silencioso sem loader intrusivo
-      fetchJogos(selectedDate, false)
-    }, 60000)
-    return () => clearInterval(timer)
-  }, [selectedDate, fetchJogos])
-
-  // Contadores para os filtros de status
+  // Contadores para os filtros de status e controle de polling
   const counts = useMemo(() => {
     let live = 0
     let scheduled = 0
@@ -215,6 +206,54 @@ export default function JogosDoDia() {
 
     return { total: fixtures.length, live, scheduled, finished }
   }, [fixtures])
+
+  // Regras estritas de economia de cota pedidas pelo administrador:
+  // 1. Partidas ainda não iniciadas ("Em Breve"/agendadas): NENHUM polling contínuo.
+  // 2. No exato momento do kickoff ("rola a bola"), dispara 1 única busca pela partida.
+  // 3. Durante o jogo (status "Ao Vivo"): APENAS se houver jogos efetivamente ao vivo gera polling periódico (~60s).
+
+  // Kickoff timers: Dispara UMA única busca no exato momento que o jogo começar
+  useEffect(() => {
+    const timers: NodeJS.Timeout[] = []
+    const now = Date.now()
+
+    for (const f of fixtures) {
+      const st = f.fixture?.status?.short || ''
+      const isLive = ['1H', 'HT', '2H', 'ET', 'BT', 'P', 'LIVE'].includes(st)
+      const isFinished = ['FT', 'AET', 'PEN', 'POSTP', 'CANC'].includes(st)
+
+      if (!isLive && !isFinished && f.fixture?.date) {
+        const kickoffTime = new Date(f.fixture.date).getTime()
+        const delay = kickoffTime - now
+
+        // Se o kickoff for no futuro próximo (até 24 horas), agenda disparo exato uma única vez
+        if (delay > 0 && delay <= 24 * 60 * 60 * 1000) {
+          const t = setTimeout(() => {
+            // Dispara UMA única verificação pontual ao rolar a bola
+            fetchJogos(selectedDate, false)
+          }, delay + 1000) // +1s após o horário para garantir que a partida iniciou
+          timers.push(t)
+        }
+      }
+    }
+
+    return () => {
+      timers.forEach((t) => clearTimeout(t))
+    }
+  }, [fixtures, selectedDate, fetchJogos])
+
+  // Polling periódico APENAS quando há jogos efetivamente com status "Ao Vivo"
+  useEffect(() => {
+    // Se não há nenhum jogo ao vivo, NÃO fazer polling periódico (preserva cota da API)
+    if (counts.live === 0) {
+      return
+    }
+
+    const timer = setInterval(() => {
+      fetchJogos(selectedDate, false)
+    }, 60000)
+    return () => clearInterval(timer)
+  }, [counts.live, selectedDate, fetchJogos])
 
   // Filtragem e busca
   const filteredFixtures = useMemo(() => {

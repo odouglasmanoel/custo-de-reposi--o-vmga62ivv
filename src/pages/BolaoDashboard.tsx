@@ -44,6 +44,7 @@ import {
 } from '@/lib/scorerUtils'
 import {
   resolveLiveScoreForGame,
+  isFixtureLive,
   type ApiFootballFixture,
   type MatchedLiveScore,
 } from '@/lib/apiFootballMatcher'
@@ -183,8 +184,10 @@ export default function BolaoDashboard() {
     return () => clearInterval(timer)
   }, [])
 
-  // Polling de placar ao vivo da API-Football a cada 60s
-  // Consulta partidas ao vivo (live=all) e partidas do dia (date=YYYY-MM-DD)
+  // Consulta de placar ao vivo com regras estritas de economia de cota:
+  // 1. Jogos ainda não iniciados ("Em Breve"/agendados): NÃO acionam chamadas externas de tempo real.
+  // 2. No momento do kickoff (horário do jogo iniciar), a API é acionada EXATAMENTE 1 vez.
+  // 3. Durante o jogo: APENAS quando há partidas efetivamente "Ao Vivo" ocorre polling periódico (~60s).
   const fetchLiveScores = useCallback(async () => {
     try {
       const headers: Record<string, string> = {}
@@ -209,7 +212,17 @@ export default function BolaoDashboard() {
         url += `&ids=${encodeURIComponent(fixtureIdsFromGames.join(','))}`
       }
 
-      const res = await fetch(url, { headers })
+      // Controller com timeout de 10s para estabilidade total
+      const controller = new AbortController()
+      const timeoutId = setTimeout(() => controller.abort(), 10000)
+
+      let res: Response
+      try {
+        res = await fetch(url, { headers, signal: controller.signal })
+      } finally {
+        clearTimeout(timeoutId)
+      }
+
       if (res.ok) {
         const data = await res.json()
         setApiConfigured(Boolean(data.configured))
@@ -259,11 +272,9 @@ export default function BolaoDashboard() {
     }
   }, [allJogos, jogos])
 
-  // Dispara polling a cada 60s
+  // Carga inicial leve das fixtures ao montar o dashboard
   useEffect(() => {
     fetchLiveScores()
-    const interval = setInterval(fetchLiveScores, 60000)
-    return () => clearInterval(interval)
   }, [fetchLiveScores])
 
   const isGeral = activeBolaoId === GERAL_BOLAO_ID
@@ -821,6 +832,50 @@ export default function BolaoDashboard() {
         return horaA.localeCompare(horaB)
       })
   }, [isGeral, allJogos, jogos, nowMs])
+
+  // 1. REGRA DO KICKOFF ("rola a bola"): Dispara a API APENAS 1 única vez quando o horário de um jogo iniciar
+  useEffect(() => {
+    const targetGames = isGeral ? allJogos : jogos
+    const timers: NodeJS.Timeout[] = []
+    const now = Date.now()
+
+    for (const j of targetGames) {
+      if (j.resultado_finalizado) continue
+
+      const kickoffMs = getJogoKickoffTimestamp(j.data, j.hora)
+      if (!kickoffMs) continue
+
+      const delay = kickoffMs - now
+      // Se o jogo começa no futuro próximo (até 24h), programa disparo exato de 1 única consulta
+      if (delay > 0 && delay <= 24 * 60 * 60 * 1000) {
+        const t = setTimeout(() => {
+          // Kickoff atingido: aciona a API uma única vez para conferir o início do jogo
+          fetchLiveScores()
+        }, delay + 1000) // +1s após o horário previsto
+        timers.push(t)
+      }
+    }
+
+    return () => {
+      timers.forEach((t) => clearTimeout(t))
+    }
+  }, [isGeral, allJogos, jogos, fetchLiveScores])
+
+  // 2. REGRA DO POLLING: APENAS quando há jogos liberados/em andamento ou com partidas ao vivo na API
+  useEffect(() => {
+    // Verifica se há alguma partida pendente cujo horário já passou (jogosLiberados)
+    // OU se a API já retornou alguma partida ao vivo
+    const hasAnyLiveGame =
+      jogosLiberados.length > 0 || apiFixtures.some((f) => isFixtureLive(f.fixture?.status?.short))
+
+    if (!hasAnyLiveGame) {
+      // Nenhum jogo ao vivo: NENHUM polling contínuo (economia estrita de cota API)
+      return
+    }
+
+    const interval = setInterval(fetchLiveScores, 60000)
+    return () => clearInterval(interval)
+  }, [jogosLiberados.length, apiFixtures, fetchLiveScores])
 
   // Quick stats com fallback para o último valor válido conhecido
   // NUNCA zera as estatísticas por falta de tempo de resposta ou carregamento

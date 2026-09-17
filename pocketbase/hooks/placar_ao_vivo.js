@@ -754,9 +754,18 @@ routerAdd('GET', '/backend/v1/placar-ao-vivo', (e) => {
       sobrescritas: sobrescritasMap,
     })
   } catch (err) {
-    return e.json(500, {
-      configured: false,
-      error: err ? err.message : 'Falha ao consultar placar ao vivo',
+    console.log(
+      'Aviso ao consultar placar ao vivo (recuperado de forma segura):',
+      err ? err.message : err,
+    )
+    return e.json(200, {
+      configured: true,
+      provider: 'api_football',
+      directFixtures: [],
+      live: [],
+      dateFixtures: [],
+      sobrescritas: {},
+      error: 'Instabilidade momentânea ao consultar partidas. O sistema tentará novamente.',
     })
   }
 })
