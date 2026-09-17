@@ -86,6 +86,10 @@ export default function Palpites() {
   const initialPendentes = pendentesRaw === null ? true : pendentesRaw !== '0'
 
   const [jogos, setJogos] = useState<Jogo[]>([])
+  const [currentPage, setCurrentPage] = useState<number>(1)
+  const [totalPages, setTotalPages] = useState<number>(1)
+  const [totalItems, setTotalItems] = useState<number>(0)
+  const [isLoadingMore, setIsLoadingMore] = useState<boolean>(false)
   const [allBoloes, setAllBoloes] = useState<Bolao[]>([])
   const [participantesList, setParticipantesList] = useState<Participante[]>([])
   const [allGroupPalpites, setAllGroupPalpites] = useState<Palpite[]>([])
@@ -102,7 +106,6 @@ export default function Palpites() {
     timeB: string
   } | null>(null)
   const [filterPendentes, setFilterPendentes] = useState<boolean>(initialPendentes)
-  const [visibleCount, setVisibleCount] = useState<number>(20)
   const [loadingGroupBets, setLoadingGroupBets] = useState(false)
   const [loadedGroupBets, setLoadedGroupBets] = useState(false)
   const [loading, setLoading] = useState(true)
@@ -130,9 +133,9 @@ export default function Palpites() {
     }
   }, [pendentesRaw])
 
-  // Resetar contagem visível ao mudar bolão ou filtro
+  // Resetar página quando bolão ou filtro mudar
   useEffect(() => {
-    setVisibleCount(20)
+    setCurrentPage(1)
   }, [activeBolaoId, isGeralParam, filterPendentes])
 
   // Resetar estado de palpites do grupo sob demanda quando trocar de bolão
@@ -203,13 +206,14 @@ export default function Palpites() {
   }, [loadedGroupBets, isGeralParam, activeBolaoId, boloes])
 
   // Carregamento principal dos jogos e palpites do usuário logado
-  // Tolerante a timeout (10s), deduplicado e com payload otimizado (campos estritamente necessários)
+  // Com LIMIT 20 real na query (getList(page, 20)), filtro de pendentes no backend
+  // e projeção de campos estritamente necessários via `fields`.
   const loadData = useCallback(
-    async (isManualRefresh: boolean = false) => {
+    async (pageToLoad: number = 1, isManualRefresh: boolean = false, append: boolean = false) => {
       if (!user) return
 
       const now = Date.now()
-      if (!isManualRefresh && now - lastLoadTimeRef.current < 2500) {
+      if (!isManualRefresh && !append && now - lastLoadTimeRef.current < 2500) {
         return
       }
 
@@ -219,6 +223,10 @@ export default function Palpites() {
 
       if (isManualRefresh) {
         setIsRefreshing(true)
+      } else if (append) {
+        setIsLoadingMore(true)
+      } else {
+        setLoading(true)
       }
 
       const fetchTask = async () => {
@@ -248,23 +256,31 @@ export default function Palpites() {
                 })
           setAllBoloes(loadedBoloes)
 
+          // Montar filtro de consulta de jogos:
+          // Se filterPendentes estiver ativo, busca apenas resultado_finalizado = false
+          // Se MODO BOLÃO ESPECÍFICO, filtra pelo bolao selecionado
+          let gamesFilter = ''
+          if (filterPendentes) {
+            gamesFilter = 'resultado_finalizado = false'
+          }
+
           if (isGeralParam) {
-            // MODO GERAL: Carregamento otimizado — buscar jogos + participantes do usuário + palpites do próprio usuário
-            // Retorna apenas dados estritamente necessários do usuário logado, reduzindo o payload drasticamente
-            const allGamesPromise = pb.collection('jogos').getFullList<Jogo>({
+            // MODO GERAL: Carregamento paginado de 20 jogos no backend
+            const gamesListPromise = pb.collection('jogos').getList<Jogo>(pageToLoad, 20, {
+              filter: gamesFilter || undefined,
               sort: 'data,hora',
               fields:
                 'id,bolao,time_a,time_b,data,hora,competicao,resultado_finalizado,placar_a,placar_b,tem_penaltis,vencedor_penaltis',
             })
 
-            // Buscar apenas os registros de participante deste usuário
+            // Buscar registros de participante deste usuário
             const myPartsPromise = pb.collection('participantes').getFullList<Participante>({
               filter: `nome ~ '${searchName.replace(/'/g, "\\'")}'`,
               fields: 'id,nome,bolao',
             })
 
-            const [allGames, myParts] = await Promise.race([
-              Promise.all([allGamesPromise, myPartsPromise]),
+            const [gamesResult, myParts] = await Promise.race([
+              Promise.all([gamesListPromise, myPartsPromise]),
               timeoutPromise,
             ])
 
@@ -274,14 +290,18 @@ export default function Palpites() {
             }
             setUserParticipantsMap(myPartMapByBolao)
 
-            const myPartIds = myParts.map((p) => p.id)
+            // Buscar palpites do usuário logado para as partidas retornadas
+            const loadedGameIds = gamesResult.items.map((j) => j.id)
             let myPalpites: Palpite[] = []
 
-            if (myPartIds.length > 0) {
-              const filterUserBets = myPartIds.map((id) => `participante = '${id}'`).join(' || ')
+            if (loadedGameIds.length > 0 && myParts.length > 0) {
+              const filterUserPartIds = myParts.map((p) => `participante = '${p.id}'`).join(' || ')
+              const filterLoadedGames = loadedGameIds.map((id) => `jogo = '${id}'`).join(' || ')
+              const combinedFilter = `(${filterUserPartIds}) && (${filterLoadedGames})`
+
               myPalpites = await Promise.race([
                 pb.collection('palpites').getFullList<Palpite>({
-                  filter: filterUserBets,
+                  filter: combinedFilter,
                   fields:
                     'id,bolao,jogo,participante,placar_a,placar_b,goleadores_a,goleadores_b,vencedor_penaltis,pontuacao_jogo,detalhamento',
                 }),
@@ -289,17 +309,36 @@ export default function Palpites() {
               ])
             }
 
-            if (Array.isArray(allGames)) {
-              setJogos(allGames)
+            setCurrentPage(gamesResult.page)
+            setTotalPages(gamesResult.totalPages)
+            setTotalItems(gamesResult.totalItems)
 
-              const mapPalpites: Record<string, Palpite> = {}
-              const forms: Record<string, PalpiteFormData> = {}
+            if (append) {
+              setJogos((prev) => {
+                const existingMap = new Map(prev.map((j) => [j.id, j]))
+                for (const item of gamesResult.items) {
+                  existingMap.set(item.id, item)
+                }
+                return Array.from(existingMap.values())
+              })
+            } else {
+              setJogos(gamesResult.items)
+            }
 
+            setPalpites((prev) => {
+              const updated = append ? { ...prev } : {}
               for (const p of myPalpites) {
-                mapPalpites[p.jogo] = p
+                updated[p.jogo] = p
+              }
+              return updated
+            })
+
+            setFormData((prev) => {
+              const updated = append ? { ...prev } : {}
+              for (const p of myPalpites) {
                 const gA = p.placar_a !== null && p.placar_a !== undefined ? Number(p.placar_a) : 0
                 const gB = p.placar_b !== null && p.placar_b !== undefined ? Number(p.placar_b) : 0
-                forms[p.jogo] = {
+                updated[p.jogo] = {
                   placar_a: p.placar_a ?? '',
                   placar_b: p.placar_b ?? '',
                   goleadores_a: normalizeScorersArray(p.goleadores_a, gA),
@@ -307,12 +346,10 @@ export default function Palpites() {
                   vencedor_penaltis: p.vencedor_penaltis || 'N',
                 }
               }
-
-              setPalpites(mapPalpites)
-              setFormData(forms)
-            }
+              return updated
+            })
           } else {
-            // MODO BOLÃO ESPECÍFICO: Buscar apenas dados deste bolão e do participante logado
+            // MODO BOLÃO ESPECÍFICO: Buscar dados do bolão selecionado com LIMIT 20 real no backend
             const currentTargetBolaoId =
               activeBolaoId && activeBolaoId !== GERAL_BOLAO_ID
                 ? activeBolaoId
@@ -321,6 +358,7 @@ export default function Palpites() {
             if (!currentTargetBolaoId) {
               setLoading(false)
               setIsRefreshing(false)
+              setIsLoadingMore(false)
               return
             }
 
@@ -351,39 +389,67 @@ export default function Palpites() {
               setUserParticipantsMap({ [currentTargetBolaoId]: currentParticipante })
             }
 
-            // Buscar apenas jogos do bolão e palpites deste participante com campos enxutos
-            const gamesPromise = pb.collection('jogos').getFullList<Jogo>({
-              filter: `bolao = '${currentTargetBolaoId}'`,
+            const specificFilter = gamesFilter
+              ? `bolao = '${currentTargetBolaoId}' && ${gamesFilter}`
+              : `bolao = '${currentTargetBolaoId}'`
+
+            const gamesListPromise = pb.collection('jogos').getList<Jogo>(pageToLoad, 20, {
+              filter: specificFilter,
               sort: 'data,hora',
               fields:
                 'id,bolao,time_a,time_b,data,hora,competicao,resultado_finalizado,placar_a,placar_b,tem_penaltis,vencedor_penaltis',
             })
 
-            let myPalpitesPromise: Promise<Palpite[]> = Promise.resolve([])
-            if (participanteId) {
-              myPalpitesPromise = pb.collection('palpites').getFullList<Palpite>({
-                filter: `bolao = '${currentTargetBolaoId}' && participante = '${participanteId}'`,
-                fields:
-                  'id,bolao,jogo,participante,placar_a,placar_b,goleadores_a,goleadores_b,vencedor_penaltis,pontuacao_jogo,detalhamento',
-              })
-            }
-
-            const [gamesList, myPalpites] = await Promise.race([
-              Promise.all([gamesPromise, myPalpitesPromise]),
+            const [gamesResult] = await Promise.race([
+              Promise.all([gamesListPromise]),
               timeoutPromise,
             ])
 
-            if (Array.isArray(gamesList)) {
-              setJogos(gamesList)
+            const loadedGameIds = gamesResult.items.map((j) => j.id)
+            let myPalpites: Palpite[] = []
 
-              const mapPalpites: Record<string, Palpite> = {}
-              const forms: Record<string, PalpiteFormData> = {}
+            if (participanteId && loadedGameIds.length > 0) {
+              const filterLoadedGames = loadedGameIds.map((id) => `jogo = '${id}'`).join(' || ')
+              myPalpites = await Promise.race([
+                pb.collection('palpites').getFullList<Palpite>({
+                  filter: `bolao = '${currentTargetBolaoId}' && participante = '${participanteId}' && (${filterLoadedGames})`,
+                  fields:
+                    'id,bolao,jogo,participante,placar_a,placar_b,goleadores_a,goleadores_b,vencedor_penaltis,pontuacao_jogo,detalhamento',
+                }),
+                timeoutPromise,
+              ])
+            }
 
+            setCurrentPage(gamesResult.page)
+            setTotalPages(gamesResult.totalPages)
+            setTotalItems(gamesResult.totalItems)
+
+            if (append) {
+              setJogos((prev) => {
+                const existingMap = new Map(prev.map((j) => [j.id, j]))
+                for (const item of gamesResult.items) {
+                  existingMap.set(item.id, item)
+                }
+                return Array.from(existingMap.values())
+              })
+            } else {
+              setJogos(gamesResult.items)
+            }
+
+            setPalpites((prev) => {
+              const updated = append ? { ...prev } : {}
               for (const p of myPalpites) {
-                mapPalpites[p.jogo] = p
+                updated[p.jogo] = p
+              }
+              return updated
+            })
+
+            setFormData((prev) => {
+              const updated = append ? { ...prev } : {}
+              for (const p of myPalpites) {
                 const gA = p.placar_a !== null && p.placar_a !== undefined ? Number(p.placar_a) : 0
                 const gB = p.placar_b !== null && p.placar_b !== undefined ? Number(p.placar_b) : 0
-                forms[p.jogo] = {
+                updated[p.jogo] = {
                   placar_a: p.placar_a ?? '',
                   placar_b: p.placar_b ?? '',
                   goleadores_a: normalizeScorersArray(p.goleadores_a, gA),
@@ -391,10 +457,8 @@ export default function Palpites() {
                   vencedor_penaltis: p.vencedor_penaltis || 'N',
                 }
               }
-
-              setPalpites(mapPalpites)
-              setFormData(forms)
-            }
+              return updated
+            })
           }
         } catch (err) {
           console.warn('Alerta ao carregar palpites (preservando estado atual):', err)
@@ -404,6 +468,7 @@ export default function Palpites() {
         } finally {
           setLoading(false)
           setIsRefreshing(false)
+          setIsLoadingMore(false)
           activeLoadPromiseRef.current = null
         }
       }
@@ -412,21 +477,34 @@ export default function Palpites() {
       activeLoadPromiseRef.current = promise
       return promise
     },
-    [user, participantName, boloes, isGeralParam, activeBolaoId, currentParticipante],
+    [
+      user,
+      participantName,
+      boloes,
+      isGeralParam,
+      activeBolaoId,
+      currentParticipante,
+      filterPendentes,
+    ],
   )
 
   useRealtime<Jogo>('jogos', () => {
-    loadData()
+    loadData(1, false, false)
   })
 
   useRealtime<Palpite>('palpites', () => {
-    loadData()
+    loadData(1, false, false)
   })
 
   useEffect(() => {
-    setLoading(true)
-    loadData()
-  }, [activeBolaoId, isGeralParam, currentParticipante, loadData])
+    loadData(1, false, false)
+  }, [activeBolaoId, isGeralParam, filterPendentes, currentParticipante, loadData])
+
+  const handleLoadMore = () => {
+    if (currentPage < totalPages && !isLoadingMore) {
+      loadData(currentPage + 1, false, true)
+    }
+  }
 
   const handleScoreChange = (jogoId: string, team: 'a' | 'b', rawVal: string) => {
     const valNum = rawVal === '' ? '' : Math.max(0, parseInt(rawVal, 10) || 0)
@@ -657,7 +735,7 @@ export default function Palpites() {
         ...prev,
         [jogo.id]: false,
       }))
-      await loadData()
+      await loadData(1, false, false)
     } catch (err: unknown) {
       console.error('Erro ao salvar palpite:', err)
       const errorMsg =
@@ -701,18 +779,8 @@ export default function Palpites() {
     return map
   }, [participantesList])
 
-  // Lista de jogos filtrada se pendentes estiver ativo
-  const allFilteredJogos = useMemo(() => {
-    if (!filterPendentes) return jogos
-    return jogos.filter((j) => !j.resultado_finalizado)
-  }, [jogos, filterPendentes])
-
-  // Lista fatiada para carregamento progressivo e renderização instantânea
-  const displayedJogos = useMemo(() => {
-    return allFilteredJogos.slice(0, visibleCount)
-  }, [allFilteredJogos, visibleCount])
-
-  const hasMore = visibleCount < allFilteredJogos.length
+  const displayedJogos = jogos
+  const hasMore = currentPage < totalPages
 
   return (
     <div className="space-y-6">
@@ -764,7 +832,7 @@ export default function Palpites() {
             type="button"
             variant="outline"
             size="sm"
-            onClick={() => loadData(true)}
+            onClick={() => loadData(1, true, false)}
             disabled={isRefreshing}
             className="h-8 gap-1.5 text-xs font-semibold border-slate-300 text-slate-700 hover:bg-slate-50"
             title="Atualizar palpites"
@@ -804,7 +872,7 @@ export default function Palpites() {
           </Button>
 
           <Badge variant="outline" className="border-slate-300 text-xs text-slate-700 py-1">
-            {allFilteredJogos.length} jogo(s) {filterPendentes ? 'pendente(s)' : 'total'}
+            {totalItems} jogo(s) {filterPendentes ? 'pendente(s)' : 'total'}
           </Badge>
         </div>
       </div>
@@ -817,7 +885,7 @@ export default function Palpites() {
           </div>
           <button
             type="button"
-            onClick={() => loadData(true)}
+            onClick={() => loadData(1, true, false)}
             className="text-xs font-bold text-amber-900 underline hover:text-amber-950"
           >
             Tentar novamente
@@ -1610,20 +1678,28 @@ export default function Palpites() {
         </div>
       )}
 
-      {/* Paginação / Carregamento progressivo para evitar travamento da DOM */}
+      {/* Paginação incremental com limite real de 20 por página no backend */}
       {!loading && hasMore && (
         <div className="flex flex-col items-center justify-center gap-2 pt-4 pb-8">
           <p className="text-xs text-slate-500">
-            Exibindo <strong>{displayedJogos.length}</strong> de{' '}
-            <strong>{allFilteredJogos.length}</strong> partidas
+            Exibindo <strong>{displayedJogos.length}</strong> de <strong>{totalItems}</strong>{' '}
+            partidas (Página {currentPage} de {totalPages})
           </p>
           <Button
             type="button"
             variant="outline"
-            onClick={() => setVisibleCount((prev) => prev + 20)}
+            disabled={isLoadingMore}
+            onClick={handleLoadMore}
             className="h-10 px-6 font-bold text-xs border-[#0F2A43] text-[#0F2A43] hover:bg-slate-50 transition shadow-2xs"
           >
-            Carregar mais 20 partidas ({allFilteredJogos.length - displayedJogos.length} restantes)
+            {isLoadingMore ? (
+              <>
+                <Loader2 className="mr-2 h-4 w-4 animate-spin text-[#0F2A43]" />
+                Carregando mais partidas...
+              </>
+            ) : (
+              `Carregar mais 20 partidas (${totalItems - displayedJogos.length} restantes)`
+            )}
           </Button>
         </div>
       )}
@@ -1639,7 +1715,7 @@ export default function Palpites() {
         timeA={adminEditingPalpite?.timeA}
         timeB={adminEditingPalpite?.timeB}
         onSuccess={() => {
-          loadData()
+          loadData(1, false, false)
         }}
       />
     </div>

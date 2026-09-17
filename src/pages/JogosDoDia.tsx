@@ -57,11 +57,13 @@ export interface DayFixture {
       id: number
       name: string
       logo: string
+      country?: string
     }
     away: {
       id: number
       name: string
       logo: string
+      country?: string
     }
   }
   goals: {
@@ -187,13 +189,73 @@ export default function JogosDoDia() {
     fetchJogos(selectedDate)
   }, [selectedDate, fetchJogos])
 
-  // Contadores para os filtros de status e controle de polling
+  // Ligas e competições relevantes acompanhadas pelo app:
+  // Brasileirão A-D, Copa do Brasil, Libertadores, Sul-Americana,
+  // Champions League, Europa League, Conference League, Premier League,
+  // La Liga, Serie A, Bundesliga, Ligue 1 e principais copas nacionais europeias.
+  const relevantFixtures = useMemo(() => {
+    // Regex de clubes brasileiros para filtrar confrontos em torneios CONMEBOL (Libertadores e Sul-Americana)
+    const brazilianClubsRegex =
+      /(Flamengo|Palmeiras|São Paulo|Sao Paulo|Corinthians|Fluminense|Grêmio|Gremio|Internacional|Atlético Mineiro|Atletico Mineiro|Atlético-MG|Botafogo|Cruzeiro|Vasco|Athletico Paranaense|Athletico-PR|Fortaleza|Bahia|Bragantino|Red Bull Bragantino|Cuiabá|Cuiaba|Goiás|Goias|Coritiba|Santos|América Mineiro|America-MG|Ceará|Ceara|Juventude|Vitória|Vitoria|Sport|Chapecoense|Avaí|Avai|Ponte Preta)/i
+
+    const targetLeagueSet = new Set<number>([
+      71, // Brasileirão Série A
+      72, // Série B
+      73, // Copa do Brasil / Série C
+      74, // Copa do Brasil / Série D
+      75, // Série C
+      76, // Série D
+      13, // Copa Libertadores
+      11, // Copa Sudamericana
+      450, // Copa Sudamericana alternativa
+      2, // UEFA Champions League
+      3, // UEFA Europa League
+      848, // UEFA Conference League
+      39, // Premier League (Inglaterra)
+      140, // La Liga (Espanha)
+      135, // Serie A (Itália)
+      78, // Bundesliga (Alemanha)
+      61, // Ligue 1 (França)
+      45, // FA Cup
+      48, // EFL Carabao Cup
+      143, // Copa del Rey
+      137, // Coppa Italia
+      81, // DFB-Pokal
+      66, // Coupe de France
+    ])
+
+    return fixtures.filter((item) => {
+      const lid = item.league?.id
+      if (!lid || !targetLeagueSet.has(lid)) {
+        return false
+      }
+
+      // Regra CONMEBOL (Libertadores e Sul-Americana): prioriza confrontos que envolvam clubes brasileiros
+      if (lid === 13 || lid === 11 || lid === 450) {
+        const homeName = item.teams?.home?.name || ''
+        const awayName = item.teams?.away?.name || ''
+        const homeCountry = item.teams?.home?.country || ''
+        const awayCountry = item.teams?.away?.country || ''
+
+        const isHomeBrazilian = homeCountry === 'Brazil' || brazilianClubsRegex.test(homeName)
+        const isAwayBrazilian = awayCountry === 'Brazil' || brazilianClubsRegex.test(awayName)
+
+        if (!isHomeBrazilian && !isAwayBrazilian) {
+          return false
+        }
+      }
+
+      return true
+    })
+  }, [fixtures])
+
+  // Contadores para os filtros de status e controle de polling baseados nas partidas relevantes
   const counts = useMemo(() => {
     let live = 0
     let scheduled = 0
     let finished = 0
 
-    for (const f of fixtures) {
+    for (const f of relevantFixtures) {
       const st = f.fixture?.status?.short || ''
       if (['1H', 'HT', '2H', 'ET', 'BT', 'P', 'LIVE'].includes(st)) {
         live++
@@ -204,8 +266,8 @@ export default function JogosDoDia() {
       }
     }
 
-    return { total: fixtures.length, live, scheduled, finished }
-  }, [fixtures])
+    return { total: relevantFixtures.length, live, scheduled, finished }
+  }, [relevantFixtures])
 
   // Regras estritas de economia de cota pedidas pelo administrador:
   // 1. Partidas ainda não iniciadas ("Em Breve"/agendadas): NENHUM polling contínuo.
@@ -217,7 +279,7 @@ export default function JogosDoDia() {
     const timers: NodeJS.Timeout[] = []
     const now = Date.now()
 
-    for (const f of fixtures) {
+    for (const f of relevantFixtures) {
       const st = f.fixture?.status?.short || ''
       const isLive = ['1H', 'HT', '2H', 'ET', 'BT', 'P', 'LIVE'].includes(st)
       const isFinished = ['FT', 'AET', 'PEN', 'POSTP', 'CANC'].includes(st)
@@ -240,7 +302,7 @@ export default function JogosDoDia() {
     return () => {
       timers.forEach((t) => clearTimeout(t))
     }
-  }, [fixtures, selectedDate, fetchJogos])
+  }, [relevantFixtures, selectedDate, fetchJogos])
 
   // Polling periódico APENAS quando há jogos efetivamente com status "Ao Vivo"
   useEffect(() => {
@@ -255,9 +317,9 @@ export default function JogosDoDia() {
     return () => clearInterval(timer)
   }, [counts.live, selectedDate, fetchJogos])
 
-  // Filtragem e busca
+  // Filtragem e busca baseadas no conjunto de ligas relevantes
   const filteredFixtures = useMemo(() => {
-    return fixtures.filter((f) => {
+    return relevantFixtures.filter((f) => {
       // Filtro de região
       if (selectedRegion !== 'todos') {
         if (f.league.region !== selectedRegion) {
@@ -288,7 +350,7 @@ export default function JogosDoDia() {
 
       return true
     })
-  }, [fixtures, selectedRegion, selectedStatus, searchTerm])
+  }, [relevantFixtures, selectedRegion, selectedStatus, searchTerm])
 
   // Agrupamento por competição/liga
   const groupedByLeague = useMemo(() => {

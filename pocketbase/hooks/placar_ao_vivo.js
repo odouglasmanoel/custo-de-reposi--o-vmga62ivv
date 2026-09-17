@@ -522,13 +522,14 @@ routerAdd('GET', '/backend/v1/placar-ao-vivo', (e) => {
       Boolean($os.getenv('RAPIDAPI_KEY')) ||
       apiKey.length > 40
 
-    let urlLive = 'https://v3.football.api-sports.io/fixtures?live=all'
+    let urlLive = 'https://v3.football.api-sports.io/fixtures?live=all&timezone=America%2FSao_Paulo'
     let headers = {
       'x-apisports-key': apiKey,
     }
 
     if (isRapidApi) {
-      urlLive = 'https://api-football-v1.p.rapidapi.com/v3/fixtures?live=all'
+      urlLive =
+        'https://api-football-v1.p.rapidapi.com/v3/fixtures?live=all&timezone=America%2FSao_Paulo'
       headers = {
         'x-rapidapi-key': apiKey,
         'x-rapidapi-host': 'api-football-v1.p.rapidapi.com',
@@ -742,6 +743,40 @@ routerAdd('GET', '/backend/v1/placar-ao-vivo', (e) => {
             errDate ? errDate.message : errDate,
           )
         }
+      }
+    }
+
+    // Se dateQuery não veio na query mas o provedor é api_football,
+    // busca a data de hoje no fuso de Brasília para popular dateFixtures
+    if (!dateQuery) {
+      try {
+        var nowSPDate = new Date(Date.now() - 3 * 3600 * 1000)
+        var spM = ('0' + (nowSPDate.getUTCMonth() + 1)).slice(-2)
+        var spD = ('0' + nowSPDate.getUTCDate()).slice(-2)
+        var todaySPStr = nowSPDate.getUTCFullYear() + '-' + spM + '-' + spD
+
+        var baseUrlToday = isRapidApi
+          ? 'https://api-football-v1.p.rapidapi.com/v3/fixtures'
+          : 'https://v3.football.api-sports.io/fixtures'
+        var urlToday =
+          baseUrlToday + '?date=' + encodeURIComponent(todaySPStr) + '&timezone=America%2FSao_Paulo'
+
+        var resToday = $http.send({
+          url: urlToday,
+          method: 'GET',
+          headers: headers,
+          timeout: 10,
+        })
+        if (resToday.statusCode === 200 && resToday.json && Array.isArray(resToday.json.response)) {
+          for (var rti = 0; rti < resToday.json.response.length; rti++) {
+            dateFixtures.push(mapApiFootballItem(resToday.json.response[rti]))
+          }
+        }
+      } catch (errToday) {
+        console.log(
+          'Aviso ao consultar date fixtures de hoje API-Football:',
+          errToday ? errToday.message : errToday,
+        )
       }
     }
 
@@ -1351,24 +1386,32 @@ routerAdd('GET', '/backend/v1/jogos-do-dia', (e) => {
     // Primeiro consulta a data solicitada (com timezone=America/Sao_Paulo).
     // Para garantir que partidas da noite no fuso do Brasil ou partidas internacionais sejam
     // encontradas mesmo com pequenas divergências de fuso horário, buscamos a data do dia corrente.
-    var baseUrlDate = baseUrl + '?timezone=America%2FSao_Paulo&date='
-    var res = null
-    try {
-      res = $http.send({
-        url: baseUrlDate + encodeURIComponent(dateQuery),
-        method: 'GET',
-        headers: headers,
-        timeout: 9,
-      })
-    } catch (errHttp) {
-      console.log(
-        'Aviso ao consultar API-Football para jogos do dia (' + dateQuery + '):',
-        errHttp ? errHttp.message : errHttp,
-      )
+    // Endpoint genérico oficial da API-Football v3 no fuso de Brasília:
+    // https://v3.football.api-sports.io/fixtures?date=YYYY-MM-DD&timezone=America/Sao_Paulo
+    // Uma chamada direta com a data corrente em Brasília (America/Sao_Paulo).
+    var callApiDate = function (targetDateStr) {
+      var callUrl =
+        baseUrl + '?date=' + encodeURIComponent(targetDateStr) + '&timezone=America%2FSao_Paulo'
+      try {
+        var resp = $http.send({
+          url: callUrl,
+          method: 'GET',
+          headers: headers,
+          timeout: 10,
+        })
+        if (resp && resp.statusCode === 200 && resp.json && Array.isArray(resp.json.response)) {
+          return resp.json.response
+        }
+      } catch (eH) {
+        console.log('Aviso ao consultar data ' + targetDateStr + ':', eH ? eH.message : eH)
+      }
+      return null
     }
 
-    if (!res || res.statusCode !== 200 || !res.json || !Array.isArray(res.json.response)) {
-      // Se tiver cache expirado mas falhar a chamada externa, serve o cache como stale-while-revalidate fallback
+    var allFixtures = callApiDate(dateQuery)
+
+    // Se a chamada principal falhou e temos cache para esta data, serve stale cache
+    if (!allFixtures) {
       if (cacheObj && cacheObj.payload && cacheObj.dataKey === dateQuery) {
         var staleResp = Object.assign({}, cacheObj.payload, {
           cached: true,
@@ -1385,42 +1428,21 @@ routerAdd('GET', '/backend/v1/jogos-do-dia', (e) => {
         hasLive: false,
         fixtures: [],
         error:
-          'A API externa de futebol está temporariamente instável ou indisponível (status ' +
-          (res ? res.statusCode : 'timeout') +
-          '). Tente novamente em instantes.',
+          'A API externa de futebol está temporariamente instável ou indisponível. Tente novamente em instantes.',
       })
     }
 
-    var allFixtures = res.json.response
-    var filtered = []
+    // Processamento de todos os itens retornados pela API-Football
+    // Formatando e extraindo eventos, marcadores e status
+    var rawFixtures = []
     var hasLiveMatch = false
-
-    // Clubes brasileiros conhecidos em torneios CONMEBOL (Libertadores / Sul-Americana)
-    var brazilianClubsRegex =
-      /(Flamengo|Palmeiras|São Paulo|Sao Paulo|Corinthians|Fluminense|Grêmio|Gremio|Internacional|Atlético Mineiro|Atletico Mineiro|Atlético-MG|Botafogo|Cruzeiro|Vasco|Athletico Paranaense|Athletico-PR|Fortaleza|Bahia|Bragantino|Red Bull Bragantino|Cuiabá|Cuiaba|Goiás|Goias|Coritiba|Santos|América Mineiro|America-MG|Ceará|Ceara|Juventude|Vitória|Vitoria|Sport|Chapecoense|Avaí|Avai|Ponte Preta)/i
+    var seenFixtureIds = {}
 
     for (var i = 0; i < allFixtures.length; i++) {
       var item = allFixtures[i]
-      var leagueId = item.league ? item.league.id : null
-      if (!leagueId || !targetLeagueSet[leagueId]) {
-        continue
-      }
-
-      // Regra especial Libertadores (13) e Sul-Americana (11 / 450):
-      // Exibir SOMENTE confrontos que envolvam clubes brasileiros
-      if (leagueId === 13 || leagueId === 11 || leagueId === 450) {
-        var homeName = (item.teams && item.teams.home && item.teams.home.name) || ''
-        var awayName = (item.teams && item.teams.away && item.teams.away.name) || ''
-        var homeCountry = (item.teams && item.teams.home && item.teams.home.country) || ''
-        var awayCountry = (item.teams && item.teams.away && item.teams.away.country) || ''
-
-        var isHomeBrazilian = homeCountry === 'Brazil' || brazilianClubsRegex.test(homeName)
-        var isAwayBrazilian = awayCountry === 'Brazil' || brazilianClubsRegex.test(awayName)
-
-        if (!isHomeBrazilian && !isAwayBrazilian) {
-          continue
-        }
-      }
+      var fId = (item.fixture && item.fixture.id) || i
+      if (seenFixtureIds[fId]) continue
+      seenFixtureIds[fId] = true
 
       // Extrair status e verificar se está ao vivo
       var statusShort = (item.fixture && item.fixture.status && item.fixture.status.short) || ''
@@ -1457,7 +1479,7 @@ routerAdd('GET', '/backend/v1/jogos-do-dia', (e) => {
         }
       }
 
-      // Categorizar região da liga
+      var leagueId = item.league ? item.league.id : null
       var region = 'Outros'
       if (
         leagueId === 71 || // Série A
@@ -1470,19 +1492,34 @@ routerAdd('GET', '/backend/v1/jogos-do-dia', (e) => {
         region = 'Brasileirão & Copas'
       } else if (leagueId === 13 || leagueId === 11 || leagueId === 450) {
         region = 'Sul-Americana'
-      } else {
+      } else if (
+        leagueId === 2 || // UCL
+        leagueId === 3 || // UEL
+        leagueId === 848 || // UECL
+        leagueId === 39 || // Premier
+        leagueId === 140 || // La Liga
+        leagueId === 135 || // Serie A
+        leagueId === 78 || // Bundesliga
+        leagueId === 61 || // Ligue 1
+        leagueId === 45 || // FA Cup
+        leagueId === 48 || // EFL Cup
+        leagueId === 143 || // Copa del Rey
+        leagueId === 137 || // Coppa Italia
+        leagueId === 81 || // DFB Pokal
+        leagueId === 66 // Coupe de France
+      ) {
         region = 'Futebol Europeu'
       }
 
-      filtered.push({
+      rawFixtures.push({
         fixture: item.fixture,
         league: {
-          id: item.league.id,
-          name: item.league.name,
-          country: item.league.country,
-          logo: item.league.logo,
-          flag: item.league.flag,
-          round: item.league.round,
+          id: item.league ? item.league.id : null,
+          name: item.league ? item.league.name : '',
+          country: item.league ? item.league.country : '',
+          logo: item.league ? item.league.logo : '',
+          flag: item.league ? item.league.flag : '',
+          round: item.league ? item.league.round : '',
           region: region,
         },
         teams: item.teams,
@@ -1496,9 +1533,9 @@ routerAdd('GET', '/backend/v1/jogos-do-dia', (e) => {
     var payload = {
       configured: true,
       date: dateQuery,
-      total: filtered.length,
+      total: rawFixtures.length,
       hasLive: hasLiveMatch,
-      fixtures: filtered,
+      fixtures: rawFixtures,
       updatedAt: new Date().toISOString(),
     }
 
