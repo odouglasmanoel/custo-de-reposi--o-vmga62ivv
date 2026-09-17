@@ -14,6 +14,7 @@ import AdminJogos from './pages/AdminJogos'
 import AdminResultado from './pages/AdminResultado'
 import AdminConfiguracoes from './pages/AdminConfiguracoes'
 import Palpites from './pages/Palpites'
+import JogosDoDia from './pages/JogosDoDia'
 import Historico from './pages/Historico'
 import Estatisticas from './pages/Estatisticas'
 import Chat from './pages/Chat'
@@ -84,6 +85,18 @@ const App = () => (
                 <BolaoRoute>
                   <Layout>
                     <Palpites />
+                  </Layout>
+                </BolaoRoute>
+              }
+            />
+
+            {/* Central de Jogos do Dia & Placar Ao Vivo */}
+            <Route
+              path="/bolao/jogos-do-dia"
+              element={
+                <BolaoRoute>
+                  <Layout>
+                    <JogosDoDia />
                   </Layout>
                 </BolaoRoute>
               }

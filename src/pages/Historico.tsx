@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { History, Loader2, Lock, Power, RotateCcw, ShieldAlert, Edit3 } from 'lucide-react'
 import pb from '@/lib/pocketbase/client'
+import { normalizeMemberName } from '@/lib/statsCalculator'
 import type { Bolao, Participante, Jogo, Palpite } from '@/types/bolao'
 import { useAuth } from '@/context/AuthContext'
 import { useActivePool } from '@/context/ActivePoolContext'
@@ -80,32 +81,60 @@ export default function Historico() {
         ])
 
         // Dynamically calculate ranking: sum valid finished games + pontos_importados (or existing pontuacao_total if no imported field)
+        // Deduplicação estrita por participante (nome normalizado) para garantir que cada participante apareça uma única vez
         const finishedGameIds = new Set(
           games.filter((g) => g.resultado_finalizado).map((g) => g.id),
         )
 
-        const calculatedParts = parts
-          .map((part) => {
-            const sumPalpites = bets
-              .filter((p) => p.participante === part.id && finishedGameIds.has(p.jogo))
-              .reduce((acc, p) => acc + (Number(p.pontuacao_jogo) || 0), 0)
+        const grouped = new Map<
+          string,
+          {
+            primaryPart: Participante
+            totalImported: number
+            allPartIds: Set<string>
+          }
+        >()
 
-            const importedPts =
-              part.pontos_importados !== undefined && part.pontos_importados !== null
-                ? Number(part.pontos_importados)
-                : Number(part.pontuacao_total) || 0
+        for (const part of parts) {
+          const norm = normalizeMemberName(part.nome)
+          const existing = grouped.get(norm)
+          const imp =
+            part.pontos_importados !== undefined && part.pontos_importados !== null
+              ? Number(part.pontos_importados)
+              : Number(part.pontuacao_total) || 0
 
-            return {
-              ...part,
-              pontuacao_total: importedPts + sumPalpites,
-            }
+          if (!existing) {
+            grouped.set(norm, {
+              primaryPart: part,
+              totalImported: imp,
+              allPartIds: new Set([part.id]),
+            })
+          } else {
+            existing.totalImported += imp
+            existing.allPartIds.add(part.id)
+          }
+        }
+
+        const calculatedParts: Participante[] = []
+        for (const [normName, group] of grouped.entries()) {
+          const sumPalpites = bets
+            .filter((p) => group.allPartIds.has(p.participante) && finishedGameIds.has(p.jogo))
+            .reduce((acc, p) => acc + (Number(p.pontuacao_jogo) || 0), 0)
+
+          calculatedParts.push({
+            ...group.primaryPart,
+            nome: normName,
+            pontos_importados: group.totalImported,
+            pontuacao_total: group.totalImported + sumPalpites,
           })
-          .sort((a, b) => {
-            if (b.pontuacao_total !== a.pontuacao_total) {
-              return b.pontuacao_total - a.pontuacao_total
-            }
-            return a.nome.localeCompare(b.nome)
-          })
+        }
+
+        calculatedParts.sort((a, b) => {
+          if (b.pontuacao_total !== a.pontuacao_total) {
+            return b.pontuacao_total - a.pontuacao_total
+          }
+          return a.nome.localeCompare(b.nome)
+        })
 
         setParticipantes(calculatedParts)
         setJogos(games)

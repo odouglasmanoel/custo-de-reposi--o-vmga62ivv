@@ -10,6 +10,7 @@ import {
   Settings,
   User,
   BarChart2,
+  Radio,
 } from 'lucide-react'
 import { useAuth } from '@/context/AuthContext'
 import { useActivePool } from '@/context/ActivePoolContext'
@@ -39,6 +40,7 @@ export default function Layout({ children }: LayoutProps) {
     location.pathname === '/bolao/chat' ||
     location.pathname === '/bolao/palpites' ||
     location.pathname === '/bolao/meus-palpites' ||
+    location.pathname === '/bolao/jogos-do-dia' ||
     location.pathname === '/bolao/historico' ||
     location.pathname === '/bolao/estatisticas' ||
     location.pathname === '/bolao/configuracoes' ||
@@ -54,6 +56,7 @@ export default function Layout({ children }: LayoutProps) {
       location.pathname === '/bolao/chat' ||
       location.pathname === '/bolao/palpites' ||
       location.pathname === '/bolao/meus-palpites' ||
+      location.pathname === '/bolao/jogos-do-dia' ||
       location.pathname === '/bolao/historico' ||
       location.pathname === '/bolao/estatisticas'
     ) {
@@ -139,6 +142,17 @@ export default function Layout({ children }: LayoutProps) {
                       }`}
                     >
                       Meus Palpites
+                    </Link>
+                    <Link
+                      to="/bolao/jogos-do-dia"
+                      className={`inline-flex items-center gap-1 rounded-md px-2.5 py-1 text-xs font-medium transition ${
+                        location.pathname === '/bolao/jogos-do-dia'
+                          ? 'bg-[#1B3A5C] text-white'
+                          : 'text-slate-300 hover:text-white'
+                      }`}
+                    >
+                      <Radio className="h-3 w-3 text-rose-400" />
+                      Jogos do Dia
                     </Link>
                     <Link
                       to="/bolao/historico"

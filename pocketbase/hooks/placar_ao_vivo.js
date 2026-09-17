@@ -1211,3 +1211,286 @@ routerAdd('POST', '/backend/v1/placar-ao-vivo/sobrescrever', (e) => {
     })
   }
 })
+
+/**
+ * GET /backend/v1/jogos-do-dia
+ * Calendário e acompanhamento ao vivo dos jogos do dia centralizado via API-Football
+ * com cache em memória no servidor (globalThis.__jogosDoDiaCache).
+ */
+routerAdd('GET', '/backend/v1/jogos-do-dia', (e) => {
+  try {
+    var dateQuery = (e.requestInfo().query.date || '').trim()
+    var forceRefresh = e.requestInfo().query.refresh === '1'
+
+    // Formato de data padrão YYYY-MM-DD
+    if (!dateQuery || !/^\d{4}-\d{2}-\d{2}$/.test(dateQuery)) {
+      // Data de hoje em São Paulo (UTC-3)
+      var now = new Date(Date.now() - 3 * 3600 * 1000)
+      var ym = ('0' + (now.getUTCMonth() + 1)).slice(-2)
+      var yd = ('0' + now.getUTCDate()).slice(-2)
+      dateQuery = now.getUTCFullYear() + '-' + ym + '-' + yd
+    }
+
+    // Cache em globalThis para persistir entre chamadas sem violar o escopo do JSVM
+    if (!globalThis.__jogosDoDiaCache) {
+      globalThis.__jogosDoDiaCache = {
+        dataKey: null,
+        timestamp: 0,
+        payload: null,
+      }
+    }
+
+    var currentCache = globalThis.__jogosDoDiaCache
+    var nowMs = Date.now()
+    var cacheAge = nowMs - currentCache.timestamp
+
+    // Verificar se podemos retornar cache
+    if (!forceRefresh && currentCache.payload && currentCache.dataKey === dateQuery) {
+      var hasAnyLive = currentCache.payload.hasLive === true
+      var maxAge = hasAnyLive ? 60 * 1000 : 30 * 60 * 1000 // 60s se live, 30min se agendado/finalizado
+      if (cacheAge < maxAge) {
+        return e.json(200, {
+          ...currentCache.payload,
+          cached: true,
+          cacheAgeSeconds: Math.round(cacheAge / 1000),
+        })
+      }
+    }
+
+    // Lista oficial de IDs de ligas requeridas:
+    // Brasileirão Série A (71), B (72), C (75), D (76), Copa do Brasil (73)
+    // Libertadores (13) e Sul-Americana (11) -> filtrando apenas confrontos com clubes brasileiros
+    // Premier League (39), La Liga (140), Serie A (135), Bundesliga (78), Ligue 1 (61)
+    // Copas nacionais: Copa da Inglaterra (45), Copa da Liga Inglesa (48), Copa do Rei (143), Copa da Itália (137), Copa da Alemanha (81), Copa da França (66)
+    // UEFA Champions League (2), Europa League (3), Conference League (848)
+    var targetLeagueSet = {
+      71: true,
+      72: true,
+      75: true,
+      76: true,
+      73: true,
+      13: true,
+      11: true,
+      39: true,
+      140: true,
+      135: true,
+      78: true,
+      61: true,
+      45: true,
+      48: true,
+      143: true,
+      137: true,
+      81: true,
+      66: true,
+      2: true,
+      3: true,
+      848: true,
+    }
+
+    // Buscar credenciais configuradas
+    var apiKey = ''
+    var isRapidApi = false
+    try {
+      var configRecord = $app.findFirstRecordByData('config_integracoes', 'chave', 'placar_ao_vivo')
+      if (configRecord) {
+        apiKey = (configRecord.getString('api_key') || '').trim()
+      }
+    } catch (_) {}
+
+    if (!apiKey) {
+      if ($secrets.has && $secrets.has('API_FOOTBALL_KEY')) {
+        apiKey = $secrets.get('API_FOOTBALL_KEY')
+      } else if ($secrets.has && $secrets.has('RAPIDAPI_KEY')) {
+        apiKey = $secrets.get('RAPIDAPI_KEY')
+        isRapidApi = true
+      } else if ($os.getenv('API_FOOTBALL_KEY')) {
+        apiKey = $os.getenv('API_FOOTBALL_KEY')
+      } else if ($os.getenv('RAPIDAPI_KEY')) {
+        apiKey = $os.getenv('RAPIDAPI_KEY')
+        isRapidApi = true
+      }
+    }
+
+    if (apiKey.length > 40) {
+      isRapidApi = true
+    }
+
+    // Se nenhuma chave estiver configurada, retornar indicativo claro
+    if (!apiKey) {
+      return e.json(200, {
+        configured: false,
+        date: dateQuery,
+        fixtures: [],
+        message: 'API de futebol não configurada pelo administrador.',
+      })
+    }
+
+    var baseUrl = isRapidApi
+      ? 'https://api-football-v1.p.rapidapi.com/v3/fixtures'
+      : 'https://v3.football.api-sports.io/fixtures'
+
+    var headers = isRapidApi
+      ? {
+          'x-rapidapi-key': apiKey,
+          'x-rapidapi-host': 'api-football-v1.p.rapidapi.com',
+        }
+      : {
+          'x-apisports-key': apiKey,
+        }
+
+    // Buscar partidas da data no fuso de São Paulo
+    var urlDate =
+      baseUrl + '?date=' + encodeURIComponent(dateQuery) + '&timezone=America%2FSao_Paulo'
+    var res = $http.send({
+      url: urlDate,
+      method: 'GET',
+      headers: headers,
+      timeout: 15,
+    })
+
+    if (res.statusCode !== 200 || !res.json || !Array.isArray(res.json.response)) {
+      // Se tiver cache expirado mas falhar a chamada externa, serve o cache como fallback
+      if (currentCache.payload && currentCache.dataKey === dateQuery) {
+        return e.json(200, {
+          ...currentCache.payload,
+          cached: true,
+          fallback: true,
+        })
+      }
+
+      return e.json(200, {
+        configured: true,
+        date: dateQuery,
+        fixtures: [],
+        error: 'API retornou status ' + res.statusCode,
+      })
+    }
+
+    var allFixtures = res.json.response
+    var filtered = []
+    var hasLiveMatch = false
+
+    // Clubes brasileiros conhecidos em torneios CONMEBOL (Libertadores / Sul-Americana)
+    var brazilianClubsRegex =
+      /(Flamengo|Palmeiras|São Paulo|Sao Paulo|Corinthians|Fluminense|Grêmio|Gremio|Internacional|Atlético Mineiro|Atletico Mineiro|Atlético-MG|Botafogo|Cruzeiro|Vasco|Athletico Paranaense|Athletico-PR|Fortaleza|Bahia|Bragantino|Red Bull Bragantino|Cuiabá|Cuiaba|Goiás|Goias|Coritiba|Santos|América Mineiro|America-MG|Ceará|Ceara|Juventude|Vitória|Vitoria|Sport|Chapecoense|Avaí|Avai|Ponte Preta)/i
+
+    for (var i = 0; i < allFixtures.length; i++) {
+      var item = allFixtures[i]
+      var leagueId = item.league ? item.league.id : null
+      if (!leagueId || !targetLeagueSet[leagueId]) {
+        continue
+      }
+
+      // Regra especial Libertadores (13) e Sul-Americana (11):
+      // Exibir SOMENTE confrontos que envolvam clubes brasileiros
+      if (leagueId === 13 || leagueId === 11) {
+        var homeName = (item.teams && item.teams.home && item.teams.home.name) || ''
+        var awayName = (item.teams && item.teams.away && item.teams.away.name) || ''
+        var homeCountry = (item.teams && item.teams.home && item.teams.home.country) || ''
+        var awayCountry = (item.teams && item.teams.away && item.teams.away.country) || ''
+
+        var isHomeBrazilian = homeCountry === 'Brazil' || brazilianClubsRegex.test(homeName)
+        var isAwayBrazilian = awayCountry === 'Brazil' || brazilianClubsRegex.test(awayName)
+
+        if (!isHomeBrazilian && !isAwayBrazilian) {
+          continue
+        }
+      }
+
+      // Extrair status e verificar se está ao vivo
+      var statusShort = (item.fixture && item.fixture.status && item.fixture.status.short) || ''
+      var isLive = ['1H', 'HT', '2H', 'ET', 'BT', 'P', 'LIVE'].indexOf(statusShort) !== -1
+      if (isLive) {
+        hasLiveMatch = true
+      }
+
+      // Extrair marcadores dos gols com minutagem
+      var scorersList = []
+      if (Array.isArray(item.events)) {
+        for (var ei = 0; ei < item.events.length; ei++) {
+          var ev = item.events[ei]
+          if (ev && ev.type === 'Goal' && ev.player && ev.player.name) {
+            var isOwnGoal = ev.detail && ev.detail.toLowerCase().indexOf('own') !== -1
+            var scorerNameStr = String(ev.player.name).trim()
+            if (isOwnGoal) {
+              scorerNameStr += ' (contra)'
+            }
+            scorersList.push({
+              name: scorerNameStr,
+              minute: ev.time ? ev.time.elapsed : null,
+              extraMinute: ev.time ? ev.time.extra : null,
+              teamId: ev.team ? ev.team.id : null,
+              teamName: ev.team ? ev.team.name : null,
+              teamSide:
+                item.teams && item.teams.home && ev.team && ev.team.id === item.teams.home.id
+                  ? 'home'
+                  : item.teams && item.teams.away && ev.team && ev.team.id === item.teams.away.id
+                    ? 'away'
+                    : null,
+            })
+          }
+        }
+      }
+
+      // Categorizar região da liga
+      var region = 'Outros'
+      if (
+        leagueId === 71 ||
+        leagueId === 72 ||
+        leagueId === 75 ||
+        leagueId === 76 ||
+        leagueId === 73
+      ) {
+        region = 'Brasileirão & Copas'
+      } else if (leagueId === 13 || leagueId === 11) {
+        region = 'Sul-Americana'
+      } else {
+        region = 'Futebol Europeu'
+      }
+
+      filtered.push({
+        fixture: item.fixture,
+        league: {
+          id: item.league.id,
+          name: item.league.name,
+          country: item.league.country,
+          logo: item.league.logo,
+          flag: item.league.flag,
+          round: item.league.round,
+          region: region,
+        },
+        teams: item.teams,
+        goals: item.goals,
+        score: item.score,
+        scorers: scorersList,
+        isLive: isLive,
+      })
+    }
+
+    var payload = {
+      configured: true,
+      date: dateQuery,
+      total: filtered.length,
+      hasLive: hasLiveMatch,
+      fixtures: filtered,
+      updatedAt: new Date().toISOString(),
+    }
+
+    // Salva em cache na memória do hook
+    globalThis.__jogosDoDiaCache = {
+      dataKey: dateQuery,
+      timestamp: Date.now(),
+      payload: payload,
+    }
+
+    return e.json(200, {
+      ...payload,
+      cached: false,
+    })
+  } catch (err) {
+    return e.json(500, {
+      configured: false,
+      error: err ? err.message : 'Erro interno ao consultar jogos do dia',
+    })
+  }
+})

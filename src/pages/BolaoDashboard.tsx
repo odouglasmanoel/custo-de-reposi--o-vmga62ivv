@@ -17,6 +17,7 @@ import {
 } from 'lucide-react'
 import pb from '@/lib/pocketbase/client'
 import { useAuth, BOLAO_MEMBERS } from '@/context/AuthContext'
+import { normalizeMemberName } from '@/lib/statsCalculator'
 import { useActivePool } from '@/context/ActivePoolContext'
 import { useRealtime } from '@/hooks/use-realtime'
 import type { Bolao, Participante, Jogo, Palpite } from '@/types/bolao'
@@ -505,30 +506,59 @@ export default function BolaoDashboard() {
         })
     }
 
-    // Visão de bolão específico (lógica existente mantida com precisão)
+    // Visão de bolão específico: consolidação e deduplicação estrita por participante oficial
     const finishedGameIds = new Set(jogos.filter((j) => j.resultado_finalizado).map((j) => j.id))
 
-    return participantes
-      .map((part) => {
-        // Sum only palpites whose game still exists in this bolao and is finalized
-        const sumPalpites = palpites
-          .filter((p) => p.participante === part.id && finishedGameIds.has(p.jogo))
-          .reduce((acc, p) => acc + (Number(p.pontuacao_jogo) || 0), 0)
+    // Agrupar registros de participantes por nome normalizado (ex: Douglas, Davi, Gabriel, Bruno)
+    // para garantir que cada participante apareça estritamente UMA ÚNICA VEZ, somando pontos importados
+    // e palpites caso existam múltiplos registros ou importações históricas.
+    const groupedByMember = new Map<
+      string,
+      {
+        primaryPart: Participante
+        totalImported: number
+        allPartIds: Set<string>
+      }
+    >()
 
-        const importedPts = Number(part.pontos_importados) || 0
-        const pontuacaoDinamica = importedPts + sumPalpites
+    for (const part of participantes) {
+      const norm = normalizeMemberName(part.nome)
+      const existing = groupedByMember.get(norm)
+      const imp = Number(part.pontos_importados) || 0
+      if (!existing) {
+        groupedByMember.set(norm, {
+          primaryPart: part,
+          totalImported: imp,
+          allPartIds: new Set([part.id]),
+        })
+      } else {
+        existing.totalImported += imp
+        existing.allPartIds.add(part.id)
+      }
+    }
 
-        return {
-          ...part,
-          pontuacao_total: pontuacaoDinamica,
-        }
+    const consolidated: Participante[] = []
+    for (const [normName, group] of groupedByMember.entries()) {
+      const sumPalpites = palpites
+        .filter((p) => group.allPartIds.has(p.participante) && finishedGameIds.has(p.jogo))
+        .reduce((acc, p) => acc + (Number(p.pontuacao_jogo) || 0), 0)
+
+      const pontuacaoDinamica = group.totalImported + sumPalpites
+
+      consolidated.push({
+        ...group.primaryPart,
+        nome: normName,
+        pontos_importados: group.totalImported,
+        pontuacao_total: pontuacaoDinamica,
       })
-      .sort((a, b) => {
-        if (b.pontuacao_total !== a.pontuacao_total) {
-          return b.pontuacao_total - a.pontuacao_total
-        }
-        return a.nome.localeCompare(b.nome)
-      })
+    }
+
+    return consolidated.sort((a, b) => {
+      if (b.pontuacao_total !== a.pontuacao_total) {
+        return b.pontuacao_total - a.pontuacao_total
+      }
+      return a.nome.localeCompare(b.nome)
+    })
   }, [isGeral, participantes, jogos, palpites, allJogos, allParticipantes])
 
   // Mapa de bolões para nomes rápidos

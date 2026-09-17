@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useCallback } from 'react'
 import { useSearchParams, Link } from 'react-router-dom'
 import {
   Calendar,
@@ -101,6 +101,9 @@ export default function Palpites() {
     timeB: string
   } | null>(null)
   const [filterPendentes, setFilterPendentes] = useState<boolean>(initialPendentes)
+  const [visibleCount, setVisibleCount] = useState<number>(20)
+  const [loadingGroupBets, setLoadingGroupBets] = useState(false)
+  const [loadedGroupBets, setLoadedGroupBets] = useState(false)
   const [loading, setLoading] = useState(true)
   const [nowMs, setNowMs] = useState<number>(Date.now())
 
@@ -119,6 +122,11 @@ export default function Palpites() {
     }
   }, [pendentesRaw])
 
+  // Resetar contagem visível ao mudar bolão ou filtro
+  useEffect(() => {
+    setVisibleCount(20)
+  }, [activeBolaoId, isGeralParam, filterPendentes])
+
   useRealtime<Jogo>('jogos', () => {
     loadData()
   })
@@ -126,6 +134,44 @@ export default function Palpites() {
   useRealtime<Palpite>('palpites', () => {
     loadData()
   })
+
+  const loadGroupBetsOnDemand = useCallback(async () => {
+    if (loadingGroupBets || loadedGroupBets) return
+    setLoadingGroupBets(true)
+    try {
+      if (isGeralParam) {
+        const [allParts, allGroupBets] = await Promise.all([
+          pb.collection('participantes').getFullList<Participante>({ sort: 'nome' }),
+          pb.collection('palpites').getFullList<Palpite>(),
+        ])
+        setParticipantesList(allParts)
+        setAllGroupPalpites(allGroupBets)
+      } else {
+        const currentTargetBolaoId =
+          activeBolaoId && activeBolaoId !== GERAL_BOLAO_ID
+            ? activeBolaoId
+            : boloes.find((b) => b.ativo)?.id || boloes[0]?.id
+        if (currentTargetBolaoId) {
+          const [parts, bets] = await Promise.all([
+            pb.collection('participantes').getFullList<Participante>({
+              filter: `bolao = '${currentTargetBolaoId}'`,
+              sort: 'nome',
+            }),
+            pb.collection('palpites').getFullList<Palpite>({
+              filter: `bolao = '${currentTargetBolaoId}'`,
+            }),
+          ])
+          setParticipantesList(parts)
+          setAllGroupPalpites(bets)
+        }
+      }
+      setLoadedGroupBets(true)
+    } catch (err) {
+      console.warn('Erro ao carregar palpites do grupo sob demanda:', err)
+    } finally {
+      setLoadingGroupBets(false)
+    }
+  }, [loadingGroupBets, loadedGroupBets, isGeralParam, activeBolaoId, boloes])
 
   const loadData = async () => {
     if (!user) return
@@ -144,38 +190,34 @@ export default function Palpites() {
       setAllBoloes(loadedBoloes)
 
       if (isGeralParam) {
-        // MODO GERAL: Carregar jogos, participantes e palpites de todas as copas
-        const [allGames, allParts, allGroupBets] = await Promise.all([
-          pb.collection('jogos').getFullList<Jogo>({
-            sort: 'data,hora',
-          }),
-          pb.collection('participantes').getFullList<Participante>({
-            sort: 'nome',
-          }),
-          pb.collection('palpites').getFullList<Palpite>(),
-        ])
+        // MODO GERAL: Carregamento otimizado — buscar jogos + participantes do usuário + palpites do próprio usuário
+        // Em vez de buscar todos os milhares de palpites de uma vez, busca apenas do usuário logado
+        const allGamesPromise = pb.collection('jogos').getFullList<Jogo>({
+          sort: 'data,hora',
+        })
 
-        setParticipantesList(allParts)
-        setAllGroupPalpites(allGroupBets)
+        // Buscar apenas os registros de participante deste usuário
+        const myParts = await pb.collection('participantes').getFullList<Participante>({
+          filter: `nome ~ '${searchName.replace(/'/g, "\\'")}'`,
+        })
 
-        // Encontrar os registros de participante do usuário para cada bolão
-        const myParts = allParts.filter(
-          (p) =>
-            searchName &&
-            (p.nome.trim().toLowerCase() === searchName.trim().toLowerCase() ||
-              p.nome.toLowerCase().includes(searchName.toLowerCase())),
-        )
         const myPartMapByBolao: Record<string, Participante> = {}
         for (const p of myParts) {
           myPartMapByBolao[p.bolao] = p
         }
         setUserParticipantsMap(myPartMapByBolao)
 
-        const myPartIds = new Set(myParts.map((p) => p.id))
+        const myPartIds = myParts.map((p) => p.id)
+        let myPalpites: Palpite[] = []
 
-        // Filtrar palpites do próprio usuário para o formulário
-        const myPalpites = allGroupBets.filter((p) => myPartIds.has(p.participante))
+        if (myPartIds.length > 0) {
+          const filterUserBets = myPartIds.map((id) => `participante = '${id}'`).join(' || ')
+          myPalpites = await pb.collection('palpites').getFullList<Palpite>({
+            filter: filterUserBets,
+          })
+        }
 
+        const allGames = await allGamesPromise
         setJogos(allGames)
 
         const mapPalpites: Record<string, Palpite> = {}
@@ -197,7 +239,7 @@ export default function Palpites() {
         setPalpites(mapPalpites)
         setFormData(forms)
       } else {
-        // MODO BOLÃO ESPECÍFICO
+        // MODO BOLÃO ESPECÍFICO: Buscar apenas dados deste bolão e do participante logado
         const currentTargetBolaoId =
           activeBolaoId && activeBolaoId !== GERAL_BOLAO_ID
             ? activeBolaoId
@@ -213,7 +255,7 @@ export default function Palpites() {
           if (searchName) {
             try {
               const parts = await pb.collection('participantes').getFullList<Participante>({
-                filter: `bolao = '${currentTargetBolaoId}'`,
+                filter: `bolao = '${currentTargetBolaoId}' && (nome ~ '${searchName.replace(/'/g, "\\'")}')`,
               })
               const exact = parts.find((p) => p.nome.toLowerCase() === searchName.toLowerCase())
               const partial = parts.find(
@@ -234,27 +276,20 @@ export default function Palpites() {
           setUserParticipantsMap({ [currentTargetBolaoId]: currentParticipante })
         }
 
-        const [gamesList, allPoolParticipants, allPoolPalpites] = await Promise.all([
-          pb.collection('jogos').getFullList<Jogo>({
-            filter: `bolao = '${currentTargetBolaoId}'`,
-            sort: 'data,hora',
-          }),
-          pb.collection('participantes').getFullList<Participante>({
-            filter: `bolao = '${currentTargetBolaoId}'`,
-            sort: 'nome',
-          }),
-          pb.collection('palpites').getFullList<Palpite>({
-            filter: `bolao = '${currentTargetBolaoId}'`,
-          }),
-        ])
+        // Buscar apenas jogos do bolão e palpites deste participante
+        const gamesPromise = pb.collection('jogos').getFullList<Jogo>({
+          filter: `bolao = '${currentTargetBolaoId}'`,
+          sort: 'data,hora',
+        })
 
-        setParticipantesList(allPoolParticipants)
-        setAllGroupPalpites(allPoolPalpites)
+        let myPalpites: Palpite[] = []
+        if (participanteId) {
+          myPalpites = await pb.collection('palpites').getFullList<Palpite>({
+            filter: `bolao = '${currentTargetBolaoId}' && participante = '${participanteId}'`,
+          })
+        }
 
-        const myPalpites = participanteId
-          ? allPoolPalpites.filter((p) => p.participante === participanteId)
-          : []
-
+        const gamesList = await gamesPromise
         setJogos(gamesList)
 
         const mapPalpites: Record<string, Palpite> = {}
@@ -562,10 +597,17 @@ export default function Palpites() {
   }, [participantesList])
 
   // Lista de jogos filtrada se pendentes estiver ativo
-  const displayedJogos = useMemo(() => {
+  const allFilteredJogos = useMemo(() => {
     if (!filterPendentes) return jogos
     return jogos.filter((j) => !j.resultado_finalizado)
   }, [jogos, filterPendentes])
+
+  // Lista fatiada para carregamento progressivo e renderização instantânea
+  const displayedJogos = useMemo(() => {
+    return allFilteredJogos.slice(0, visibleCount)
+  }, [allFilteredJogos, visibleCount])
+
+  const hasMore = visibleCount < allFilteredJogos.length
 
   return (
     <div className="space-y-6">
@@ -642,7 +684,7 @@ export default function Palpites() {
           </Button>
 
           <Badge variant="outline" className="border-slate-300 text-xs text-slate-700 py-1">
-            {displayedJogos.length} de {jogos.length} jogo(s)
+            {allFilteredJogos.length} jogo(s) {filterPendentes ? 'pendente(s)' : 'total'}
           </Badge>
         </div>
       </div>
@@ -817,6 +859,36 @@ export default function Palpites() {
                     const isExpiredOrFinalized =
                       finalizado || isPalpiteEncerrado(jogo.data, jogo.hora, nowMs)
                     if (!isExpiredOrFinalized) return null
+
+                    if (!loadedGroupBets) {
+                      return (
+                        <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50/80 p-3 text-center">
+                          <p className="text-xs text-slate-600 mb-2">
+                            Palpites do grupo disponíveis para esta partida encerrada ou iniciada.
+                          </p>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            disabled={loadingGroupBets}
+                            onClick={loadGroupBetsOnDemand}
+                            className="h-7 text-xs font-semibold border-slate-300 text-[#0F2A43] hover:bg-white"
+                          >
+                            {loadingGroupBets ? (
+                              <>
+                                <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                                Carregando palpites do grupo...
+                              </>
+                            ) : (
+                              <>
+                                <Users className="mr-1.5 h-3.5 w-3.5" />
+                                Carregar palpites do grupo
+                              </>
+                            )}
+                          </Button>
+                        </div>
+                      )
+                    }
 
                     const betsForGame = allGroupPalpites.filter((p) => p.jogo === jogo.id)
 
@@ -1399,6 +1471,24 @@ export default function Palpites() {
               </Card>
             )
           })}
+        </div>
+      )}
+
+      {/* Paginação / Carregamento progressivo para evitar travamento da DOM */}
+      {!loading && hasMore && (
+        <div className="flex flex-col items-center justify-center gap-2 pt-4 pb-8">
+          <p className="text-xs text-slate-500">
+            Exibindo <strong>{displayedJogos.length}</strong> de{' '}
+            <strong>{allFilteredJogos.length}</strong> partidas
+          </p>
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => setVisibleCount((prev) => prev + 20)}
+            className="h-10 px-6 font-bold text-xs border-[#0F2A43] text-[#0F2A43] hover:bg-slate-50 transition shadow-2xs"
+          >
+            Carregar mais 20 partidas ({allFilteredJogos.length - displayedJogos.length} restantes)
+          </Button>
         </div>
       )}
 
