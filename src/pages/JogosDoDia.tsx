@@ -21,6 +21,11 @@ import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { getHojeDataSaoPaulo, formatDataBR } from '@/lib/dateUtils'
+import {
+  getFixtureDateSaoPaulo,
+  isFixturePostponed,
+  isFixtureCancelled,
+} from '@/lib/apiFootballMatcher'
 
 export interface FixtureScorer {
   name: string
@@ -247,6 +252,18 @@ export default function JogosDoDia() {
     ])
 
     return fixtures.filter((item) => {
+      // FILTRO ESTRITO DE FUSO HORÁRIO (America/Sao_Paulo - UTC-3):
+      // Converte o horário da partida para a data no fuso de Brasília.
+      // Se a partida pertence a outro dia que não a selectedDate selecionada no datepicker,
+      // descarta imediatamente (evitando jogos de ontem, ex.: Corinthians).
+      const fixtureDateStr = item.fixture?.date
+      if (selectedDate && fixtureDateStr) {
+        const fixtureDateSP = getFixtureDateSaoPaulo(fixtureDateStr)
+        if (fixtureDateSP && fixtureDateSP !== selectedDate) {
+          return false
+        }
+      }
+
       const lid = item.league?.id
       // Se não temos lid ou não está no target, mas tem região mapeada válida
       if (item.league?.region && item.league.region !== 'Outros') {
@@ -272,7 +289,7 @@ export default function JogosDoDia() {
 
       return true
     })
-  }, [fixtures])
+  }, [fixtures, selectedDate])
 
   // Contadores para os filtros de status e controle de polling baseados nas partidas relevantes
   const counts = useMemo(() => {
@@ -281,12 +298,15 @@ export default function JogosDoDia() {
     let finished = 0
 
     for (const f of relevantFixtures) {
-      const st = f.fixture?.status?.short || ''
+      const st = (f.fixture?.status?.short || '').toUpperCase().trim()
+      const long = (f.fixture?.status?.long || '').toUpperCase().trim()
+      const isPostponedOrCancelled = isFixturePostponed(st, long) || isFixtureCancelled(st, long)
+
       if (['1H', 'HT', '2H', 'ET', 'BT', 'P', 'LIVE'].includes(st)) {
         live++
       } else if (['FT', 'AET', 'PEN'].includes(st)) {
         finished++
-      } else {
+      } else if (!isPostponedOrCancelled) {
         scheduled++
       }
     }
@@ -305,21 +325,25 @@ export default function JogosDoDia() {
     const now = Date.now()
 
     for (const f of relevantFixtures) {
-      const st = f.fixture?.status?.short || ''
+      const st = (f.fixture?.status?.short || '').toUpperCase().trim()
+      const long = (f.fixture?.status?.long || '').toUpperCase().trim()
       const isLive = ['1H', 'HT', '2H', 'ET', 'BT', 'P', 'LIVE'].includes(st)
-      const isFinished = ['FT', 'AET', 'PEN', 'POSTP', 'CANC'].includes(st)
+      const isFinished = ['FT', 'AET', 'PEN'].includes(st)
+      const isPostponedOrCancelled = isFixturePostponed(st, long) || isFixtureCancelled(st, long)
 
-      if (!isLive && !isFinished && f.fixture?.date) {
+      if (!isLive && !isFinished && !isPostponedOrCancelled && f.fixture?.date) {
         const kickoffTime = new Date(f.fixture.date).getTime()
-        const delay = kickoffTime - now
+        if (!isNaN(kickoffTime)) {
+          const delay = kickoffTime - now
 
-        // Se o kickoff for no futuro próximo (até 24 horas), agenda disparo exato uma única vez
-        if (delay > 0 && delay <= 24 * 60 * 60 * 1000) {
-          const t = setTimeout(() => {
-            // Dispara UMA única verificação pontual ao rolar a bola
-            fetchJogos(selectedDate, false)
-          }, delay + 1000) // +1s após o horário para garantir que a partida iniciou
-          timers.push(t)
+          // Se o kickoff for no futuro próximo (até 24 horas), agenda disparo exato uma única vez
+          if (delay > 0 && delay <= 24 * 60 * 60 * 1000) {
+            const t = setTimeout(() => {
+              // Dispara UMA única verificação pontual ao rolar a bola
+              fetchJogos(selectedDate, false)
+            }, delay + 1000) // +1s após o horário para garantir que a partida iniciou
+            timers.push(t)
+          }
         }
       }
     }
@@ -353,10 +377,12 @@ export default function JogosDoDia() {
       }
 
       // Filtro de status
-      const st = f.fixture?.status?.short || ''
+      const st = (f.fixture?.status?.short || '').toUpperCase().trim()
+      const long = (f.fixture?.status?.long || '').toUpperCase().trim()
       const isLive = ['1H', 'HT', '2H', 'ET', 'BT', 'P', 'LIVE'].includes(st)
       const isFinished = ['FT', 'AET', 'PEN'].includes(st)
-      const isUpcoming = !isLive && !isFinished
+      const isPostponedOrCancelled = isFixturePostponed(st, long) || isFixtureCancelled(st, long)
+      const isUpcoming = !isLive && !isFinished && !isPostponedOrCancelled
 
       if (selectedStatus === 'ao-vivo' && !isLive) return false
       if (selectedStatus === 'em-breve' && !isUpcoming) return false
@@ -412,8 +438,35 @@ export default function JogosDoDia() {
 
   // Helpers de formatação de status
   const renderStatusBadge = (fixture: DayFixture) => {
-    const st = fixture.fixture?.status?.short || ''
+    const st = (fixture.fixture?.status?.short || '').toUpperCase().trim()
+    const long = (fixture.fixture?.status?.long || '').toUpperCase().trim()
     const elapsed = fixture.fixture?.status?.elapsed
+
+    // Jogos Adiados (PST / POSTPONED)
+    if (isFixturePostponed(st, long)) {
+      return (
+        <Badge
+          variant="outline"
+          className="border-amber-300 bg-amber-50 text-amber-800 font-bold text-[11px] gap-1 px-2 py-0.5 shadow-2xs"
+        >
+          <Clock className="h-3 w-3 text-amber-600" />
+          Adiado
+        </Badge>
+      )
+    }
+
+    // Jogos Cancelados / Suspensos (CANC / CANCELLED / SUSP / ABD)
+    if (isFixtureCancelled(st, long)) {
+      return (
+        <Badge
+          variant="outline"
+          className="border-rose-300 bg-rose-50 text-rose-700 font-bold text-[11px] gap-1 px-2 py-0.5 shadow-2xs"
+        >
+          <AlertCircle className="h-3 w-3 text-rose-500" />
+          Cancelado
+        </Badge>
+      )
+    }
 
     if (st === 'HT') {
       return (
@@ -450,16 +503,19 @@ export default function JogosDoDia() {
       )
     }
 
-    if (st === 'POSTP' || st === 'CANC') {
+    // Horário agendado (apenas se data for válida)
+    const matchDate = new Date(fixture.fixture.date)
+    if (isNaN(matchDate.getTime())) {
       return (
-        <Badge variant="destructive" className="font-bold text-[11px]">
-          Adiado/Cancelado
+        <Badge
+          variant="outline"
+          className="border-slate-200 bg-slate-50 text-slate-600 font-bold text-[11px]"
+        >
+          A Definir
         </Badge>
       )
     }
 
-    // Horário agendado
-    const matchDate = new Date(fixture.fixture.date)
     const horaBR = matchDate.toLocaleTimeString('pt-BR', {
       hour: '2-digit',
       minute: '2-digit',
@@ -803,6 +859,12 @@ export default function JogosDoDia() {
                 <div className="divide-y divide-slate-100">
                   {matches.map((match) => {
                     const { homeScorers, awayScorers } = getMatchScorers(match)
+                    const stMatch = (match.fixture?.status?.short || '').toUpperCase().trim()
+                    const longMatch = (match.fixture?.status?.long || '').toUpperCase().trim()
+                    const matchIsPostponed = isFixturePostponed(stMatch, longMatch)
+                    const matchIsCancelled = isFixtureCancelled(stMatch, longMatch)
+                    const isPstOrCanc = matchIsPostponed || matchIsCancelled
+
                     const homeScore = match.goals?.home ?? '-'
                     const awayScore = match.goals?.away ?? '-'
 
@@ -810,7 +872,11 @@ export default function JogosDoDia() {
                       <div
                         key={match.fixture.id}
                         className={`p-4 transition hover:bg-slate-50/60 ${
-                          match.isLive ? 'bg-emerald-50/20' : ''
+                          match.isLive
+                            ? 'bg-emerald-50/20'
+                            : isPstOrCanc
+                              ? 'bg-slate-50/40 opacity-90'
+                              : ''
                         }`}
                       >
                         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -822,14 +888,20 @@ export default function JogosDoDia() {
                             <div className="flex items-center justify-between gap-4">
                               {/* Time Mandante */}
                               <div className="flex flex-1 items-center justify-end gap-2.5 text-right">
-                                <span className="text-sm font-bold text-[#0F172A] sm:text-base truncate">
+                                <span
+                                  className={`text-sm font-bold sm:text-base truncate ${
+                                    isPstOrCanc ? 'text-slate-600' : 'text-[#0F172A]'
+                                  }`}
+                                >
                                   {match.teams.home.name}
                                 </span>
                                 {match.teams.home.logo && (
                                   <img
                                     src={match.teams.home.logo}
                                     alt={match.teams.home.name}
-                                    className="h-6 w-6 object-contain shrink-0"
+                                    className={`h-6 w-6 object-contain shrink-0 ${
+                                      isPstOrCanc ? 'grayscale-[50%] opacity-80' : ''
+                                    }`}
                                     loading="lazy"
                                     onError={(e) => {
                                       e.currentTarget.style.display = 'none'
@@ -838,12 +910,18 @@ export default function JogosDoDia() {
                                 )}
                               </div>
 
-                              {/* Placar Central */}
-                              <div className="flex items-center justify-center gap-2 rounded-lg bg-slate-900 px-3 py-1 font-mono text-base font-black text-white shadow-2xs sm:text-lg min-w-[72px]">
-                                <span>{homeScore}</span>
-                                <span className="text-slate-500 font-normal">:</span>
-                                <span>{awayScore}</span>
-                              </div>
+                              {/* Placar Central ou Badge de Adiado/Cancelado */}
+                              {isPstOrCanc ? (
+                                <div className="flex items-center justify-center rounded-lg border border-slate-200 bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-500 shadow-2xs min-w-[72px]">
+                                  <span>{matchIsPostponed ? 'Adiado' : 'Cancelado'}</span>
+                                </div>
+                              ) : (
+                                <div className="flex items-center justify-center gap-2 rounded-lg bg-slate-900 px-3 py-1 font-mono text-base font-black text-white shadow-2xs sm:text-lg min-w-[72px]">
+                                  <span>{homeScore}</span>
+                                  <span className="text-slate-500 font-normal">:</span>
+                                  <span>{awayScore}</span>
+                                </div>
+                              )}
 
                               {/* Time Visitante */}
                               <div className="flex flex-1 items-center justify-start gap-2.5 text-left">
@@ -851,14 +929,20 @@ export default function JogosDoDia() {
                                   <img
                                     src={match.teams.away.logo}
                                     alt={match.teams.away.name}
-                                    className="h-6 w-6 object-contain shrink-0"
+                                    className={`h-6 w-6 object-contain shrink-0 ${
+                                      isPstOrCanc ? 'grayscale-[50%] opacity-80' : ''
+                                    }`}
                                     loading="lazy"
                                     onError={(e) => {
                                       e.currentTarget.style.display = 'none'
                                     }}
                                   />
                                 )}
-                                <span className="text-sm font-bold text-[#0F172A] sm:text-base truncate">
+                                <span
+                                  className={`text-sm font-bold sm:text-base truncate ${
+                                    isPstOrCanc ? 'text-slate-600' : 'text-[#0F172A]'
+                                  }`}
+                                >
                                   {match.teams.away.name}
                                 </span>
                               </div>

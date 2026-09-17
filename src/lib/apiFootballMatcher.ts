@@ -484,8 +484,16 @@ export function isFixtureLive(statusShort?: string): boolean {
 export function extractFixtureDateSP(fixture: ApiFootballFixture): string | null {
   const rawDate = fixture.fixture?.date
   if (!rawDate) return null
+  return getFixtureDateSaoPaulo(rawDate)
+}
+
+/**
+ * Converte qualquer string ISO ou Date de partida para YYYY-MM-DD no fuso America/Sao_Paulo (UTC-3).
+ */
+export function getFixtureDateSaoPaulo(dateInput?: string | Date | null): string | null {
+  if (!dateInput) return null
   try {
-    const d = new Date(rawDate)
+    const d = dateInput instanceof Date ? dateInput : new Date(dateInput)
     if (isNaN(d.getTime())) return null
     const formatter = new Intl.DateTimeFormat('en-CA', {
       timeZone: 'America/Sao_Paulo',
@@ -508,6 +516,35 @@ export function isFixtureFinished(statusShort?: string, statusLong?: string): bo
   if (statusShort && FINISHED_STATUSES.has(statusShort.toUpperCase().trim())) return true
   if (statusLong && FINISHED_STATUSES.has(statusLong.toUpperCase().trim())) return true
   return false
+}
+
+/**
+ * Verifica se a partida está adiada (PST / POSTPONED).
+ */
+export function isFixturePostponed(statusShort?: string, statusLong?: string): boolean {
+  const s = (statusShort || '').toUpperCase().trim()
+  const l = (statusLong || '').toUpperCase().trim()
+  return s === 'PST' || s === 'POSTP' || l === 'POSTPONED' || l === 'MATCH POSTPONED'
+}
+
+/**
+ * Verifica se a partida foi cancelada ou suspensa (CANC / CANCELLED / SUSP / ABD).
+ */
+export function isFixtureCancelled(statusShort?: string, statusLong?: string): boolean {
+  const s = (statusShort || '').toUpperCase().trim()
+  const l = (statusLong || '').toUpperCase().trim()
+  return (
+    s === 'CANC' ||
+    s === 'CANCELLED' ||
+    s === 'SUSP' ||
+    s === 'ABD' ||
+    l === 'CANCELLED' ||
+    l === 'MATCH CANCELLED' ||
+    l === 'SUSPENDED' ||
+    l === 'MATCH SUSPENDED' ||
+    l === 'ABANDONED' ||
+    l === 'MATCH ABANDONED'
+  )
 }
 
 /**
@@ -614,8 +651,35 @@ export function matchGameWithApiFixtures(
   const isFinished = isFixtureFinished(statusShort, statusLong)
 
   // Label amigável de exibição
+  const stUpper = statusShort.toUpperCase().trim()
+  const longUpper = statusLong.toUpperCase().trim()
+  const isPostponed =
+    stUpper === 'PST' ||
+    stUpper === 'POSTP' ||
+    longUpper === 'POSTPONED' ||
+    longUpper === 'MATCH POSTPONED'
+  const isCancelled =
+    stUpper === 'CANC' ||
+    stUpper === 'CANCELLED' ||
+    stUpper === 'SUSP' ||
+    stUpper === 'ABD' ||
+    longUpper === 'CANCELLED' ||
+    longUpper === 'MATCH CANCELLED' ||
+    longUpper === 'SUSPENDED' ||
+    longUpper === 'MATCH SUSPENDED' ||
+    longUpper === 'ABANDONED' ||
+    longUpper === 'MATCH ABANDONED'
+
   let displayLabel = `AO VIVO ${placarA} x ${placarB}`
-  if (statusShort === 'HT' || statusShort === 'PAUSED' || statusLong.toUpperCase() === 'PAUSED') {
+  if (isPostponed) {
+    displayLabel = 'Adiado'
+  } else if (isCancelled) {
+    displayLabel = 'Cancelado'
+  } else if (
+    statusShort === 'HT' ||
+    statusShort === 'PAUSED' ||
+    statusLong.toUpperCase() === 'PAUSED'
+  ) {
     displayLabel = `AO VIVO (Intervalo) ${placarA} x ${placarB}`
   } else if (elapsed && isLive) {
     displayLabel = `AO VIVO ${elapsed}' • ${placarA} x ${placarB}`

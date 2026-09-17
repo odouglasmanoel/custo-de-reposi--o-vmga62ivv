@@ -3,9 +3,12 @@ import {
   cleanTeamName,
   stringSimilarity,
   isFixtureLive,
+  isFixturePostponed,
+  isFixtureCancelled,
   matchGameWithApiFixtures,
   resolveLiveScoreForGame,
   formatFixtureToLiveScore,
+  getFixtureDateSaoPaulo,
   type ApiFootballFixture,
 } from './apiFootballMatcher'
 
@@ -64,6 +67,42 @@ describe('apiFootballMatcher', () => {
       expect(isFixtureLive('TBD')).toBe(false)
       expect(isFixtureLive('CANC')).toBe(false)
       expect(isFixtureLive(undefined)).toBe(false)
+    })
+  })
+
+  describe('isFixturePostponed e isFixtureCancelled (PST e CANC)', () => {
+    it('deve identificar jogos adiados nos dialetos de API-Football e Football-Data.org', () => {
+      expect(isFixturePostponed('PST')).toBe(true)
+      expect(isFixturePostponed('POSTP')).toBe(true)
+      expect(isFixturePostponed(undefined, 'POSTPONED')).toBe(true)
+      expect(isFixturePostponed(undefined, 'Match Postponed')).toBe(true)
+      expect(isFixturePostponed('FT')).toBe(false)
+      expect(isFixturePostponed('1H')).toBe(false)
+    })
+
+    it('deve identificar jogos cancelados/suspensos nos dialetos de API-Football e Football-Data.org', () => {
+      expect(isFixtureCancelled('CANC')).toBe(true)
+      expect(isFixtureCancelled('CANCELLED')).toBe(true)
+      expect(isFixtureCancelled('SUSP')).toBe(true)
+      expect(isFixtureCancelled('ABD')).toBe(true)
+      expect(isFixtureCancelled(undefined, 'Cancelled')).toBe(true)
+      expect(isFixtureCancelled(undefined, 'Match Suspended')).toBe(true)
+      expect(isFixtureCancelled('FT')).toBe(false)
+      expect(isFixtureCancelled('NS')).toBe(false)
+    })
+  })
+
+  describe('getFixtureDateSaoPaulo (Filtro rigoroso America/Sao_Paulo)', () => {
+    it('converte corretamente partida UTC da noite para a data local de Brasília', () => {
+      // Jogo de ontem 23h00 em SP = 02h00 UTC do dia seguinte
+      // Ex: 2026-06-16T01:30:00Z -> 2026-06-15 22:30:00 em SP
+      expect(getFixtureDateSaoPaulo('2026-06-16T01:30:00Z')).toBe('2026-06-15')
+      // Jogo das 20h00 em SP = 23h00 UTC do mesmo dia
+      expect(getFixtureDateSaoPaulo('2026-06-15T23:00:00Z')).toBe('2026-06-15')
+      // Jogo na madrugada em Londres (02:00 UTC) = dia anterior em SP (23:00)
+      expect(getFixtureDateSaoPaulo('2026-06-16T02:00:00Z')).toBe('2026-06-15')
+      // Jogo às 03:00 UTC = 00:00 (meia-noite) em SP já é dia 16
+      expect(getFixtureDateSaoPaulo('2026-06-16T03:00:00Z')).toBe('2026-06-16')
     })
   })
 

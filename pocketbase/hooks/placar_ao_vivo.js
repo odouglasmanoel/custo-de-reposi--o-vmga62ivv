@@ -382,14 +382,21 @@ routerAdd('GET', '/backend/v1/placar-ao-vivo', (e) => {
         }
       }
 
-      var stShort =
-        m.status === 'PAUSED'
-          ? 'HT'
-          : m.status === 'IN_PLAY'
-            ? '1H'
-            : m.status === 'FINISHED'
-              ? 'FT'
-              : m.status
+      var rawStatus = (m.status || '').toUpperCase().trim()
+      var stShort = rawStatus
+      if (rawStatus === 'PAUSED') {
+        stShort = 'HT'
+      } else if (rawStatus === 'IN_PLAY') {
+        stShort = '1H'
+      } else if (rawStatus === 'FINISHED') {
+        stShort = 'FT'
+      } else if (rawStatus === 'POSTPONED' || rawStatus === 'PST') {
+        stShort = 'PST'
+      } else if (rawStatus === 'CANCELLED' || rawStatus === 'CANC') {
+        stShort = 'CANC'
+      } else if (rawStatus === 'SUSPENDED' || rawStatus === 'SUSP') {
+        stShort = 'SUSP'
+      }
 
       return {
         provider: 'football_data',
@@ -878,9 +885,46 @@ routerAdd('GET', '/backend/v1/placar-ao-vivo', (e) => {
         }
       }
 
+      var fixtureObj = item.fixture || {}
+      var rawStatusShort =
+        fixtureObj.status && fixtureObj.status.short
+          ? String(fixtureObj.status.short).toUpperCase().trim()
+          : ''
+      var rawStatusLong =
+        fixtureObj.status && fixtureObj.status.long
+          ? String(fixtureObj.status.long).toUpperCase().trim()
+          : ''
+
+      var normShort = rawStatusShort
+      if (
+        rawStatusShort === 'PST' ||
+        rawStatusShort === 'POSTP' ||
+        rawStatusLong === 'MATCH POSTPONED' ||
+        rawStatusLong === 'POSTPONED'
+      ) {
+        normShort = 'PST'
+      } else if (
+        rawStatusShort === 'CANC' ||
+        rawStatusShort === 'CANCELLED' ||
+        rawStatusLong === 'MATCH CANCELLED' ||
+        rawStatusLong === 'CANCELLED'
+      ) {
+        normShort = 'CANC'
+      } else if (rawStatusShort === 'SUSP' || rawStatusLong === 'MATCH SUSPENDED') {
+        normShort = 'SUSP'
+      } else if (rawStatusShort === 'ABD' || rawStatusLong === 'MATCH ABANDONED') {
+        normShort = 'ABD'
+      }
+
+      var normalizedFixture = Object.assign({}, fixtureObj, {
+        status: Object.assign({}, fixtureObj.status || {}, {
+          short: normShort,
+        }),
+      })
+
       return {
         provider: 'api_football',
-        fixture: item.fixture,
+        fixture: normalizedFixture,
         teams: item.teams,
         goals: item.goals,
         score: item.score,
@@ -1341,6 +1385,23 @@ routerAdd('GET', '/backend/v1/jogos-do-dia', (e) => {
     var allFixtures = null
     var rateLimitHit = false
 
+    // Helper para converter data UTC para YYYY-MM-DD em America/Sao_Paulo (UTC-3)
+    var toDateStringSaoPaulo = function (dateInput) {
+      if (!dateInput) return null
+      try {
+        var d = new Date(dateInput)
+        if (isNaN(d.getTime())) return null
+        // Subtrai 3 horas (America/Sao_Paulo UTC-3 padrão)
+        var spTime = new Date(d.getTime() - 3 * 3600 * 1000)
+        var ySP = spTime.getUTCFullYear()
+        var mSP = ('0' + (spTime.getUTCMonth() + 1)).slice(-2)
+        var dSP = ('0' + spTime.getUTCDate()).slice(-2)
+        return ySP + '-' + mSP + '-' + dSP
+      } catch (_) {
+        return null
+      }
+    }
+
     // Função interna para normalizar dados do Football-Data.org para jogos-do-dia
     var parseFootballDataToDayFixtures = function (fdMatches) {
       var convertedFixtures = []
@@ -1348,19 +1409,33 @@ routerAdd('GET', '/backend/v1/jogos-do-dia', (e) => {
 
       for (var fdi = 0; fdi < fdMatches.length; fdi++) {
         var m = fdMatches[fdi]
+        var matchDateSP = toDateStringSaoPaulo(m.utcDate)
+        // FILTRO ESTRITO DE DATA (America/Sao_Paulo): se o jogo pertence a outro dia no fuso de SP, ignora
+        if (dateQuery && matchDateSP && matchDateSP !== dateQuery) {
+          continue
+        }
+
         var homeScore = m.score && m.score.fullTime ? m.score.fullTime.home : null
         var awayScore = m.score && m.score.fullTime ? m.score.fullTime.away : null
         var htHome = m.score && m.score.halfTime ? m.score.halfTime.home : null
         var htAway = m.score && m.score.halfTime ? m.score.halfTime.away : null
 
-        var stShort =
-          m.status === 'PAUSED'
-            ? 'HT'
-            : m.status === 'IN_PLAY'
-              ? '1H'
-              : m.status === 'FINISHED'
-                ? 'FT'
-                : m.status
+        var rawStatusFD = (m.status || '').toUpperCase().trim()
+        var stShort = rawStatusFD
+        if (rawStatusFD === 'PAUSED') {
+          stShort = 'HT'
+        } else if (rawStatusFD === 'IN_PLAY') {
+          stShort = '1H'
+        } else if (rawStatusFD === 'FINISHED') {
+          stShort = 'FT'
+        } else if (rawStatusFD === 'POSTPONED' || rawStatusFD === 'PST') {
+          stShort = 'PST'
+        } else if (rawStatusFD === 'CANCELLED' || rawStatusFD === 'CANC') {
+          stShort = 'CANC'
+        } else if (rawStatusFD === 'SUSPENDED' || rawStatusFD === 'SUSP') {
+          stShort = 'SUSP'
+        }
+
         var isLive =
           ['1H', 'HT', '2H', 'ET', 'BT', 'P', 'LIVE', 'IN_PLAY', 'PAUSED'].indexOf(stShort) !== -1
         if (isLive) hasLiveMatchFD = true
@@ -1818,9 +1893,44 @@ routerAdd('GET', '/backend/v1/jogos-do-dia', (e) => {
       var item = allFixtures[i]
       var fId = (item.fixture && item.fixture.id) || i
       if (seenFixtureIds[fId]) continue
+
+      // FILTRO ESTRITO DE FUSO HORÁRIO (America/Sao_Paulo):
+      // Partida cujo horário, convertido para America/Sao_Paulo (UTC-3), pertence a outro dia
+      // que não a data consultada (dateQuery) NÃO deve aparecer na listagem.
+      var fixtureDateStr = item.fixture && item.fixture.date ? String(item.fixture.date) : ''
+      var fixtureDateSP = toDateStringSaoPaulo(fixtureDateStr)
+      if (dateQuery && fixtureDateSP && fixtureDateSP !== dateQuery) {
+        continue
+      }
+
       seenFixtureIds[fId] = true
 
       var statusShort = (item.fixture && item.fixture.status && item.fixture.status.short) || ''
+      var statusLong = (item.fixture && item.fixture.status && item.fixture.status.long) || ''
+      var rawShortUpper = statusShort.toUpperCase().trim()
+      var rawLongUpper = statusLong.toUpperCase().trim()
+
+      // Normaliza dialetos de status para PST (Adiado) e CANC (Cancelado)
+      if (
+        rawShortUpper === 'PST' ||
+        rawShortUpper === 'POSTP' ||
+        rawLongUpper === 'MATCH POSTPONED' ||
+        rawLongUpper === 'POSTPONED'
+      ) {
+        statusShort = 'PST'
+      } else if (
+        rawShortUpper === 'CANC' ||
+        rawShortUpper === 'CANCELLED' ||
+        rawLongUpper === 'MATCH CANCELLED' ||
+        rawLongUpper === 'CANCELLED'
+      ) {
+        statusShort = 'CANC'
+      } else if (rawShortUpper === 'SUSP' || rawLongUpper === 'MATCH SUSPENDED') {
+        statusShort = 'SUSP'
+      } else if (rawShortUpper === 'ABD' || rawLongUpper === 'MATCH ABANDONED') {
+        statusShort = 'ABD'
+      }
+
       var isLive = ['1H', 'HT', '2H', 'ET', 'BT', 'P', 'LIVE'].indexOf(statusShort) !== -1
       if (isLive) {
         hasLiveMatch = true
@@ -1885,8 +1995,14 @@ routerAdd('GET', '/backend/v1/jogos-do-dia', (e) => {
         region = 'Futebol Europeu'
       }
 
+      var fixedFixtureObj = Object.assign({}, item.fixture || {}, {
+        status: Object.assign({}, (item.fixture && item.fixture.status) || {}, {
+          short: statusShort,
+        }),
+      })
+
       rawFixtures.push({
-        fixture: item.fixture,
+        fixture: fixedFixtureObj,
         league: {
           id: item.league ? item.league.id : null,
           name: item.league ? item.league.name : '',
