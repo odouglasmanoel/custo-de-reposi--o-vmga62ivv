@@ -15,6 +15,7 @@ import {
   Database,
   RefreshCw,
   Zap,
+  Globe,
 } from 'lucide-react'
 import pb from '@/lib/pocketbase/client'
 import { useAuth } from '@/context/AuthContext'
@@ -33,12 +34,14 @@ interface ConfigState {
   hasDbKey: boolean
   hasSecretFallback: boolean
   maskedKey: string
-  hasFallbackKey?: boolean
-  hasFallbackDbKey?: boolean
-  maskedFallbackKey?: string
+  hasFallbackKey: boolean
+  hasFallbackDbKey: boolean
+  maskedFallbackKey: string
+  hasTsdbKey?: boolean
+  hasTsdbDbKey?: boolean
+  maskedTsdbKey?: string
   ativo: boolean
 }
-
 export default function AdminConfiguracoes() {
   const { user, isAdmin } = useAuth()
   const { toast } = useToast()
@@ -58,6 +61,9 @@ export default function AdminConfiguracoes() {
     hasFallbackKey: false,
     hasFallbackDbKey: false,
     maskedFallbackKey: '',
+    hasTsdbKey: false,
+    hasTsdbDbKey: false,
+    maskedTsdbKey: '',
     ativo: true,
   })
 
@@ -68,6 +74,15 @@ export default function AdminConfiguracoes() {
   // Campo específico para chave secundária de contingência (Football-Data.org)
   const [fallbackApiKeyInput, setFallbackApiKeyInput] = useState('')
   const [showFallbackKeyText, setShowFallbackKeyText] = useState(false)
+
+  // Campo específico para chave do TheSportsDB (Sul-Americana / Libertadores)
+  const [tsdbApiKeyInput, setTsdbApiKeyInput] = useState('')
+  const [showTsdbKeyText, setShowTsdbKeyText] = useState(false)
+  const [testingTsdb, setTestingTsdb] = useState(false)
+  const [tsdbTestResult, setTsdbTestResult] = useState<{
+    success: boolean
+    message: string
+  } | null>(null)
 
   const [ativoInput, setAtivoInput] = useState(true)
 
@@ -128,6 +143,7 @@ export default function AdminConfiguracoes() {
     setSaving(true)
     setTestResult(null)
     setFallbackTestResult(null)
+    setTsdbTestResult(null)
     try {
       const headers: Record<string, string> = {
         'Content-Type': 'application/json',
@@ -140,6 +156,7 @@ export default function AdminConfiguracoes() {
         provedor: ProvedorKey
         api_key?: string
         fallback_api_key?: string
+        tsdb_api_key?: string
         ativo: boolean
       } = {
         provedor: selectedProvedor,
@@ -156,6 +173,11 @@ export default function AdminConfiguracoes() {
         payload.fallback_api_key = fallbackApiKeyInput.trim()
       }
 
+      // Se o usuário digitou uma nova chave para TheSportsDB (Sul-Americana / Libertadores)
+      if (tsdbApiKeyInput.trim()) {
+        payload.tsdb_api_key = tsdbApiKeyInput.trim()
+      }
+
       const res = await fetch(
         `${import.meta.env.VITE_POCKETBASE_URL}/backend/v1/placar-ao-vivo/config`,
         {
@@ -170,7 +192,7 @@ export default function AdminConfiguracoes() {
         toast({
           title: 'Configurações salvas!',
           description:
-            'As chaves de API principal e de contingência foram gravadas com segurança no banco de dados.',
+            'As chaves de API principal, de contingência e TheSportsDB foram gravadas com segurança no banco de dados.',
         })
         setConfig({
           provedor: data.provedor,
@@ -181,10 +203,14 @@ export default function AdminConfiguracoes() {
           hasFallbackKey: data.hasFallbackKey,
           hasFallbackDbKey: data.hasFallbackKey,
           maskedFallbackKey: data.maskedFallbackKey,
+          hasTsdbKey: data.hasTsdbKey,
+          hasTsdbDbKey: data.hasTsdbDbKey,
+          maskedTsdbKey: data.maskedTsdbKey,
           ativo: data.ativo,
         })
         setApiKeyInput('') // Limpa campo de edição
         setFallbackApiKeyInput('') // Limpa campo de edição
+        setTsdbApiKeyInput('') // Limpa campo TheSportsDB
       } else {
         const err = await res.json().catch(() => ({}))
         toast({
@@ -354,6 +380,61 @@ export default function AdminConfiguracoes() {
       })
     } finally {
       setTestingFallback(false)
+    }
+  }
+
+  // Teste de conexão específico para TheSportsDB (Sul-Americana / Libertadores)
+  const handleTestTsdbConnection = async () => {
+    setTestingTsdb(true)
+    setTsdbTestResult(null)
+    try {
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+      }
+      if (pb.authStore.token) {
+        headers['Authorization'] = pb.authStore.token
+      }
+
+      const res = await fetch(
+        `${import.meta.env.VITE_POCKETBASE_URL}/backend/v1/placar-ao-vivo/test`,
+        {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({
+            provedor: 'thesportsdb',
+            api_key: tsdbApiKeyInput.trim() || undefined,
+          }),
+        },
+      )
+
+      const data = await res.json().catch(() => ({}))
+      if (res.ok && data.success) {
+        setTsdbTestResult({
+          success: true,
+          message: data.message || 'Conexão com TheSportsDB validada com sucesso!',
+        })
+        toast({
+          title: 'TheSportsDB Conectado! 🌎',
+          description: 'A integração com TheSportsDB para CONMEBOL está operando.',
+        })
+      } else {
+        setTsdbTestResult({
+          success: false,
+          message: data.message || 'Falha ao conectar com o TheSportsDB.',
+        })
+        toast({
+          title: 'Falha no teste TheSportsDB',
+          description: data.message || 'Verifique a chave ou conectividade.',
+          variant: 'destructive',
+        })
+      }
+    } catch (err: unknown) {
+      setTsdbTestResult({
+        success: false,
+        message: err instanceof Error ? err.message : 'Erro de rede ou timeout.',
+      })
+    } finally {
+      setTestingTsdb(false)
     }
   }
 
@@ -769,6 +850,98 @@ export default function AdminConfiguracoes() {
                           <AlertCircle className="h-4 w-4 shrink-0 text-red-600 mt-0.5" />
                         )}
                         <p className="leading-relaxed">{fallbackTestResult.message}</p>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* BLOCO DE COBERTURA CONMEBOL (THESPORTSDB) */}
+                  <div className="rounded-xl border border-blue-300 bg-blue-50/40 p-4 space-y-3">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <Globe className="h-4 w-4 text-blue-600" />
+                        <Label htmlFor="tsdb-key-input" className="text-xs font-bold text-blue-950">
+                          Chave TheSportsDB (Sul-Americana / Libertadores)
+                        </Label>
+                      </div>
+                      <Badge className="bg-blue-600 text-white font-semibold text-[10px]">
+                        CONMEBOL Fallback
+                      </Badge>
+                    </div>
+
+                    <p className="text-[11px] text-slate-600 leading-relaxed">
+                      Como a Football-Data.org não cobre a Copa Sul-Americana (ex.: Flamengo x
+                      Independiente del Valle), o servidor consulta o TheSportsDB automaticamente
+                      quando a aba CONMEBOL estiver ativa ou o provedor primário não cobrir essas
+                      partidas.
+                    </p>
+
+                    <div className="relative">
+                      <Input
+                        id="tsdb-key-input"
+                        type={showTsdbKeyText ? 'text' : 'password'}
+                        placeholder={
+                          config.hasTsdbKey
+                            ? `Chave TheSportsDB salva (${config.maskedTsdbKey || 'Salva'}). Padrão "3" usado se em branco.`
+                            : 'Chave TheSportsDB opcional (se em branco, usa a pública "3")'
+                        }
+                        value={tsdbApiKeyInput}
+                        onChange={(e) => setTsdbApiKeyInput(e.target.value)}
+                        className="h-10 pr-10 font-mono text-xs border-blue-200 bg-white focus-visible:border-blue-500 focus-visible:ring-blue-500"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowTsdbKeyText(!showTsdbKeyText)}
+                        className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                        title={showTsdbKeyText ? 'Ocultar' : 'Exibir'}
+                      >
+                        {showTsdbKeyText ? (
+                          <EyeOff className="h-4 w-4" />
+                        ) : (
+                          <Eye className="h-4 w-4" />
+                        )}
+                      </button>
+                    </div>
+
+                    <div className="flex items-center justify-between pt-1">
+                      <span className="text-[11px] text-blue-800">
+                        Chave padrão pública "3" ativada automaticamente.
+                      </span>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={handleTestTsdbConnection}
+                        disabled={testingTsdb || saving}
+                        className="h-7 border-blue-300 bg-white text-xs font-semibold text-blue-900 hover:bg-blue-50"
+                      >
+                        {testingTsdb ? (
+                          <>
+                            <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin text-blue-700" />
+                            Testando TheSportsDB...
+                          </>
+                        ) : (
+                          <>
+                            <Radio className="mr-1.5 h-3.5 w-3.5 text-blue-600" />
+                            Testar Conexão TheSportsDB
+                          </>
+                        )}
+                      </Button>
+                    </div>
+
+                    {tsdbTestResult && (
+                      <div
+                        className={`flex items-start gap-2 rounded-lg border p-2.5 text-xs ${
+                          tsdbTestResult.success
+                            ? 'border-blue-300 bg-blue-50 text-blue-900'
+                            : 'border-red-300 bg-red-50 text-red-900'
+                        }`}
+                      >
+                        {tsdbTestResult.success ? (
+                          <CheckCircle2 className="h-4 w-4 shrink-0 text-blue-600 mt-0.5" />
+                        ) : (
+                          <AlertCircle className="h-4 w-4 shrink-0 text-red-600 mt-0.5" />
+                        )}
+                        <p className="leading-relaxed">{tsdbTestResult.message}</p>
                       </div>
                     )}
                   </div>

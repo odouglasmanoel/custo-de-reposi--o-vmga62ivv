@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-09-17T10:41:57.076Z",
+  "generatedAt": "2026-09-17T10:52:31.463Z",
   "collections": [
     {
       "name": "users",
@@ -508,6 +508,110 @@
         }
       ],
       "indexes": ["CREATE UNIQUE INDEX idx_config_integracoes_chave ON config_integracoes (chave)"]
+    },
+    {
+      "name": "jogos_do_dia_manuais",
+      "type": "base",
+      "apiRules": {
+        "list": "@request.auth.id != ''",
+        "view": "@request.auth.id != ''",
+        "create": "@request.auth.id != ''",
+        "update": "@request.auth.id != ''",
+        "delete": "@request.auth.id != ''"
+      },
+      "fields": [
+        {
+          "name": "time_casa",
+          "type": "text",
+          "required": true,
+          "system": false
+        },
+        {
+          "name": "time_visitante",
+          "type": "text",
+          "required": true,
+          "system": false
+        },
+        {
+          "name": "data",
+          "type": "text",
+          "required": true,
+          "system": false
+        },
+        {
+          "name": "horario",
+          "type": "text",
+          "required": true,
+          "system": false
+        },
+        {
+          "name": "campeonato",
+          "type": "text",
+          "required": true,
+          "system": false
+        },
+        {
+          "name": "regiao",
+          "type": "select",
+          "required": false,
+          "system": false,
+          "selectValues": ["Brasileirão & Copas", "Sul-Americana", "Futebol Europeu", "Outros"]
+        },
+        {
+          "name": "placar_casa",
+          "type": "number",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "placar_visitante",
+          "type": "number",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "status",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "logo_casa",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "logo_visitante",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "observacao",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "created",
+          "type": "autodate",
+          "required": false,
+          "system": false,
+          "autodateTriggers": ["onCreate"]
+        },
+        {
+          "name": "updated",
+          "type": "autodate",
+          "required": false,
+          "system": false,
+          "autodateTriggers": ["onCreate", "onUpdate"]
+        }
+      ],
+      "indexes": [
+        "CREATE INDEX idx_jogos_manuais_data ON jogos_do_dia_manuais (data)",
+        "CREATE INDEX idx_jogos_manuais_campeonato ON jogos_do_dia_manuais (campeonato)"
+      ]
     }
   ]
 }

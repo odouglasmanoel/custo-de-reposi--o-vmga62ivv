@@ -12,6 +12,10 @@ import {
   Filter,
   Flame,
   Globe2,
+  PlusCircle,
+  Pencil,
+  Trash2,
+  Sparkles,
 } from 'lucide-react'
 import pb from '@/lib/pocketbase/client'
 import { useAuth } from '@/context/AuthContext'
@@ -20,6 +24,15 @@ import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+} from '@/components/ui/dialog'
+import { Label } from '@/components/ui/label'
+import { useToast } from '@/hooks/use-toast'
 import { getHojeDataSaoPaulo, formatDataBR } from '@/lib/dateUtils'
 import {
   getFixtureDateSaoPaulo,
@@ -38,10 +51,12 @@ export interface FixtureScorer {
 
 export interface DayFixture {
   fixture: {
-    id: number
+    id: number | string
     date: string
     timestamp?: number
     timezone?: string
+    isManual?: boolean
+    manualId?: string
     status: {
       long: string
       short: string
@@ -83,6 +98,8 @@ export interface DayFixture {
   }
   scorers: FixtureScorer[]
   isLive: boolean
+  isManual?: boolean
+  manualRecordId?: string
 }
 
 interface ApiResponse {
@@ -122,6 +139,178 @@ export default function JogosDoDia() {
   const [selectedRegion, setSelectedRegion] = useState<string>('todos')
   const [selectedStatus, setSelectedStatus] = useState<string>('todos') // todos, ao-vivo, em-breve, finalizado
   const [searchTerm, setSearchTerm] = useState<string>('')
+
+  // Estado do Modal de Inserir/Editar Jogo Manual pelo Admin (Douglas)
+  const { toast } = useToast()
+  const [manualModalOpen, setManualModalOpen] = useState(false)
+  const [savingManual, setSavingManual] = useState(false)
+  const [deletingManualId, setDeletingManualId] = useState<string | null>(null)
+  const [editingManualRecordId, setEditingManualRecordId] = useState<string | null>(null)
+  const [manualFormData, setManualFormData] = useState({
+    timeCasa: '',
+    timeVisitante: '',
+    horario: '20:00',
+    data: '',
+    campeonato: 'Copa Sul-Americana',
+    regiao: 'Sul-Americana' as
+      | 'Brasileirão & Copas'
+      | 'Sul-Americana'
+      | 'Futebol Europeu'
+      | 'Outros',
+    placarCasa: '',
+    placarVisitante: '',
+    status: 'NS',
+    observacao: '',
+  })
+
+  const openNewManualModal = () => {
+    setEditingManualRecordId(null)
+    setManualFormData({
+      timeCasa: '',
+      timeVisitante: '',
+      horario: '20:00',
+      data: selectedDate || getHojeDataSaoPaulo(Date.now()),
+      campeonato: 'Copa Sul-Americana',
+      regiao: 'Sul-Americana',
+      placarCasa: '',
+      placarVisitante: '',
+      status: 'NS',
+      observacao: '',
+    })
+    setManualModalOpen(true)
+  }
+
+  const openEditManualModal = (fixture: DayFixture) => {
+    const recordId =
+      fixture.manualRecordId ||
+      (typeof fixture.fixture.id === 'string' && fixture.fixture.id.startsWith('manual_')
+        ? fixture.fixture.id.replace('manual_', '')
+        : null)
+    setEditingManualRecordId(recordId)
+
+    // Extrai horário de fixture.date ou hora default
+    let horaStr = '20:00'
+    if (fixture.fixture.date) {
+      try {
+        const d = new Date(fixture.fixture.date)
+        if (!isNaN(d.getTime())) {
+          horaStr = d.toLocaleTimeString('pt-BR', {
+            hour: '2-digit',
+            minute: '2-digit',
+            timeZone: 'America/Sao_Paulo',
+          })
+        }
+      } catch {
+        /* intentionally ignored */
+      }
+    }
+
+    setManualFormData({
+      timeCasa: fixture.teams.home.name || '',
+      timeVisitante: fixture.teams.away.name || '',
+      horario: horaStr,
+      data: selectedDate,
+      campeonato: fixture.league.name || '',
+      regiao: fixture.league.region || 'Sul-Americana',
+      placarCasa:
+        fixture.goals.home !== null && fixture.goals.home !== undefined
+          ? String(fixture.goals.home)
+          : '',
+      placarVisitante:
+        fixture.goals.away !== null && fixture.goals.away !== undefined
+          ? String(fixture.goals.away)
+          : '',
+      status: fixture.fixture.status?.short || 'NS',
+      observacao: fixture.league.round !== 'Manual' ? fixture.league.round || '' : '',
+    })
+    setManualModalOpen(true)
+  }
+
+  const handleSaveManualGame = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!manualFormData.timeCasa.trim() || !manualFormData.timeVisitante.trim()) {
+      toast({
+        title: 'Campos obrigatórios',
+        description: 'Por favor, informe os nomes do Time da Casa e Time Visitante.',
+        variant: 'destructive',
+      })
+      return
+    }
+
+    setSavingManual(true)
+    try {
+      const pCasa =
+        manualFormData.placarCasa.trim() !== '' ? parseInt(manualFormData.placarCasa, 10) : null
+      const pVis =
+        manualFormData.placarVisitante.trim() !== ''
+          ? parseInt(manualFormData.placarVisitante, 10)
+          : null
+
+      const payload = {
+        time_casa: manualFormData.timeCasa.trim(),
+        time_visitante: manualFormData.timeVisitante.trim(),
+        data: manualFormData.data.trim() || selectedDate,
+        horario: manualFormData.horario.trim() || '20:00',
+        campeonato: manualFormData.campeonato.trim() || 'Copa Sul-Americana',
+        regiao: manualFormData.regiao,
+        placar_casa: pCasa !== null && !isNaN(pCasa) ? pCasa : null,
+        placar_visitante: pVis !== null && !isNaN(pVis) ? pVis : null,
+        status: manualFormData.status || 'NS',
+        observacao: manualFormData.observacao.trim(),
+      }
+
+      if (editingManualRecordId) {
+        await pb.collection('jogos_do_dia_manuais').update(editingManualRecordId, payload)
+        toast({
+          title: 'Jogo manual atualizado!',
+          description: `${payload.time_casa} x ${payload.time_visitante} atualizado com prioridade.`,
+        })
+      } else {
+        await pb.collection('jogos_do_dia_manuais').create(payload)
+        toast({
+          title: 'Jogo manual adicionado!',
+          description: `${payload.time_casa} x ${payload.time_visitante} garantido na exibição.`,
+        })
+      }
+
+      setManualModalOpen(false)
+      // Recarrega jogos do dia (com forçamento)
+      await fetchJogos(selectedDate, true)
+    } catch (err: unknown) {
+      console.error('Erro ao salvar jogo manual:', err)
+      toast({
+        title: 'Erro ao salvar jogo manual',
+        description: err instanceof Error ? err.message : 'Falha ao salvar no banco.',
+        variant: 'destructive',
+      })
+    } finally {
+      setSavingManual(false)
+    }
+  }
+
+  const handleDeleteManualGame = async (recordId: string, fixtureTitle: string) => {
+    if (!confirm(`Deseja realmente remover o jogo manual "${fixtureTitle}"?`)) {
+      return
+    }
+    setDeletingManualId(recordId)
+    try {
+      await pb.collection('jogos_do_dia_manuais').delete(recordId)
+      toast({
+        title: 'Jogo manual removido',
+        description: 'A partida manual foi excluída com sucesso.',
+      })
+      await fetchJogos(selectedDate, true)
+    } catch (err: unknown) {
+      console.error('Erro ao deletar jogo manual:', err)
+      toast({
+        title: 'Erro ao remover',
+        description: err instanceof Error ? err.message : 'Não foi possível deletar.',
+        variant: 'destructive',
+      })
+    } finally {
+      setDeletingManualId(null)
+    }
+  }
 
   const fetchJogos = useCallback(async (dateStr: string, force = false) => {
     try {
@@ -427,7 +616,13 @@ export default function JogosDoDia() {
     }
 
     return Array.from(map.values()).sort((a, b) => {
-      // Prioridade: ligas com jogos ao vivo primeiro, depois pelo nome
+      // Prioridade máxima: ligas com jogos manuais inseridos pelo Admin
+      const aHasManual = a.matches.some((m) => m.isManual || m.fixture?.isManual)
+      const bHasManual = b.matches.some((m) => m.isManual || m.fixture?.isManual)
+      if (aHasManual && !bHasManual) return -1
+      if (!aHasManual && bHasManual) return 1
+
+      // Em seguida: ligas com jogos ao vivo primeiro, depois pelo nome
       const aHasLive = a.matches.some((m) => m.isLive)
       const bHasLive = b.matches.some((m) => m.isLive)
       if (aHasLive && !bHasLive) return -1
@@ -438,10 +633,10 @@ export default function JogosDoDia() {
 
   // Helpers de formatação de status
   const renderStatusBadge = (fixture: DayFixture) => {
+    const isManual = Boolean(fixture.isManual || fixture.fixture?.isManual)
     const st = (fixture.fixture?.status?.short || '').toUpperCase().trim()
     const long = (fixture.fixture?.status?.long || '').toUpperCase().trim()
     const elapsed = fixture.fixture?.status?.elapsed
-
     // Jogos Adiados (PST / POSTPONED)
     if (isFixturePostponed(st, long)) {
       return (
@@ -494,15 +689,21 @@ export default function JogosDoDia() {
 
     if (['FT', 'AET', 'PEN'].includes(st)) {
       return (
-        <Badge
-          variant="outline"
-          className="border-slate-300 bg-slate-100 text-slate-700 font-bold text-[11px]"
-        >
-          Finalizado
-        </Badge>
+        <div className="flex flex-wrap items-center gap-1">
+          <Badge
+            variant="outline"
+            className="border-slate-300 bg-slate-100 text-slate-700 font-bold text-[11px]"
+          >
+            Finalizado
+          </Badge>
+          {isManual && (
+            <Badge className="border-amber-400 bg-amber-50 text-amber-800 border font-semibold text-[10px] px-1.5 py-0">
+              Manual
+            </Badge>
+          )}
+        </div>
       )
     }
-
     // Horário agendado (apenas se data for válida)
     const matchDate = new Date(fixture.fixture.date)
     if (isNaN(matchDate.getTime())) {
@@ -523,13 +724,20 @@ export default function JogosDoDia() {
     })
 
     return (
-      <Badge
-        variant="outline"
-        className="border-blue-200 bg-blue-50 text-blue-800 font-bold text-[11px] gap-1"
-      >
-        <Clock className="h-3 w-3" />
-        {horaBR}
-      </Badge>
+      <div className="flex flex-wrap items-center gap-1">
+        <Badge
+          variant="outline"
+          className="border-blue-200 bg-blue-50 text-blue-800 font-bold text-[11px] gap-1"
+        >
+          <Clock className="h-3 w-3" />
+          {horaBR}
+        </Badge>
+        {isManual && (
+          <Badge className="border-amber-400 bg-amber-50 text-amber-800 border font-semibold text-[10px] px-1.5 py-0">
+            Manual
+          </Badge>
+        )}
+      </div>
     )
   }
 
@@ -607,6 +815,20 @@ export default function JogosDoDia() {
             />
             <span>Atualizar</span>
           </Button>
+
+          {/* Botão de Inserir Jogo Manual (Garantia Total do Admin) */}
+          {isAdmin && (
+            <Button
+              type="button"
+              size="sm"
+              onClick={openNewManualModal}
+              className="h-8 gap-1.5 text-xs font-bold bg-amber-600 hover:bg-amber-700 text-white shadow-xs"
+              title="Inserir / Editar Jogo do Dia Manualmente"
+            >
+              <PlusCircle className="h-3.5 w-3.5" />
+              <span>Inserir Jogo Manual</span>
+            </Button>
+          )}
         </div>
       </div>
 
@@ -979,9 +1201,49 @@ export default function JogosDoDia() {
                             )}
                           </div>
 
-                          {/* Espaço lateral para alinhamento uniforme */}
-                          <div className="hidden sm:block sm:w-20 text-right">
-                            <span className="text-[10px] text-slate-400">{match.fixture.id}</span>
+                          {/* Espaço lateral para alinhamento uniforme ou Ações de Admin no Jogo Manual */}
+                          <div className="shrink-0 text-right sm:w-28 flex items-center justify-end gap-1">
+                            {isAdmin && (match.isManual || match.fixture?.isManual) && (
+                              <div className="flex items-center gap-1">
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="icon"
+                                  className="h-7 w-7 text-amber-700 hover:bg-amber-100/60"
+                                  title="Editar este jogo manual"
+                                  onClick={() => openEditManualModal(match)}
+                                >
+                                  <Pencil className="h-3.5 w-3.5" />
+                                </Button>
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="icon"
+                                  disabled={deletingManualId === match.manualRecordId}
+                                  className="h-7 w-7 text-rose-600 hover:bg-rose-100/60"
+                                  title="Remover este jogo manual"
+                                  onClick={() => {
+                                    const recId =
+                                      match.manualRecordId ||
+                                      (typeof match.fixture.id === 'string' &&
+                                      match.fixture.id.startsWith('manual_')
+                                        ? match.fixture.id.replace('manual_', '')
+                                        : '')
+                                    if (recId) {
+                                      handleDeleteManualGame(
+                                        recId,
+                                        `${match.teams.home.name} x ${match.teams.away.name}`,
+                                      )
+                                    }
+                                  }}
+                                >
+                                  <Trash2 className="h-3.5 w-3.5" />
+                                </Button>
+                              </div>
+                            )}
+                            <span className="text-[10px] text-slate-400 block truncate max-w-[70px]">
+                              {match.fixture.id}
+                            </span>
                           </div>
                         </div>
                       </div>
@@ -993,6 +1255,249 @@ export default function JogosDoDia() {
           })}
         </div>
       )}
+
+      {/* Modal de Inserir / Editar Jogo do Dia Manualmente */}
+      <Dialog open={manualModalOpen} onOpenChange={setManualModalOpen}>
+        <DialogContent className="max-w-lg bg-white p-6 rounded-2xl shadow-xl">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-lg font-bold text-slate-900">
+              <Sparkles className="h-5 w-5 text-amber-600" />
+              {editingManualRecordId
+                ? 'Editar Jogo do Dia (Manual)'
+                : 'Inserir Jogo do Dia Manualmente'}
+            </DialogTitle>
+          </DialogHeader>
+
+          <form onSubmit={handleSaveManualGame} className="space-y-4 pt-2">
+            <p className="text-xs text-slate-500">
+              Jogos inseridos manualmente pelo Admin possuem <strong>prioridade total</strong> de
+              exibição e aparecem mesmo que APIs externas caiam ou fiquem sem cota.
+            </p>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label htmlFor="manual-time-casa" className="text-xs font-semibold text-slate-700">
+                  Time da Casa *
+                </Label>
+                <Input
+                  id="manual-time-casa"
+                  placeholder="Ex: Flamengo"
+                  value={manualFormData.timeCasa}
+                  onChange={(e) =>
+                    setManualFormData({ ...manualFormData, timeCasa: e.target.value })
+                  }
+                  required
+                  className="h-9 text-xs"
+                />
+              </div>
+
+              <div className="space-y-1.5">
+                <Label
+                  htmlFor="manual-time-visitante"
+                  className="text-xs font-semibold text-slate-700"
+                >
+                  Time Visitante *
+                </Label>
+                <Input
+                  id="manual-time-visitante"
+                  placeholder="Ex: Indep. del Valle"
+                  value={manualFormData.timeVisitante}
+                  onChange={(e) =>
+                    setManualFormData({ ...manualFormData, timeVisitante: e.target.value })
+                  }
+                  required
+                  className="h-9 text-xs"
+                />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label htmlFor="manual-data" className="text-xs font-semibold text-slate-700">
+                  Data (AAAA-MM-DD) *
+                </Label>
+                <Input
+                  id="manual-data"
+                  type="date"
+                  value={manualFormData.data}
+                  onChange={(e) => setManualFormData({ ...manualFormData, data: e.target.value })}
+                  required
+                  className="h-9 text-xs"
+                />
+              </div>
+
+              <div className="space-y-1.5">
+                <Label htmlFor="manual-horario" className="text-xs font-semibold text-slate-700">
+                  Horário (Brasília) *
+                </Label>
+                <Input
+                  id="manual-horario"
+                  placeholder="21:30"
+                  value={manualFormData.horario}
+                  onChange={(e) =>
+                    setManualFormData({ ...manualFormData, horario: e.target.value })
+                  }
+                  required
+                  className="h-9 text-xs font-mono"
+                />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label htmlFor="manual-campeonato" className="text-xs font-semibold text-slate-700">
+                  Campeonato *
+                </Label>
+                <Input
+                  id="manual-campeonato"
+                  placeholder="Ex: Copa Sul-Americana"
+                  value={manualFormData.campeonato}
+                  onChange={(e) =>
+                    setManualFormData({ ...manualFormData, campeonato: e.target.value })
+                  }
+                  required
+                  className="h-9 text-xs"
+                />
+              </div>
+
+              <div className="space-y-1.5">
+                <Label htmlFor="manual-regiao" className="text-xs font-semibold text-slate-700">
+                  Categoria / Região
+                </Label>
+                <select
+                  id="manual-regiao"
+                  value={manualFormData.regiao}
+                  onChange={(e) =>
+                    setManualFormData({
+                      ...manualFormData,
+                      regiao: e.target.value as
+                        | 'Brasileirão & Copas'
+                        | 'Sul-Americana'
+                        | 'Futebol Europeu'
+                        | 'Outros',
+                    })
+                  }
+                  className="w-full h-9 rounded-md border border-slate-200 bg-white px-2.5 text-xs text-slate-800 outline-none focus:border-amber-500"
+                >
+                  <option value="Sul-Americana">Sul-Americana / Liberta</option>
+                  <option value="Brasileirão & Copas">Brasileirão & Copas</option>
+                  <option value="Futebol Europeu">Futebol Europeu</option>
+                  <option value="Outros">Outros</option>
+                </select>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-3 gap-3">
+              <div className="space-y-1.5">
+                <Label
+                  htmlFor="manual-placar-casa"
+                  className="text-xs font-semibold text-slate-700"
+                >
+                  Gols Casa
+                </Label>
+                <Input
+                  id="manual-placar-casa"
+                  type="number"
+                  min="0"
+                  max="99"
+                  placeholder="-"
+                  value={manualFormData.placarCasa}
+                  onChange={(e) =>
+                    setManualFormData({ ...manualFormData, placarCasa: e.target.value })
+                  }
+                  className="h-9 text-xs font-mono"
+                />
+              </div>
+
+              <div className="space-y-1.5">
+                <Label
+                  htmlFor="manual-placar-visitante"
+                  className="text-xs font-semibold text-slate-700"
+                >
+                  Gols Visitante
+                </Label>
+                <Input
+                  id="manual-placar-visitante"
+                  type="number"
+                  min="0"
+                  max="99"
+                  placeholder="-"
+                  value={manualFormData.placarVisitante}
+                  onChange={(e) =>
+                    setManualFormData({ ...manualFormData, placarVisitante: e.target.value })
+                  }
+                  className="h-9 text-xs font-mono"
+                />
+              </div>
+
+              <div className="space-y-1.5">
+                <Label htmlFor="manual-status" className="text-xs font-semibold text-slate-700">
+                  Status
+                </Label>
+                <select
+                  id="manual-status"
+                  value={manualFormData.status}
+                  onChange={(e) => setManualFormData({ ...manualFormData, status: e.target.value })}
+                  className="w-full h-9 rounded-md border border-slate-200 bg-white px-2 text-xs text-slate-800 outline-none focus:border-amber-500"
+                >
+                  <option value="NS">Em Breve (NS)</option>
+                  <option value="1H">1º Tempo</option>
+                  <option value="HT">Intervalo</option>
+                  <option value="2H">2º Tempo</option>
+                  <option value="FT">Encerrado (FT)</option>
+                  <option value="PST">Adiado</option>
+                  <option value="CANC">Cancelado</option>
+                </select>
+              </div>
+            </div>
+
+            <div className="space-y-1.5">
+              <Label htmlFor="manual-obs" className="text-xs font-semibold text-slate-700">
+                Fase / Observação (opcional)
+              </Label>
+              <Input
+                id="manual-obs"
+                placeholder="Ex: Fase de Grupos - Rodada 5"
+                value={manualFormData.observacao}
+                onChange={(e) =>
+                  setManualFormData({ ...manualFormData, observacao: e.target.value })
+                }
+                className="h-9 text-xs"
+              />
+            </div>
+
+            <DialogFooter className="pt-2 flex items-center justify-end gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => setManualModalOpen(false)}
+                disabled={savingManual}
+                className="h-8 text-xs"
+              >
+                Cancelar
+              </Button>
+              <Button
+                type="submit"
+                size="sm"
+                disabled={savingManual}
+                className="h-8 text-xs font-bold bg-amber-600 hover:bg-amber-700 text-white"
+              >
+                {savingManual ? (
+                  <>
+                    <RefreshCw className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                    Salvando...
+                  </>
+                ) : editingManualRecordId ? (
+                  'Salvar Alterações'
+                ) : (
+                  'Cadastrar Jogo'
+                )}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

@@ -100,9 +100,176 @@ routerAdd('GET', '/backend/v1/placar-ao-vivo', (e) => {
       }
     }
 
+    // Chave do TheSportsDB (pode ser chave própria em config_integracoes 'thesportsdb_fallback' ou env ou '3')
+    let theSportsDbKey = ''
+    try {
+      const tsdbRec = $app.findFirstRecordByData(
+        'config_integracoes',
+        'chave',
+        'thesportsdb_fallback',
+      )
+      if (tsdbRec) {
+        theSportsDbKey = (tsdbRec.getString('api_key') || '').trim()
+      }
+    } catch (_) {}
+    if (!theSportsDbKey) {
+      try {
+        theSportsDbKey =
+          ($secrets.has && $secrets.has('THESPORTSDB_KEY')
+            ? $secrets.get('THESPORTSDB_KEY')
+            : '') ||
+          $os.getenv('THESPORTSDB_KEY') ||
+          ''
+      } catch (_) {}
+    }
+    if (!theSportsDbKey && provedor === 'thesportsdb' && apiKey) {
+      theSportsDbKey = apiKey
+    }
+    if (!theSportsDbKey) {
+      theSportsDbKey = '3'
+    }
+
     // Provedor TheSportsDB pode funcionar com chave pública "3" se nenhuma outra for inserida
     if (provedor === 'thesportsdb' && !apiKey) {
-      apiKey = '3'
+      apiKey = theSportsDbKey
+    }
+
+    // Função utilitária para buscar partidas da Copa Sudamericana e Copa Libertadores no TheSportsDB
+    // Converte para a estrutura esperada de rawFixtures (formato API-Football)
+    var fetchConmebolFromTheSportsDb = function (targetDate, apiKeyTsdb) {
+      if (!targetDate) return []
+      var key = apiKeyTsdb || '3'
+      var conmebolFixtures = []
+      var conmebolLeagues = [
+        { id: 4501, name: 'Copa Libertadores', shortId: 13 },
+        { id: 4724, name: 'Copa Sudamericana', shortId: 11 },
+      ]
+
+      for (var cli = 0; cli < conmebolLeagues.length; cli++) {
+        var cl = conmebolLeagues[cli]
+        try {
+          var tsdbUrl =
+            'https://www.thesportsdb.com/api/v1/json/' +
+            encodeURIComponent(key) +
+            '/eventsday.php?d=' +
+            encodeURIComponent(targetDate) +
+            '&l=' +
+            encodeURIComponent(cl.id)
+
+          var resTsdb = $http.send({
+            url: tsdbUrl,
+            method: 'GET',
+            timeout: 8,
+          })
+
+          if (
+            resTsdb &&
+            resTsdb.statusCode === 200 &&
+            resTsdb.json &&
+            Array.isArray(resTsdb.json.events)
+          ) {
+            var events = resTsdb.json.events
+            for (var ei = 0; ei < events.length; ei++) {
+              var ev = events[ei]
+              var homeTeam = (ev.strHomeTeam || '').trim()
+              var awayTeam = (ev.strAwayTeam || '').trim()
+              if (!homeTeam || !awayTeam) continue
+
+              var evDate = ev.dateEvent || targetDate
+              var evTime = ev.strTime || '20:00:00'
+              // Monta ISO string aproximada (UTC)
+              var isoDateStr =
+                evDate + 'T' + (evTime.indexOf(':') !== -1 ? evTime : '20:00:00') + 'Z'
+
+              var hScore =
+                ev.intHomeScore !== null && ev.intHomeScore !== undefined && ev.intHomeScore !== ''
+                  ? parseInt(ev.intHomeScore, 10)
+                  : null
+              var aScore =
+                ev.intAwayScore !== null && ev.intAwayScore !== undefined && ev.intAwayScore !== ''
+                  ? parseInt(ev.intAwayScore, 10)
+                  : null
+
+              var rawStatus = (ev.strStatus || '').trim().toUpperCase()
+              var shortStatus = 'NS'
+              if (
+                rawStatus === 'FT' ||
+                rawStatus === 'AOT' ||
+                rawStatus === 'FINISHED' ||
+                rawStatus === 'MATCH FINISHED'
+              ) {
+                shortStatus = 'FT'
+              } else if (
+                rawStatus === '1H' ||
+                rawStatus === '2H' ||
+                rawStatus === 'HT' ||
+                rawStatus === 'LIVE' ||
+                rawStatus === 'IN PROGRESS'
+              ) {
+                shortStatus = rawStatus === 'HT' ? 'HT' : '1H'
+              } else if (rawStatus === 'POSTPONED' || rawStatus === 'PST') {
+                shortStatus = 'PST'
+              } else if (rawStatus === 'CANCELLED' || rawStatus === 'CANC') {
+                shortStatus = 'CANC'
+              }
+
+              conmebolFixtures.push({
+                fixture: {
+                  id: 'tsdb_' + (ev.idEvent || cli + '_' + ei),
+                  date: isoDateStr,
+                  timestamp: Math.floor(new Date(isoDateStr).getTime() / 1000) || 0,
+                  status: {
+                    short: shortStatus,
+                    long: ev.strStatus || 'Not Started',
+                    elapsed: null,
+                  },
+                },
+                league: {
+                  id: cl.shortId,
+                  name: ev.strLeague || cl.name,
+                  country: 'South America',
+                  logo: ev.strLeagueBadge || ev.strBadge || '',
+                  flag: '',
+                  round: ev.strRound || '',
+                  region: 'Sul-Americana',
+                },
+                teams: {
+                  home: {
+                    id: parseInt(ev.idHomeTeam, 10) || 0,
+                    name: homeTeam,
+                    logo: ev.strHomeTeamBadge || '',
+                    country: 'South America',
+                  },
+                  away: {
+                    id: parseInt(ev.idAwayTeam, 10) || 0,
+                    name: awayTeam,
+                    logo: ev.strAwayTeamBadge || '',
+                    country: 'South America',
+                  },
+                },
+                goals: {
+                  home: !isNaN(hScore) ? hScore : null,
+                  away: !isNaN(aScore) ? aScore : null,
+                },
+                score: {
+                  halftime: { home: null, away: null },
+                  fulltime: {
+                    home: !isNaN(hScore) ? hScore : null,
+                    away: !isNaN(aScore) ? aScore : null,
+                  },
+                },
+                events: [],
+                isLive: ['1H', 'HT', '2H', 'LIVE'].indexOf(shortStatus) !== -1,
+                provider: 'thesportsdb',
+              })
+            }
+          }
+        } catch (errTsdbLeague) {
+          console.log('[TheSportsDB Conmebol] Erro ao buscar liga ' + cl.name + ':', errTsdbLeague)
+        }
+      }
+
+      return conmebolFixtures
     }
 
     // Lê também a sobrescrita manual de partidas salva pelo Admin Douglas (se houver)
@@ -1176,6 +1343,25 @@ routerAdd('GET', '/backend/v1/placar-ao-vivo', (e) => {
       }
     }
 
+    // Adiciona partidas da CONMEBOL via TheSportsDB se o provedor for Football-Data.org ou não houver partidas CONMEBOL
+    if (
+      provedor === 'football_data' ||
+      (directFixtures.length === 0 && liveFixtures.length === 0 && dateFixtures.length === 0)
+    ) {
+      try {
+        var tsdbConmebolLive = fetchConmebolFromTheSportsDb(hoje, theSportsDbKey)
+        for (var tcl = 0; tcl < tsdbConmebolLive.length; tcl++) {
+          var conmebolF = tsdbConmebolLive[tcl]
+          dateFixtures.push(conmebolF)
+          if (conmebolF.isLive) {
+            liveFixtures.push(conmebolF)
+          }
+        }
+      } catch (errConmebolLive) {
+        console.log('[TheSportsDB Conmebol placar-ao-vivo] Erro:', errConmebolLive)
+      }
+    }
+
     var apiFootballPayload = {
       configured: true,
       provider: 'api_football',
@@ -1860,6 +2046,126 @@ routerAdd('GET', '/backend/v1/jogos-do-dia', (e) => {
 
     // Se falhou e temos cache antigo, entrega stale
     if (!allFixtures) {
+      // Mesmo se a API falhar completamente, precisamos verificar se há jogos manuais gravados pelo admin!
+      var fallbackManualFixtures = []
+      try {
+        var fbManualRecs = $app.findRecordsByFilter(
+          'jogos_do_dia_manuais',
+          "data = '" + dateQuery + "'",
+          'horario',
+          100,
+          0,
+        )
+        for (var fmi = 0; fmi < fbManualRecs.length; fmi++) {
+          var fbRec = fbManualRecs[fmi]
+          var fbTimeCasa = fbRec.getString('time_casa') || ''
+          var fbTimeVisitante = fbRec.getString('time_visitante') || ''
+          var fbHorario = fbRec.getString('horario') || '20:00'
+          var fbCampeonato = fbRec.getString('campeonato') || 'Amistoso'
+          var fbRegiao = fbRec.getString('regiao') || 'Brasileirão & Copas'
+          var fbPlacarCasa = fbRec.getInt('placar_casa')
+          var fbPlacarVisitante = fbRec.getInt('placar_visitante')
+          var fbStatus = (fbRec.getString('status') || 'NS').trim().toUpperCase()
+          var fbLogoCasa = fbRec.getString('logo_casa') || ''
+          var fbLogoVisitante = fbRec.getString('logo_visitante') || ''
+          var fbObs = fbRec.getString('observacao') || ''
+          var fbIso =
+            dateQuery + 'T' + (fbHorario.length === 5 ? fbHorario + ':00' : fbHorario) + '-03:00'
+          var fbIsLive = ['1H', 'HT', '2H', 'LIVE'].indexOf(fbStatus) !== -1
+
+          fallbackManualFixtures.push({
+            fixture: {
+              id: 'manual_' + fbRec.id,
+              manualId: fbRec.id,
+              isManual: true,
+              date: fbIso,
+              timestamp: Math.floor(new Date(fbIso).getTime() / 1000) || 0,
+              status: {
+                short: fbStatus,
+                long:
+                  fbStatus === 'FT'
+                    ? 'Encerrado'
+                    : fbIsLive
+                      ? 'Ao Vivo'
+                      : fbStatus === 'PST'
+                        ? 'Adiado'
+                        : fbStatus === 'CANC'
+                          ? 'Cancelado'
+                          : 'Agendado',
+                elapsed: null,
+              },
+            },
+            league: {
+              id: 99990 + fmi,
+              name: fbCampeonato,
+              country: 'América do Sul',
+              logo: '',
+              flag: '',
+              round: fbObs || 'Manual',
+              region: fbRegiao,
+            },
+            teams: {
+              home: {
+                id: 999000 + fmi * 2,
+                name: fbTimeCasa,
+                logo: fbLogoCasa,
+                country: 'América do Sul',
+              },
+              away: {
+                id: 999001 + fmi * 2,
+                name: fbTimeVisitante,
+                logo: fbLogoVisitante,
+                country: 'América do Sul',
+              },
+            },
+            goals: {
+              home:
+                fbRec.get('placar_casa') !== null && fbRec.get('placar_casa') !== undefined
+                  ? fbPlacarCasa
+                  : null,
+              away:
+                fbRec.get('placar_visitante') !== null &&
+                fbRec.get('placar_visitante') !== undefined
+                  ? fbPlacarVisitante
+                  : null,
+            },
+            score: {
+              halftime: { home: null, away: null },
+              fulltime: {
+                home:
+                  fbRec.get('placar_casa') !== null && fbRec.get('placar_casa') !== undefined
+                    ? fbPlacarCasa
+                    : null,
+                away:
+                  fbRec.get('placar_visitante') !== null &&
+                  fbRec.get('placar_visitante') !== undefined
+                    ? fbPlacarVisitante
+                    : null,
+              },
+            },
+            scorers: [],
+            isLive: fbIsLive,
+            isManual: true,
+            manualRecordId: fbRec.id,
+          })
+        }
+      } catch (errFbMan) {}
+
+      if (fallbackManualFixtures.length > 0) {
+        return e.json(200, {
+          configured: true,
+          date: dateQuery,
+          total: fallbackManualFixtures.length,
+          hasLive: fallbackManualFixtures.some(function (m) {
+            return m.isLive
+          }),
+          fixtures: fallbackManualFixtures,
+          cached: false,
+          warning:
+            'APIs externas indisponíveis. Exibindo jogos inseridos manualmente pelo administrador.',
+        })
+      }
+
       if (dayEntry && dayEntry.payload) {
         var prevTotal = Array.isArray(dayEntry.payload.fixtures)
           ? dayEntry.payload.fixtures.length
@@ -2062,18 +2368,211 @@ routerAdd('GET', '/backend/v1/jogos-do-dia', (e) => {
       updatedAt: new Date().toISOString(),
     }
 
-    // SÓ GRAVA NO CACHE SE HOUVER PELO MENOS 1 PARTIDA!
-    if (dayStore && rawFixtures.length > 0) {
-      dayStore[dateQuery] = {
-        timestamp: Date.now(),
-        payload: payload,
-        fetching: 0,
+    // Se o provedor principal for Football-Data.org ou nenhuma partida CONMEBOL estiver na lista,
+    // busca TheSportsDB para adicionar os jogos de Sul-Americana e Libertadores
+    try {
+      var hasConmebolDay = false
+      for (var fchk = 0; fchk < rawFixtures.length; fchk++) {
+        var fixC = rawFixtures[fchk]
+        var fixR = fixC.league ? fixC.league.region : ''
+        var fixLName = fixC.league ? (fixC.league.name || '').toLowerCase() : ''
+        if (
+          fixR === 'Sul-Americana' ||
+          fixLName.indexOf('sudamericana') !== -1 ||
+          fixLName.indexOf('libertadores') !== -1
+        ) {
+          hasConmebolDay = true
+          break
+        }
+      }
+
+      // Se não encontrou partidas de CONMEBOL do dia e temos TheSportsDB disponível (chave ou pública "3")
+      if (!hasConmebolDay) {
+        var tsdbConmebol = fetchConmebolFromTheSportsDb(dateQuery, theSportsDbKey)
+        for (var tsi = 0; tsi < tsdbConmebol.length; tsi++) {
+          var tFix = tsdbConmebol[tsi]
+          // Evita duplicar se por acaso já existir
+          var dHome = (tFix.teams && tFix.teams.home && tFix.teams.home.name) || ''
+          var dAway = (tFix.teams && tFix.teams.away && tFix.teams.away.name) || ''
+          var dupFound = false
+          for (var rfi = 0; rfi < rawFixtures.length; rfi++) {
+            var rf = rawFixtures[rfi]
+            var rfHome = (rf.teams && rf.teams.home && rf.teams.home.name) || ''
+            var rfAway = (rf.teams && rf.teams.away && rf.teams.away.name) || ''
+            if (
+              rfHome.toLowerCase() === dHome.toLowerCase() &&
+              rfAway.toLowerCase() === dAway.toLowerCase()
+            ) {
+              dupFound = true
+              break
+            }
+          }
+          if (!dupFound) {
+            rawFixtures.push(tFix)
+            if (tFix.isLive) {
+              hasLiveMatch = true
+            }
+          }
+        }
+      }
+    } catch (errTsdbDay) {
+      console.log('[TheSportsDB Conmebol Jogos-do-Dia] Erro:', errTsdbDay)
+    }
+
+    // Busca jogos manuais criados pelo Admin para esta data
+    var manualDayFixtures = []
+    try {
+      var manualRecords = $app.findRecordsByFilter(
+        'jogos_do_dia_manuais',
+        "data = '" + dateQuery + "'",
+        'horario',
+        100,
+        0,
+      )
+      for (var mi = 0; mi < manualRecords.length; mi++) {
+        var mRec = manualRecords[mi]
+        var mTimeCasa = mRec.getString('time_casa') || ''
+        var mTimeVisitante = mRec.getString('time_visitante') || ''
+        var mHorario = mRec.getString('horario') || '20:00'
+        var mCampeonato = mRec.getString('campeonato') || 'Amistoso'
+        var mRegiao = mRec.getString('regiao') || 'Brasileirão & Copas'
+        var mPlacarCasa = mRec.getInt('placar_casa')
+        var mPlacarVisitante = mRec.getInt('placar_visitante')
+        var mStatus = (mRec.getString('status') || 'NS').trim().toUpperCase()
+        var mLogoCasa = mRec.getString('logo_casa') || ''
+        var mLogoVisitante = mRec.getString('logo_visitante') || ''
+        var mObs = mRec.getString('observacao') || ''
+
+        var mIso =
+          dateQuery + 'T' + (mHorario.length === 5 ? mHorario + ':00' : mHorario) + '-03:00'
+        var mIsLive = ['1H', 'HT', '2H', 'LIVE'].indexOf(mStatus) !== -1
+
+        manualDayFixtures.push({
+          fixture: {
+            id: 'manual_' + mRec.id,
+            manualId: mRec.id,
+            isManual: true,
+            date: mIso,
+            timestamp: Math.floor(new Date(mIso).getTime() / 1000) || 0,
+            status: {
+              short: mStatus,
+              long:
+                mStatus === 'FT'
+                  ? 'Encerrado'
+                  : mIsLive
+                    ? 'Ao Vivo'
+                    : mStatus === 'PST'
+                      ? 'Adiado'
+                      : mStatus === 'CANC'
+                        ? 'Cancelado'
+                        : 'Agendado',
+              elapsed: null,
+            },
+          },
+          league: {
+            id: 99990 + mi,
+            name: mCampeonato,
+            country: 'América do Sul',
+            logo: '',
+            flag: '',
+            round: mObs || 'Manual',
+            region: mRegiao,
+          },
+          teams: {
+            home: {
+              id: 999000 + mi * 2,
+              name: mTimeCasa,
+              logo: mLogoCasa,
+              country: 'América do Sul',
+            },
+            away: {
+              id: 999001 + mi * 2,
+              name: mTimeVisitante,
+              logo: mLogoVisitante,
+              country: 'América do Sul',
+            },
+          },
+          goals: {
+            home:
+              mRec.get('placar_casa') !== null && mRec.get('placar_casa') !== undefined
+                ? mPlacarCasa
+                : null,
+            away:
+              mRec.get('placar_visitante') !== null && mRec.get('placar_visitante') !== undefined
+                ? mPlacarVisitante
+                : null,
+          },
+          score: {
+            halftime: { home: null, away: null },
+            fulltime: {
+              home:
+                mRec.get('placar_casa') !== null && mRec.get('placar_casa') !== undefined
+                  ? mPlacarCasa
+                  : null,
+              away:
+                mRec.get('placar_visitante') !== null && mRec.get('placar_visitante') !== undefined
+                  ? mPlacarVisitante
+                  : null,
+            },
+          },
+          scorers: [],
+          isLive: mIsLive,
+          isManual: true,
+          manualRecordId: mRec.id,
+        })
+      }
+    } catch (errMan) {
+      console.log('[Jogos Manuais] Aviso ao ler jogos_do_dia_manuais:', errMan)
+    }
+
+    // Mescla jogos manuais com PRIORIDADE TOTAL:
+    // Começa com os manuais. Adiciona os da API que não colidem com nenhum manual por times parecidos.
+    var finalFixtures = []
+    for (var mfi = 0; mfi < manualDayFixtures.length; mfi++) {
+      finalFixtures.push(manualDayFixtures[mfi])
+    }
+
+    for (var rfi2 = 0; rfi2 < rawFixtures.length; rfi2++) {
+      var rfItem = rawFixtures[rfi2]
+      var rHome = (rfItem.teams && rfItem.teams.home && rfItem.teams.home.name) || ''
+      var rAway = (rfItem.teams && rfItem.teams.away && rfItem.teams.away.name) || ''
+      var matchCollides = false
+      for (var mj = 0; mj < manualDayFixtures.length; mj++) {
+        var mItem = manualDayFixtures[mj]
+        var mHome = (mItem.teams && mItem.teams.home && mItem.teams.home.name) || ''
+        var mAway = (mItem.teams && mItem.teams.away && mItem.teams.away.name) || ''
+        if (
+          rHome &&
+          mHome &&
+          rAway &&
+          mAway &&
+          (rHome.toLowerCase().indexOf(mHome.toLowerCase()) !== -1 ||
+            mHome.toLowerCase().indexOf(rHome.toLowerCase()) !== -1) &&
+          (rAway.toLowerCase().indexOf(mAway.toLowerCase()) !== -1 ||
+            mAway.toLowerCase().indexOf(rAway.toLowerCase()) !== -1)
+        ) {
+          matchCollides = true
+          break
+        }
+      }
+      if (!matchCollides) {
+        finalFixtures.push(rfItem)
       }
     }
 
+    var finalPayload = Object.assign({}, payload, {
+      total: finalFixtures.length,
+      fixtures: finalFixtures,
+      hasLive:
+        hasLiveMatch ||
+        manualDayFixtures.some(function (m) {
+          return m.isLive
+        }),
+    })
+
     return e.json(
       200,
-      Object.assign({}, payload, {
+      Object.assign({}, finalPayload, {
         cached: false,
         ttlSeconds: Math.round((hasLiveMatch ? 5 * 60 * 1000 : 30 * 60 * 1000) / 1000),
       }),
@@ -2163,16 +2662,36 @@ routerAdd('GET', '/backend/v1/placar-ao-vivo/config', (e) => {
       }
     } catch (_) {}
 
+    // Lê chave de contingência TheSportsDB (Sul-Americana / Libertadores)
+    let hasTsdbDbKey = false
+    let maskedTsdbKey = ''
+    try {
+      const tsdbRec = $app.findFirstRecordByData(
+        'config_integracoes',
+        'chave',
+        'thesportsdb_fallback',
+      )
+      if (tsdbRec) {
+        const tsdbK = (tsdbRec.getString('api_key') || '').trim()
+        if (tsdbK) {
+          hasTsdbDbKey = true
+          maskedTsdbKey = tsdbK.length > 8 ? '••••••••' + tsdbK.slice(-4) : '••••' + tsdbK.slice(-2)
+        }
+      }
+    } catch (_) {}
+
     let hasSecretFallback = false
     try {
       if (
         ($secrets.has &&
           ($secrets.has('API_FOOTBALL_KEY') ||
             $secrets.has('RAPIDAPI_KEY') ||
-            $secrets.has('FOOTBALL_DATA_KEY'))) ||
+            $secrets.has('FOOTBALL_DATA_KEY') ||
+            $secrets.has('THESPORTSDB_KEY'))) ||
         $os.getenv('API_FOOTBALL_KEY') ||
         $os.getenv('RAPIDAPI_KEY') ||
-        $os.getenv('FOOTBALL_DATA_KEY')
+        $os.getenv('FOOTBALL_DATA_KEY') ||
+        $os.getenv('THESPORTSDB_KEY')
       ) {
         hasSecretFallback = true
       }
@@ -2190,6 +2709,12 @@ routerAdd('GET', '/backend/v1/placar-ao-vivo/config', (e) => {
         Boolean($os.getenv('FOOTBALL_DATA_KEY')),
       hasFallbackDbKey: hasFallbackDbKey,
       maskedFallbackKey: maskedFallbackKey,
+      hasTsdbKey:
+        hasTsdbDbKey ||
+        Boolean($secrets.has && $secrets.has('THESPORTSDB_KEY')) ||
+        Boolean($os.getenv('THESPORTSDB_KEY')),
+      hasTsdbDbKey: hasTsdbDbKey,
+      maskedTsdbKey: maskedTsdbKey,
       ativo: ativo,
     })
   } catch (err) {
@@ -2221,6 +2746,7 @@ routerAdd('POST', '/backend/v1/placar-ao-vivo/config', (e) => {
     const apiKey = typeof body.api_key === 'string' ? body.api_key.trim() : undefined
     const fallbackApiKey =
       typeof body.fallback_api_key === 'string' ? body.fallback_api_key.trim() : undefined
+    const tsdbApiKey = typeof body.tsdb_api_key === 'string' ? body.tsdb_api_key.trim() : undefined
     const ativo = body.ativo !== false
 
     const col = $app.findCollectionByNameOrId('config_integracoes')
@@ -2256,6 +2782,22 @@ routerAdd('POST', '/backend/v1/placar-ao-vivo/config', (e) => {
       $app.save(fbRecord)
     }
 
+    // Se fornecida chave para TheSportsDB (Sul-Americana / Libertadores)
+    let tsdbRecord
+    try {
+      tsdbRecord = $app.findFirstRecordByData('config_integracoes', 'chave', 'thesportsdb_fallback')
+    } catch (_) {
+      tsdbRecord = new Record(col)
+      tsdbRecord.set('chave', 'thesportsdb_fallback')
+      tsdbRecord.set('provedor', 'thesportsdb')
+      tsdbRecord.set('ativo', true)
+    }
+
+    if (tsdbApiKey !== undefined) {
+      tsdbRecord.set('api_key', tsdbApiKey)
+      $app.save(tsdbRecord)
+    }
+
     // Invalida caches ao salvar nova chave para que o admin possa testar imediatamente
     try {
       if (typeof globalThis !== 'undefined') {
@@ -2278,6 +2820,13 @@ routerAdd('POST', '/backend/v1/placar-ao-vivo/config', (e) => {
         : '••••' + savedFallbackKey.slice(-2)
       : ''
 
+    const savedTsdbKey = tsdbRecord ? tsdbRecord.getString('api_key') || '' : ''
+    const maskedTsdbKey = savedTsdbKey
+      ? savedTsdbKey.length > 8
+        ? '••••••••' + savedTsdbKey.slice(-4)
+        : '••••' + savedTsdbKey.slice(-2)
+      : ''
+
     return e.json(200, {
       success: true,
       message: 'Configurações de integração e contingência salvas com sucesso no banco de dados.',
@@ -2286,6 +2835,8 @@ routerAdd('POST', '/backend/v1/placar-ao-vivo/config', (e) => {
       maskedKey: maskedKey,
       hasFallbackKey: Boolean(savedFallbackKey),
       maskedFallbackKey: maskedFallbackKey,
+      hasTsdbKey: Boolean(savedTsdbKey),
+      maskedTsdbKey: maskedTsdbKey,
       ativo: ativo,
     })
   } catch (err) {
@@ -2356,8 +2907,32 @@ routerAdd('POST', '/backend/v1/placar-ao-vivo/test', (e) => {
       }
     }
 
-    if (provedor === 'thesportsdb' && !apiKey) {
-      apiKey = '3'
+    if (provedor === 'thesportsdb') {
+      if (!apiKey) {
+        try {
+          const tsdbRecord = $app.findFirstRecordByData(
+            'config_integracoes',
+            'chave',
+            'thesportsdb_fallback',
+          )
+          if (tsdbRecord) {
+            apiKey = (tsdbRecord.getString('api_key') || '').trim()
+          }
+        } catch (_) {}
+      }
+      if (!apiKey) {
+        try {
+          apiKey =
+            ($secrets.has && $secrets.has('THESPORTSDB_KEY')
+              ? $secrets.get('THESPORTSDB_KEY')
+              : '') ||
+            $os.getenv('THESPORTSDB_KEY') ||
+            ''
+        } catch (_) {}
+      }
+      if (!apiKey) {
+        apiKey = '3'
+      }
     }
 
     if (!apiKey) {
