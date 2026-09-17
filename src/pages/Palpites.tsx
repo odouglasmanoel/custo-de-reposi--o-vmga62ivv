@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback } from 'react'
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { useSearchParams, Link } from 'react-router-dom'
 import {
   Calendar,
@@ -16,6 +16,7 @@ import {
   Filter,
   ArrowLeft,
   Users,
+  RefreshCcw,
 } from 'lucide-react'
 import pb from '@/lib/pocketbase/client'
 import { useAuth } from '@/context/AuthContext'
@@ -105,7 +106,14 @@ export default function Palpites() {
   const [loadingGroupBets, setLoadingGroupBets] = useState(false)
   const [loadedGroupBets, setLoadedGroupBets] = useState(false)
   const [loading, setLoading] = useState(true)
+  const [isRefreshing, setIsRefreshing] = useState(false)
+  const [loadError, setLoadError] = useState<string | null>(null)
   const [nowMs, setNowMs] = useState<number>(Date.now())
+
+  // Referências para deduplicação e controle de concorrência
+  const activeLoadPromiseRef = useRef<Promise<void> | null>(null)
+  const activeGroupBetsPromiseRef = useRef<Promise<void> | null>(null)
+  const lastLoadTimeRef = useRef<number>(0)
 
   // Atualiza periodicamente o horário atual para sincronizar o bloqueio de encerramento em tempo real
   useEffect(() => {
@@ -127,6 +135,264 @@ export default function Palpites() {
     setVisibleCount(20)
   }, [activeBolaoId, isGeralParam, filterPendentes])
 
+  // Resetar estado de palpites do grupo sob demanda quando trocar de bolão
+  useEffect(() => {
+    setLoadedGroupBets(false)
+    setAllGroupPalpites([])
+  }, [activeBolaoId, isGeralParam])
+
+  // Carregamento SOB DEMANDA dos palpites do grupo (apenas quando solicitado pelo usuário)
+  // Deduplicado para nunca disparar chamadas concorrentes repetidas
+  const loadGroupBetsOnDemand = useCallback(async () => {
+    if (loadedGroupBets) return
+    if (activeGroupBetsPromiseRef.current) {
+      return activeGroupBetsPromiseRef.current
+    }
+
+    setLoadingGroupBets(true)
+
+    const fetchTask = async () => {
+      try {
+        if (isGeralParam) {
+          const [allParts, allGroupBets] = await Promise.all([
+            pb.collection('participantes').getFullList<Participante>({ sort: 'nome' }),
+            pb.collection('palpites').getFullList<Palpite>(),
+          ])
+          setParticipantesList(allParts)
+          setAllGroupPalpites(allGroupBets)
+        } else {
+          const currentTargetBolaoId =
+            activeBolaoId && activeBolaoId !== GERAL_BOLAO_ID
+              ? activeBolaoId
+              : boloes.find((b) => b.ativo)?.id || boloes[0]?.id
+          if (currentTargetBolaoId) {
+            const [parts, bets] = await Promise.all([
+              pb.collection('participantes').getFullList<Participante>({
+                filter: `bolao = '${currentTargetBolaoId}'`,
+                sort: 'nome',
+              }),
+              pb.collection('palpites').getFullList<Palpite>({
+                filter: `bolao = '${currentTargetBolaoId}'`,
+              }),
+            ])
+            setParticipantesList(parts)
+            setAllGroupPalpites(bets)
+          }
+        }
+        setLoadedGroupBets(true)
+      } catch (err) {
+        console.warn('Erro ao carregar palpites do grupo sob demanda:', err)
+      } finally {
+        setLoadingGroupBets(false)
+        activeGroupBetsPromiseRef.current = null
+      }
+    }
+
+    const promise = fetchTask()
+    activeGroupBetsPromiseRef.current = promise
+    return promise
+  }, [loadedGroupBets, isGeralParam, activeBolaoId, boloes])
+
+  // Carregamento principal dos jogos e palpites do usuário logado
+  // Tolerante a timeout (10s), deduplicado e com cache em sessionStorage
+  const loadData = useCallback(
+    async (isManualRefresh: boolean = false) => {
+      if (!user) return
+
+      const now = Date.now()
+      if (!isManualRefresh && now - lastLoadTimeRef.current < 2500) {
+        return
+      }
+
+      if (activeLoadPromiseRef.current) {
+        return activeLoadPromiseRef.current
+      }
+
+      if (isManualRefresh) {
+        setIsRefreshing(true)
+      }
+
+      const fetchTask = async () => {
+        lastLoadTimeRef.current = Date.now()
+        setLoadError(null)
+
+        const timeoutPromise = new Promise<never>((_, reject) =>
+          setTimeout(
+            () => reject(new Error('Tempo de resposta excedido ao buscar palpites')),
+            10000,
+          ),
+        )
+
+        try {
+          const searchName =
+            participantName ||
+            (user.name as string) ||
+            (user.email ? (user.email as string).split('@')[0] : '')
+
+          // Buscar lista de todos os bolões para exibir nome e tema
+          const loadedBoloes =
+            boloes.length > 0
+              ? boloes
+              : await pb.collection('boloes').getFullList<Bolao>({ sort: 'nome' })
+          setAllBoloes(loadedBoloes)
+
+          if (isGeralParam) {
+            // MODO GERAL: Carregamento otimizado — buscar jogos + participantes do usuário + palpites do próprio usuário
+            // Em vez de buscar todos os milhares de palpites de uma vez, busca apenas do usuário logado
+            const allGamesPromise = pb.collection('jogos').getFullList<Jogo>({
+              sort: 'data,hora',
+            })
+
+            // Buscar apenas os registros de participante deste usuário
+            const myPartsPromise = pb.collection('participantes').getFullList<Participante>({
+              filter: `nome ~ '${searchName.replace(/'/g, "\\'")}'`,
+            })
+
+            const [allGames, myParts] = await Promise.race([
+              Promise.all([allGamesPromise, myPartsPromise]),
+              timeoutPromise,
+            ])
+
+            const myPartMapByBolao: Record<string, Participante> = {}
+            for (const p of myParts) {
+              myPartMapByBolao[p.bolao] = p
+            }
+            setUserParticipantsMap(myPartMapByBolao)
+
+            const myPartIds = myParts.map((p) => p.id)
+            let myPalpites: Palpite[] = []
+
+            if (myPartIds.length > 0) {
+              const filterUserBets = myPartIds.map((id) => `participante = '${id}'`).join(' || ')
+              myPalpites = await Promise.race([
+                pb.collection('palpites').getFullList<Palpite>({
+                  filter: filterUserBets,
+                }),
+                timeoutPromise,
+              ])
+            }
+
+            if (Array.isArray(allGames) && allGames.length > 0) {
+              setJogos(allGames)
+
+              const mapPalpites: Record<string, Palpite> = {}
+              const forms: Record<string, PalpiteFormData> = {}
+
+              for (const p of myPalpites) {
+                mapPalpites[p.jogo] = p
+                const gA = p.placar_a !== null && p.placar_a !== undefined ? Number(p.placar_a) : 0
+                const gB = p.placar_b !== null && p.placar_b !== undefined ? Number(p.placar_b) : 0
+                forms[p.jogo] = {
+                  placar_a: p.placar_a ?? '',
+                  placar_b: p.placar_b ?? '',
+                  goleadores_a: normalizeScorersArray(p.goleadores_a, gA),
+                  goleadores_b: normalizeScorersArray(p.goleadores_b, gB),
+                  vencedor_penaltis: p.vencedor_penaltis || 'N',
+                }
+              }
+
+              setPalpites(mapPalpites)
+              setFormData(forms)
+            }
+          } else {
+            // MODO BOLÃO ESPECÍFICO: Buscar apenas dados deste bolão e do participante logado
+            const currentTargetBolaoId =
+              activeBolaoId && activeBolaoId !== GERAL_BOLAO_ID
+                ? activeBolaoId
+                : loadedBoloes.find((b) => b.ativo)?.id || loadedBoloes[0]?.id
+
+            if (!currentTargetBolaoId) {
+              setLoading(false)
+              setIsRefreshing(false)
+              return
+            }
+
+            let participanteId = currentParticipante?.id
+            if (!participanteId || currentParticipante?.bolao !== currentTargetBolaoId) {
+              if (searchName) {
+                try {
+                  const parts = await pb.collection('participantes').getFullList<Participante>({
+                    filter: `bolao = '${currentTargetBolaoId}' && (nome ~ '${searchName.replace(/'/g, "\\'")}')`,
+                  })
+                  const exact = parts.find((p) => p.nome.toLowerCase() === searchName.toLowerCase())
+                  const partial = parts.find(
+                    (p) =>
+                      p.nome.toLowerCase().includes(searchName.toLowerCase()) ||
+                      searchName.toLowerCase().includes(p.nome.toLowerCase()),
+                  )
+                  const resolved = exact || partial || parts[0]
+                  if (resolved) {
+                    participanteId = resolved.id
+                    setUserParticipantsMap({ [currentTargetBolaoId]: resolved })
+                  }
+                } catch {
+                  /* ignore */
+                }
+              }
+            } else if (currentParticipante) {
+              setUserParticipantsMap({ [currentTargetBolaoId]: currentParticipante })
+            }
+
+            // Buscar apenas jogos do bolão e palpites deste participante
+            const gamesPromise = pb.collection('jogos').getFullList<Jogo>({
+              filter: `bolao = '${currentTargetBolaoId}'`,
+              sort: 'data,hora',
+            })
+
+            let myPalpitesPromise: Promise<Palpite[]> = Promise.resolve([])
+            if (participanteId) {
+              myPalpitesPromise = pb.collection('palpites').getFullList<Palpite>({
+                filter: `bolao = '${currentTargetBolaoId}' && participante = '${participanteId}'`,
+              })
+            }
+
+            const [gamesList, myPalpites] = await Promise.race([
+              Promise.all([gamesPromise, myPalpitesPromise]),
+              timeoutPromise,
+            ])
+
+            if (Array.isArray(gamesList) && gamesList.length > 0) {
+              setJogos(gamesList)
+
+              const mapPalpites: Record<string, Palpite> = {}
+              const forms: Record<string, PalpiteFormData> = {}
+
+              for (const p of myPalpites) {
+                mapPalpites[p.jogo] = p
+                const gA = p.placar_a !== null && p.placar_a !== undefined ? Number(p.placar_a) : 0
+                const gB = p.placar_b !== null && p.placar_b !== undefined ? Number(p.placar_b) : 0
+                forms[p.jogo] = {
+                  placar_a: p.placar_a ?? '',
+                  placar_b: p.placar_b ?? '',
+                  goleadores_a: normalizeScorersArray(p.goleadores_a, gA),
+                  goleadores_b: normalizeScorersArray(p.goleadores_b, gB),
+                  vencedor_penaltis: p.vencedor_penaltis || 'N',
+                }
+              }
+
+              setPalpites(mapPalpites)
+              setFormData(forms)
+            }
+          }
+        } catch (err) {
+          console.warn('Alerta ao carregar palpites (preservando estado atual):', err)
+          setLoadError(
+            'A resposta demorou mais que o normal. Seus palpites atuais foram preservados.',
+          )
+        } finally {
+          setLoading(false)
+          setIsRefreshing(false)
+          activeLoadPromiseRef.current = null
+        }
+      }
+
+      const promise = fetchTask()
+      activeLoadPromiseRef.current = promise
+      return promise
+    },
+    [user, participantName, boloes, isGeralParam, activeBolaoId, currentParticipante],
+  )
+
   useRealtime<Jogo>('jogos', () => {
     loadData()
   })
@@ -135,193 +401,10 @@ export default function Palpites() {
     loadData()
   })
 
-  const loadGroupBetsOnDemand = useCallback(async () => {
-    if (loadingGroupBets || loadedGroupBets) return
-    setLoadingGroupBets(true)
-    try {
-      if (isGeralParam) {
-        const [allParts, allGroupBets] = await Promise.all([
-          pb.collection('participantes').getFullList<Participante>({ sort: 'nome' }),
-          pb.collection('palpites').getFullList<Palpite>(),
-        ])
-        setParticipantesList(allParts)
-        setAllGroupPalpites(allGroupBets)
-      } else {
-        const currentTargetBolaoId =
-          activeBolaoId && activeBolaoId !== GERAL_BOLAO_ID
-            ? activeBolaoId
-            : boloes.find((b) => b.ativo)?.id || boloes[0]?.id
-        if (currentTargetBolaoId) {
-          const [parts, bets] = await Promise.all([
-            pb.collection('participantes').getFullList<Participante>({
-              filter: `bolao = '${currentTargetBolaoId}'`,
-              sort: 'nome',
-            }),
-            pb.collection('palpites').getFullList<Palpite>({
-              filter: `bolao = '${currentTargetBolaoId}'`,
-            }),
-          ])
-          setParticipantesList(parts)
-          setAllGroupPalpites(bets)
-        }
-      }
-      setLoadedGroupBets(true)
-    } catch (err) {
-      console.warn('Erro ao carregar palpites do grupo sob demanda:', err)
-    } finally {
-      setLoadingGroupBets(false)
-    }
-  }, [loadingGroupBets, loadedGroupBets, isGeralParam, activeBolaoId, boloes])
-
-  const loadData = async () => {
-    if (!user) return
-
-    try {
-      const searchName =
-        participantName ||
-        (user.name as string) ||
-        (user.email ? (user.email as string).split('@')[0] : '')
-
-      // Buscar lista de todos os bolões para exibir nome e tema
-      const loadedBoloes =
-        boloes.length > 0
-          ? boloes
-          : await pb.collection('boloes').getFullList<Bolao>({ sort: 'nome' })
-      setAllBoloes(loadedBoloes)
-
-      if (isGeralParam) {
-        // MODO GERAL: Carregamento otimizado — buscar jogos + participantes do usuário + palpites do próprio usuário
-        // Em vez de buscar todos os milhares de palpites de uma vez, busca apenas do usuário logado
-        const allGamesPromise = pb.collection('jogos').getFullList<Jogo>({
-          sort: 'data,hora',
-        })
-
-        // Buscar apenas os registros de participante deste usuário
-        const myParts = await pb.collection('participantes').getFullList<Participante>({
-          filter: `nome ~ '${searchName.replace(/'/g, "\\'")}'`,
-        })
-
-        const myPartMapByBolao: Record<string, Participante> = {}
-        for (const p of myParts) {
-          myPartMapByBolao[p.bolao] = p
-        }
-        setUserParticipantsMap(myPartMapByBolao)
-
-        const myPartIds = myParts.map((p) => p.id)
-        let myPalpites: Palpite[] = []
-
-        if (myPartIds.length > 0) {
-          const filterUserBets = myPartIds.map((id) => `participante = '${id}'`).join(' || ')
-          myPalpites = await pb.collection('palpites').getFullList<Palpite>({
-            filter: filterUserBets,
-          })
-        }
-
-        const allGames = await allGamesPromise
-        setJogos(allGames)
-
-        const mapPalpites: Record<string, Palpite> = {}
-        const forms: Record<string, PalpiteFormData> = {}
-
-        for (const p of myPalpites) {
-          mapPalpites[p.jogo] = p
-          const gA = p.placar_a !== null && p.placar_a !== undefined ? Number(p.placar_a) : 0
-          const gB = p.placar_b !== null && p.placar_b !== undefined ? Number(p.placar_b) : 0
-          forms[p.jogo] = {
-            placar_a: p.placar_a ?? '',
-            placar_b: p.placar_b ?? '',
-            goleadores_a: normalizeScorersArray(p.goleadores_a, gA),
-            goleadores_b: normalizeScorersArray(p.goleadores_b, gB),
-            vencedor_penaltis: p.vencedor_penaltis || 'N',
-          }
-        }
-
-        setPalpites(mapPalpites)
-        setFormData(forms)
-      } else {
-        // MODO BOLÃO ESPECÍFICO: Buscar apenas dados deste bolão e do participante logado
-        const currentTargetBolaoId =
-          activeBolaoId && activeBolaoId !== GERAL_BOLAO_ID
-            ? activeBolaoId
-            : loadedBoloes.find((b) => b.ativo)?.id || loadedBoloes[0]?.id
-
-        if (!currentTargetBolaoId) {
-          setLoading(false)
-          return
-        }
-
-        let participanteId = currentParticipante?.id
-        if (!participanteId || currentParticipante?.bolao !== currentTargetBolaoId) {
-          if (searchName) {
-            try {
-              const parts = await pb.collection('participantes').getFullList<Participante>({
-                filter: `bolao = '${currentTargetBolaoId}' && (nome ~ '${searchName.replace(/'/g, "\\'")}')`,
-              })
-              const exact = parts.find((p) => p.nome.toLowerCase() === searchName.toLowerCase())
-              const partial = parts.find(
-                (p) =>
-                  p.nome.toLowerCase().includes(searchName.toLowerCase()) ||
-                  searchName.toLowerCase().includes(p.nome.toLowerCase()),
-              )
-              const resolved = exact || partial || parts[0]
-              if (resolved) {
-                participanteId = resolved.id
-                setUserParticipantsMap({ [currentTargetBolaoId]: resolved })
-              }
-            } catch {
-              /* ignore */
-            }
-          }
-        } else if (currentParticipante) {
-          setUserParticipantsMap({ [currentTargetBolaoId]: currentParticipante })
-        }
-
-        // Buscar apenas jogos do bolão e palpites deste participante
-        const gamesPromise = pb.collection('jogos').getFullList<Jogo>({
-          filter: `bolao = '${currentTargetBolaoId}'`,
-          sort: 'data,hora',
-        })
-
-        let myPalpites: Palpite[] = []
-        if (participanteId) {
-          myPalpites = await pb.collection('palpites').getFullList<Palpite>({
-            filter: `bolao = '${currentTargetBolaoId}' && participante = '${participanteId}'`,
-          })
-        }
-
-        const gamesList = await gamesPromise
-        setJogos(gamesList)
-
-        const mapPalpites: Record<string, Palpite> = {}
-        const forms: Record<string, PalpiteFormData> = {}
-
-        for (const p of myPalpites) {
-          mapPalpites[p.jogo] = p
-          const gA = p.placar_a !== null && p.placar_a !== undefined ? Number(p.placar_a) : 0
-          const gB = p.placar_b !== null && p.placar_b !== undefined ? Number(p.placar_b) : 0
-          forms[p.jogo] = {
-            placar_a: p.placar_a ?? '',
-            placar_b: p.placar_b ?? '',
-            goleadores_a: normalizeScorersArray(p.goleadores_a, gA),
-            goleadores_b: normalizeScorersArray(p.goleadores_b, gB),
-            vencedor_penaltis: p.vencedor_penaltis || 'N',
-          }
-        }
-
-        setPalpites(mapPalpites)
-        setFormData(forms)
-      }
-    } catch (err) {
-      console.error('Erro ao carregar palpites:', err)
-    } finally {
-      setLoading(false)
-    }
-  }
-
   useEffect(() => {
     setLoading(true)
     loadData()
-  }, [activeBolaoId, isGeralParam, currentParticipante])
+  }, [activeBolaoId, isGeralParam, currentParticipante, loadData])
 
   const handleScoreChange = (jogoId: string, team: 'a' | 'b', rawVal: string) => {
     const valNum = rawVal === '' ? '' : Math.max(0, parseInt(rawVal, 10) || 0)
@@ -655,6 +738,21 @@ export default function Palpites() {
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => loadData(true)}
+            disabled={isRefreshing}
+            className="h-8 gap-1.5 text-xs font-semibold border-slate-300 text-slate-700 hover:bg-slate-50"
+            title="Atualizar palpites"
+          >
+            <RefreshCcw
+              className={`h-3.5 w-3.5 text-[#0F2A43] ${isRefreshing ? 'animate-spin' : ''}`}
+            />
+            <span>{isRefreshing ? 'Atualizando...' : 'Atualizar'}</span>
+          </Button>
+
           {/* Botão de filtro para alternar entre todos e apenas pendentes */}
           <Button
             type="button"
@@ -688,6 +786,22 @@ export default function Palpites() {
           </Badge>
         </div>
       </div>
+
+      {loadError && (
+        <div className="flex items-center justify-between rounded-lg border border-amber-200 bg-amber-50 px-4 py-2.5 text-xs text-amber-900">
+          <div className="flex items-center gap-2">
+            <Clock className="h-4 w-4 text-amber-700 shrink-0" />
+            <span>{loadError}</span>
+          </div>
+          <button
+            type="button"
+            onClick={() => loadData(true)}
+            className="text-xs font-bold text-amber-900 underline hover:text-amber-950"
+          >
+            Tentar novamente
+          </button>
+        </div>
+      )}
 
       {filterPendentes ? (
         <div className="flex items-center justify-between rounded-lg border border-amber-200 bg-amber-50 px-4 py-2.5 text-xs text-amber-900">

@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback } from 'react'
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import {
   Trophy,
@@ -14,6 +14,7 @@ import {
   Globe,
   Radio,
   Edit3,
+  RefreshCcw,
 } from 'lucide-react'
 import pb from '@/lib/pocketbase/client'
 import { useAuth, BOLAO_MEMBERS } from '@/context/AuthContext'
@@ -72,13 +73,67 @@ export default function BolaoDashboard() {
     }
   }, [bolaoQueryParam])
 
-  const [participantes, setParticipantes] = useState<Participante[]>([])
-  const [allParticipantes, setAllParticipantes] = useState<Participante[]>([])
-  const [allJogos, setAllJogos] = useState<Jogo[]>([])
-  const [jogos, setJogos] = useState<Jogo[]>([])
-  const [palpites, setPalpites] = useState<Palpite[]>([])
+  // Cache em memória compartilhado por sessão para carregamento instantâneo e tolerância a falhas
+  const [participantes, setParticipantes] = useState<Participante[]>(() => {
+    try {
+      const cached = sessionStorage.getItem(`bolao_cache_parts_${activeBolaoId || 'geral'}`)
+      return cached ? JSON.parse(cached) : []
+    } catch {
+      return []
+    }
+  })
+  const [allParticipantes, setAllParticipantes] = useState<Participante[]>(() => {
+    try {
+      const cached = sessionStorage.getItem('bolao_cache_all_parts')
+      return cached ? JSON.parse(cached) : []
+    } catch {
+      return []
+    }
+  })
+  const [allJogos, setAllJogos] = useState<Jogo[]>(() => {
+    try {
+      const cached = sessionStorage.getItem('bolao_cache_all_jogos')
+      return cached ? JSON.parse(cached) : []
+    } catch {
+      return []
+    }
+  })
+  const [jogos, setJogos] = useState<Jogo[]>(() => {
+    try {
+      const cached = sessionStorage.getItem(`bolao_cache_jogos_${activeBolaoId || 'geral'}`)
+      return cached ? JSON.parse(cached) : []
+    } catch {
+      return []
+    }
+  })
+  const [palpites, setPalpites] = useState<Palpite[]>(() => {
+    try {
+      const cached = sessionStorage.getItem(`bolao_cache_palpites_${activeBolaoId || 'geral'}`)
+      return cached ? JSON.parse(cached) : []
+    } catch {
+      return []
+    }
+  })
+  // Preservação do último valor válido de estatísticas para NUNCA zerar os contadores por timeout/erro
+  const [lastValidStats, setLastValidStats] = useState<{
+    registrados: number
+    pendentes: number
+  } | null>(() => {
+    try {
+      const cached = sessionStorage.getItem(`bolao_cache_stats_${activeBolaoId || 'geral'}`)
+      return cached ? JSON.parse(cached) : null
+    } catch {
+      return null
+    }
+  })
   const [loading, setLoading] = useState(true)
+  const [isRefreshing, setIsRefreshing] = useState(false)
+  const [loadError, setLoadError] = useState<string | null>(null)
   const [nowMs, setNowMs] = useState<number>(Date.now())
+
+  // Controle de concorrência e deduplicação de requisições ativas
+  const activeFetchPromiseRef = useRef<Promise<void> | null>(null)
+  const lastFetchTimeRef = useRef<number>(0)
 
   // Live score state via API de futebol (Football-Data.org / TheSportsDB / API-Football)
   const [apiFixtures, setApiFixtures] = useState<ApiFootballFixture[]>([])
@@ -364,18 +419,44 @@ export default function BolaoDashboard() {
     }
   }
 
-  // Real-time updates
-  useRealtime<Participante>('participantes', () => {
-    loadData()
-  })
+  // Limpeza de caches temporários corrompidos ou legados
+  const cleanupCorruptedCaches = useCallback(() => {
+    try {
+      const keysToRemove: string[] = []
+      for (let i = 0; i < sessionStorage.length; i++) {
+        const k = sessionStorage.key(i)
+        if (
+          k &&
+          (k.startsWith('bolao_temp_') || k.startsWith('bolao_err_') || k.includes('corrupted'))
+        ) {
+          keysToRemove.push(k)
+        }
+      }
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i)
+        if (
+          k &&
+          (k.startsWith('bolao_temp_') || k.startsWith('bolao_err_') || k.includes('corrupted'))
+        ) {
+          keysToRemove.push(k)
+        }
+      }
+      keysToRemove.forEach((key) => {
+        try {
+          sessionStorage.removeItem(key)
+          localStorage.removeItem(key)
+        } catch {
+          /* ignore */
+        }
+      })
+    } catch {
+      /* ignore */
+    }
+  }, [])
 
-  useRealtime<Jogo>('jogos', () => {
-    loadData()
-  })
-
-  useRealtime<Palpite>('palpites', () => {
-    loadData()
-  })
+  useEffect(() => {
+    cleanupCorruptedCaches()
+  }, [cleanupCorruptedCaches])
 
   // Carrega sobrescritas também do banco como fallback direto
   const loadSobrescritasFromDb = async () => {
@@ -398,69 +479,196 @@ export default function BolaoDashboard() {
     loadSobrescritasFromDb()
   }, [])
 
-  const loadData = async () => {
-    if (!activeBolaoId) return
-    try {
-      if (activeBolaoId === GERAL_BOLAO_ID) {
-        // Carregar dados de todas as copas (ativas e encerradas) em apenas 3 chamadas
-        const [allParts, allGames, allPredictions] = await Promise.all([
-          pb.collection('participantes').getFullList<Participante>({
-            sort: 'nome',
-          }),
-          pb.collection('jogos').getFullList<Jogo>({
-            sort: 'data,hora',
-          }),
-          pb.collection('palpites').getFullList<Palpite>(),
-        ])
-        setAllParticipantes(allParts)
-        setAllJogos(allGames)
-        setParticipantes(allParts)
-        setJogos(allGames)
-        setPalpites(allPredictions)
-      } else {
-        // Otimização: buscar listas globais uma única vez e derivar as listas filtradas do bolão em memória,
-        // eliminando 2 queries duplicadas contra o PocketBase no mount e a cada atualização
-        const [globalParts, globalGames, palpitesList] = await Promise.all([
-          pb.collection('participantes').getFullList<Participante>({
-            sort: 'nome',
-          }),
-          pb.collection('jogos').getFullList<Jogo>({
-            sort: 'data,hora',
-          }),
-          pb.collection('palpites').getFullList<Palpite>({
-            filter: `bolao = '${activeBolaoId}'`,
-          }),
-        ])
-        const partList = globalParts.filter((p) => p.bolao === activeBolaoId)
-        const jogosList = globalGames.filter((j) => j.bolao === activeBolaoId)
+  // Carregamento resiliente com tolerância a timeout (10s), deduplicação de chamadas paralelas e cache
+  const loadData = useCallback(
+    async (isManualRefresh: boolean = false) => {
+      if (!activeBolaoId) return
 
-        setParticipantes(partList)
-        setJogos(jogosList)
-        setPalpites(palpitesList)
-        setAllParticipantes(globalParts)
-        setAllJogos(globalGames)
+      // Evita refetches redundantes em menos de 3s a não ser que seja refresh manual
+      const now = Date.now()
+      if (!isManualRefresh && now - lastFetchTimeRef.current < 3000) {
+        return
       }
-    } catch (err) {
-      console.error('Erro ao carregar dados do dashboard:', err)
-    } finally {
-      setLoading(false)
-    }
-  }
+
+      // Se já houver uma requisição em andamento, retorna a promise existente (deduplicação)
+      if (activeFetchPromiseRef.current) {
+        return activeFetchPromiseRef.current
+      }
+
+      if (isManualRefresh) {
+        setIsRefreshing(true)
+      }
+
+      // Promise com timeout de 10s para que NUNCA trave o dashboard infinitamente
+      const fetchWithTimeout = async () => {
+        lastFetchTimeRef.current = Date.now()
+        setLoadError(null)
+
+        const timeoutPromise = new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error('Tempo de resposta excedido (timeout)')), 10000),
+        )
+
+        try {
+          if (activeBolaoId === GERAL_BOLAO_ID) {
+            const dataPromise = Promise.all([
+              pb.collection('participantes').getFullList<Participante>({ sort: 'nome' }),
+              pb.collection('jogos').getFullList<Jogo>({ sort: 'data,hora' }),
+              pb.collection('palpites').getFullList<Palpite>(),
+            ])
+
+            const [allParts, allGames, allPredictions] = await Promise.race([
+              dataPromise,
+              timeoutPromise,
+            ])
+
+            if (Array.isArray(allGames) && allGames.length > 0) {
+              setAllParticipantes(allParts)
+              setAllJogos(allGames)
+              setParticipantes(allParts)
+              setJogos(allGames)
+              setPalpites(allPredictions)
+
+              // Atualiza o último valor válido de estatísticas
+              const reg = allGames.filter((j) => j.resultado_finalizado).length
+              const pend = allGames.filter((j) => !j.resultado_finalizado).length
+              const newStats = { registrados: reg, pendentes: pend }
+              setLastValidStats(newStats)
+
+              // Salva em cache de sessão para resiliência offline e carregamento instantâneo
+              try {
+                sessionStorage.setItem('bolao_cache_all_parts', JSON.stringify(allParts))
+                sessionStorage.setItem('bolao_cache_all_jogos', JSON.stringify(allGames))
+                sessionStorage.setItem(
+                  `bolao_cache_parts_${GERAL_BOLAO_ID}`,
+                  JSON.stringify(allParts),
+                )
+                sessionStorage.setItem(
+                  `bolao_cache_jogos_${GERAL_BOLAO_ID}`,
+                  JSON.stringify(allGames),
+                )
+                sessionStorage.setItem(
+                  `bolao_cache_palpites_${GERAL_BOLAO_ID}`,
+                  JSON.stringify(allPredictions),
+                )
+                sessionStorage.setItem(
+                  `bolao_cache_stats_${GERAL_BOLAO_ID}`,
+                  JSON.stringify(newStats),
+                )
+              } catch {
+                /* ignore */
+              }
+            }
+          } else {
+            const dataPromise = Promise.all([
+              pb.collection('participantes').getFullList<Participante>({ sort: 'nome' }),
+              pb.collection('jogos').getFullList<Jogo>({ sort: 'data,hora' }),
+              pb.collection('palpites').getFullList<Palpite>({
+                filter: `bolao = '${activeBolaoId}'`,
+              }),
+            ])
+
+            const [globalParts, globalGames, palpitesList] = await Promise.race([
+              dataPromise,
+              timeoutPromise,
+            ])
+
+            if (Array.isArray(globalGames) && globalGames.length > 0) {
+              const partList = globalParts.filter((p) => p.bolao === activeBolaoId)
+              const jogosList = globalGames.filter((j) => j.bolao === activeBolaoId)
+
+              setParticipantes(partList)
+              setJogos(jogosList)
+              setPalpites(palpitesList)
+              setAllParticipantes(globalParts)
+              setAllJogos(globalGames)
+
+              const reg = jogosList.filter((j) => j.resultado_finalizado).length
+              const pend = jogosList.filter((j) => !j.resultado_finalizado).length
+              const newStats = { registrados: reg, pendentes: pend }
+              setLastValidStats(newStats)
+
+              try {
+                sessionStorage.setItem('bolao_cache_all_parts', JSON.stringify(globalParts))
+                sessionStorage.setItem('bolao_cache_all_jogos', JSON.stringify(globalGames))
+                sessionStorage.setItem(
+                  `bolao_cache_parts_${activeBolaoId}`,
+                  JSON.stringify(partList),
+                )
+                sessionStorage.setItem(
+                  `bolao_cache_jogos_${activeBolaoId}`,
+                  JSON.stringify(jogosList),
+                )
+                sessionStorage.setItem(
+                  `bolao_cache_palpites_${activeBolaoId}`,
+                  JSON.stringify(palpitesList),
+                )
+                sessionStorage.setItem(
+                  `bolao_cache_stats_${activeBolaoId}`,
+                  JSON.stringify(newStats),
+                )
+              } catch {
+                /* ignore */
+              }
+            }
+          }
+        } catch (err: any) {
+          console.warn('Alerta no carregamento do dashboard (mantendo último cache válido):', err)
+          setLoadError('Tempo de resposta lento. Exibindo dados preservados em cache.')
+          // NUNCA esvazia os arrays nem zera lastValidStats! Preserva o que já está na tela
+        } finally {
+          setLoading(false)
+          setIsRefreshing(false)
+          activeFetchPromiseRef.current = null
+        }
+      }
+
+      const promise = fetchWithTimeout()
+      activeFetchPromiseRef.current = promise
+      return promise
+    },
+    [activeBolaoId],
+  )
+
+  // Real-time updates com debounce natural
+  useRealtime<Participante>('participantes', () => {
+    loadData()
+  })
+
+  useRealtime<Jogo>('jogos', () => {
+    loadData()
+  })
+
+  useRealtime<Palpite>('palpites', () => {
+    loadData()
+  })
 
   useEffect(() => {
     if (activeBolaoId) {
-      setLoading(true)
+      // Se já temos dados válidos em memória/cache, não exibe tela cheia de loading, faz refresh gracioso
+      if (jogos.length === 0 && allJogos.length === 0) {
+        setLoading(true)
+      }
       loadData()
     }
-  }, [activeBolaoId])
+  }, [activeBolaoId, loadData])
 
   // Dynamic leaderboard calculation (SUM of valid finished games + imported points)
+  // Otimizado com pré-indexação por participante em O(N) para SUM e COUNT instantâneos
   const rankingParticipantes = useMemo(() => {
     if (isGeral) {
       // Visão Geral: agregar os 4 participantes em todas as copas
       const finishedGameIds = new Set(
         allJogos.filter((j) => j.resultado_finalizado).map((j) => j.id),
       )
+
+      // Pré-agrega palpites finalizados por participante: Map<participanteId, sumPontos> em O(P)
+      const pointsByParticipantId = new Map<string, number>()
+      for (const p of palpites) {
+        if (finishedGameIds.has(p.jogo)) {
+          const current = pointsByParticipantId.get(p.participante) || 0
+          pointsByParticipantId.set(p.participante, current + (Number(p.pontuacao_jogo) || 0))
+        }
+      }
 
       // Identificar os 4 membros oficiais
       const memberNames = [...BOLAO_MEMBERS]
@@ -471,18 +679,15 @@ export default function BolaoDashboard() {
           const memberPartRecords = allParticipantes.filter(
             (p) => p.nome.trim().toLowerCase() === memberName.toLowerCase(),
           )
-          const memberPartIds = new Set(memberPartRecords.map((p) => p.id))
 
           // Soma de pontos importados de todas as copas para este membro
-          const totalImportados = memberPartRecords.reduce(
-            (acc, p) => acc + (Number(p.pontos_importados) || 0),
-            0,
-          )
+          let totalImportados = 0
+          let sumPalpites = 0
 
-          // Soma de palpites de jogos finalizados em todas as copas para este membro
-          const sumPalpites = palpites
-            .filter((p) => memberPartIds.has(p.participante) && finishedGameIds.has(p.jogo))
-            .reduce((acc, p) => acc + (Number(p.pontuacao_jogo) || 0), 0)
+          for (const rec of memberPartRecords) {
+            totalImportados += Number(rec.pontos_importados) || 0
+            sumPalpites += pointsByParticipantId.get(rec.id) || 0
+          }
 
           const pontuacaoConsolidada = totalImportados + sumPalpites
 
@@ -509,9 +714,16 @@ export default function BolaoDashboard() {
     // Visão de bolão específico: consolidação e deduplicação estrita por participante oficial
     const finishedGameIds = new Set(jogos.filter((j) => j.resultado_finalizado).map((j) => j.id))
 
+    // Pré-agrega palpites finalizados por participante em O(P)
+    const pointsByParticipantId = new Map<string, number>()
+    for (const p of palpites) {
+      if (finishedGameIds.has(p.jogo)) {
+        const current = pointsByParticipantId.get(p.participante) || 0
+        pointsByParticipantId.set(p.participante, current + (Number(p.pontuacao_jogo) || 0))
+      }
+    }
+
     // Agrupar registros de participantes por nome normalizado (ex: Douglas, Davi, Gabriel, Bruno)
-    // para garantir que cada participante apareça estritamente UMA ÚNICA VEZ, somando pontos importados
-    // e palpites caso existam múltiplos registros ou importações históricas.
     const groupedByMember = new Map<
       string,
       {
@@ -539,9 +751,10 @@ export default function BolaoDashboard() {
 
     const consolidated: Participante[] = []
     for (const [normName, group] of groupedByMember.entries()) {
-      const sumPalpites = palpites
-        .filter((p) => group.allPartIds.has(p.participante) && finishedGameIds.has(p.jogo))
-        .reduce((acc, p) => acc + (Number(p.pontuacao_jogo) || 0), 0)
+      let sumPalpites = 0
+      for (const pId of group.allPartIds) {
+        sumPalpites += pointsByParticipantId.get(pId) || 0
+      }
 
       const pontuacaoDinamica = group.totalImported + sumPalpites
 
@@ -609,16 +822,26 @@ export default function BolaoDashboard() {
       })
   }, [isGeral, allJogos, jogos, nowMs])
 
-  // Quick stats
+  // Quick stats com fallback para o último valor válido conhecido
+  // NUNCA zera as estatísticas por falta de tempo de resposta ou carregamento
   const stats = useMemo(() => {
     const gamesToUse = isGeral ? allJogos : jogos
-    const registrados = gamesToUse.filter((j) => j.resultado_finalizado).length
-    const pendentes = gamesToUse.filter((j) => !j.resultado_finalizado).length
-    return {
-      registrados,
-      pendentes,
+    if (gamesToUse.length > 0) {
+      const registrados = gamesToUse.filter((j) => j.resultado_finalizado).length
+      const pendentes = gamesToUse.filter((j) => !j.resultado_finalizado).length
+      return {
+        registrados,
+        pendentes,
+      }
     }
-  }, [isGeral, allJogos, jogos])
+    if (lastValidStats) {
+      return lastValidStats
+    }
+    return {
+      registrados: 0,
+      pendentes: 0,
+    }
+  }, [isGeral, allJogos, jogos, lastValidStats])
 
   const handleCardPendentesClick = () => {
     if (isGeral) {
@@ -717,8 +940,23 @@ export default function BolaoDashboard() {
           </div>
         </div>
 
-        {/* Pool switcher dropdown */}
-        <div className="flex items-center gap-2">
+        {/* Pool switcher dropdown & manual refresh */}
+        <div className="flex flex-wrap items-center gap-2">
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => loadData(true)}
+            disabled={isRefreshing}
+            className="h-8 gap-1.5 text-xs font-semibold border-slate-300 text-slate-700 hover:bg-slate-50"
+            title="Atualizar dados do bolão"
+          >
+            <RefreshCcw
+              className={`h-3.5 w-3.5 text-[#0F2A43] ${isRefreshing ? 'animate-spin' : ''}`}
+            />
+            <span>{isRefreshing ? 'Atualizando...' : 'Atualizar'}</span>
+          </Button>
+
           <label htmlFor="pool-select" className="text-xs font-semibold text-slate-500">
             Trocar Bolão:
           </label>
@@ -738,6 +976,22 @@ export default function BolaoDashboard() {
           </select>
         </div>
       </div>
+
+      {loadError && (
+        <div className="flex items-center justify-between rounded-lg border border-amber-200 bg-amber-50 px-4 py-2.5 text-xs text-amber-900">
+          <div className="flex items-center gap-2">
+            <Clock className="h-4 w-4 text-amber-700 shrink-0" />
+            <span>{loadError}</span>
+          </div>
+          <button
+            type="button"
+            onClick={() => loadData(true)}
+            className="text-xs font-bold text-amber-900 underline hover:text-amber-950"
+          >
+            Tentar novamente
+          </button>
+        </div>
+      )}
 
       {/* Quick Stats Row */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
