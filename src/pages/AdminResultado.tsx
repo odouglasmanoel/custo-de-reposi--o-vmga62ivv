@@ -2,8 +2,6 @@ import { useState, useEffect } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import {
   Shield,
-  Plus,
-  Trash2,
   Save,
   ArrowLeft,
   Loader2,
@@ -146,34 +144,62 @@ export default function AdminResultado() {
     }
   }
 
-  // Add scorer row to team A
-  const addScorerA = () => {
-    setGolsA([...golsA, { nome: '', posicao: 'Atacante/Meia', quantidade: 1 }])
+  // Normaliza o array de ScorerItem para ter exatamente o tamanho de count gols (reativo ao placar)
+  const normalizeScorerItemsCount = (
+    currentList: ScorerItem[],
+    targetCount: number,
+  ): ScorerItem[] => {
+    const safeCount = Math.max(0, targetCount)
+    if (safeCount === 0) return []
+    const next: ScorerItem[] = []
+    for (let i = 0; i < safeCount; i++) {
+      if (currentList[i]) {
+        next.push({
+          nome: currentList[i].nome ?? '',
+          posicao: currentList[i].posicao || 'Atacante/Meia',
+          quantidade: 1,
+        })
+      } else {
+        next.push({
+          nome: '',
+          posicao: 'Atacante/Meia',
+          quantidade: 1,
+        })
+      }
+    }
+    return next
   }
 
-  const removeScorerA = (index: number) => {
-    setGolsA(golsA.filter((_, i) => i !== index))
+  // Alteração reativa do placar do time A com geração automática dos campos dinâmicos
+  const handlePlacarAChange = (valStr: string) => {
+    setPlacarA(valStr)
+    const count = valStr === '' ? 0 : Math.max(0, parseInt(valStr, 10) || 0)
+    setGolsA((prev) => normalizeScorerItemsCount(prev, count))
+  }
+
+  // Alteração reativa do placar do time B com geração automática dos campos dinâmicos
+  const handlePlacarBChange = (valStr: string) => {
+    setPlacarB(valStr)
+    const count = valStr === '' ? 0 : Math.max(0, parseInt(valStr, 10) || 0)
+    setGolsB((prev) => normalizeScorerItemsCount(prev, count))
   }
 
   const updateScorerA = (index: number, field: keyof ScorerItem, value: any) => {
-    const updated = [...golsA]
-    updated[index] = { ...updated[index], [field]: value }
-    setGolsA(updated)
-  }
-
-  // Add scorer row to team B
-  const addScorerB = () => {
-    setGolsB([...golsB, { nome: '', posicao: 'Atacante/Meia', quantidade: 1 }])
-  }
-
-  const removeScorerB = (index: number) => {
-    setGolsB(golsB.filter((_, i) => i !== index))
+    setGolsA((prev) => {
+      const updated = [...prev]
+      if (!updated[index]) return prev
+      updated[index] = { ...updated[index], [field]: value }
+      return updated
+    })
   }
 
   const updateScorerB = (index: number, field: keyof ScorerItem, value: any) => {
-    const updated = [...golsB]
-    updated[index] = { ...updated[index], [field]: value }
-    setGolsB(updated)
+    setGolsB((prev) => {
+      const updated = [...prev]
+      if (!updated[index]) return prev
+      updated[index] = { ...updated[index], [field]: value }
+      return updated
+    })
   }
 
   // Normalizer: identify predicted names not matching real scorers exactly
@@ -462,7 +488,7 @@ export default function AdminResultado() {
               type="number"
               min="0"
               value={placarA}
-              onChange={(e) => setPlacarA(e.target.value)}
+              onChange={(e) => handlePlacarAChange(e.target.value)}
               placeholder="0"
               className="mt-2 h-16 text-center text-3xl font-black text-[#0F2A43] focus-visible:border-[#10B981] focus-visible:ring-[#10B981]"
             />
@@ -476,7 +502,7 @@ export default function AdminResultado() {
               type="number"
               min="0"
               value={placarB}
-              onChange={(e) => setPlacarB(e.target.value)}
+              onChange={(e) => handlePlacarBChange(e.target.value)}
               placeholder="0"
               className="mt-2 h-16 text-center text-3xl font-black text-[#0F2A43] focus-visible:border-[#10B981] focus-visible:ring-[#10B981]"
             />
@@ -484,168 +510,183 @@ export default function AdminResultado() {
         </div>
       </Card>
 
-      {/* Goal Scorers Section: Two panels (one per team) */}
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-        {/* Panel Team A */}
-        <Card className="rounded-[14px] border-[#E2E8F0] bg-white p-6 shadow-xs">
-          <div className="flex items-center justify-between pb-4 border-b border-slate-100">
-            <div>
-              <CardTitle className="text-sm font-bold text-[#0F172A]">
-                Autores dos Gols — {jogo.time_a}
-              </CardTitle>
-              <p className="text-[11px] text-[#64748B]">Gols reais marcados pelo time A</p>
-            </div>
-            <Button
-              type="button"
-              size="sm"
-              onClick={addScorerA}
-              className="h-8 bg-emerald-600 text-xs font-medium text-white hover:bg-emerald-700"
-            >
-              <Plus className="mr-1 h-3.5 w-3.5" /> Adicionar Gol
-            </Button>
-          </div>
+      {/* Goal Scorers Section: Two panels (one per team) — reativo ao placar, com ordinais 1º, 2º... */}
+      {(() => {
+        const numGolsA =
+          placarA === '' || placarA === undefined ? 0 : Math.max(0, Number(placarA) || 0)
+        const numGolsB =
+          placarB === '' || placarB === undefined ? 0 : Math.max(0, Number(placarB) || 0)
+        const isZeroA = numGolsA === 0
+        const isZeroB = numGolsB === 0
 
-          <div className="mt-4 space-y-3">
-            {golsA.length === 0 ? (
-              <p className="py-6 text-center text-xs text-slate-400">
-                Nenhum gol registrado para {jogo.time_a}.
-              </p>
-            ) : (
-              golsA.map((scorer, index) => (
-                <div
-                  key={index}
-                  className="flex flex-col gap-2 rounded-lg border border-slate-200 bg-slate-50 p-3 sm:flex-row sm:items-center"
-                >
-                  <div className="flex-1">
-                    <Input
-                      placeholder="Nome do jogador"
-                      value={scorer.nome}
-                      onChange={(e) => updateScorerA(index, 'nome', e.target.value)}
-                      className="h-8 border-slate-300 bg-white text-xs"
-                    />
-                  </div>
-
-                  <div className="w-full sm:w-36">
-                    <select
-                      value={scorer.posicao}
-                      onChange={(e) => updateScorerA(index, 'posicao', e.target.value)}
-                      className={`h-8 w-full rounded-md border text-[11px] font-semibold px-2 ${getPositionTagStyle(
-                        scorer.posicao,
-                      )}`}
-                    >
-                      <option value="Atacante/Meia">Atacante/Meia (+1 pt)</option>
-                      <option value="Zagueiro/Lateral">Zagueiro/Lateral (+3 pts)</option>
-                      <option value="Goleiro">Goleiro (+10 pts)</option>
-                      <option value="Gol Contra">Gol Contra (+5 pts)</option>
-                    </select>
-                  </div>
-
-                  <div className="w-16">
-                    <Input
-                      type="number"
-                      min="1"
-                      title="Quantidade de gols"
-                      value={scorer.quantidade}
-                      onChange={(e) => updateScorerA(index, 'quantidade', Number(e.target.value))}
-                      className="h-8 border-slate-300 bg-white text-center text-xs"
-                    />
-                  </div>
-
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon"
-                    onClick={() => removeScorerA(index)}
-                    className="h-8 w-8 text-slate-400 hover:text-red-600"
-                  >
-                    <Trash2 className="h-3.5 w-3.5" />
-                  </Button>
+        return (
+          <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+            {/* Panel Team A */}
+            <Card className="rounded-[14px] border-[#E2E8F0] bg-white p-6 shadow-xs">
+              <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+                <div>
+                  <CardTitle className="text-sm font-bold text-[#0F172A]">
+                    Marcadores de gols — {jogo.time_a}
+                  </CardTitle>
+                  <p className="text-[11px] text-[#64748B]">
+                    Gols reais marcados pelo {jogo.time_a} (campos gerados automaticamente pelo
+                    placar)
+                  </p>
                 </div>
-              ))
-            )}
-          </div>
-        </Card>
-
-        {/* Panel Team B */}
-        <Card className="rounded-[14px] border-[#E2E8F0] bg-white p-6 shadow-xs">
-          <div className="flex items-center justify-between pb-4 border-b border-slate-100">
-            <div>
-              <CardTitle className="text-sm font-bold text-[#0F172A]">
-                Autores dos Gols — {jogo.time_b}
-              </CardTitle>
-              <p className="text-[11px] text-[#64748B]">Gols reais marcados pelo time B</p>
-            </div>
-            <Button
-              type="button"
-              size="sm"
-              onClick={addScorerB}
-              className="h-8 bg-emerald-600 text-xs font-medium text-white hover:bg-emerald-700"
-            >
-              <Plus className="mr-1 h-3.5 w-3.5" /> Adicionar Gol
-            </Button>
-          </div>
-
-          <div className="mt-4 space-y-3">
-            {golsB.length === 0 ? (
-              <p className="py-6 text-center text-xs text-slate-400">
-                Nenhum gol registrado para {jogo.time_b}.
-              </p>
-            ) : (
-              golsB.map((scorer, index) => (
-                <div
-                  key={index}
-                  className="flex flex-col gap-2 rounded-lg border border-slate-200 bg-slate-50 p-3 sm:flex-row sm:items-center"
+                <Badge
+                  variant="outline"
+                  className={`text-[11px] font-semibold ${
+                    isZeroA
+                      ? 'border-slate-300 text-slate-400 bg-slate-100'
+                      : 'border-emerald-300 text-emerald-800 bg-emerald-50'
+                  }`}
                 >
-                  <div className="flex-1">
-                    <Input
-                      placeholder="Nome do jogador"
-                      value={scorer.nome}
-                      onChange={(e) => updateScorerB(index, 'nome', e.target.value)}
-                      className="h-8 border-slate-300 bg-white text-xs"
-                    />
-                  </div>
+                  {isZeroA
+                    ? '0 gols (bloqueado)'
+                    : `${numGolsA} gol${numGolsA > 1 ? 's' : ''} registrado${numGolsA > 1 ? 's' : ''}`}
+                </Badge>
+              </div>
 
-                  <div className="w-full sm:w-36">
-                    <select
-                      value={scorer.posicao}
-                      onChange={(e) => updateScorerB(index, 'posicao', e.target.value)}
-                      className={`h-8 w-full rounded-md border text-[11px] font-semibold px-2 ${getPositionTagStyle(
-                        scorer.posicao,
-                      )}`}
-                    >
-                      <option value="Atacante/Meia">Atacante/Meia (+1 pt)</option>
-                      <option value="Zagueiro/Lateral">Zagueiro/Lateral (+3 pts)</option>
-                      <option value="Goleiro">Goleiro (+10 pts)</option>
-                      <option value="Gol Contra">Gol Contra (+5 pts)</option>
-                    </select>
-                  </div>
+              <div className="mt-4 space-y-3">
+                {isZeroA ? (
+                  <p className="py-6 text-center text-xs italic text-slate-400">
+                    Placar zero (0): nenhum gol para registrar em {jogo.time_a}.
+                  </p>
+                ) : (
+                  Array.from({ length: numGolsA }).map((_, index) => {
+                    const scorer = golsA[index] || {
+                      nome: '',
+                      posicao: 'Atacante/Meia',
+                      quantidade: 1,
+                    }
+                    return (
+                      <div
+                        key={index}
+                        className="flex flex-col gap-2 rounded-lg border border-slate-200 bg-slate-50 p-2.5 sm:flex-row sm:items-center"
+                      >
+                        <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-slate-200 text-[10px] font-bold text-slate-700">
+                          {index + 1}º
+                        </span>
 
-                  <div className="w-16">
-                    <Input
-                      type="number"
-                      min="1"
-                      title="Quantidade de gols"
-                      value={scorer.quantidade}
-                      onChange={(e) => updateScorerB(index, 'quantidade', Number(e.target.value))}
-                      className="h-8 border-slate-300 bg-white text-center text-xs"
-                    />
-                  </div>
+                        <div className="flex-1">
+                          <Input
+                            placeholder={`Nome do autor do ${index + 1}º gol (ex: Pedro Raul)`}
+                            value={scorer.nome}
+                            onChange={(e) => updateScorerA(index, 'nome', e.target.value)}
+                            className="h-8 border-slate-300 bg-white text-xs focus-visible:border-[#10B981] focus-visible:ring-[#10B981]"
+                          />
+                        </div>
 
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon"
-                    onClick={() => removeScorerB(index)}
-                    className="h-8 w-8 text-slate-400 hover:text-red-600"
-                  >
-                    <Trash2 className="h-3.5 w-3.5" />
-                  </Button>
+                        <div className="w-full sm:w-44">
+                          <select
+                            value={scorer.posicao}
+                            onChange={(e) => updateScorerA(index, 'posicao', e.target.value)}
+                            className={`h-8 w-full rounded-md border text-[11px] font-semibold px-2 ${getPositionTagStyle(
+                              scorer.posicao,
+                            )}`}
+                          >
+                            <option value="Atacante/Meia">Atacante/Meia (+1 pt)</option>
+                            <option value="Zagueiro/Lateral">Zagueiro/Lateral (+3 pts)</option>
+                            <option value="Goleiro">Goleiro (+10 pts)</option>
+                            <option value="Gol Contra">Gol Contra (+5 pts)</option>
+                          </select>
+                        </div>
+                      </div>
+                    )
+                  })
+                )}
+                {!isZeroA && (
+                  <p className="pt-1 text-[10px] text-slate-500">
+                    Pode repetir o mesmo jogador caso tenha marcado múltiplos gols na partida.
+                  </p>
+                )}
+              </div>
+            </Card>
+
+            {/* Panel Team B */}
+            <Card className="rounded-[14px] border-[#E2E8F0] bg-white p-6 shadow-xs">
+              <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+                <div>
+                  <CardTitle className="text-sm font-bold text-[#0F172A]">
+                    Marcadores de gols — {jogo.time_b}
+                  </CardTitle>
+                  <p className="text-[11px] text-[#64748B]">
+                    Gols reais marcados pelo {jogo.time_b} (campos gerados automaticamente pelo
+                    placar)
+                  </p>
                 </div>
-              ))
-            )}
+                <Badge
+                  variant="outline"
+                  className={`text-[11px] font-semibold ${
+                    isZeroB
+                      ? 'border-slate-300 text-slate-400 bg-slate-100'
+                      : 'border-emerald-300 text-emerald-800 bg-emerald-50'
+                  }`}
+                >
+                  {isZeroB
+                    ? '0 gols (bloqueado)'
+                    : `${numGolsB} gol${numGolsB > 1 ? 's' : ''} registrado${numGolsB > 1 ? 's' : ''}`}
+                </Badge>
+              </div>
+
+              <div className="mt-4 space-y-3">
+                {isZeroB ? (
+                  <p className="py-6 text-center text-xs italic text-slate-400">
+                    Placar zero (0): nenhum gol para registrar em {jogo.time_b}.
+                  </p>
+                ) : (
+                  Array.from({ length: numGolsB }).map((_, index) => {
+                    const scorer = golsB[index] || {
+                      nome: '',
+                      posicao: 'Atacante/Meia',
+                      quantidade: 1,
+                    }
+                    return (
+                      <div
+                        key={index}
+                        className="flex flex-col gap-2 rounded-lg border border-slate-200 bg-slate-50 p-2.5 sm:flex-row sm:items-center"
+                      >
+                        <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-slate-200 text-[10px] font-bold text-slate-700">
+                          {index + 1}º
+                        </span>
+
+                        <div className="flex-1">
+                          <Input
+                            placeholder={`Nome do autor do ${index + 1}º gol (ex: Veiga)`}
+                            value={scorer.nome}
+                            onChange={(e) => updateScorerB(index, 'nome', e.target.value)}
+                            className="h-8 border-slate-300 bg-white text-xs focus-visible:border-[#10B981] focus-visible:ring-[#10B981]"
+                          />
+                        </div>
+
+                        <div className="w-full sm:w-44">
+                          <select
+                            value={scorer.posicao}
+                            onChange={(e) => updateScorerB(index, 'posicao', e.target.value)}
+                            className={`h-8 w-full rounded-md border text-[11px] font-semibold px-2 ${getPositionTagStyle(
+                              scorer.posicao,
+                            )}`}
+                          >
+                            <option value="Atacante/Meia">Atacante/Meia (+1 pt)</option>
+                            <option value="Zagueiro/Lateral">Zagueiro/Lateral (+3 pts)</option>
+                            <option value="Goleiro">Goleiro (+10 pts)</option>
+                            <option value="Gol Contra">Gol Contra (+5 pts)</option>
+                          </select>
+                        </div>
+                      </div>
+                    )
+                  })
+                )}
+                {!isZeroB && (
+                  <p className="pt-1 text-[10px] text-slate-500">
+                    Pode repetir o mesmo jogador caso tenha marcado múltiplos gols na partida.
+                  </p>
+                )}
+              </div>
+            </Card>
           </div>
-        </Card>
-      </div>
+        )
+      })()}
 
       {/* Penalties Section */}
       <Card className="rounded-[14px] border-[#E2E8F0] bg-white p-6 shadow-xs">

@@ -19,6 +19,7 @@ import {
   RefreshCcw,
 } from 'lucide-react'
 import pb from '@/lib/pocketbase/client'
+import { Skeleton } from '@/components/ui/skeleton'
 import { useAuth } from '@/context/AuthContext'
 import { AdminEditMarcadoresModal } from '@/components/AdminEditMarcadoresModal'
 import { useActivePool } from '@/context/ActivePoolContext'
@@ -45,6 +46,60 @@ interface PalpiteFormData {
   goleadores_a: string[]
   goleadores_b: string[]
   vencedor_penaltis: 'A' | 'B' | 'N' | string
+}
+
+interface PalpitesLocalCache {
+  version: number
+  timestamp: number
+  jogos: Jogo[]
+  palpites: Record<string, Palpite>
+  formData: Record<string, PalpiteFormData>
+  currentPage: number
+  totalPages: number
+  totalItems: number
+  userParticipantsMap: Record<string, Participante>
+}
+
+const CACHE_PREFIX = 'cr_palpites_cache_v1'
+
+function getLocalCacheKey(userId: string, targetBolao: string, filterPendentes: boolean): string {
+  return `${CACHE_PREFIX}_${userId || 'anon'}_${targetBolao || 'all'}_${filterPendentes ? 'p1' : 'p0'}`
+}
+
+function readLocalCache(
+  userId: string,
+  targetBolao: string,
+  filterPendentes: boolean,
+): PalpitesLocalCache | null {
+  try {
+    const key = getLocalCacheKey(userId, targetBolao, filterPendentes)
+    const raw = localStorage.getItem(key)
+    if (!raw) return null
+    const parsed = JSON.parse(raw) as PalpitesLocalCache
+    if (!parsed || !Array.isArray(parsed.jogos)) return null
+    return parsed
+  } catch {
+    return null
+  }
+}
+
+function writeLocalCache(
+  userId: string,
+  targetBolao: string,
+  filterPendentes: boolean,
+  data: Omit<PalpitesLocalCache, 'version' | 'timestamp'>,
+) {
+  try {
+    const key = getLocalCacheKey(userId, targetBolao, filterPendentes)
+    const payload: PalpitesLocalCache = {
+      ...data,
+      version: 1,
+      timestamp: Date.now(),
+    }
+    localStorage.setItem(key, JSON.stringify(payload))
+  } catch {
+    // localStorage pode estar indisponível ou cheio; ignora falhas de gravação de cache
+  }
 }
 
 function normalizeScorersArray(raw: any, goalCount: number): string[] {
@@ -85,17 +140,31 @@ export default function Palpites() {
   // Caso o usuário acesse explicitamente ?pendentes=0, desativa; se ?pendentes=1 ou omitido, inicia ativado (true)
   const initialPendentes = pendentesRaw === null ? true : pendentesRaw !== '0'
 
-  const [jogos, setJogos] = useState<Jogo[]>([])
-  const [currentPage, setCurrentPage] = useState<number>(1)
-  const [totalPages, setTotalPages] = useState<number>(1)
-  const [totalItems, setTotalItems] = useState<number>(0)
+  const currentScopeKey = isGeralParam ? GERAL_BOLAO_ID : activeBolaoId || 'default'
+
+  // Leitura inicial síncrona do cache local para renderização INSTANTÂNEA (SWR: stale-while-revalidate)
+  const initialCache = useMemo(() => {
+    const uid = (user?.id as string) || (user?.email as string) || ''
+    return readLocalCache(uid, currentScopeKey, initialPendentes)
+  }, [user?.id, user?.email, currentScopeKey, initialPendentes])
+
+  const [jogos, setJogos] = useState<Jogo[]>(() => initialCache?.jogos || [])
+  const [currentPage, setCurrentPage] = useState<number>(() => initialCache?.currentPage || 1)
+  const [totalPages, setTotalPages] = useState<number>(() => initialCache?.totalPages || 1)
+  const [totalItems, setTotalItems] = useState<number>(() => initialCache?.totalItems || 0)
   const [isLoadingMore, setIsLoadingMore] = useState<boolean>(false)
   const [allBoloes, setAllBoloes] = useState<Bolao[]>([])
   const [participantesList, setParticipantesList] = useState<Participante[]>([])
   const [allGroupPalpites, setAllGroupPalpites] = useState<Palpite[]>([])
-  const [userParticipantsMap, setUserParticipantsMap] = useState<Record<string, Participante>>({})
-  const [palpites, setPalpites] = useState<Record<string, Palpite>>({})
-  const [formData, setFormData] = useState<Record<string, PalpiteFormData>>({})
+  const [userParticipantsMap, setUserParticipantsMap] = useState<Record<string, Participante>>(
+    () => initialCache?.userParticipantsMap || {},
+  )
+  const [palpites, setPalpites] = useState<Record<string, Palpite>>(
+    () => initialCache?.palpites || {},
+  )
+  const [formData, setFormData] = useState<Record<string, PalpiteFormData>>(
+    () => initialCache?.formData || {},
+  )
   const [editingGames, setEditingGames] = useState<Record<string, boolean>>({})
   const [savingGameId, setSavingGameId] = useState<string | null>(null)
   const [expandedDetails, setExpandedDetails] = useState<Record<string, boolean>>({})
@@ -108,7 +177,11 @@ export default function Palpites() {
   const [filterPendentes, setFilterPendentes] = useState<boolean>(initialPendentes)
   const [loadingGroupBets, setLoadingGroupBets] = useState(false)
   const [loadedGroupBets, setLoadedGroupBets] = useState(false)
-  const [loading, setLoading] = useState(true)
+  // Se houver cache inicial para este escopo, a tela NÃO bloqueia em spinner, entra revalidando em background
+  const [loading, setLoading] = useState(() => !initialCache || initialCache.jogos.length === 0)
+  const [isBackgroundRevalidating, setIsBackgroundRevalidating] = useState(
+    () => !!(initialCache && initialCache.jogos.length > 0),
+  )
   const [isRefreshing, setIsRefreshing] = useState(false)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [nowMs, setNowMs] = useState<number>(Date.now())
@@ -117,6 +190,8 @@ export default function Palpites() {
   const activeLoadPromiseRef = useRef<Promise<void> | null>(null)
   const activeGroupBetsPromiseRef = useRef<Promise<void> | null>(null)
   const lastLoadTimeRef = useRef<number>(0)
+  // Referência para chave de contexto anterior para carregar cache na troca de copa/filtro
+  const prevScopeRef = useRef<string>(`${currentScopeKey}_${initialPendentes}`)
 
   // Atualiza periodicamente o horário atual para sincronizar o bloqueio de encerramento em tempo real
   useEffect(() => {
@@ -133,16 +208,35 @@ export default function Palpites() {
     }
   }, [pendentesRaw])
 
-  // Resetar página quando bolão ou filtro mudar
+  // Hidratação instantânea do cache local ao trocar de bolão ou filtro (SWR local)
   useEffect(() => {
-    setCurrentPage(1)
-  }, [activeBolaoId, isGeralParam, filterPendentes])
+    const scopeKey = `${currentScopeKey}_${filterPendentes}`
+    if (scopeKey !== prevScopeRef.current) {
+      prevScopeRef.current = scopeKey
+      setCurrentPage(1)
+      setLoadedGroupBets(false)
+      setAllGroupPalpites([])
 
-  // Resetar estado de palpites do grupo sob demanda quando trocar de bolão
-  useEffect(() => {
-    setLoadedGroupBets(false)
-    setAllGroupPalpites([])
-  }, [activeBolaoId, isGeralParam])
+      const uid = (user?.id as string) || (user?.email as string) || ''
+      const cached = readLocalCache(uid, currentScopeKey, filterPendentes)
+      if (cached && cached.jogos.length > 0) {
+        setJogos(cached.jogos)
+        setPalpites(cached.palpites || {})
+        setFormData(cached.formData || {})
+        setUserParticipantsMap(cached.userParticipantsMap || {})
+        setCurrentPage(cached.currentPage || 1)
+        setTotalPages(cached.totalPages || 1)
+        setTotalItems(cached.totalItems || cached.jogos.length)
+        setLoading(false)
+        setIsBackgroundRevalidating(true)
+      } else {
+        // Sem cache para a nova copa/filtro: exibe skeleton/loading enquanto busca
+        setJogos([])
+        setLoading(true)
+        setIsBackgroundRevalidating(false)
+      }
+    }
+  }, [currentScopeKey, filterPendentes, user?.id, user?.email])
 
   // Carregamento SOB DEMANDA dos palpites do grupo (apenas quando solicitado pelo usuário)
   // Deduplicado para nunca disparar chamadas concorrentes repetidas
@@ -221,10 +315,16 @@ export default function Palpites() {
         return activeLoadPromiseRef.current
       }
 
+      // Se já temos jogos em tela (ex: via cache local), não exibe spinner de tela inteira:
+      // apenas sinaliza revalidação discreta em background
+      const hasExistingData = !append && jogos.length > 0
+
       if (isManualRefresh) {
         setIsRefreshing(true)
       } else if (append) {
         setIsLoadingMore(true)
+      } else if (hasExistingData) {
+        setIsBackgroundRevalidating(true)
       } else {
         setLoading(true)
       }
@@ -325,28 +425,36 @@ export default function Palpites() {
               setJogos(gamesResult.items)
             }
 
-            setPalpites((prev) => {
-              const updated = append ? { ...prev } : {}
-              for (const p of myPalpites) {
-                updated[p.jogo] = p
-              }
-              return updated
-            })
+            const nextPalpitesMap: Record<string, Palpite> = append ? { ...palpites } : {}
+            for (const p of myPalpites) {
+              nextPalpitesMap[p.jogo] = p
+            }
+            setPalpites(nextPalpitesMap)
 
-            setFormData((prev) => {
-              const updated = append ? { ...prev } : {}
-              for (const p of myPalpites) {
-                const gA = p.placar_a !== null && p.placar_a !== undefined ? Number(p.placar_a) : 0
-                const gB = p.placar_b !== null && p.placar_b !== undefined ? Number(p.placar_b) : 0
-                updated[p.jogo] = {
-                  placar_a: p.placar_a ?? '',
-                  placar_b: p.placar_b ?? '',
-                  goleadores_a: normalizeScorersArray(p.goleadores_a, gA),
-                  goleadores_b: normalizeScorersArray(p.goleadores_b, gB),
-                  vencedor_penaltis: p.vencedor_penaltis || 'N',
-                }
+            const nextFormDataMap: Record<string, PalpiteFormData> = append ? { ...formData } : {}
+            for (const p of myPalpites) {
+              const gA = p.placar_a !== null && p.placar_a !== undefined ? Number(p.placar_a) : 0
+              const gB = p.placar_b !== null && p.placar_b !== undefined ? Number(p.placar_b) : 0
+              nextFormDataMap[p.jogo] = {
+                placar_a: p.placar_a ?? '',
+                placar_b: p.placar_b ?? '',
+                goleadores_a: normalizeScorersArray(p.goleadores_a, gA),
+                goleadores_b: normalizeScorersArray(p.goleadores_b, gB),
+                vencedor_penaltis: p.vencedor_penaltis || 'N',
               }
-              return updated
+            }
+            setFormData(nextFormDataMap)
+
+            // Grava no cache local para renderização instantânea nas próximas visitas (SWR)
+            const uid = (user.id as string) || (user.email as string) || ''
+            writeLocalCache(uid, GERAL_BOLAO_ID, filterPendentes, {
+              jogos: gamesResult.items,
+              palpites: nextPalpitesMap,
+              formData: nextFormDataMap,
+              currentPage: gamesResult.page,
+              totalPages: gamesResult.totalPages,
+              totalItems: gamesResult.totalItems,
+              userParticipantsMap: myPartMapByBolao,
             })
           } else {
             // MODO BOLÃO ESPECÍFICO: Buscar dados do bolão selecionado com LIMIT 20 real no backend
@@ -436,28 +544,36 @@ export default function Palpites() {
               setJogos(gamesResult.items)
             }
 
-            setPalpites((prev) => {
-              const updated = append ? { ...prev } : {}
-              for (const p of myPalpites) {
-                updated[p.jogo] = p
-              }
-              return updated
-            })
+            const nextPalpitesMap: Record<string, Palpite> = append ? { ...palpites } : {}
+            for (const p of myPalpites) {
+              nextPalpitesMap[p.jogo] = p
+            }
+            setPalpites(nextPalpitesMap)
 
-            setFormData((prev) => {
-              const updated = append ? { ...prev } : {}
-              for (const p of myPalpites) {
-                const gA = p.placar_a !== null && p.placar_a !== undefined ? Number(p.placar_a) : 0
-                const gB = p.placar_b !== null && p.placar_b !== undefined ? Number(p.placar_b) : 0
-                updated[p.jogo] = {
-                  placar_a: p.placar_a ?? '',
-                  placar_b: p.placar_b ?? '',
-                  goleadores_a: normalizeScorersArray(p.goleadores_a, gA),
-                  goleadores_b: normalizeScorersArray(p.goleadores_b, gB),
-                  vencedor_penaltis: p.vencedor_penaltis || 'N',
-                }
+            const nextFormDataMap: Record<string, PalpiteFormData> = append ? { ...formData } : {}
+            for (const p of myPalpites) {
+              const gA = p.placar_a !== null && p.placar_a !== undefined ? Number(p.placar_a) : 0
+              const gB = p.placar_b !== null && p.placar_b !== undefined ? Number(p.placar_b) : 0
+              nextFormDataMap[p.jogo] = {
+                placar_a: p.placar_a ?? '',
+                placar_b: p.placar_b ?? '',
+                goleadores_a: normalizeScorersArray(p.goleadores_a, gA),
+                goleadores_b: normalizeScorersArray(p.goleadores_b, gB),
+                vencedor_penaltis: p.vencedor_penaltis || 'N',
               }
-              return updated
+            }
+            setFormData(nextFormDataMap)
+
+            // Grava no cache local para renderização instantânea nas próximas visitas (SWR)
+            const uid = (user.id as string) || (user.email as string) || ''
+            writeLocalCache(uid, currentTargetBolaoId, filterPendentes, {
+              jogos: gamesResult.items,
+              palpites: nextPalpitesMap,
+              formData: nextFormDataMap,
+              currentPage: gamesResult.page,
+              totalPages: gamesResult.totalPages,
+              totalItems: gamesResult.totalItems,
+              userParticipantsMap: userParticipantsMap,
             })
           }
         } catch (err) {
@@ -468,6 +584,7 @@ export default function Palpites() {
         } finally {
           setLoading(false)
           setIsRefreshing(false)
+          setIsBackgroundRevalidating(false)
           setIsLoadingMore(false)
           activeLoadPromiseRef.current = null
         }
@@ -828,17 +945,25 @@ export default function Palpites() {
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
+          {/* Indicador discreto de revalidação em background (SWR) */}
+          {isBackgroundRevalidating && !isRefreshing && (
+            <span className="flex items-center gap-1.5 text-[11px] font-medium text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-1 rounded-md animate-pulse">
+              <RefreshCcw className="h-3 w-3 animate-spin text-emerald-600" />
+              Sincronizando dados...
+            </span>
+          )}
+
           <Button
             type="button"
             variant="outline"
             size="sm"
             onClick={() => loadData(1, true, false)}
-            disabled={isRefreshing}
+            disabled={isRefreshing || isBackgroundRevalidating}
             className="h-8 gap-1.5 text-xs font-semibold border-slate-300 text-slate-700 hover:bg-slate-50"
             title="Atualizar palpites"
           >
             <RefreshCcw
-              className={`h-3.5 w-3.5 text-[#0F2A43] ${isRefreshing ? 'animate-spin' : ''}`}
+              className={`h-3.5 w-3.5 text-[#0F2A43] ${isRefreshing || isBackgroundRevalidating ? 'animate-spin' : ''}`}
             />
             <span>{isRefreshing ? 'Atualizando...' : 'Atualizar'}</span>
           </Button>
@@ -934,9 +1059,32 @@ export default function Palpites() {
         </div>
       )}
 
-      {loading ? (
-        <div className="flex min-h-[300px] items-center justify-center">
-          <Loader2 className="h-8 w-8 animate-spin text-[#0F2A43]" />
+      {loading && displayedJogos.length === 0 ? (
+        <div className="space-y-4">
+          <div className="flex items-center gap-2 text-xs text-slate-500 py-1">
+            <Loader2 className="h-4 w-4 animate-spin text-[#0F2A43]" />
+            <span>Carregando partidas e palpites pela primeira vez...</span>
+          </div>
+          {[1, 2, 3].map((idx) => (
+            <Card
+              key={idx}
+              className="overflow-hidden rounded-[14px] border-[#E2E8F0] bg-white p-6 shadow-xs"
+            >
+              <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+                <Skeleton className="h-4 w-40" />
+                <Skeleton className="h-5 w-24 rounded-full" />
+              </div>
+              <div className="py-6 flex justify-center items-center gap-6">
+                <Skeleton className="h-6 w-32" />
+                <Skeleton className="h-4 w-8" />
+                <Skeleton className="h-6 w-32" />
+              </div>
+              <div className="flex justify-center gap-4 pt-2">
+                <Skeleton className="h-12 w-20 rounded-lg" />
+                <Skeleton className="h-12 w-20 rounded-lg" />
+              </div>
+            </Card>
+          ))}
         </div>
       ) : displayedJogos.length === 0 ? (
         <Card className="rounded-[14px] border-[#E2E8F0] bg-white p-12 text-center text-xs text-slate-500">
