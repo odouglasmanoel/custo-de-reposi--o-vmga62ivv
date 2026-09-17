@@ -82,6 +82,7 @@ export interface DayFixture {
 
 interface ApiResponse {
   configured: boolean
+  provider?: string
   date: string
   total: number
   hasLive: boolean
@@ -103,6 +104,7 @@ export default function JogosDoDia() {
   const [fixtures, setFixtures] = useState<DayFixture[]>([])
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
+  const [activeProvider, setActiveProvider] = useState<string>('api_football')
   const [isConfigured, setIsConfigured] = useState<boolean>(true)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
   const [isCached, setIsCached] = useState<boolean>(false)
@@ -162,6 +164,7 @@ export default function JogosDoDia() {
 
       const data: ApiResponse = await res.json()
       setIsConfigured(Boolean(data.configured))
+      setActiveProvider(data.provider || 'api_football')
       setFixtures(Array.isArray(data.fixtures) ? data.fixtures : [])
       setIsCached(Boolean(data.cached))
       setCacheAge(data.cacheAgeSeconds || 0)
@@ -220,8 +223,8 @@ export default function JogosDoDia() {
       13, // Copa Libertadores
       11, // Copa Sudamericana
       450, // Copa Sudamericana alternativa
-      2, // UEFA Champions League
-      3, // UEFA Europa League
+      2, // UEFA Champions League (CL)
+      3, // UEFA Europa League (EL)
       848, // UEFA Conference League
       39, // Premier League (Inglaterra)
       140, // La Liga (Espanha)
@@ -234,11 +237,21 @@ export default function JogosDoDia() {
       137, // Coppa Italia
       81, // DFB-Pokal
       66, // Coupe de France
+      2013, // Football-Data.org Brasileirão Série A
+      2001, // Football-Data.org UEFA Champions League
+      2021, // Football-Data.org Premier League
+      2014, // Football-Data.org La Liga
+      2019, // Football-Data.org Serie A
+      2002, // Football-Data.org Bundesliga
+      2015, // Football-Data.org Ligue 1
     ])
 
     return fixtures.filter((item) => {
       const lid = item.league?.id
-      if (!lid || !targetLeagueSet.has(lid)) {
+      // Se não temos lid ou não está no target, mas tem região mapeada válida
+      if (item.league?.region && item.league.region !== 'Outros') {
+        // Aceita torneios categorizados diretamente
+      } else if (!lid || !targetLeagueSet.has(lid)) {
         return false
       }
 
@@ -712,12 +725,32 @@ export default function JogosDoDia() {
       ) : groupedByLeague.length === 0 ? (
         <Card className="rounded-[14px] border-[#E2E8F0] bg-white p-12 text-center text-xs text-slate-500 shadow-xs">
           <Trophy className="mx-auto h-8 w-8 text-slate-300 mb-2" />
-          <p className="font-semibold text-slate-700">
-            Nenhuma partida encontrada para os critérios selecionados.
-          </p>
-          <p className="mt-1 text-slate-400">
-            Tente selecionar outra data ou ajustar os filtros de região e status acima.
-          </p>
+          {activeProvider === 'football_data' &&
+          (selectedRegion === 'Sul-Americana' ||
+            (selectedRegion === 'Brasileirão & Copas' &&
+              relevantFixtures.filter((f) => f.league.region === 'Brasileirão & Copas').length ===
+                0)) ? (
+            <div className="space-y-1">
+              <p className="font-semibold text-slate-700">
+                Sem cobertura neste provedor ({selectedRegion})
+              </p>
+              <p className="mt-1 text-slate-400 max-w-md mx-auto">
+                O provedor ativo (Football-Data.org) cobre apenas grandes ligas (Brasileirão Série
+                A, Champions League, Premier League, La Liga, Serie A, Bundesliga e Ligue 1).
+                Torneios como Séries B/C/D, Copa do Brasil ou Sul-Americana não são transmitidos por
+                ele.
+              </p>
+            </div>
+          ) : (
+            <>
+              <p className="font-semibold text-slate-700">
+                Nenhuma partida encontrada para os critérios selecionados.
+              </p>
+              <p className="mt-1 text-slate-400">
+                Tente selecionar outra data ou ajustar os filtros de região e status acima.
+              </p>
+            </>
+          )}
         </Card>
       ) : (
         <div className="space-y-6">

@@ -47,6 +47,7 @@ export default function AdminConfiguracoes() {
   const [saving, setSaving] = useState(false)
   const [testing, setTesting] = useState(false)
   const [testingFallback, setTestingFallback] = useState(false)
+  const [clearingCache, setClearingCache] = useState(false)
 
   const [config, setConfig] = useState<ConfigState>({
     provedor: 'api_football',
@@ -258,6 +259,48 @@ export default function AdminConfiguracoes() {
   }
 
   // Teste de conexão específico para a chave secundária de contingência (Football-Data.org)
+  const handleClearCache = async () => {
+    setClearingCache(true)
+    try {
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+      }
+      if (pb.authStore.token) {
+        headers['Authorization'] = pb.authStore.token
+      }
+
+      const res = await fetch(
+        `${import.meta.env.VITE_POCKETBASE_URL}/backend/v1/placar-ao-vivo/limpar-cache`,
+        {
+          method: 'POST',
+          headers,
+        },
+      )
+
+      const data = await res.json().catch(() => ({}))
+      if (res.ok && data.success) {
+        toast({
+          title: 'Cache limpo com sucesso! 🧹',
+          description: data.message || 'Cache limpo — próxima busca será direto na API',
+        })
+      } else {
+        toast({
+          title: 'Erro ao limpar cache',
+          description: data.error || data.message || 'Falha ao comunicar com o servidor',
+          variant: 'destructive',
+        })
+      }
+    } catch (err: unknown) {
+      toast({
+        title: 'Erro ao limpar cache',
+        description: err instanceof Error ? err.message : 'Falha na requisição',
+        variant: 'destructive',
+      })
+    } finally {
+      setClearingCache(false)
+    }
+  }
+
   const handleTestFallbackConnection = async () => {
     setTestingFallback(true)
     setFallbackTestResult(null)
@@ -352,7 +395,28 @@ export default function AdminConfiguracoes() {
           </div>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={handleClearCache}
+            disabled={clearingCache || loading}
+            className="h-8 rounded-lg border-rose-300 bg-rose-50/50 text-xs font-semibold text-rose-800 hover:bg-rose-100 hover:text-rose-900"
+            title="Zerar caches em memória no servidor e forçar busca limpa na API"
+          >
+            {clearingCache ? (
+              <>
+                <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin text-rose-700" />
+                Limpando...
+              </>
+            ) : (
+              <>
+                <RefreshCw className="mr-1.5 h-3.5 w-3.5 text-rose-700" />
+                Limpar Cache do Servidor
+              </>
+            )}
+          </Button>
           <Link to="/bolao/admin/jogos">
             <Button
               variant="outline"
@@ -727,10 +791,31 @@ export default function AdminConfiguracoes() {
                   </div>
 
                   {/* Botões de Ação */}
-                  <div className="flex flex-wrap items-center justify-end gap-3 pt-3 border-t border-slate-100">
+                  <div className="flex flex-wrap items-center justify-between gap-3 pt-3 border-t border-slate-100">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={handleClearCache}
+                      disabled={clearingCache || saving}
+                      className="h-10 rounded-lg border-rose-300 bg-rose-50/50 text-xs font-semibold text-rose-800 hover:bg-rose-100"
+                    >
+                      {clearingCache ? (
+                        <>
+                          <Loader2 className="mr-2 h-4 w-4 animate-spin text-rose-700" />
+                          Limpando caches do servidor...
+                        </>
+                      ) : (
+                        <>
+                          <RefreshCw className="mr-2 h-4 w-4 text-rose-700" />
+                          Limpar Cache do Servidor
+                        </>
+                      )}
+                    </Button>
+
                     <Button
                       type="submit"
-                      disabled={saving || testing || testingFallback}
+                      disabled={saving || testing || testingFallback || clearingCache}
                       className="h-10 rounded-lg bg-[#0F2A43] px-6 text-xs font-semibold text-white shadow-xs hover:bg-[#1B3A5C]"
                     >
                       {saving ? (

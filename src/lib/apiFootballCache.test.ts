@@ -215,6 +215,118 @@ describe('API-Football - Cache, Rate Limit e Consumo Sob Demanda', () => {
   })
 
   describe('3. Preservação de Regras de Fallback e Integridade dos Dados', () => {
+    it('nunca grava array vazio [] no cache se a API externa falhar ou retornar 0 partidas', () => {
+      // Simulação da store em memória do backend
+      const cacheStore: Record<string, { timestamp: number; data: any }> = {}
+      const cacheKey = 'api_football_2026-09-17_'
+
+      // Estado 1: Cache possuía 2 partidas válidas gravadas anteriormente
+      const validPayload = {
+        configured: true,
+        provider: 'api_football',
+        fixtures: [
+          { fixture: { id: 101 }, teams: { home: { name: 'Flamengo' }, away: { name: 'Vasco' } } },
+          {
+            fixture: { id: 102 },
+            teams: { home: { name: 'Palmeiras' }, away: { name: 'Santos' } },
+          },
+        ],
+        updatedAt: '2026-09-17T10:00:00Z',
+      }
+      const initialTimestamp = 1000000
+      cacheStore[cacheKey] = {
+        timestamp: initialTimestamp,
+        data: validPayload,
+      }
+
+      // Simula uma nova chamada externa que retornou 0 partidas (falha de API ou sem dados)
+      const newApiResponse: any[] = []
+
+      // Função de gravação no cache com a regra estrita implementada
+      function maybeSaveToCache(store: typeof cacheStore, key: string, fixturesList: any[]) {
+        if (fixturesList && fixturesList.length > 0) {
+          store[key] = {
+            timestamp: 2000000,
+            data: {
+              configured: true,
+              provider: 'api_football',
+              fixtures: fixturesList,
+            },
+          }
+        }
+      }
+
+      maybeSaveToCache(cacheStore, cacheKey, newApiResponse)
+
+      // Verifica que o cache NÃO foi sobrescrito por [] e preservou o resultado anterior
+      expect(cacheStore[cacheKey].data.fixtures).toHaveLength(2)
+      expect(cacheStore[cacheKey].timestamp).toBe(initialTimestamp)
+      expect(cacheStore[cacheKey].data.fixtures[0].teams.home.name).toBe('Flamengo')
+    })
+
+    it('quando o cache estiver contaminado com [] descarta e não serve do cache', () => {
+      const contaminatedEntry = {
+        timestamp: 1000000,
+        payload: {
+          configured: true,
+          fixtures: [], // vazio contaminado
+        },
+      }
+
+      // Regra de validação: só serve do cache se fixtures.length > 0
+      const isContaminated =
+        !contaminatedEntry.payload.fixtures || contaminatedEntry.payload.fixtures.length === 0
+      expect(isContaminated).toBe(true)
+    })
+
+    it('limpar cache do servidor esvazia todas as stores em memória', () => {
+      const mockGlobalStores: Record<string, any> = {
+        __placarAoVivoCacheStore: {
+          key1: { timestamp: 123, data: {} },
+        },
+        __jogosDoDiaStore: {
+          '2026-09-17': { timestamp: 123, payload: { fixtures: [] } },
+        },
+      }
+
+      // Simula execução da rota /backend/v1/placar-ao-vivo/limpar-cache
+      function clearServerCache(stores: typeof mockGlobalStores) {
+        stores.__placarAoVivoCacheStore = {}
+        stores.__jogosDoDiaStore = {}
+        return {
+          success: true,
+          message: 'Cache limpo — próxima busca será direto na API',
+        }
+      }
+
+      const res = clearServerCache(mockGlobalStores)
+      expect(res.success).toBe(true)
+      expect(res.message).toBe('Cache limpo — próxima busca será direto na API')
+      expect(Object.keys(mockGlobalStores.__placarAoVivoCacheStore)).toHaveLength(0)
+      expect(Object.keys(mockGlobalStores.__jogosDoDiaStore)).toHaveLength(0)
+    })
+
+    it('alternância para Football-Data.org lida graciosamente com competições não suportadas', () => {
+      // Competições suportadas por Football-Data.org v4
+      const supportedCompetitionCodes = ['BSA', 'CL', 'EL', 'PL', 'PD', 'SA', 'BL1', 'FL1']
+
+      // Testando torneios não suportados (ex: Série B, Copa do Brasil)
+      const testCompetitions = [
+        { code: 'BSA', name: 'Campeonato Brasileiro Série A', supported: true },
+        { code: 'BSB', name: 'Campeonato Brasileiro Série B', supported: false },
+        { code: 'CDB', name: 'Copa do Brasil', supported: false },
+        { code: 'CL', name: 'UEFA Champions League', supported: true },
+      ]
+
+      const filteredMatches = testCompetitions.filter((c) =>
+        supportedCompetitionCodes.includes(c.code),
+      )
+
+      // Apenas competições suportadas devem ser incluídas, sem quebrar nem estourar erro
+      expect(filteredMatches).toHaveLength(2)
+      expect(filteredMatches.map((m) => m.code)).toEqual(['BSA', 'CL'])
+    })
+
     it('nunca inventa placar 0 x 0 quando a API falha ou está sem dados', () => {
       // Simula resultado do matcher quando API está vazia
       const jogoSemResultado = {

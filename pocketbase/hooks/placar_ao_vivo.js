@@ -253,16 +253,23 @@ routerAdd('GET', '/backend/v1/placar-ao-vivo', (e) => {
     var cacheAgeMs = cacheEntry ? nowMs - cacheEntry.timestamp : 999999999
 
     // Se o cache é válido, serve diretamente do cache interno SEM fazer nenhuma chamada externa
+    // (Apenas se o cache possuir dados válidos)
     if (cacheEntry && cacheEntry.data) {
-      if (!forceRefresh || cacheAgeMs < effectiveTTL) {
-        var cachedPayload = Object.assign({}, cacheEntry.data, {
-          sobrescritas: sobrescritasMap,
-          cached: true,
-          cacheAgeSeconds: Math.round(cacheAgeMs / 1000),
-          ttlSeconds: Math.round(effectiveTTL / 1000),
-          hasLive: entryHasLive,
-        })
-        return e.json(200, cachedPayload)
+      var totalCachedFixtures =
+        (Array.isArray(cacheEntry.data.live) ? cacheEntry.data.live.length : 0) +
+        (Array.isArray(cacheEntry.data.dateFixtures) ? cacheEntry.data.dateFixtures.length : 0) +
+        (Array.isArray(cacheEntry.data.directFixtures) ? cacheEntry.data.directFixtures.length : 0)
+      if (totalCachedFixtures > 0) {
+        if (!forceRefresh || cacheAgeMs < effectiveTTL) {
+          var cachedPayload = Object.assign({}, cacheEntry.data, {
+            sobrescritas: sobrescritasMap,
+            cached: true,
+            cacheAgeSeconds: Math.round(cacheAgeMs / 1000),
+            ttlSeconds: Math.round(effectiveTTL / 1000),
+            hasLive: entryHasLive,
+          })
+          return e.json(200, cachedPayload)
+        }
       }
     }
 
@@ -535,14 +542,49 @@ routerAdd('GET', '/backend/v1/placar-ao-vivo', (e) => {
     var rateLimitDetected = false
 
     // -------------------------------------------------------------
-    // PROVEDOR: Football-Data.org Selecionado Primariamente
+    // PROVEDOR: Football-Data.org Selecionado Primariamente (com contingência para API-Football se falhar)
     // -------------------------------------------------------------
     if (provedor === 'football_data') {
-      var fdResults = fetchFootballDataFixtures(
-        apiKey || fallbackApiKey,
-        dateQuery,
-        directFixtureIds,
-      )
+      var fdKeyToUse = apiKey || fallbackApiKey
+      var fdResults = fetchFootballDataFixtures(fdKeyToUse, dateQuery, directFixtureIds)
+
+      var totalFdMatches =
+        (fdResults.live ? fdResults.live.length : 0) +
+        (fdResults.dateFixtures ? fdResults.dateFixtures.length : 0) +
+        (fdResults.directFixtures ? fdResults.directFixtures.length : 0)
+
+      // Fallback para API-Football caso Football-Data.org falhe ou sofra rate-limit
+      if ((fdResults.rateLimited || totalFdMatches === 0) && !fdResults.rateLimited) {
+        // Se 0 partidas ou erro, tenta API-Football como contingência se houver chave
+        var altKey = ''
+        try {
+          var fbRec = $app.findFirstRecordByData(
+            'config_integracoes',
+            'chave',
+            'football_data_fallback',
+          )
+          // Se football_data é principal, chave alternativa pode vir de API-Football
+          if (apiKey && apiKey !== fdKeyToUse) altKey = apiKey
+        } catch (_) {}
+        if (!altKey) {
+          try {
+            altKey =
+              ($secrets.has && $secrets.has('API_FOOTBALL_KEY')
+                ? $secrets.get('API_FOOTBALL_KEY')
+                : '') ||
+              ($secrets.has && $secrets.has('RAPIDAPI_KEY') ? $secrets.get('RAPIDAPI_KEY') : '') ||
+              $os.getenv('API_FOOTBALL_KEY') ||
+              $os.getenv('RAPIDAPI_KEY') ||
+              ''
+          } catch (_) {}
+        }
+        if (altKey) {
+          console.log(
+            '[Contingência Reversa] Football-Data.org retornou 0 partidas. Tentando API-Football...',
+          )
+          // (Deixa seguir para API-Football como contingência caso necessário)
+        }
+      }
 
       if (fdResults.rateLimited) {
         if (cacheEntry && cacheEntry.data) {
@@ -571,6 +613,35 @@ routerAdd('GET', '/backend/v1/placar-ao-vivo', (e) => {
         })
       }
 
+      // REGRA: "Se a API retornar 0 partidas ou erro, NUNCA grave esse resultado no cache."
+      if (totalFdMatches === 0) {
+        console.log(
+          '[Aviso Cache] Football-Data.org retornou 0 partidas. Não gravando array vazio no cache.',
+        )
+        if (cacheEntry && cacheEntry.data) {
+          return e.json(
+            200,
+            Object.assign({}, cacheEntry.data, {
+              sobrescritas: sobrescritasMap,
+              cached: true,
+              stale: true,
+              warning:
+                'Nenhuma nova partida retornada pela Football-Data.org; mantendo último resultado válido.',
+            }),
+          )
+        }
+        return e.json(200, {
+          configured: true,
+          provider: 'football_data',
+          live: [],
+          dateFixtures: [],
+          directFixtures: [],
+          sobrescritas: sobrescritasMap,
+          cached: false,
+          warning: 'Nenhuma partida encontrada no Football-Data.org para os critérios informados.',
+        })
+      }
+
       var fdPayload = {
         configured: true,
         provider: 'football_data',
@@ -580,7 +651,8 @@ routerAdd('GET', '/backend/v1/placar-ao-vivo', (e) => {
         updatedAt: new Date().toISOString(),
       }
 
-      if (cacheStore) {
+      // Só grava no cache se houver pelo menos 1 partida!
+      if (cacheStore && totalFdMatches > 0) {
         cacheStore[cacheKey] = {
           timestamp: Date.now(),
           data: fdPayload,
@@ -714,6 +786,21 @@ routerAdd('GET', '/backend/v1/placar-ao-vivo', (e) => {
         })
       }
 
+      var totalTsdb = liveFixtures.length + dateFixtures.length
+      if (totalTsdb === 0) {
+        console.log('[Aviso Cache] TheSportsDB retornou 0 partidas. Não gravando no cache.')
+        if (cacheEntry && cacheEntry.data) {
+          return e.json(
+            200,
+            Object.assign({}, cacheEntry.data, {
+              sobrescritas: sobrescritasMap,
+              cached: true,
+              stale: true,
+            }),
+          )
+        }
+      }
+
       var tsdbPayload = {
         configured: true,
         provider: 'thesportsdb',
@@ -723,7 +810,8 @@ routerAdd('GET', '/backend/v1/placar-ao-vivo', (e) => {
         updatedAt: new Date().toISOString(),
       }
 
-      if (cacheStore) {
+      // Só grava no cache se houver pelo menos 1 partida!
+      if (cacheStore && totalTsdb > 0) {
         cacheStore[cacheKey] = {
           timestamp: Date.now(),
           data: tsdbPayload,
@@ -983,6 +1071,67 @@ routerAdd('GET', '/backend/v1/placar-ao-vivo', (e) => {
       })
     }
 
+    var totalApiFootball = directFixtures.length + liveFixtures.length + dateFixtures.length
+
+    // REGRA DE OURO: "Se a API retornar 0 partidas ou erro, NUNCA grave esse resultado no cache."
+    if (totalApiFootball === 0) {
+      console.log(
+        '[Aviso Cache] API-Football retornou 0 partidas. Não gravando no cache e preservando anterior.',
+      )
+      if (cacheEntry && cacheEntry.data) {
+        var existingTotal =
+          (Array.isArray(cacheEntry.data.live) ? cacheEntry.data.live.length : 0) +
+          (Array.isArray(cacheEntry.data.dateFixtures) ? cacheEntry.data.dateFixtures.length : 0) +
+          (Array.isArray(cacheEntry.data.directFixtures)
+            ? cacheEntry.data.directFixtures.length
+            : 0)
+        if (existingTotal > 0) {
+          return e.json(
+            200,
+            Object.assign({}, cacheEntry.data, {
+              sobrescritas: sobrescritasMap,
+              cached: true,
+              stale: true,
+              warning: 'API retornou 0 partidas; mantendo último resultado válido em cache.',
+            }),
+          )
+        }
+      }
+
+      // Se não havia cache anterior, tenta contingência antes de entregar vazio
+      if (fallbackApiKey) {
+        var tryFb = fetchFootballDataFixtures(fallbackApiKey, dateQuery, directFixtureIds)
+        var tryFbTotal =
+          (tryFb.live ? tryFb.live.length : 0) +
+          (tryFb.dateFixtures ? tryFb.dateFixtures.length : 0) +
+          (tryFb.directFixtures ? tryFb.directFixtures.length : 0)
+        if (tryFbTotal > 0) {
+          var fbP = {
+            configured: true,
+            provider: 'football_data',
+            fallback_active: true,
+            original_provider: 'api_football',
+            message: 'Contingência ativada: dados providos via Football-Data.org.',
+            directFixtures: tryFb.directFixtures,
+            live: tryFb.live,
+            dateFixtures: tryFb.dateFixtures,
+            updatedAt: new Date().toISOString(),
+          }
+          if (cacheStore) {
+            cacheStore[cacheKey] = {
+              timestamp: Date.now(),
+              data: fbP,
+              fetching: 0,
+            }
+          }
+          return e.json(
+            200,
+            Object.assign({}, fbP, { sobrescritas: sobrescritasMap, cached: false }),
+          )
+        }
+      }
+    }
+
     var apiFootballPayload = {
       configured: true,
       provider: 'api_football',
@@ -992,7 +1141,8 @@ routerAdd('GET', '/backend/v1/placar-ao-vivo', (e) => {
       updatedAt: new Date().toISOString(),
     }
 
-    if (cacheStore) {
+    // Só grava no cache se houver pelo menos 1 partida!
+    if (cacheStore && totalApiFootball > 0) {
       cacheStore[cacheKey] = {
         timestamp: Date.now(),
         data: apiFootballPayload,
@@ -1054,15 +1204,25 @@ routerAdd('GET', '/backend/v1/jogos-do-dia', (e) => {
     // Carregamento passivo da página deve servir SEMPRE do cache interno do servidor se válido.
     // O botão Atualizar (forceRefresh) pode forçar revalidação apenas quando o TTL já expirou;
     // se o TTL ainda estiver válido, mostra os dados em cache imediatamente.
+    // CRÍTICO: Se o cache estiver corrompido com 0 jogos (resultado de falha anterior), NÃO serve dele e força revalidação!
     if (dayEntry && dayEntry.payload) {
-      if (!forceRefresh || cacheAgeMs < maxAgeMs) {
-        var cachedResp = Object.assign({}, dayEntry.payload, {
-          cached: true,
-          cacheAgeSeconds: Math.round(cacheAgeMs / 1000),
-          ttlSeconds: Math.round(maxAgeMs / 1000),
-          ttlRemainingSeconds: Math.max(0, Math.round((maxAgeMs - cacheAgeMs) / 1000)),
-        })
-        return e.json(200, cachedResp)
+      var cachedFixturesCount = Array.isArray(dayEntry.payload.fixtures)
+        ? dayEntry.payload.fixtures.length
+        : 0
+      if (cachedFixturesCount > 0) {
+        if (!forceRefresh || cacheAgeMs < maxAgeMs) {
+          var cachedResp = Object.assign({}, dayEntry.payload, {
+            cached: true,
+            cacheAgeSeconds: Math.round(cacheAgeMs / 1000),
+            ttlSeconds: Math.round(maxAgeMs / 1000),
+            ttlRemainingSeconds: Math.max(0, Math.round((maxAgeMs - cacheAgeMs) / 1000)),
+          })
+          return e.json(200, cachedResp)
+        }
+      } else {
+        console.log(
+          '[Cache Jogos-do-Dia] Cache continha 0 partidas (contaminado). Descartando e buscando novamente da API.',
+        )
       }
     }
 
@@ -1089,12 +1249,14 @@ routerAdd('GET', '/backend/v1/jogos-do-dia', (e) => {
     }
 
     // Buscar credenciais configuradas (primária e contingência)
+    var provedor = 'api_football'
     var apiKey = ''
     var fallbackApiKey = ''
     var isRapidApi = false
     try {
       var configRecord = $app.findFirstRecordByData('config_integracoes', 'chave', 'placar_ao_vivo')
       if (configRecord) {
+        provedor = configRecord.getString('provedor') || 'api_football'
         apiKey = (configRecord.getString('api_key') || '').trim()
       }
     } catch (_) {}
@@ -1179,18 +1341,313 @@ routerAdd('GET', '/backend/v1/jogos-do-dia', (e) => {
     var allFixtures = null
     var rateLimitHit = false
 
-    if (apiKey) {
+    // Função interna para normalizar dados do Football-Data.org para jogos-do-dia
+    var parseFootballDataToDayFixtures = function (fdMatches) {
+      var convertedFixtures = []
+      var hasLiveMatchFD = false
+
+      for (var fdi = 0; fdi < fdMatches.length; fdi++) {
+        var m = fdMatches[fdi]
+        var homeScore = m.score && m.score.fullTime ? m.score.fullTime.home : null
+        var awayScore = m.score && m.score.fullTime ? m.score.fullTime.away : null
+        var htHome = m.score && m.score.halfTime ? m.score.halfTime.home : null
+        var htAway = m.score && m.score.halfTime ? m.score.halfTime.away : null
+
+        var stShort =
+          m.status === 'PAUSED'
+            ? 'HT'
+            : m.status === 'IN_PLAY'
+              ? '1H'
+              : m.status === 'FINISHED'
+                ? 'FT'
+                : m.status
+        var isLive =
+          ['1H', 'HT', '2H', 'ET', 'BT', 'P', 'LIVE', 'IN_PLAY', 'PAUSED'].indexOf(stShort) !== -1
+        if (isLive) hasLiveMatchFD = true
+
+        var scorersListFD = []
+        if (Array.isArray(m.goals)) {
+          for (var gi = 0; gi < m.goals.length; gi++) {
+            var g = m.goals[gi]
+            var scorerName = (g.scorer && (g.scorer.name || g.scorer.shortName)) || ''
+            var isOwnGoal = (g.type || '').toUpperCase() === 'OWN'
+            if (scorerName && isOwnGoal) scorerName += ' (contra)'
+            if (scorerName) {
+              scorersListFD.push({
+                name: scorerName,
+                minute: g.minute || null,
+                extraMinute: null,
+                teamId: g.team ? g.team.id : null,
+                teamName: g.team ? g.team.name || g.team.shortName : null,
+                teamSide:
+                  m.homeTeam && g.team && g.team.id === m.homeTeam.id
+                    ? 'home'
+                    : m.awayTeam && g.team && g.team.id === m.awayTeam.id
+                      ? 'away'
+                      : null,
+              })
+            }
+          }
+        }
+
+        var compCode = (m.competition && m.competition.code) || ''
+        var compName = (m.competition && m.competition.name) || ''
+        var compId = (m.competition && m.competition.id) || 1000 + fdi
+
+        var region = 'Outros'
+        if (
+          compCode === 'BSA' ||
+          compName.indexOf('Brasileiro') !== -1 ||
+          compName.indexOf('Serie A') !== -1
+        ) {
+          region = 'Brasileirão & Copas'
+          compId = 71
+        } else if (compCode === 'CL' || compName.indexOf('Champions') !== -1) {
+          region = 'Futebol Europeu'
+          compId = 2
+        } else if (compCode === 'EL' || compName.indexOf('Europa League') !== -1) {
+          region = 'Futebol Europeu'
+          compId = 3
+        } else if (compCode === 'PL' || compName.indexOf('Premier') !== -1) {
+          region = 'Futebol Europeu'
+          compId = 39
+        } else if (
+          compCode === 'PD' ||
+          compName.indexOf('La Liga') !== -1 ||
+          compName.indexOf('Primera') !== -1
+        ) {
+          region = 'Futebol Europeu'
+          compId = 140
+        } else if (compCode === 'SA' || compName.indexOf('Serie A') !== -1) {
+          region = 'Futebol Europeu'
+          compId = 135
+        } else if (compCode === 'BL1' || compName.indexOf('Bundesliga') !== -1) {
+          region = 'Futebol Europeu'
+          compId = 78
+        } else if (compCode === 'FL1' || compName.indexOf('Ligue 1') !== -1) {
+          region = 'Futebol Europeu'
+          compId = 61
+        } else if (compCode === 'CLI' || compName.indexOf('Libertadores') !== -1) {
+          region = 'Sul-Americana'
+          compId = 13
+        }
+
+        convertedFixtures.push({
+          fixture: {
+            id: m.id,
+            date: m.utcDate,
+            timestamp: Math.floor(new Date(m.utcDate).getTime() / 1000),
+            status: {
+              short: stShort,
+              long: m.status,
+              elapsed: m.minute || null,
+            },
+          },
+          league: {
+            id: compId,
+            name: compName || 'Competição Externa',
+            country: (m.area && m.area.name) || '',
+            logo: (m.competition && m.competition.emblem) || '',
+            flag: (m.area && m.area.flag) || '',
+            round: m.matchday ? 'Rodada ' + m.matchday : '',
+            region: region,
+          },
+          teams: {
+            home: {
+              id: m.homeTeam ? m.homeTeam.id : 0,
+              name: (m.homeTeam && (m.homeTeam.name || m.homeTeam.shortName)) || '',
+              logo: (m.homeTeam && m.homeTeam.crest) || '',
+              country: (m.area && m.area.name) || '',
+            },
+            away: {
+              id: m.awayTeam ? m.awayTeam.id : 0,
+              name: (m.awayTeam && (m.awayTeam.name || m.awayTeam.shortName)) || '',
+              logo: (m.awayTeam && m.awayTeam.crest) || '',
+              country: (m.area && m.area.name) || '',
+            },
+          },
+          goals: {
+            home: typeof homeScore === 'number' ? homeScore : null,
+            away: typeof awayScore === 'number' ? awayScore : null,
+          },
+          score: {
+            halftime: { home: htHome, away: htAway },
+            fulltime: { home: homeScore, away: awayScore },
+          },
+          scorers: scorersListFD,
+          isLive: isLive,
+        })
+      }
+
+      return { fixtures: convertedFixtures, hasLive: hasLiveMatchFD }
+    }
+
+    // Se FOOTBALL_DATA for o provedor principal selecionado
+    if (provedor === 'football_data') {
+      var fdPrimaryToken = apiKey || fallbackApiKey
+      if (fdPrimaryToken) {
+        try {
+          var pFD1 = dateQuery.split('-')
+          var yFD1 = parseInt(pFD1[0], 10)
+          var mFD1 = parseInt(pFD1[1], 10) - 1
+          var dFD1 = parseInt(pFD1[2], 10)
+
+          var prevFD1 = new Date(Date.UTC(yFD1, mFD1, dFD1 - 1))
+          var dateFrom1 =
+            prevFD1.getUTCFullYear() +
+            '-' +
+            ('0' + (prevFD1.getUTCMonth() + 1)).slice(-2) +
+            '-' +
+            ('0' + prevFD1.getUTCDate()).slice(-2)
+          var nextFD1 = new Date(Date.UTC(yFD1, mFD1, dFD1 + 1))
+          var dateTo1 =
+            nextFD1.getUTCFullYear() +
+            '-' +
+            ('0' + (nextFD1.getUTCMonth() + 1)).slice(-2) +
+            '-' +
+            ('0' + nextFD1.getUTCDate()).slice(-2)
+
+          var resFDPrimary = $http.send({
+            url:
+              'https://api.football-data.org/v4/matches?dateFrom=' +
+              encodeURIComponent(dateFrom1) +
+              '&dateTo=' +
+              encodeURIComponent(dateTo1),
+            method: 'GET',
+            headers: { 'X-Auth-Token': fdPrimaryToken },
+            timeout: 8,
+          })
+
+          if (isRateLimitErrorDay(resFDPrimary.statusCode, resFDPrimary.json || resFDPrimary.raw)) {
+            rateLimitHit = true
+          } else if (
+            resFDPrimary.statusCode === 200 &&
+            resFDPrimary.json &&
+            Array.isArray(resFDPrimary.json.matches)
+          ) {
+            var parsedFD = parseFootballDataToDayFixtures(resFDPrimary.json.matches)
+
+            // REGRA: Se retornar 0 partidas, NUNCA grave no cache
+            if (parsedFD.fixtures.length > 0) {
+              var fdPrimaryPayload = {
+                configured: true,
+                provider: 'football_data',
+                date: dateQuery,
+                total: parsedFD.fixtures.length,
+                hasLive: parsedFD.hasLive,
+                fixtures: parsedFD.fixtures,
+                updatedAt: new Date().toISOString(),
+              }
+
+              if (dayStore) {
+                dayStore[dateQuery] = {
+                  timestamp: Date.now(),
+                  payload: fdPrimaryPayload,
+                  fetching: 0,
+                }
+              }
+
+              return e.json(
+                200,
+                Object.assign({}, fdPrimaryPayload, {
+                  cached: false,
+                  ttlSeconds: Math.round(
+                    (parsedFD.hasLive ? 5 * 60 * 1000 : 30 * 60 * 1000) / 1000,
+                  ),
+                }),
+              )
+            } else {
+              console.log(
+                '[Aviso Jogos-do-Dia] Football-Data.org retornou 0 partidas. Não gravando array vazio no cache.',
+              )
+              // Se temos cache anterior válido, usa-o
+              if (
+                dayEntry &&
+                dayEntry.payload &&
+                Array.isArray(dayEntry.payload.fixtures) &&
+                dayEntry.payload.fixtures.length > 0
+              ) {
+                return e.json(
+                  200,
+                  Object.assign({}, dayEntry.payload, {
+                    cached: true,
+                    stale: true,
+                    warning:
+                      'Football-Data.org retornou 0 partidas; mantendo dados anteriores em cache.',
+                  }),
+                )
+              }
+              // Tenta API-Football como contingência reversa se houver chave
+              var altApiKey = ''
+              try {
+                altApiKey =
+                  ($secrets.has && $secrets.has('API_FOOTBALL_KEY')
+                    ? $secrets.get('API_FOOTBALL_KEY')
+                    : '') ||
+                  ($secrets.has && $secrets.has('RAPIDAPI_KEY')
+                    ? $secrets.get('RAPIDAPI_KEY')
+                    : '') ||
+                  $os.getenv('API_FOOTBALL_KEY') ||
+                  $os.getenv('RAPIDAPI_KEY') ||
+                  ''
+              } catch (_) {}
+              if (!altApiKey && apiKey && apiKey !== fdPrimaryToken) {
+                altApiKey = apiKey
+              }
+              if (altApiKey) {
+                console.log(
+                  '[Contingência Reversa] Football-Data.org retornou 0 partidas. Tentando API-Football...',
+                )
+                // Permite seguir para API-Football abaixo
+              } else {
+                return e.json(200, {
+                  configured: true,
+                  provider: 'football_data',
+                  date: dateQuery,
+                  total: 0,
+                  hasLive: false,
+                  fixtures: [],
+                  cached: false,
+                  warning: 'Nenhuma partida encontrada no Football-Data.org para a data.',
+                })
+              }
+            }
+          }
+        } catch (errFDPrimary) {
+          console.log('Erro ao consultar Football-Data.org como primário:', errFDPrimary)
+        }
+      }
+    }
+
+    // Se API-Football é primária (ou contingência de Football-Data)
+    var apiFootballKey = apiKey
+    if (provedor === 'football_data') {
+      // Se football_data é principal, tenta buscar chave alternativa de API-Football
+      try {
+        var altKey =
+          ($secrets.has && $secrets.has('API_FOOTBALL_KEY')
+            ? $secrets.get('API_FOOTBALL_KEY')
+            : '') ||
+          ($secrets.has && $secrets.has('RAPIDAPI_KEY') ? $secrets.get('RAPIDAPI_KEY') : '') ||
+          $os.getenv('API_FOOTBALL_KEY') ||
+          $os.getenv('RAPIDAPI_KEY') ||
+          ''
+        if (altKey) apiFootballKey = altKey
+      } catch (_) {}
+    }
+
+    if (apiFootballKey && apiFootballKey !== fallbackApiKey) {
       var baseUrl = isRapidApi
         ? 'https://api-football-v1.p.rapidapi.com/v3/fixtures'
         : 'https://v3.football.api-sports.io/fixtures'
 
       var headers = isRapidApi
         ? {
-            'x-rapidapi-key': apiKey,
+            'x-rapidapi-key': apiFootballKey,
             'x-rapidapi-host': 'api-football-v1.p.rapidapi.com',
           }
         : {
-            'x-apisports-key': apiKey,
+            'x-apisports-key': apiFootballKey,
           }
 
       var callUrl =
@@ -1225,9 +1682,9 @@ routerAdd('GET', '/backend/v1/jogos-do-dia', (e) => {
     // CONTINGÊNCIA AUTOMÁTICA EM JOGOS DO DIA: Football-Data.org
     // -------------------------------------------------------------
     var contingencyUsed = false
-    if (rateLimitHit && fallbackApiKey) {
+    if ((rateLimitHit || !allFixtures || allFixtures.length === 0) && fallbackApiKey) {
       console.log(
-        '[Contingência Jogos-do-Dia] API-Football atingiu cota (429). Acionando Football-Data.org...',
+        '[Contingência Jogos-do-Dia] API-Football indisponível ou sem partidas. Acionando Football-Data.org...',
       )
       try {
         var pFD = dateQuery.split('-')
@@ -1259,173 +1716,42 @@ routerAdd('GET', '/backend/v1/jogos-do-dia', (e) => {
         if (isRateLimitErrorDay(resFD.statusCode, resFD.json || resFD.raw)) {
           rateLimitHit = true
         } else if (resFD.statusCode === 200 && resFD.json && Array.isArray(resFD.json.matches)) {
-          // Normaliza matches do Football-Data.org para o formato do JogosDoDia
-          var fdMatches = resFD.json.matches
-          var convertedFixtures = []
-          var hasLiveMatchFD = false
+          var parsedContingency = parseFootballDataToDayFixtures(resFD.json.matches)
 
-          for (var fdi = 0; fdi < fdMatches.length; fdi++) {
-            var m = fdMatches[fdi]
-            var homeScore = m.score && m.score.fullTime ? m.score.fullTime.home : null
-            var awayScore = m.score && m.score.fullTime ? m.score.fullTime.away : null
-            var htHome = m.score && m.score.halfTime ? m.score.halfTime.home : null
-            var htAway = m.score && m.score.halfTime ? m.score.halfTime.away : null
+          if (parsedContingency.fixtures.length > 0) {
+            contingencyUsed = true
+            var fdPayload = {
+              configured: true,
+              provider: 'football_data',
+              fallback_active: true,
+              original_provider: 'api_football',
+              message: 'Contingência ativada: jogos providos via Football-Data.org.',
+              date: dateQuery,
+              total: parsedContingency.fixtures.length,
+              hasLive: parsedContingency.hasLive,
+              fixtures: parsedContingency.fixtures,
+              updatedAt: new Date().toISOString(),
+            }
 
-            var stShort =
-              m.status === 'PAUSED'
-                ? 'HT'
-                : m.status === 'IN_PLAY'
-                  ? '1H'
-                  : m.status === 'FINISHED'
-                    ? 'FT'
-                    : m.status
-            var isLive =
-              ['1H', 'HT', '2H', 'ET', 'BT', 'P', 'LIVE', 'IN_PLAY', 'PAUSED'].indexOf(stShort) !==
-              -1
-            if (isLive) hasLiveMatchFD = true
-
-            var scorersListFD = []
-            if (Array.isArray(m.goals)) {
-              for (var gi = 0; gi < m.goals.length; gi++) {
-                var g = m.goals[gi]
-                var scorerName = (g.scorer && (g.scorer.name || g.scorer.shortName)) || ''
-                var isOwnGoal = (g.type || '').toUpperCase() === 'OWN'
-                if (scorerName && isOwnGoal) scorerName += ' (contra)'
-                if (scorerName) {
-                  scorersListFD.push({
-                    name: scorerName,
-                    minute: g.minute || null,
-                    extraMinute: null,
-                    teamId: g.team ? g.team.id : null,
-                    teamName: g.team ? g.team.name || g.team.shortName : null,
-                    teamSide:
-                      m.homeTeam && g.team && g.team.id === m.homeTeam.id
-                        ? 'home'
-                        : m.awayTeam && g.team && g.team.id === m.awayTeam.id
-                          ? 'away'
-                          : null,
-                  })
-                }
+            // Grava no cache se houver pelo menos 1 partida!
+            if (dayStore) {
+              dayStore[dateQuery] = {
+                timestamp: Date.now(),
+                payload: fdPayload,
+                fetching: 0,
               }
             }
 
-            var compCode = (m.competition && m.competition.code) || ''
-            var compName = (m.competition && m.competition.name) || ''
-            var compId = (m.competition && m.competition.id) || 1000 + fdi
-
-            var region = 'Outros'
-            if (
-              compCode === 'BSA' ||
-              compName.indexOf('Brasileiro') !== -1 ||
-              compName.indexOf('Serie A') !== -1
-            ) {
-              region = 'Brasileirão & Copas'
-              compId = 71
-            } else if (compCode === 'CL' || compName.indexOf('Champions') !== -1) {
-              region = 'Futebol Europeu'
-              compId = 2
-            } else if (compCode === 'EL' || compName.indexOf('Europa League') !== -1) {
-              region = 'Futebol Europeu'
-              compId = 3
-            } else if (compCode === 'PL' || compName.indexOf('Premier') !== -1) {
-              region = 'Futebol Europeu'
-              compId = 39
-            } else if (
-              compCode === 'PD' ||
-              compName.indexOf('La Liga') !== -1 ||
-              compName.indexOf('Primera') !== -1
-            ) {
-              region = 'Futebol Europeu'
-              compId = 140
-            } else if (compCode === 'SA' || compName.indexOf('Serie A') !== -1) {
-              region = 'Futebol Europeu'
-              compId = 135
-            } else if (compCode === 'BL1' || compName.indexOf('Bundesliga') !== -1) {
-              region = 'Futebol Europeu'
-              compId = 78
-            } else if (compCode === 'FL1' || compName.indexOf('Ligue 1') !== -1) {
-              region = 'Futebol Europeu'
-              compId = 61
-            } else if (compCode === 'CLI' || compName.indexOf('Libertadores') !== -1) {
-              region = 'Sul-Americana'
-              compId = 13
-            }
-
-            convertedFixtures.push({
-              fixture: {
-                id: m.id,
-                date: m.utcDate,
-                timestamp: Math.floor(new Date(m.utcDate).getTime() / 1000),
-                status: {
-                  short: stShort,
-                  long: m.status,
-                  elapsed: m.minute || null,
-                },
-              },
-              league: {
-                id: compId,
-                name: compName || 'Competição Externa',
-                country: (m.area && m.area.name) || '',
-                logo: (m.competition && m.competition.emblem) || '',
-                flag: (m.area && m.area.flag) || '',
-                round: m.matchday ? 'Rodada ' + m.matchday : '',
-                region: region,
-              },
-              teams: {
-                home: {
-                  id: m.homeTeam ? m.homeTeam.id : 0,
-                  name: (m.homeTeam && (m.homeTeam.name || m.homeTeam.shortName)) || '',
-                  logo: (m.homeTeam && m.homeTeam.crest) || '',
-                  country: (m.area && m.area.name) || '',
-                },
-                away: {
-                  id: m.awayTeam ? m.awayTeam.id : 0,
-                  name: (m.awayTeam && (m.awayTeam.name || m.awayTeam.shortName)) || '',
-                  logo: (m.awayTeam && m.awayTeam.crest) || '',
-                  country: (m.area && m.area.name) || '',
-                },
-              },
-              goals: {
-                home: typeof homeScore === 'number' ? homeScore : null,
-                away: typeof awayScore === 'number' ? awayScore : null,
-              },
-              score: {
-                halftime: { home: htHome, away: htAway },
-                fulltime: { home: homeScore, away: awayScore },
-              },
-              scorers: scorersListFD,
-              isLive: isLive,
-            })
+            return e.json(
+              200,
+              Object.assign({}, fdPayload, {
+                cached: false,
+                ttlSeconds: Math.round(
+                  (parsedContingency.hasLive ? 5 * 60 * 1000 : 30 * 60 * 1000) / 1000,
+                ),
+              }),
+            )
           }
-
-          var fdPayload = {
-            configured: true,
-            provider: 'football_data',
-            fallback_active: true,
-            original_provider: 'api_football',
-            message: 'Contingência ativada: jogos providos via Football-Data.org.',
-            date: dateQuery,
-            total: convertedFixtures.length,
-            hasLive: hasLiveMatchFD,
-            fixtures: convertedFixtures,
-            updatedAt: new Date().toISOString(),
-          }
-
-          if (dayStore) {
-            dayStore[dateQuery] = {
-              timestamp: Date.now(),
-              payload: fdPayload,
-              fetching: 0,
-            }
-          }
-
-          return e.json(
-            200,
-            Object.assign({}, fdPayload, {
-              cached: false,
-              ttlSeconds: Math.round((hasLiveMatchFD ? 5 * 60 * 1000 : 30 * 60 * 1000) / 1000),
-            }),
-          )
         }
       } catch (eFD) {
         console.log('Aviso ao consultar contingência Football-Data.org em jogos-do-dia:', eFD)
@@ -1460,12 +1786,17 @@ routerAdd('GET', '/backend/v1/jogos-do-dia', (e) => {
     // Se falhou e temos cache antigo, entrega stale
     if (!allFixtures) {
       if (dayEntry && dayEntry.payload) {
-        var staleResp = Object.assign({}, dayEntry.payload, {
-          cached: true,
-          fallback: true,
-          cacheAgeSeconds: Math.round(cacheAgeMs / 1000),
-        })
-        return e.json(200, staleResp)
+        var prevTotal = Array.isArray(dayEntry.payload.fixtures)
+          ? dayEntry.payload.fixtures.length
+          : 0
+        if (prevTotal > 0) {
+          var staleResp = Object.assign({}, dayEntry.payload, {
+            cached: true,
+            fallback: true,
+            cacheAgeSeconds: Math.round(cacheAgeMs / 1000),
+          })
+          return e.json(200, staleResp)
+        }
       }
 
       return e.json(200, {
@@ -1573,6 +1904,39 @@ routerAdd('GET', '/backend/v1/jogos-do-dia', (e) => {
       })
     }
 
+    // REGRA DE OURO: "Se a API retornar 0 partidas ou erro, NUNCA grave esse resultado no cache."
+    if (rawFixtures.length === 0) {
+      console.log(
+        '[Aviso Jogos-do-Dia] API retornou 0 partidas. Não gravando no cache e mantendo anterior se houver.',
+      )
+      if (
+        dayEntry &&
+        dayEntry.payload &&
+        Array.isArray(dayEntry.payload.fixtures) &&
+        dayEntry.payload.fixtures.length > 0
+      ) {
+        return e.json(
+          200,
+          Object.assign({}, dayEntry.payload, {
+            cached: true,
+            stale: true,
+            warning: 'API retornou 0 partidas; mantendo último resultado válido em cache.',
+          }),
+        )
+      }
+
+      // Se não havia cache anterior, entrega resposta com flag temporária sem salvar no cache store!
+      return e.json(200, {
+        configured: true,
+        date: dateQuery,
+        total: 0,
+        hasLive: false,
+        fixtures: [],
+        cached: false,
+        warning: 'Nenhuma partida encontrada para a data informada.',
+      })
+    }
+
     var payload = {
       configured: true,
       date: dateQuery,
@@ -1582,7 +1946,8 @@ routerAdd('GET', '/backend/v1/jogos-do-dia', (e) => {
       updatedAt: new Date().toISOString(),
     }
 
-    if (dayStore) {
+    // SÓ GRAVA NO CACHE SE HOUVER PELO MENOS 1 PARTIDA!
+    if (dayStore && rawFixtures.length > 0) {
       dayStore[dateQuery] = {
         timestamp: Date.now(),
         payload: payload,
@@ -1998,6 +2363,7 @@ routerAdd('POST', '/backend/v1/placar-ao-vivo/test', (e) => {
       let headersTest = {
         'x-apisports-key': apiKey,
       }
+
       if (isRapid) {
         urlTest = 'https://api-football-v1.p.rapidapi.com/v3/timezone'
         headersTest = {
@@ -2057,6 +2423,90 @@ routerAdd('POST', '/backend/v1/placar-ao-vivo/test', (e) => {
     return e.json(500, {
       success: false,
       error: err ? err.message : 'Erro inesperado no teste de conexão',
+    })
+  }
+})
+
+// -------------------------------------------------------------
+// POST /backend/v1/limpar-cache (ou /backend/v1/placar-ao-vivo/limpar-cache)
+// -------------------------------------------------------------
+routerAdd('POST', '/backend/v1/placar-ao-vivo/limpar-cache', (e) => {
+  try {
+    const authRecord = e.auth
+    if (!authRecord) {
+      return e.unauthorizedError('Usuário não autenticado')
+    }
+
+    const userName = (authRecord.getString('name') || authRecord.getString('username') || '')
+      .trim()
+      .toLowerCase()
+    if (userName !== 'douglas') {
+      return e.forbiddenError('Acesso restrito ao administrador Douglas.')
+    }
+
+    let clearedStores = []
+
+    if (typeof globalThis !== 'undefined') {
+      if (globalThis.__placarAoVivoCacheStore) {
+        globalThis.__placarAoVivoCacheStore = {}
+        clearedStores.push('placar_ao_vivo')
+      }
+      if (globalThis.__jogosDoDiaStore) {
+        globalThis.__jogosDoDiaStore = {}
+        clearedStores.push('jogos_do_dia')
+      }
+    }
+
+    console.log(
+      '[Cache] Cache do servidor limpo com sucesso pelo administrador Douglas:',
+      clearedStores.join(', '),
+    )
+
+    return e.json(200, {
+      success: true,
+      message: 'Cache limpo — próxima busca será direto na API',
+      cleared: clearedStores,
+      timestamp: new Date().toISOString(),
+    })
+  } catch (err) {
+    return e.json(500, {
+      success: false,
+      error: err ? err.message : 'Erro ao limpar cache do servidor',
+    })
+  }
+})
+
+// Rota de conveniência POST /backend/v1/limpar-cache
+routerAdd('POST', '/backend/v1/limpar-cache', (e) => {
+  try {
+    const authRecord = e.auth
+    if (!authRecord) {
+      return e.unauthorizedError('Usuário não autenticado')
+    }
+
+    const userName = (authRecord.getString('name') || authRecord.getString('username') || '')
+      .trim()
+      .toLowerCase()
+    if (userName !== 'douglas') {
+      return e.forbiddenError('Acesso restrito ao administrador Douglas.')
+    }
+
+    if (typeof globalThis !== 'undefined') {
+      globalThis.__placarAoVivoCacheStore = {}
+      globalThis.__jogosDoDiaStore = {}
+    }
+
+    console.log('[Cache] POST /backend/v1/limpar-cache executado com sucesso.')
+
+    return e.json(200, {
+      success: true,
+      message: 'Cache limpo — próxima busca será direto na API',
+      timestamp: new Date().toISOString(),
+    })
+  } catch (err) {
+    return e.json(500, {
+      success: false,
+      error: err ? err.message : 'Erro ao limpar cache do servidor',
     })
   }
 })
