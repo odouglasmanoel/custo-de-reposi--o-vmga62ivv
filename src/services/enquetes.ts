@@ -180,7 +180,7 @@ export async function criarEnquete(params: {
     data_fim: params.dataFim,
     status: 'aberta',
     criado_por: userId || null,
-    limite_votos: params.limiteVotos || 8,
+    limite_votos: params.limiteVotos || 10,
   })
 
   // Insere os jogos associados à enquete
@@ -411,12 +411,12 @@ export async function obterDadosEnquete(
 
 /**
  * Alterna voto em um jogo (adiciona se não votado, remove se já votado)
- * Respeita a trava de no máximo 8 votos
+ * Respeita a trava de no máximo 10 votos (ou o limite_votos configurado na enquete)
  */
 export async function toggleVotoJogo(
   enqueteId: string,
   jogoId: string,
-  limiteVotos: number = 8,
+  limiteVotos: number = 10,
 ): Promise<{ voted: boolean; totalVotosUsuario: number }> {
   const user = pb.authStore.record
   if (!user) throw new Error('Usuário não autenticado.')

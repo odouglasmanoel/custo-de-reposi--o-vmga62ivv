@@ -33,6 +33,7 @@ import { Label } from '@/components/ui/label'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
+import { Progress } from '@/components/ui/progress'
 import {
   Dialog,
   DialogContent,
@@ -299,7 +300,7 @@ export default function Enquetes() {
 
   // Total de votos do usuário logado na enquete ativa
   const totalMeusVotos = meusVotosIds.size
-  const limiteVotos = enqueteAtiva?.limite_votos || 8
+  const limiteVotos = enqueteAtiva?.limite_votos || 10
   const limiteAtingido = totalMeusVotos >= limiteVotos
 
   // Ranking dos jogos por total de votos (decrescente)
@@ -390,9 +391,8 @@ export default function Enquetes() {
     const jaVotado = meusVotosIds.has(jogoId)
     if (!jaVotado && limiteAtingido) {
       toast({
-        title: 'Limite de 8 votos atingido!',
-        description:
-          'Você já utilizou os 8 votos permitidos. Para votar nesta partida, desmarque outra primeiro.',
+        title: `Limite de ${limiteVotos} votos atingido!`,
+        description: `Você já utilizou os ${limiteVotos} votos permitidos. Para votar nesta partida, desmarque outra primeiro.`,
         variant: 'destructive',
       })
       return
@@ -695,7 +695,7 @@ export default function Enquetes() {
         dataInicio,
         dataFim,
         jogos: jogosParaSalvar,
-        limiteVotos: 8,
+        limiteVotos: 10,
       })
 
       toast({
@@ -1342,29 +1342,37 @@ export default function Enquetes() {
         <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
           {/* Contador de Votos Pessoais */}
           <Card className="border-emerald-200 bg-linear-to-br from-emerald-50/60 to-white shadow-xs">
-            <CardContent className="flex items-center justify-between p-4">
-              <div>
-                <span className="text-xs font-semibold uppercase tracking-wider text-emerald-800">
-                  Seus Votos na Enquete
-                </span>
-                <div className="mt-1 flex items-baseline gap-2">
-                  <span className="text-2xl font-black text-emerald-700">{totalMeusVotos}</span>
-                  <span className="text-sm font-bold text-slate-500">
-                    / {limiteVotos} permitidos
+            <CardContent className="p-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <span className="text-xs font-semibold uppercase tracking-wider text-emerald-800">
+                    Seus Votos na Enquete
                   </span>
+                  <div className="mt-1 flex items-baseline gap-2">
+                    <span className="text-2xl font-black text-emerald-700">{totalMeusVotos}</span>
+                    <span className="text-sm font-bold text-slate-500">
+                      / {limiteVotos} permitidos
+                    </span>
+                  </div>
+                  <p className="mt-1 text-[11px] text-slate-600">
+                    {limiteAtingido
+                      ? `Limite máximo de ${limiteVotos} votos atingido.`
+                      : `Você ainda pode escolher mais ${limiteVotos - totalMeusVotos} jogo(s).`}
+                  </p>
                 </div>
-                <p className="mt-1 text-[11px] text-slate-600">
-                  {limiteAtingido
-                    ? 'Limite máximo de 8 votos atingido.'
-                    : `Você ainda pode escolher mais ${limiteVotos - totalMeusVotos} jogo(s).`}
-                </p>
+                <div
+                  className={`flex h-12 w-12 items-center justify-center rounded-full text-base font-black shadow-xs ${
+                    limiteAtingido ? 'bg-amber-500 text-white' : 'bg-emerald-600 text-white'
+                  }`}
+                >
+                  {totalMeusVotos}/{limiteVotos}
+                </div>
               </div>
-              <div
-                className={`flex h-12 w-12 items-center justify-center rounded-full text-base font-black shadow-xs ${
-                  limiteAtingido ? 'bg-amber-500 text-white' : 'bg-emerald-600 text-white'
-                }`}
-              >
-                {totalMeusVotos}/{limiteVotos}
+              <div className="mt-3">
+                <Progress
+                  value={Math.min(100, Math.round((totalMeusVotos / limiteVotos) * 100))}
+                  className="h-2 bg-emerald-100"
+                />
               </div>
             </CardContent>
           </Card>
@@ -1564,7 +1572,7 @@ export default function Enquetes() {
                   )
                 })}
 
-                {/* Botão Fixo: Meus Votos com contador de 8 */}
+                {/* Botão Fixo: Meus Votos com contador de 10 */}
                 <Button
                   variant={filtroCategoria === 'meus-votos' ? 'default' : 'ghost'}
                   size="sm"
@@ -1575,7 +1583,7 @@ export default function Enquetes() {
                       : 'text-emerald-700 hover:bg-emerald-50'
                   }`}
                 >
-                  Meus Votos ({totalMeusVotos}/8)
+                  Meus Votos ({totalMeusVotos}/{limiteVotos})
                 </Button>
               </div>
 
@@ -1595,7 +1603,7 @@ export default function Enquetes() {
                 </p>
                 <p className="mt-1 text-xs text-slate-500">
                   {filtroCategoria === 'meus-votos'
-                    ? 'Clique nas partidas abaixo no filtro "Todos" para selecionar até 8 confrontos.'
+                    ? `Clique nas partidas abaixo no filtro "Todos" para selecionar até ${limiteVotos} confrontos.`
                     : 'Selecione "Todos" para visualizar todas as partidas disponíveis para votação.'}
                 </p>
                 <Button
@@ -2203,7 +2211,7 @@ export default function Enquetes() {
                 </Label>
                 <Input
                   id="desc-enquete"
-                  placeholder="Ex.: Escolha até 8 jogos. Os 4 mais votados irão para a Copa Coni."
+                  placeholder="Ex.: Escolha até 10 jogos. Os 4 mais votados irão para a Copa Coni."
                   value={descricaoEnquete}
                   onChange={(e) => setDescricaoEnquete(e.target.value)}
                   className="h-9 text-xs"
