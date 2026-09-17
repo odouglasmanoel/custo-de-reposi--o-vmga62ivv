@@ -321,6 +321,39 @@ export async function toggleVotoJogo(
 }
 
 /**
+ * Admin: Adiciona um jogo manualmente a uma enquete já ativa/criada
+ */
+export async function adicionarJogoManualNaEnquete(params: {
+  enqueteId: string
+  time_a: string
+  time_b: string
+  campeonato?: string
+  regiao?: string
+  data: string
+  horario?: string
+  logo_casa?: string
+  logo_visitante?: string
+  campeonato_logo?: string
+}): Promise<EnqueteJogoModel> {
+  return pb.collection('enquete_jogos').create<EnqueteJogoModel>({
+    enquete: params.enqueteId,
+    time_a: params.time_a.trim(),
+    time_b: params.time_b.trim(),
+    campeonato: params.campeonato?.trim() || 'Futebol',
+    regiao: params.regiao?.trim() || 'Brasileirão & Copas',
+    data: params.data,
+    horario: params.horario || '16:00',
+    fixture_id: '',
+    logo_casa: params.logo_casa || '',
+    logo_visitante: params.logo_visitante || '',
+    campeonato_logo: params.campeonato_logo || '',
+    selecionado_admin: false,
+    cadastrado_bolao: false,
+    origem: 'manual',
+  })
+}
+
+/**
  * Admin: Atualiza seleção manual do admin para um jogo da enquete
  */
 export async function toggleAdminSelecaoJogo(jogoId: string, selecionado: boolean): Promise<void> {

@@ -61,6 +61,7 @@ import {
   atualizarStatusEnquete,
   cadastrarJogosAprovadosNaCopaConi,
   excluirEnquete,
+  adicionarJogoManualNaEnquete,
 } from '@/services/enquetes'
 
 export default function Enquetes() {
@@ -98,6 +99,17 @@ export default function Enquetes() {
   const [manualHorario, setManualHorario] = useState('16:00')
   const [manualAvisoMargem, setManualAvisoMargem] = useState<string | null>(null)
   const [manualAvisoDuplicado, setManualAvisoDuplicado] = useState<string | null>(null)
+
+  // Modal de adição de jogo manual em enquete ativa (já criada)
+  const [dialogAdicionarManualAtivaOpen, setDialogAdicionarManualAtivaOpen] = useState(false)
+  const [salvandoJogoAtiva, setSalvandoJogoAtiva] = useState(false)
+  const [ativaManualMandante, setAtivaManualMandante] = useState('')
+  const [ativaManualVisitante, setAtivaManualVisitante] = useState('')
+  const [ativaManualCompeticao, setAtivaManualCompeticao] = useState('')
+  const [ativaManualData, setAtivaManualData] = useState('')
+  const [ativaManualHorario, setAtivaManualHorario] = useState('16:00')
+  const [ativaManualAvisoMargem, setAtivaManualAvisoMargem] = useState<string | null>(null)
+  const [ativaManualAvisoDuplicado, setAtivaManualAvisoDuplicado] = useState<string | null>(null)
 
   // Atualiza data padrão do formulário manual ao alterar dataInicio da busca
   useEffect(() => {
@@ -587,6 +599,142 @@ export default function Enquetes() {
     }
   }
 
+  // Admin: Abrir modal de inserção de jogo manual na enquete ativa
+  const handleAbrirModalAdicionarManualAtiva = () => {
+    setAtivaManualMandante('')
+    setAtivaManualVisitante('')
+    setAtivaManualCompeticao('')
+    setAtivaManualData(enqueteAtiva?.data_inicio || datasPadrao.dataInicio)
+    setAtivaManualHorario('16:00')
+    setAtivaManualAvisoMargem(null)
+    setAtivaManualAvisoDuplicado(null)
+    setDialogAdicionarManualAtivaOpen(true)
+  }
+
+  // Admin: Salvar jogo manual na enquete ativa
+  const handleSalvarJogoManualAtiva = async () => {
+    if (!enqueteAtiva) return
+
+    const timeA = ativaManualMandante.trim()
+    const timeB = ativaManualVisitante.trim()
+    const competicao = ativaManualCompeticao.trim() || 'Amistoso / Outros'
+    const dataJogo = ativaManualData.trim()
+    const horarioJogo = ativaManualHorario.trim() || '16:00'
+
+    // Validações obrigatórias
+    if (!timeA || !timeB) {
+      toast({
+        title: 'Campos incompletos',
+        description: 'Informe tanto o time mandante quanto o time visitante.',
+        variant: 'destructive',
+      })
+      return
+    }
+
+    if (timeA.toLowerCase() === timeB.toLowerCase()) {
+      toast({
+        title: 'Equipes idênticas',
+        description: 'O time mandante e o time visitante devem ser diferentes entre si.',
+        variant: 'destructive',
+      })
+      return
+    }
+
+    if (!dataJogo) {
+      toast({
+        title: 'Data obrigatória',
+        description: 'Selecione a data da partida no formato YYYY-MM-DD.',
+        variant: 'destructive',
+      })
+      return
+    }
+
+    // Normaliza para fuso de Brasília e verifica margem de 3 horas
+    const spConverted = formatDataHoraSaoPaulo(dataJogo, horarioJogo)
+    const dataFinal = spConverted.data || dataJogo
+    const horaFinal = spConverted.horario || horarioJogo
+
+    const nowMs = Date.now()
+    const respeitaMargem = satisfiesEnqueteMinTimeMargin(dataFinal, horaFinal, nowMs, 3)
+    if (!respeitaMargem) {
+      setAtivaManualAvisoMargem(
+        'Atenção: Este confronto está agendado para menos de 3 horas a partir de agora (ou no passado). Você pode adicioná-lo manualmente se desejar manter.',
+      )
+    } else {
+      setAtivaManualAvisoMargem(null)
+    }
+
+    // Alerta de duplicação potencial com jogos já existentes nesta enquete
+    const norm = (s: string) =>
+      s
+        .toLowerCase()
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .replace(/[^a-z0-9]/g, '')
+    const pairNew = [norm(timeA), norm(timeB)].sort().join('___')
+    const duplicado = jogosEnquete.some((j) => {
+      const pairExisting = [norm(j.time_a), norm(j.time_b)].sort().join('___')
+      return j.data === dataFinal && pairExisting === pairNew
+    })
+
+    if (duplicado) {
+      setAtivaManualAvisoDuplicado(
+        `Aviso: Já existe uma partida cadastrada entre ${timeA} e ${timeB} na data ${formatDataBR(dataFinal)}. O confronto foi inserido mantendo a distinção.`,
+      )
+    } else {
+      setAtivaManualAvisoDuplicado(null)
+    }
+
+    const regiaoCalculada =
+      competicao.toLowerCase().includes('brasileir') || competicao.toLowerCase().includes('copa')
+        ? 'Brasileirão & Copas'
+        : 'Futebol Europeu'
+
+    setSalvandoJogoAtiva(true)
+    try {
+      const novoRegistro = await adicionarJogoManualNaEnquete({
+        enqueteId: enqueteAtiva.id,
+        time_a: timeA,
+        time_b: timeB,
+        campeonato: competicao,
+        regiao: regiaoCalculada,
+        data: dataFinal,
+        horario: horaFinal,
+      })
+
+      // Normaliza no fuso America/Sao_Paulo (UTC-3)
+      const spNovo = formatDataHoraSaoPaulo(novoRegistro.data, novoRegistro.horario)
+      const novoJogoComVotos: JogoComVotos = {
+        ...novoRegistro,
+        data: spNovo.data || novoRegistro.data,
+        horario: spNovo.horario || novoRegistro.horario || '16:00',
+        totalVotos: 0,
+        votantes: [],
+        votadoPorMim: false,
+      }
+
+      // Atualiza imediatamente o estado React:
+      // Mantém votos já computados intactos e inclui o novo jogo
+      setJogosEnquete((prev) => [...prev, novoJogoComVotos])
+
+      toast({
+        title: 'Jogo manual adicionado!',
+        description: `${timeA} x ${timeB} foi incluído na enquete ativa e já está aberto para votação.`,
+      })
+
+      setDialogAdicionarManualAtivaOpen(false)
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Falha ao salvar jogo manual.'
+      toast({
+        title: 'Erro ao adicionar jogo',
+        description: msg,
+        variant: 'destructive',
+      })
+    } finally {
+      setSalvandoJogoAtiva(false)
+    }
+  }
+
   // Admin: Alternar seleção manual do Admin no Ranking/Apurador
   const handleToggleAdminSelecao = async (jogo: JogoComVotos) => {
     if (!isAdmin) return
@@ -911,7 +1059,16 @@ export default function Enquetes() {
 
             {/* Ações de Administração da Enquete */}
             {isAdmin && (
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
+                <Button
+                  variant="default"
+                  size="sm"
+                  onClick={handleAbrirModalAdicionarManualAtiva}
+                  className="h-8 bg-amber-600 text-xs font-bold text-white hover:bg-amber-700 shadow-xs"
+                >
+                  <Plus className="mr-1.5 h-3.5 w-3.5" />+ Adicionar Jogo Manual
+                </Button>
+
                 {enqueteAtiva.status === 'aberta' ? (
                   <Button
                     variant="outline"
@@ -1813,6 +1970,159 @@ export default function Enquetes() {
                 <CheckCircle2 className="mr-1.5 h-3.5 w-3.5" />
               )}
               Confirmar e Cadastrar
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* MODAL DE INSERÇÃO MANUAL DE JOGO NA ENQUETE ATIVA (PAINEL ADMIN) */}
+      <Dialog
+        open={dialogAdicionarManualAtivaOpen}
+        onOpenChange={setDialogAdicionarManualAtivaOpen}
+      >
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-base font-bold text-[#0F172A]">
+              <Plus className="h-5 w-5 text-amber-600" />
+              Adicionar Jogo Manual na Enquete Ativa
+            </DialogTitle>
+            <DialogDescription className="text-xs text-slate-600">
+              Inclua manualmente um confronto em <strong>"{enqueteAtiva?.titulo}"</strong>. O jogo
+              ficará disponível imediatamente para votação sem afetar os votos já existentes.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-3 py-1">
+            <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
+              {/* Mandante */}
+              <div className="space-y-1">
+                <Label htmlFor="ativa-manual-time-a" className="text-xs font-bold text-slate-700">
+                  Mandante (Time Casa) *:
+                </Label>
+                <Input
+                  id="ativa-manual-time-a"
+                  placeholder="Ex.: Corinthians"
+                  value={ativaManualMandante}
+                  onChange={(e) => setAtivaManualMandante(e.target.value)}
+                  className="h-9 bg-white text-xs"
+                />
+              </div>
+
+              {/* Visitante */}
+              <div className="space-y-1">
+                <Label htmlFor="ativa-manual-time-b" className="text-xs font-bold text-slate-700">
+                  Visitante (Time Fora) *:
+                </Label>
+                <Input
+                  id="ativa-manual-time-b"
+                  placeholder="Ex.: Palmeiras"
+                  value={ativaManualVisitante}
+                  onChange={(e) => setAtivaManualVisitante(e.target.value)}
+                  className="h-9 bg-white text-xs"
+                />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-3">
+              {/* Competição com Datalist de sugestões */}
+              <div className="space-y-1 sm:col-span-1">
+                <Label
+                  htmlFor="ativa-manual-competicao"
+                  className="text-xs font-bold text-slate-700"
+                >
+                  Competição / Liga *:
+                </Label>
+                <Input
+                  id="ativa-manual-competicao"
+                  list="sugestoes-competicoes-ativa"
+                  placeholder="Ex.: Brasileirão Série A"
+                  value={ativaManualCompeticao}
+                  onChange={(e) => setAtivaManualCompeticao(e.target.value)}
+                  className="h-9 bg-white text-xs"
+                />
+                <datalist id="sugestoes-competicoes-ativa">
+                  <option value="Brasileirão Série A" />
+                  <option value="Champions League" />
+                  <option value="Premier League (Inglaterra)" />
+                  <option value="La Liga (Espanha)" />
+                  <option value="Serie A (Itália)" />
+                  <option value="Bundesliga (Alemanha)" />
+                  <option value="Ligue 1 (França)" />
+                  <option value="Copa Libertadores" />
+                  <option value="Copa Sul-Americana" />
+                  <option value="Copa do Brasil" />
+                  <option value="UEFA Europa League" />
+                </datalist>
+              </div>
+
+              {/* Data (UTC-3) */}
+              <div className="space-y-1">
+                <Label htmlFor="ativa-manual-data" className="text-xs font-bold text-slate-700">
+                  Data (Brasília UTC-3) *:
+                </Label>
+                <Input
+                  id="ativa-manual-data"
+                  type="date"
+                  value={ativaManualData}
+                  onChange={(e) => setAtivaManualData(e.target.value)}
+                  className="h-9 bg-white text-xs"
+                />
+              </div>
+
+              {/* Horário (UTC-3) */}
+              <div className="space-y-1">
+                <Label htmlFor="ativa-manual-horario" className="text-xs font-bold text-slate-700">
+                  Horário (UTC-3) *:
+                </Label>
+                <Input
+                  id="ativa-manual-horario"
+                  type="time"
+                  value={ativaManualHorario}
+                  onChange={(e) => setAtivaManualHorario(e.target.value)}
+                  className="h-9 bg-white text-xs"
+                />
+              </div>
+            </div>
+
+            {/* Avisos leves (margem / duplicação) */}
+            {ativaManualAvisoMargem && (
+              <div className="flex items-center gap-2 rounded-md border border-amber-300 bg-amber-100/70 p-2.5 text-[11px] text-amber-900">
+                <AlertCircle className="h-4 w-4 shrink-0 text-amber-700" />
+                <span>{ativaManualAvisoMargem}</span>
+              </div>
+            )}
+
+            {ativaManualAvisoDuplicado && (
+              <div className="flex items-center gap-2 rounded-md border border-blue-200 bg-blue-50 p-2.5 text-[11px] text-blue-800">
+                <Info className="h-4 w-4 shrink-0 text-blue-600" />
+                <span>{ativaManualAvisoDuplicado}</span>
+              </div>
+            )}
+          </div>
+
+          <DialogFooter className="flex items-center justify-between border-t border-slate-100 pt-3">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => setDialogAdicionarManualAtivaOpen(false)}
+              disabled={salvandoJogoAtiva}
+            >
+              Cancelar
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              onClick={handleSalvarJogoManualAtiva}
+              disabled={salvandoJogoAtiva}
+              className="bg-amber-600 font-bold text-white hover:bg-amber-700"
+            >
+              {salvandoJogoAtiva ? (
+                <RefreshCw className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <Plus className="mr-1.5 h-3.5 w-3.5" />
+              )}
+              Inserir Jogo na Enquete
             </Button>
           </DialogFooter>
         </DialogContent>
