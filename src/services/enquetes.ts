@@ -354,6 +354,54 @@ export async function adicionarJogoManualNaEnquete(params: {
 }
 
 /**
+ * Admin: Atualiza informações de um confronto da enquete
+ * Mantém os votos computados intactos sem tocar na coleção de votos
+ */
+export async function editarJogoEnquete(
+  jogoId: string,
+  params: {
+    time_a: string
+    time_b: string
+    campeonato?: string
+    regiao?: string
+    data: string
+    horario?: string
+  },
+): Promise<EnqueteJogoModel> {
+  return pb.collection('enquete_jogos').update<EnqueteJogoModel>(jogoId, {
+    time_a: params.time_a.trim(),
+    time_b: params.time_b.trim(),
+    campeonato: params.campeonato?.trim() || 'Futebol',
+    regiao: params.regiao?.trim() || 'Brasileirão & Copas',
+    data: params.data,
+    horario: params.horario || '16:00',
+  })
+}
+
+/**
+ * Admin: Exclui um jogo individual da enquete
+ * Também limpa votos associados a esse jogo específico
+ */
+export async function excluirJogoEnquete(jogoId: string): Promise<void> {
+  // Limpa votos do confronto se existirem para não deixar registros órfãos
+  try {
+    const votosJogo = await pb.collection('enquete_votos').getFullList({
+      filter: `jogo = '${jogoId}'`,
+    })
+    for (const v of votosJogo) {
+      await pb
+        .collection('enquete_votos')
+        .delete(v.id)
+        .catch(() => {})
+    }
+  } catch {
+    /* prossegue para deletar o jogo */
+  }
+
+  await pb.collection('enquete_jogos').delete(jogoId)
+}
+
+/**
  * Admin: Atualiza seleção manual do admin para um jogo da enquete
  */
 export async function toggleAdminSelecaoJogo(jogoId: string, selecionado: boolean): Promise<void> {

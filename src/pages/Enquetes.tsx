@@ -15,6 +15,7 @@ import {
   Users,
   Send,
   Trash2,
+  Pencil,
   ChevronRight,
   Sparkles,
   Info,
@@ -62,6 +63,8 @@ import {
   cadastrarJogosAprovadosNaCopaConi,
   excluirEnquete,
   adicionarJogoManualNaEnquete,
+  editarJogoEnquete,
+  excluirJogoEnquete,
 } from '@/services/enquetes'
 
 export default function Enquetes() {
@@ -110,6 +113,22 @@ export default function Enquetes() {
   const [ativaManualHorario, setAtivaManualHorario] = useState('16:00')
   const [ativaManualAvisoMargem, setAtivaManualAvisoMargem] = useState<string | null>(null)
   const [ativaManualAvisoDuplicado, setAtivaManualAvisoDuplicado] = useState<string | null>(null)
+
+  // Admin: Modal de Edição de Jogo da Enquete
+  const [jogoEmEdicao, setJogoEmEdicao] = useState<JogoComVotos | null>(null)
+  const [dialogEditarJogoOpen, setDialogEditarJogoOpen] = useState(false)
+  const [editMandante, setEditMandante] = useState('')
+  const [editVisitante, setEditVisitante] = useState('')
+  const [editCompeticao, setEditCompeticao] = useState('')
+  const [editData, setEditData] = useState('')
+  const [editHorario, setEditHorario] = useState('16:00')
+  const [editAvisoMargem, setEditAvisoMargem] = useState<string | null>(null)
+  const [salvandoEdicaoJogo, setSalvandoEdicaoJogo] = useState(false)
+
+  // Admin: Modal de Exclusão de Jogo Individual da Enquete
+  const [jogoEmExclusao, setJogoEmExclusao] = useState<JogoComVotos | null>(null)
+  const [dialogExcluirJogoOpen, setDialogExcluirJogoOpen] = useState(false)
+  const [excluindoJogo, setExcluindoJogo] = useState(false)
 
   // Atualiza data padrão do formulário manual ao alterar dataInicio da busca
   useEffect(() => {
@@ -735,6 +754,184 @@ export default function Enquetes() {
     }
   }
 
+  // Admin: Abrir modal de edição de confronto
+  const handleAbrirModalEditarJogo = (jogo: JogoComVotos, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation()
+    setJogoEmEdicao(jogo)
+    setEditMandante(jogo.time_a)
+    setEditVisitante(jogo.time_b)
+    setEditCompeticao(jogo.campeonato || '')
+    setEditData(jogo.data)
+    setEditHorario(jogo.horario || '16:00')
+    setEditAvisoMargem(null)
+    setDialogEditarJogoOpen(true)
+  }
+
+  // Admin: Salvar edição de confronto
+  const handleSalvarEdicaoJogo = async () => {
+    if (!jogoEmEdicao) return
+
+    const timeA = editMandante.trim()
+    const timeB = editVisitante.trim()
+    const competicao = editCompeticao.trim() || 'Amistoso / Outros'
+    const dataJogo = editData.trim()
+    const horarioJogo = editHorario.trim() || '16:00'
+
+    if (!timeA || !timeB) {
+      toast({
+        title: 'Campos incompletos',
+        description: 'Informe tanto o time mandante quanto o visitante.',
+        variant: 'destructive',
+      })
+      return
+    }
+
+    if (timeA.toLowerCase() === timeB.toLowerCase()) {
+      toast({
+        title: 'Equipes idênticas',
+        description: 'O time mandante e o visitante devem ser diferentes entre si.',
+        variant: 'destructive',
+      })
+      return
+    }
+
+    if (!dataJogo) {
+      toast({
+        title: 'Data obrigatória',
+        description: 'Selecione a data da partida no formato YYYY-MM-DD.',
+        variant: 'destructive',
+      })
+      return
+    }
+
+    // Normaliza para fuso de Brasília e verifica margem de 3 horas
+    const spConverted = formatDataHoraSaoPaulo(dataJogo, horarioJogo)
+    const dataFinal = spConverted.data || dataJogo
+    const horaFinal = spConverted.horario || horarioJogo
+
+    const nowMs = Date.now()
+    const respeitaMargem = satisfiesEnqueteMinTimeMargin(dataFinal, horaFinal, nowMs, 3)
+    if (!respeitaMargem) {
+      setEditAvisoMargem(
+        'Atenção: Este confronto está agendado para menos de 3 horas a partir de agora (ou no passado). Você pode salvá-lo manualmente se desejar.',
+      )
+    } else {
+      setEditAvisoMargem(null)
+    }
+
+    const regiaoCalculada =
+      competicao.toLowerCase().includes('brasileir') || competicao.toLowerCase().includes('copa')
+        ? 'Brasileirão & Copas'
+        : 'Futebol Europeu'
+
+    setSalvandoEdicaoJogo(true)
+    try {
+      const atualizado = await editarJogoEnquete(jogoEmEdicao.id, {
+        time_a: timeA,
+        time_b: timeB,
+        campeonato: competicao,
+        regiao: regiaoCalculada,
+        data: dataFinal,
+        horario: horaFinal,
+      })
+
+      // Atualiza o estado React imediatamente mantendo os votos já computados
+      setJogosEnquete((prev) =>
+        prev.map((j) => {
+          if (j.id === jogoEmEdicao.id) {
+            return {
+              ...j,
+              time_a: atualizado.time_a,
+              time_b: atualizado.time_b,
+              campeonato: atualizado.campeonato,
+              regiao: atualizado.regiao,
+              data: dataFinal,
+              horario: horaFinal,
+            }
+          }
+          return j
+        }),
+      )
+
+      toast({
+        title: 'Jogo atualizado com sucesso!',
+        description: `${timeA} x ${timeB} salvo. Votos computados permanecem intactos.`,
+      })
+
+      setDialogEditarJogoOpen(false)
+      setJogoEmEdicao(null)
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Falha ao atualizar confronto.'
+      toast({
+        title: 'Erro ao editar jogo',
+        description: msg,
+        variant: 'destructive',
+      })
+    } finally {
+      setSalvandoEdicaoJogo(false)
+    }
+  }
+
+  // Admin: Abrir confirmação de exclusão de confronto
+  const handleAbrirModalExcluirJogo = (jogo: JogoComVotos, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation()
+    setJogoEmExclusao(jogo)
+    setDialogExcluirJogoOpen(true)
+  }
+
+  // Admin: Confirmar exclusão de confronto
+  const handleConfirmarExcluirJogo = async () => {
+    if (!jogoEmExclusao) return
+    const idParaExcluir = jogoEmExclusao.id
+    const nomeConfronto = `${jogoEmExclusao.time_a} x ${jogoEmExclusao.time_b}`
+
+    setExcluindoJogo(true)
+    try {
+      await excluirJogoEnquete(idParaExcluir)
+
+      // Atualiza estado React imediatamente
+      setJogosEnquete((prev) => prev.filter((j) => j.id !== idParaExcluir))
+      setMeusVotosIds((prev) => {
+        if (prev.has(idParaExcluir)) {
+          const next = new Set(prev)
+          next.delete(idParaExcluir)
+          return next
+        }
+        return prev
+      })
+
+      // Se o filtro atual era a competição desse jogo e ela não existe mais nos restantes,
+      // reseta o filtro para 'todos'
+      const compRestantes = new Set(
+        jogosEnquete.filter((j) => j.id !== idParaExcluir).map((j) => (j.campeonato || '').trim()),
+      )
+      if (
+        filtroCategoria !== 'todos' &&
+        filtroCategoria !== 'meus-votos' &&
+        !compRestantes.has(filtroCategoria)
+      ) {
+        setFiltroCategoria('todos')
+      }
+
+      toast({
+        title: 'Jogo excluído da enquete',
+        description: `${nomeConfronto} removido com sucesso.`,
+      })
+
+      setDialogExcluirJogoOpen(false)
+      setJogoEmExclusao(null)
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Falha ao remover o jogo.'
+      toast({
+        title: 'Erro ao excluir jogo',
+        description: msg,
+        variant: 'destructive',
+      })
+    } finally {
+      setExcluindoJogo(false)
+    }
+  }
+
   // Admin: Alternar seleção manual do Admin no Ranking/Apurador
   const handleToggleAdminSelecao = async (jogo: JogoComVotos) => {
     if (!isAdmin) return
@@ -1222,9 +1419,9 @@ export default function Enquetes() {
                     )}
 
                     <CardContent className="p-4">
-                      {/* Topo do Card: Campeonato, Origem e Data */}
+                      {/* Topo do Card: Campeonato, Origem, Data e Botões Admin (Editar/Excluir) */}
                       <div className="flex items-center justify-between gap-2 border-b border-slate-100 pb-2">
-                        <div className="flex items-center gap-1.5 min-w-0">
+                        <div className="flex items-center gap-1.5 min-w-0 flex-1">
                           <span className="truncate text-[11px] font-bold text-slate-600">
                             {jogo.campeonato || 'Competição'}
                           </span>
@@ -1237,11 +1434,36 @@ export default function Enquetes() {
                             </Badge>
                           )}
                         </div>
-                        <div className="flex items-center gap-1 shrink-0 text-[11px] font-medium text-slate-500">
-                          <Calendar className="h-3 w-3 text-slate-400" />
-                          <span>{formatDataBR(jogo.data)}</span>
-                          <Clock className="ml-1 h-3 w-3 text-slate-400" />
-                          <span>{formatHoraBR(jogo.horario || '16:00')}</span>
+
+                        <div className="flex items-center gap-2 shrink-0">
+                          <div className="flex items-center gap-1 text-[11px] font-medium text-slate-500">
+                            <Calendar className="h-3 w-3 text-slate-400" />
+                            <span>{formatDataBR(jogo.data)}</span>
+                            <Clock className="ml-1 h-3 w-3 text-slate-400" />
+                            <span>{formatHoraBR(jogo.horario || '16:00')}</span>
+                          </div>
+
+                          {/* Botões de Ação Admin: Editar e Excluir Jogo */}
+                          {isAdmin && (
+                            <div className="flex items-center gap-1 border-l border-slate-200 pl-1.5">
+                              <button
+                                type="button"
+                                onClick={(e) => handleAbrirModalEditarJogo(jogo, e)}
+                                className="rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-amber-600 transition"
+                                title="Editar jogo"
+                              >
+                                <Pencil className="h-3.5 w-3.5" />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={(e) => handleAbrirModalExcluirJogo(jogo, e)}
+                                className="rounded p-1 text-slate-400 hover:bg-rose-50 hover:text-rose-600 transition"
+                                title="Excluir confronto da enquete"
+                              >
+                                <Trash2 className="h-3.5 w-3.5" />
+                              </button>
+                            </div>
+                          )}
                         </div>
                       </div>
 
@@ -1506,6 +1728,28 @@ export default function Enquetes() {
                               {jogo.totalVotos === 1 ? 'voto' : 'votos'}
                             </span>
                           </div>
+
+                          {/* Ações do Admin: Botões Rápidos de Editar e Excluir */}
+                          {isAdmin && (
+                            <div className="flex items-center gap-1">
+                              <button
+                                type="button"
+                                onClick={(e) => handleAbrirModalEditarJogo(jogo, e)}
+                                className="rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-amber-600 transition"
+                                title="Editar jogo"
+                              >
+                                <Pencil className="h-3.5 w-3.5" />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={(e) => handleAbrirModalExcluirJogo(jogo, e)}
+                                className="rounded p-1 text-slate-400 hover:bg-rose-50 hover:text-rose-600 transition"
+                                title="Excluir confronto da enquete"
+                              >
+                                <Trash2 className="h-3.5 w-3.5" />
+                              </button>
+                            </div>
+                          )}
 
                           {/* Controle Final do Admin: Checkbox para Ajustar/Confirmar Partida */}
                           {isAdmin && (
@@ -2123,6 +2367,192 @@ export default function Enquetes() {
                 <Plus className="mr-1.5 h-3.5 w-3.5" />
               )}
               Inserir Jogo na Enquete
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* MODAL DE EDIÇÃO DE JOGO DA ENQUETE (PAINEL ADMIN) */}
+      <Dialog open={dialogEditarJogoOpen} onOpenChange={setDialogEditarJogoOpen}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-base font-bold text-[#0F172A]">
+              <Pencil className="h-5 w-5 text-amber-600" />
+              Editar Jogo da Enquete
+            </DialogTitle>
+            <DialogDescription className="text-xs text-slate-600">
+              Altere as informações do confronto. Os <strong>votos já computados</strong>{' '}
+              permanecerão intactos no card.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-3 py-1">
+            <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
+              {/* Mandante */}
+              <div className="space-y-1">
+                <Label htmlFor="edit-mandante" className="text-xs font-bold text-slate-700">
+                  Mandante (Time Casa) *:
+                </Label>
+                <Input
+                  id="edit-mandante"
+                  placeholder="Ex.: Corinthians"
+                  value={editMandante}
+                  onChange={(e) => setEditMandante(e.target.value)}
+                  className="h-9 bg-white text-xs"
+                />
+              </div>
+
+              {/* Visitante */}
+              <div className="space-y-1">
+                <Label htmlFor="edit-visitante" className="text-xs font-bold text-slate-700">
+                  Visitante (Time Fora) *:
+                </Label>
+                <Input
+                  id="edit-visitante"
+                  placeholder="Ex.: Palmeiras"
+                  value={editVisitante}
+                  onChange={(e) => setEditVisitante(e.target.value)}
+                  className="h-9 bg-white text-xs"
+                />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-3">
+              {/* Competição com Datalist de sugestões */}
+              <div className="space-y-1 sm:col-span-1">
+                <Label htmlFor="edit-competicao" className="text-xs font-bold text-slate-700">
+                  Competição / Liga *:
+                </Label>
+                <Input
+                  id="edit-competicao"
+                  list="sugestoes-competicoes-edit"
+                  placeholder="Ex.: Brasileirão Série A"
+                  value={editCompeticao}
+                  onChange={(e) => setEditCompeticao(e.target.value)}
+                  className="h-9 bg-white text-xs"
+                />
+                <datalist id="sugestoes-competicoes-edit">
+                  <option value="Brasileirão Série A" />
+                  <option value="Champions League" />
+                  <option value="Premier League (Inglaterra)" />
+                  <option value="La Liga (Espanha)" />
+                  <option value="Serie A (Itália)" />
+                  <option value="Bundesliga (Alemanha)" />
+                  <option value="Ligue 1 (França)" />
+                  <option value="Copa Libertadores" />
+                  <option value="Copa Sul-Americana" />
+                  <option value="Copa do Brasil" />
+                  <option value="UEFA Europa League" />
+                </datalist>
+              </div>
+
+              {/* Data (UTC-3) */}
+              <div className="space-y-1">
+                <Label htmlFor="edit-data" className="text-xs font-bold text-slate-700">
+                  Data (Brasília UTC-3) *:
+                </Label>
+                <Input
+                  id="edit-data"
+                  type="date"
+                  value={editData}
+                  onChange={(e) => setEditData(e.target.value)}
+                  className="h-9 bg-white text-xs"
+                />
+              </div>
+
+              {/* Horário (UTC-3) */}
+              <div className="space-y-1">
+                <Label htmlFor="edit-horario" className="text-xs font-bold text-slate-700">
+                  Horário (UTC-3) *:
+                </Label>
+                <Input
+                  id="edit-horario"
+                  type="time"
+                  value={editHorario}
+                  onChange={(e) => setEditHorario(e.target.value)}
+                  className="h-9 bg-white text-xs"
+                />
+              </div>
+            </div>
+
+            {/* Aviso de margem */}
+            {editAvisoMargem && (
+              <div className="flex items-center gap-2 rounded-md border border-amber-300 bg-amber-100/70 p-2.5 text-[11px] text-amber-900">
+                <AlertCircle className="h-4 w-4 shrink-0 text-amber-700" />
+                <span>{editAvisoMargem}</span>
+              </div>
+            )}
+          </div>
+
+          <DialogFooter className="flex items-center justify-between border-t border-slate-100 pt-3">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                setDialogEditarJogoOpen(false)
+                setJogoEmEdicao(null)
+              }}
+              disabled={salvandoEdicaoJogo}
+            >
+              Cancelar
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              onClick={handleSalvarEdicaoJogo}
+              disabled={salvandoEdicaoJogo}
+              className="bg-amber-600 font-bold text-white hover:bg-amber-700"
+            >
+              {salvandoEdicaoJogo ? (
+                <RefreshCw className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <Pencil className="mr-1.5 h-3.5 w-3.5" />
+              )}
+              Salvar Alterações
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* MODAL DE CONFIRMAÇÃO DE EXCLUSÃO DE JOGO INDIVIDUAL (PAINEL ADMIN) */}
+      <Dialog open={dialogExcluirJogoOpen} onOpenChange={setDialogExcluirJogoOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-base font-bold text-rose-700">
+              <Trash2 className="h-5 w-5" />
+              Excluir Confronto da Enquete
+            </DialogTitle>
+            <DialogDescription className="text-xs text-slate-600">
+              Tem certeza que deseja remover o confronto{' '}
+              <strong>
+                "{jogoEmExclusao?.time_a} x {jogoEmExclusao?.time_b}"
+              </strong>{' '}
+              da enquete? O jogo será excluído, as contagens serão recalculadas e os filtros
+              dinâmicos ajustados.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="flex items-center justify-between border-t border-slate-100 pt-3">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                setDialogExcluirJogoOpen(false)
+                setJogoEmExclusao(null)
+              }}
+              disabled={excluindoJogo}
+            >
+              Cancelar
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              onClick={handleConfirmarExcluirJogo}
+              disabled={excluindoJogo}
+              className="bg-rose-600 font-bold text-white hover:bg-rose-700"
+            >
+              {excluindoJogo ? 'Excluindo...' : 'Sim, Excluir Jogo'}
             </Button>
           </DialogFooter>
         </DialogContent>
