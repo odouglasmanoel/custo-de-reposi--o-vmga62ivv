@@ -123,7 +123,7 @@ interface JogosDoDiaCachePayload {
   timestamp: number
 }
 
-const JOGOS_DO_DIA_CACHE_PREFIX = 'cr_jogos_dia_cache_v2'
+const JOGOS_DO_DIA_CACHE_PREFIX = 'cr_jogos_dia_cache_v3'
 const jogosDiaMemoryCache = new Map<string, JogosDoDiaCachePayload>()
 
 function readJogosDiaCache(dateStr: string): JogosDoDiaCachePayload | null {
@@ -499,7 +499,7 @@ export default function JogosDoDia() {
   }, [relevantFixtures, selectedDate, fetchJogos])
 
   // Polling periódico APENAS quando há jogos efetivamente com status "Ao Vivo"
-  // E nunca se tiver atingido rate limit
+  // E nunca se tiver atingido rate limit (60-90s durante jogos ao vivo para propagar gols e encerramento rápido)
   useEffect(() => {
     if (counts.live === 0 || isRateLimited) {
       return
@@ -507,7 +507,7 @@ export default function JogosDoDia() {
 
     const timer = setInterval(() => {
       fetchJogos(selectedDate, false)
-    }, 300000) // 5 minutos enquanto houver ao vivo, respeitando o cache mínimo
+    }, 75000) // 75s (intervalo entre 60-90s) durante partidas ao vivo
     return () => clearInterval(timer)
   }, [counts.live, isRateLimited, selectedDate, fetchJogos])
 

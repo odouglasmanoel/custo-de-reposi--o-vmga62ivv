@@ -298,9 +298,9 @@ export default function Enquetes() {
     }
   }, [enqueteAtivaId, carregarDetalhesEnquete])
 
-  // Total de votos do usuário logado na enquete ativa
+  // Total de votos do usuário logado na enquete ativa (piso mínimo de 10 votos)
   const totalMeusVotos = meusVotosIds.size
-  const limiteVotos = enqueteAtiva?.limite_votos || 10
+  const limiteVotos = Math.max(10, enqueteAtiva?.limite_votos || 10)
   const limiteAtingido = totalMeusVotos >= limiteVotos
 
   // Ranking dos jogos por total de votos (decrescente)

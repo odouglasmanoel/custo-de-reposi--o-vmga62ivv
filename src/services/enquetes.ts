@@ -416,13 +416,16 @@ export async function obterDadosEnquete(
 export async function toggleVotoJogo(
   enqueteId: string,
   jogoId: string,
-  limiteVotos: number = 10,
+  limiteVotosParam: number = 10,
 ): Promise<{ voted: boolean; totalVotosUsuario: number }> {
   const user = pb.authStore.record
   if (!user) throw new Error('Usuário não autenticado.')
 
   const userId = user.id
   const userName = user.name || user.username || 'Participante'
+
+  // Piso mínimo garantido de 10 votos
+  const limiteVotos = Math.max(10, Number(limiteVotosParam) || 10)
 
   // Busca votos existentes do usuário nesta enquete
   const meusVotos = await pb.collection('enquete_votos').getFullList<EnqueteVotoModel>({

@@ -480,8 +480,19 @@ routerAdd('GET', '/backend/v1/placar-ao-vivo', (e) => {
       }
     }
 
-    // TTL: ~30 min para jogos agendados/calendário, 5 min enquanto houver jogo ao vivo
-    var effectiveTTL = entryHasLive ? 5 * 60 * 1000 : 30 * 60 * 1000
+    // Registra timestamp da última partida ao vivo conhecida nesta chave para transição suave
+    if (entryHasLive && cacheEntry) {
+      cacheEntry.lastLiveTimestamp = nowMs
+    }
+    // Se havia jogo ao vivo nos últimos 10 minutos (transição Ao Vivo -> Finalizado), usa TTL curto
+    var hadRecentLive = Boolean(
+      cacheEntry &&
+      cacheEntry.lastLiveTimestamp &&
+      nowMs - cacheEntry.lastLiveTimestamp < 10 * 60 * 1000,
+    )
+
+    // TTL: 1-2 min (90.000 ms) se houver jogo ao vivo ou transição recente; 30 min para dias/jogos agendados
+    var effectiveTTL = entryHasLive || hadRecentLive ? 90 * 1000 : 30 * 60 * 1000
     var cacheAgeMs = cacheEntry ? nowMs - cacheEntry.timestamp : 999999999
 
     // Se o cache é válido, serve diretamente do cache interno SEM fazer nenhuma chamada externa
@@ -1264,7 +1275,45 @@ routerAdd('GET', '/backend/v1/placar-ao-vivo', (e) => {
           Array.isArray(resDate.json.response)
         ) {
           for (var ri = 0; ri < resDate.json.response.length; ri++) {
-            dateFixtures.push(mapApiFootballItem(resDate.json.response[ri]))
+            var rawItemDate = resDate.json.response[ri]
+            // Se o jogo tem gols mas veio sem events, busca fixture detalhada por ID (apenas até 3 por ciclo)
+            var hasGolsDate = Boolean(
+              rawItemDate.goals && (rawItemDate.goals.home > 0 || rawItemDate.goals.away > 0),
+            )
+            var hasEventsDate = Array.isArray(rawItemDate.events) && rawItemDate.events.length > 0
+            if (
+              hasGolsDate &&
+              !hasEventsDate &&
+              rawItemDate.fixture &&
+              rawItemDate.fixture.id &&
+              ri < 3
+            ) {
+              try {
+                var dEnrUrl =
+                  baseUrlDate +
+                  '?id=' +
+                  encodeURIComponent(rawItemDate.fixture.id) +
+                  '&timezone=America%2FSao_Paulo'
+                var dEnrRes = $http.send({
+                  url: dEnrUrl,
+                  method: 'GET',
+                  headers: headers,
+                  timeout: 5,
+                })
+                if (
+                  dEnrRes &&
+                  dEnrRes.statusCode === 200 &&
+                  dEnrRes.json &&
+                  Array.isArray(dEnrRes.json.response) &&
+                  dEnrRes.json.response[0]
+                ) {
+                  if (Array.isArray(dEnrRes.json.response[0].events)) {
+                    rawItemDate.events = dEnrRes.json.response[0].events
+                  }
+                }
+              } catch (_) {}
+            }
+            dateFixtures.push(mapApiFootballItem(rawItemDate))
           }
         }
       } catch (errDate) {
@@ -1687,8 +1736,15 @@ routerAdd('GET', '/backend/v1/jogos-do-dia', (e) => {
     var cacheAgeMs = dayEntry ? nowMs - dayEntry.timestamp : 999999999
 
     var entryHasLive = Boolean(dayEntry && dayEntry.payload && dayEntry.payload.hasLive === true)
-    // TTL OBRIGATÓRIO: Topo da faixa (~30 minutos para o calendário; 5 min enquanto houver jogo "Ao Vivo")
-    var maxAgeMs = entryHasLive ? 5 * 60 * 1000 : 30 * 60 * 1000
+    if (entryHasLive && dayEntry) {
+      dayEntry.lastLiveTimestamp = nowMs
+    }
+    var dayHadRecentLive = Boolean(
+      dayEntry && dayEntry.lastLiveTimestamp && nowMs - dayEntry.lastLiveTimestamp < 10 * 60 * 1000,
+    )
+
+    // TTL: 1-2 min (90.000 ms) se houver jogo ao vivo ou transição recente; 30 min sem jogo ao vivo
+    var maxAgeMs = entryHasLive || dayHadRecentLive ? 90 * 1000 : 30 * 60 * 1000
 
     // REGRA DE ON-DEMAND FETCHING E CARREGAMENTO PASSIVO:
     // Se há cache válido para a API externa, concatenamos SEMPRE os jogos manuais do banco no TOPO
@@ -2191,7 +2247,7 @@ routerAdd('GET', '/backend/v1/jogos-do-dia', (e) => {
                 Object.assign({}, fdPrimaryPayload, {
                   cached: false,
                   ttlSeconds: Math.round(
-                    (fdPrimaryPayload.hasLive ? 5 * 60 * 1000 : 30 * 60 * 1000) / 1000,
+                    (fdPrimaryPayload.hasLive ? 90 * 1000 : 30 * 60 * 1000) / 1000,
                   ),
                 }),
               )
@@ -2476,9 +2532,7 @@ routerAdd('GET', '/backend/v1/jogos-do-dia', (e) => {
         200,
         Object.assign({}, contingencyPayload, {
           cached: false,
-          ttlSeconds: Math.round(
-            (contingencyPayload.hasLive ? 5 * 60 * 1000 : 30 * 60 * 1000) / 1000,
-          ),
+          ttlSeconds: Math.round((contingencyPayload.hasLive ? 90 * 1000 : 30 * 60 * 1000) / 1000),
         }),
       )
     }
@@ -2669,6 +2723,65 @@ routerAdd('GET', '/backend/v1/jogos-do-dia', (e) => {
     var rawFixtures = []
     var hasLiveMatch = false
     var seenFixtureIds = {}
+
+    // Complementa eventos por fixture id se a API retornou fixture com placar mas sem events
+    // (Apenas para partidas com gols ou ao vivo, limitado a até 4 chamadas para respeitar timeout e cota)
+    var fixturesToEnrichEvents = []
+    for (var preI = 0; preI < allFixtures.length; preI++) {
+      var preItem = allFixtures[preI]
+      var preShort =
+        (preItem.fixture && preItem.fixture.status && preItem.fixture.status.short) || ''
+      var preIsLive = ['1H', 'HT', '2H', 'ET', 'BT', 'P', 'LIVE'].indexOf(preShort) !== -1
+      var preHasGoals = Boolean(
+        (preItem.goals && (preItem.goals.home > 0 || preItem.goals.away > 0)) ||
+        (preItem.score &&
+          preItem.score.fulltime &&
+          (preItem.score.fulltime.home > 0 || preItem.score.fulltime.away > 0)),
+      )
+      var preHasEvents = Array.isArray(preItem.events) && preItem.events.length > 0
+      if ((preIsLive || preHasGoals) && !preHasEvents && preItem.fixture && preItem.fixture.id) {
+        fixturesToEnrichEvents.push(preItem)
+        if (fixturesToEnrichEvents.length >= 4) break
+      }
+    }
+
+    if (fixturesToEnrichEvents.length > 0 && apiFootballKey && !rateLimitHit) {
+      for (var enrI = 0; enrI < fixturesToEnrichEvents.length; enrI++) {
+        var fixToEnrich = fixturesToEnrichEvents[enrI]
+        try {
+          var enrichUrl =
+            baseUrl +
+            '?id=' +
+            encodeURIComponent(fixToEnrich.fixture.id) +
+            '&timezone=America%2FSao_Paulo'
+          var enrichResp = $http.send({
+            url: enrichUrl,
+            method: 'GET',
+            headers: headers,
+            timeout: 5,
+          })
+          if (
+            enrichResp &&
+            enrichResp.statusCode === 200 &&
+            enrichResp.json &&
+            Array.isArray(enrichResp.json.response) &&
+            enrichResp.json.response.length > 0
+          ) {
+            var fullFixtureData = enrichResp.json.response[0]
+            if (Array.isArray(fullFixtureData.events) && fullFixtureData.events.length > 0) {
+              fixToEnrich.events = fullFixtureData.events
+            }
+          }
+        } catch (enrichErr) {
+          console.log(
+            '[Enrich Fixture Events] Erro ao buscar eventos para fixture ' +
+              fixToEnrich.fixture.id +
+              ':',
+            enrichErr,
+          )
+        }
+      }
+    }
 
     for (var i = 0; i < allFixtures.length; i++) {
       var item = allFixtures[i]
@@ -2912,7 +3025,7 @@ routerAdd('GET', '/backend/v1/jogos-do-dia', (e) => {
       200,
       Object.assign({}, finalPayload, {
         cached: false,
-        ttlSeconds: Math.round((hasLiveMatch ? 5 * 60 * 1000 : 30 * 60 * 1000) / 1000),
+        ttlSeconds: Math.round((hasLiveMatch ? 90 * 1000 : 30 * 60 * 1000) / 1000),
       }),
     )
   } catch (err) {

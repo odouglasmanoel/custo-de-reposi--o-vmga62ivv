@@ -63,7 +63,7 @@ interface DashboardCachePayload {
   timestamp: number
 }
 
-const DASHBOARD_CACHE_PREFIX = 'cr_dashboard_cache_v2'
+const DASHBOARD_CACHE_PREFIX = 'cr_dashboard_cache_v3'
 const dashboardMemoryCache = new Map<string, DashboardCachePayload>()
 
 function readDashboardCache(bolaoId: string): DashboardCachePayload | null {
@@ -1004,8 +1004,8 @@ export default function BolaoDashboard() {
       return
     }
 
-    // Polling a cada 5 min (300.000ms) respeitando o cache mínimo de ao vivo
-    const interval = setInterval(fetchLiveScores, 300000)
+    // Polling a cada 75s (60-90s) durante partidas ao vivo para atualizar placares e gols
+    const interval = setInterval(fetchLiveScores, 75000)
     return () => clearInterval(interval)
   }, [jogosLiberados.length, apiFixtures, isRateLimited, fetchLiveScores])
 
