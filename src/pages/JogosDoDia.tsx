@@ -712,19 +712,30 @@ export default function JogosDoDia() {
       minute: number | null | undefined,
       side: 'home' | 'away' | null,
       isOwnGoal = false,
+      extraMinute?: number | null | undefined,
     ) => {
       const cleanName = (name || '').trim()
       if (!cleanName) return
       const finalName = isOwnGoal ? `${cleanName} (contra)` : cleanName
-      const minText = minute != null && !isNaN(Number(minute)) ? `${minute}'` : ''
-      const entry = minText ? `${finalName} ${minText}` : finalName
-      const key = `${side || 'any'}__${finalName.toLowerCase()}__${minute ?? ''}`
+      let minText = ''
+      if (minute != null && !isNaN(Number(minute))) {
+        if (extraMinute != null && !isNaN(Number(extraMinute)) && Number(extraMinute) > 0) {
+          minText = `${minute}+${extraMinute}'`
+        } else {
+          minText = `${minute}'`
+        }
+      }
+      const entry = minText ? `⚽ ${finalName} ${minText}` : `⚽ ${finalName}`
+      const key = `${side || 'any'}__${finalName.toLowerCase()}__${minText}`
       if (seenScorerKeys.has(key)) return
       seenScorerKeys.add(key)
 
       if (side === 'away') {
         awayScorers.push(entry)
+      } else if (side === 'home') {
+        homeScorers.push(entry)
       } else {
+        // Sem lado identificado, coloca no mandante por omissão somente se houver gol do mandante
         homeScorers.push(entry)
       }
     }
@@ -741,117 +752,148 @@ export default function JogosDoDia() {
     ): 'home' | 'away' | null => {
       if (hintSide === 'home' || hintSide === 'away') return hintSide
       if (tId != null) {
-        if (homeId != null && tId === homeId) return 'home'
-        if (awayId != null && tId === awayId) return 'away'
+        if (homeId != null && String(tId) === String(homeId)) return 'home'
+        if (awayId != null && String(tId) === String(awayId)) return 'away'
       }
       if (tName) {
+        const homeRaw = fixture.teams?.home?.name || ''
+        const awayRaw = fixture.teams?.away?.name || ''
+        const simHome = Math.max(
+          stringSimilarity(tName, homeRaw),
+          homeClean ? stringSimilarity(cleanTeamName(tName), homeClean) : 0,
+        )
+        const simAway = Math.max(
+          stringSimilarity(tName, awayRaw),
+          awayClean ? stringSimilarity(cleanTeamName(tName), awayClean) : 0,
+        )
         const c = cleanTeamName(tName).toLowerCase()
-        if (homeClean && (c === homeClean || homeClean.includes(c) || c.includes(homeClean)))
-          return 'home'
-        if (awayClean && (c === awayClean || awayClean.includes(c) || c.includes(awayClean)))
-          return 'away'
+        const subHome =
+          homeClean && (c === homeClean || homeClean.includes(c) || c.includes(homeClean))
+        const subAway =
+          awayClean && (c === awayClean || awayClean.includes(c) || c.includes(awayClean))
+
+        if (subHome && !subAway) return 'home'
+        if (subAway && !subHome) return 'away'
+        if (simHome >= 0.6 && simHome > simAway) return 'home'
+        if (simAway >= 0.6 && simAway > simHome) return 'away'
       }
       return null
     }
 
-    // 1. Provedor API-Football: events do tipo "Goal"
-    if (Array.isArray(fixture.events) && fixture.events.length > 0) {
+    // Leitura tolerante de autor do gol
+    const extractNameFromEv = (ev: any): string => {
+      if (!ev) return ''
+      return (
+        ev.player?.name ||
+        ev.player?.shortName ||
+        ev.player_name ||
+        ev.scorer?.name ||
+        ev.scorer?.shortName ||
+        (typeof ev.scorer === 'string' ? ev.scorer : '') ||
+        ev.name ||
+        ev.strPlayer ||
+        ev.strScorer ||
+        ''
+      )
+    }
+
+    const extractMinuteFromEv = (ev: any): { minute: number | null; extra: number | null } => {
+      if (!ev) return { minute: null, extra: null }
+      let rawMin =
+        ev.time?.elapsed ?? ev.minute ?? ev.intMinute ?? ev.intGoalScoredTime ?? ev.intTime ?? null
+      let rawExtra = ev.time?.extra ?? ev.extraMinute ?? null
+
+      if (typeof rawMin === 'string') {
+        const plusMatch = rawMin.match(/(\d+)\s*\+\s*(\d+)/)
+        if (plusMatch) {
+          rawMin = parseInt(plusMatch[1], 10)
+          rawExtra = parseInt(plusMatch[2], 10)
+        } else {
+          const numMatch = rawMin.match(/(\d+)/)
+          rawMin = numMatch ? parseInt(numMatch[1], 10) : null
+        }
+      }
+      return {
+        minute: rawMin != null && !isNaN(Number(rawMin)) ? Number(rawMin) : null,
+        extra: rawExtra != null && !isNaN(Number(rawExtra)) ? Number(rawExtra) : null,
+      }
+    }
+
+    // 1. Array normalizado universal do backend (scorers)
+    if (Array.isArray(fixture.scorers) && fixture.scorers.length > 0) {
+      for (const sc of fixture.scorers) {
+        if (!sc || !sc.name) continue
+        const side = resolveSide(sc.teamId, sc.teamName, sc.teamSide)
+        const isContra = /contra|own\s*goal|o\.?g\.?/i.test(sc.name)
+        const cleanScName = sc.name.replace(/\s*\(contra\)/i, '').trim()
+        const minObj = {
+          minute: sc.minute != null ? Number(sc.minute) : null,
+          extra: sc.extraMinute != null ? Number(sc.extraMinute) : null,
+        }
+        addScorer(cleanScName, minObj.minute, side, isContra, minObj.extra)
+      }
+    }
+
+    // 2. Provedor API-Football: events do tipo "Goal"
+    if (
+      homeScorers.length === 0 &&
+      awayScorers.length === 0 &&
+      Array.isArray(fixture.events) &&
+      fixture.events.length > 0
+    ) {
       for (const ev of fixture.events) {
-        if (ev && String(ev.type || '').toLowerCase() === 'goal') {
-          const playerName = ev.player?.name || ev.player?.shortName || ''
-          const isOwn = Boolean(ev.detail && String(ev.detail).toLowerCase().includes('own'))
-          const minute = ev.time?.elapsed ?? null
+        const evType = String(ev?.type || '').toLowerCase()
+        const evDetail = String(ev?.detail || '').toLowerCase()
+        if (ev && (evType === 'goal' || evType === 'gol' || evType === 'own goal')) {
+          const playerName = extractNameFromEv(ev)
+          const isOwn = evDetail.includes('own') || evType.includes('own')
+          const { minute, extra } = extractMinuteFromEv(ev)
           const side = resolveSide(ev.team?.id, ev.team?.name, null)
-          addScorer(playerName, minute, side, isOwn)
+          addScorer(playerName, minute, side, isOwn, extra)
         }
       }
     }
 
-    // 2. Provedor Football-Data.org: goals / goalEvents
-    const rawGoals = Array.isArray(fixture.goalEvents)
-      ? fixture.goalEvents
-      : Array.isArray((fixture as any).goals)
-        ? (fixture as any).goals
-        : []
-    if (rawGoals.length > 0) {
-      for (const g of rawGoals) {
-        const playerName = g.scorer?.name || g.scorer?.shortName || g.name || ''
-        const isOwn = String(g.type || '').toUpperCase() === 'OWN'
-        const minute = g.minute ?? null
-        const side = resolveSide(g.team?.id, g.team?.name || g.team?.shortName, null)
-        addScorer(playerName, minute, side, isOwn)
+    // 3. Provedor Football-Data.org: goals / goalEvents
+    if (homeScorers.length === 0 && awayScorers.length === 0) {
+      const rawGoals = Array.isArray(fixture.goalEvents)
+        ? fixture.goalEvents
+        : Array.isArray((fixture as any).goals)
+          ? (fixture as any).goals
+          : []
+      if (rawGoals.length > 0) {
+        for (const g of rawGoals) {
+          const playerName = extractNameFromEv(g)
+          const isOwn = String(g.type || '').toUpperCase() === 'OWN'
+          const { minute, extra } = extractMinuteFromEv(g)
+          const side = resolveSide(g.team?.id, g.team?.name || g.team?.shortName, null)
+          addScorer(playerName, minute, side, isOwn, extra)
+        }
       }
     }
 
-    // 3. Provedor TheSportsDB: golevents
-    if (Array.isArray(fixture.golevents) && fixture.golevents.length > 0) {
+    // 4. Provedor TheSportsDB: golevents
+    if (
+      homeScorers.length === 0 &&
+      awayScorers.length === 0 &&
+      Array.isArray(fixture.golevents) &&
+      fixture.golevents.length > 0
+    ) {
       for (const ge of fixture.golevents) {
-        const playerName = ge.player || ge.scorer || ge.strPlayer || ge.strScorer || ge.name || ''
-        const minute = ge.minute ?? ge.intMinute ?? ge.intTime ?? null
+        const playerName = extractNameFromEv(ge)
+        const { minute, extra } = extractMinuteFromEv(ge)
         const side =
           ge.teamSide === 'away' || ge.teamSide === 'home'
             ? ge.teamSide
-            : resolveSide(null, ge.strTeam || ge.teamName, null)
-        addScorer(playerName, minute, side, false)
+            : resolveSide(ge.idTeam || ge.teamId, ge.strTeam || ge.teamName, null)
+        const isContra = /contra|own\s*goal/i.test(ge.strSub || ge.strDetail || '')
+        addScorer(playerName, minute, side, isContra, extra)
       }
-    }
-
-    // 4. Fallback / Normalizado: scorers do backend
-    if (homeScorers.length === 0 && awayScorers.length === 0 && Array.isArray(fixture.scorers)) {
-      for (const sc of fixture.scorers) {
-        const side = resolveSide(sc.teamId, sc.teamName, sc.teamSide)
-        addScorer(sc.name, sc.minute, side, false)
-      }
-    }
-
-    // Agrupamento dos gols por jogador no formato solicitado: ⚽ Jogador (12', 45')
-    const formatGroupedScorers = (list: string[]): string[] => {
-      if (list.length === 0) return []
-      const map = new Map<string, string[]>()
-      const noMinList: string[] = []
-      for (const item of list) {
-        // Suporta tanto 45' quanto acréscimos 45+2'
-        const match = item.match(/^(.*?)(?:\s+(\d+(?:\+\d+)?)\s*')?$/)
-        if (match) {
-          const playerName = match[1].trim()
-          const minuteStr = match[2]
-          if (!map.has(playerName)) {
-            map.set(playerName, [])
-          }
-          if (minuteStr) {
-            map.get(playerName)!.push(minuteStr)
-          }
-        } else {
-          noMinList.push(item)
-        }
-      }
-
-      const formatted: string[] = []
-      map.forEach((minutes, name) => {
-        if (minutes.length > 0) {
-          const sorted = [...minutes].sort((a, b) => {
-            const numA = parseInt(a.split('+')[0], 10)
-            const numB = parseInt(b.split('+')[0], 10)
-            if (numA !== numB) return numA - numB
-            const extraA = parseInt(a.split('+')[1] || '0', 10)
-            const extraB = parseInt(b.split('+')[1] || '0', 10)
-            return extraA - extraB
-          })
-          formatted.push(`⚽ ${name} (${sorted.map((m) => `${m}'`).join(', ')})`)
-        } else {
-          formatted.push(`⚽ ${name}`)
-        }
-      })
-      for (const nm of noMinList) {
-        const cleanNm = nm.startsWith('⚽') ? nm : `⚽ ${nm}`
-        if (!formatted.includes(cleanNm)) formatted.push(cleanNm)
-      }
-      return formatted
     }
 
     return {
-      homeScorers: formatGroupedScorers(homeScorers),
-      awayScorers: formatGroupedScorers(awayScorers),
+      homeScorers,
+      awayScorers,
     }
   }
 

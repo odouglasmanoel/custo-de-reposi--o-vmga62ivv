@@ -247,24 +247,38 @@ routerAdd('GET', '/backend/v1/placar-ao-vivo', (e) => {
                 for (var pi = 0; pi < parts.length; pi++) {
                   var rawPart = parts[pi].trim()
                   if (!rawPart) continue
-                  var minMatch = rawPart.match(/(\d+)'?/)
-                  var extractedMin = minMatch ? parseInt(minMatch[1], 10) : null
+                  var plusMatch = rawPart.match(/(\d+)\s*\+\s*(\d+)/)
+                  var extractedMin = null
+                  var extractedExtra = null
+                  if (plusMatch) {
+                    extractedMin = parseInt(plusMatch[1], 10)
+                    extractedExtra = parseInt(plusMatch[2], 10)
+                  } else {
+                    var minMatch = rawPart.match(/(\d+)'?/)
+                    extractedMin = minMatch ? parseInt(minMatch[1], 10) : null
+                  }
                   var nameClean = rawPart
-                    .replace(/^\d+'?:?/, '')
-                    .replace(/\s*\d+'?$/, '')
+                    .replace(/^\d+(\+\d+)?'?:?/, '')
+                    .replace(/\s*\d+(\+\d+)?'?$/, '')
+                    .replace(/\s*\(pen\.?\)/i, '')
                     .trim()
+                  var isOwnGoal = /contra|own\s*goal|o\.?g\.?/i.test(rawPart)
+                  if (isOwnGoal && nameClean.toLowerCase().indexOf('contra') === -1) {
+                    nameClean += ' (contra)'
+                  }
                   if (nameClean) {
                     tsdbScorers.push({
                       name: nameClean,
                       minute: extractedMin,
+                      extraMinute: extractedExtra,
                       teamId: teamId || null,
                       teamName: teamName || null,
                       teamSide: teamSide,
                     })
                     tsdbEvents.push({
                       type: 'Goal',
-                      detail: 'Normal Goal',
-                      time: { elapsed: extractedMin },
+                      detail: isOwnGoal ? 'Own Goal' : 'Normal Goal',
+                      time: { elapsed: extractedMin, extra: extractedExtra },
                       team: { id: teamId || null, name: teamName || '' },
                       player: { id: null, name: nameClean },
                     })
@@ -607,9 +621,12 @@ routerAdd('GET', '/backend/v1/placar-ao-vivo', (e) => {
           }
 
           if (scorerName) {
+            var gExtraMin =
+              g.extraTime != null ? g.extraTime : g.injuryTime != null ? g.injuryTime : null
             scorersList.push({
               name: scorerName,
               minute: g.minute || null,
+              extraMinute: gExtraMin,
               teamId: gTeamId,
               teamName: g.team ? g.team.name || g.team.shortName : null,
               teamSide: gTeamSide,
@@ -617,7 +634,7 @@ routerAdd('GET', '/backend/v1/placar-ao-vivo', (e) => {
             eventsList.push({
               type: 'Goal',
               detail: isOwnGoal ? 'Own Goal' : 'Normal Goal',
-              time: { elapsed: g.minute || null },
+              time: { elapsed: g.minute || null, extra: gExtraMin },
               team: { id: gTeamId, name: g.team ? g.team.name : '' },
               player: { id: g.scorer ? g.scorer.id : null, name: scorerName },
             })
@@ -950,29 +967,70 @@ routerAdd('GET', '/backend/v1/placar-ao-vivo', (e) => {
             const st = (item.strStatus || 'LIVE').toUpperCase()
 
             var scorersList = []
-            var parseTsdbDetails = function (detailStr, teamSide) {
+            var parseTsdbDetails = function (detailStr, teamSide, tId, tName) {
               if (typeof detailStr !== 'string' || !detailStr.trim()) return
               var parts = detailStr.split(';')
               for (var pi = 0; pi < parts.length; pi++) {
                 var rawPart = parts[pi].trim()
                 if (!rawPart) continue
-                var minMatch = rawPart.match(/(\d+)'?/)
-                var extractedMin = minMatch ? parseInt(minMatch[1], 10) : null
+                var plusMatch = rawPart.match(/(\d+)\s*\+\s*(\d+)/)
+                var extractedMin = null
+                var extractedExtra = null
+                if (plusMatch) {
+                  extractedMin = parseInt(plusMatch[1], 10)
+                  extractedExtra = parseInt(plusMatch[2], 10)
+                } else {
+                  var minMatch = rawPart.match(/(\d+)'?/)
+                  extractedMin = minMatch ? parseInt(minMatch[1], 10) : null
+                }
                 var nameClean = rawPart
-                  .replace(/^\d+'?:?/, '')
-                  .replace(/\s*\d+'?$/, '')
+                  .replace(/^\d+(\+\d+)?'?:?/, '')
+                  .replace(/\s*\d+(\+\d+)?'?$/, '')
+                  .replace(/\s*\(pen\.?\)/i, '')
                   .trim()
+                var isOwnGoal = /contra|own\s*goal|o\.?g\.?/i.test(rawPart)
+                if (isOwnGoal && nameClean.toLowerCase().indexOf('contra') === -1) {
+                  nameClean += ' (contra)'
+                }
                 if (nameClean) {
                   scorersList.push({
                     name: nameClean,
                     minute: extractedMin,
+                    extraMinute: extractedExtra,
+                    teamId: tId || null,
+                    teamName: tName || null,
                     teamSide: teamSide,
                   })
                 }
               }
             }
-            parseTsdbDetails(item.strHomeGoalDetails, 'home')
-            parseTsdbDetails(item.strAwayGoalDetails, 'away')
+            parseTsdbDetails(item.strHomeGoalDetails, 'home', item.idHomeTeam, item.strHomeTeam)
+            parseTsdbDetails(item.strAwayGoalDetails, 'away', item.idAwayTeam, item.strAwayTeam)
+
+            if (Array.isArray(item.golevents)) {
+              for (var gei = 0; gei < item.golevents.length; gei++) {
+                var gev = item.golevents[gei]
+                var gevName = gev.strPlayer || gev.strScorer || ''
+                if (gevName && String(gevName).trim()) {
+                  var gevMin =
+                    gev.intGoalScoredTime != null ? parseInt(gev.intGoalScoredTime, 10) : null
+                  var gevSide =
+                    gev.strHomeAway === 'Home' || gev.strHomeAway === 'home'
+                      ? 'home'
+                      : gev.strHomeAway === 'Away' || gev.strHomeAway === 'away'
+                        ? 'away'
+                        : null
+                  scorersList.push({
+                    name: String(gevName).trim(),
+                    minute: isNaN(gevMin) ? null : gevMin,
+                    extraMinute: null,
+                    teamId: gev.idTeam || null,
+                    teamName: gev.strTeam || null,
+                    teamSide: gevSide,
+                  })
+                }
+              }
+            }
 
             return {
               provider: 'thesportsdb',
@@ -1106,26 +1164,60 @@ routerAdd('GET', '/backend/v1/placar-ao-vivo', (e) => {
       if (Array.isArray(item.events)) {
         for (var ei = 0; ei < item.events.length; ei++) {
           var ev = item.events[ei]
-          if (ev && ev.type === 'Goal' && ev.player && ev.player.name) {
-            var isOwnGoal = ev.detail && ev.detail.toLowerCase().indexOf('own') !== -1
-            var scorerNameStr = String(ev.player.name).trim()
-            if (isOwnGoal) {
-              scorerNameStr += ' (contra)'
+          var evType = ev && ev.type ? String(ev.type).toLowerCase() : ''
+          var evDetail = ev && ev.detail ? String(ev.detail).toLowerCase() : ''
+          if (ev && (evType === 'goal' || evType === 'gol')) {
+            var rawName =
+              (ev.player && (ev.player.name || ev.player.shortName)) ||
+              ev.player_name ||
+              (ev.scorer && (ev.scorer.name || ev.scorer.shortName)) ||
+              ev.name ||
+              ev.strPlayer ||
+              ''
+            if (rawName && String(rawName).trim()) {
+              var isOwnGoal = evDetail.indexOf('own') !== -1 || evType === 'own'
+              var scorerNameStr = String(rawName).trim()
+              if (isOwnGoal && scorerNameStr.toLowerCase().indexOf('contra') === -1) {
+                scorerNameStr += ' (contra)'
+              }
+              var evMin =
+                ev.time && ev.time.elapsed != null
+                  ? ev.time.elapsed
+                  : ev.minute != null
+                    ? ev.minute
+                    : ev.intMinute != null
+                      ? ev.intMinute
+                      : ev.intGoalScoredTime != null
+                        ? ev.intGoalScoredTime
+                        : null
+              var evExtra = ev.time && ev.time.extra != null ? ev.time.extra : null
+              var evTeamId = ev.team ? ev.team.id : null
+              var evTeamName = ev.team ? ev.team.name : null
+              var evSide = null
+              if (item.teams && item.teams.home && evTeamId && evTeamId === item.teams.home.id) {
+                evSide = 'home'
+              } else if (
+                item.teams &&
+                item.teams.away &&
+                evTeamId &&
+                evTeamId === item.teams.away.id
+              ) {
+                evSide = 'away'
+              }
+
+              scorersList.push({
+                name: scorerNameStr,
+                minute: evMin,
+                extraMinute: evExtra,
+                teamId: evTeamId,
+                teamName: evTeamName,
+                teamSide: evSide,
+              })
             }
-            scorersList.push({
-              name: scorerNameStr,
-              minute: ev.time ? ev.time.elapsed : null,
-              teamId: ev.team ? ev.team.id : null,
-              teamName: ev.team ? ev.team.name : null,
-              teamSide:
-                item.teams && item.teams.home && ev.team && ev.team.id === item.teams.home.id
-                  ? 'home'
-                  : item.teams && item.teams.away && ev.team && ev.team.id === item.teams.away.id
-                    ? 'away'
-                    : null,
-            })
           }
         }
+      } else if (Array.isArray(item.scorers)) {
+        scorersList = item.scorers
       }
 
       var fixtureObj = item.fixture || {}
@@ -1274,46 +1366,79 @@ routerAdd('GET', '/backend/v1/placar-ao-vivo', (e) => {
           resDate.json &&
           Array.isArray(resDate.json.response)
         ) {
-          for (var ri = 0; ri < resDate.json.response.length; ri++) {
-            var rawItemDate = resDate.json.response[ri]
-            // Se o jogo tem gols mas veio sem events, busca fixture detalhada por ID (apenas até 3 por ciclo)
-            var hasGolsDate = Boolean(
-              rawItemDate.goals && (rawItemDate.goals.home > 0 || rawItemDate.goals.away > 0),
+          var dateResponseList = resDate.json.response
+          // Enriquecimento em lote com /fixtures?ids=id1-id2-... para partidas com gols ou ao vivo sem events
+          var missingEventsDateFixtures = []
+          for (var ri = 0; ri < dateResponseList.length; ri++) {
+            var candDate = dateResponseList[ri]
+            var candDateShort =
+              (candDate.fixture && candDate.fixture.status && candDate.fixture.status.short) || ''
+            var candDateIsLive =
+              ['1H', 'HT', '2H', 'ET', 'BT', 'P', 'LIVE'].indexOf(candDateShort) !== -1
+            var candDateHasGoals = Boolean(
+              (candDate.goals && (candDate.goals.home > 0 || candDate.goals.away > 0)) ||
+              (candDate.score &&
+                candDate.score.fulltime &&
+                (candDate.score.fulltime.home > 0 || candDate.score.fulltime.away > 0)),
             )
-            var hasEventsDate = Array.isArray(rawItemDate.events) && rawItemDate.events.length > 0
+            var candDateHasEvents = Array.isArray(candDate.events) && candDate.events.length > 0
             if (
-              hasGolsDate &&
-              !hasEventsDate &&
-              rawItemDate.fixture &&
-              rawItemDate.fixture.id &&
-              ri < 3
+              (candDateIsLive || candDateHasGoals) &&
+              !candDateHasEvents &&
+              candDate.fixture &&
+              candDate.fixture.id
             ) {
+              missingEventsDateFixtures.push(candDate)
+            }
+          }
+
+          if (missingEventsDateFixtures.length > 0) {
+            // Agrupa IDs em lotes de até 20 (suportado pela API-Football)
+            for (var bi = 0; bi < missingEventsDateFixtures.length; bi += 20) {
+              var chunk = missingEventsDateFixtures.slice(bi, bi + 20)
+              var chunkIds = chunk.map(function (c) {
+                return c.fixture.id
+              })
               try {
-                var dEnrUrl =
+                var chunkUrl =
                   baseUrlDate +
-                  '?id=' +
-                  encodeURIComponent(rawItemDate.fixture.id) +
+                  '?ids=' +
+                  encodeURIComponent(chunkIds.join('-')) +
                   '&timezone=America%2FSao_Paulo'
-                var dEnrRes = $http.send({
-                  url: dEnrUrl,
+                var chunkRes = $http.send({
+                  url: chunkUrl,
                   method: 'GET',
                   headers: headers,
-                  timeout: 5,
+                  timeout: 7,
                 })
                 if (
-                  dEnrRes &&
-                  dEnrRes.statusCode === 200 &&
-                  dEnrRes.json &&
-                  Array.isArray(dEnrRes.json.response) &&
-                  dEnrRes.json.response[0]
+                  chunkRes &&
+                  chunkRes.statusCode === 200 &&
+                  chunkRes.json &&
+                  Array.isArray(chunkRes.json.response)
                 ) {
-                  if (Array.isArray(dEnrRes.json.response[0].events)) {
-                    rawItemDate.events = dEnrRes.json.response[0].events
+                  var enrichedDateMap = {}
+                  for (var cri = 0; cri < chunkRes.json.response.length; cri++) {
+                    var enrItem = chunkRes.json.response[cri]
+                    if (enrItem.fixture && enrItem.fixture.id && Array.isArray(enrItem.events)) {
+                      enrichedDateMap[enrItem.fixture.id] = enrItem.events
+                    }
+                  }
+                  for (var ci = 0; ci < chunk.length; ci++) {
+                    var targetFix = chunk[ci]
+                    if (enrichedDateMap[targetFix.fixture.id]) {
+                      targetFix.events = enrichedDateMap[targetFix.fixture.id]
+                    }
                   }
                 }
-              } catch (_) {}
+              } catch (chunkErr) {
+                console.log('[Enrich Date Batch Error]:', chunkErr)
+              }
             }
-            dateFixtures.push(mapApiFootballItem(rawItemDate))
+          }
+
+          for (var rj = 0; rj < dateResponseList.length; rj++) {
+            dateFixtures.push(mapApiFootballItem(dateResponseList[rj]))
           }
         }
       } catch (errDate) {
@@ -2725,7 +2850,7 @@ routerAdd('GET', '/backend/v1/jogos-do-dia', (e) => {
     var seenFixtureIds = {}
 
     // Complementa eventos por fixture id se a API retornou fixture com placar mas sem events
-    // (Apenas para partidas com gols ou ao vivo, limitado a até 4 chamadas para respeitar timeout e cota)
+    // Enriquecimento em lote com /fixtures?ids=id1-id2-... cobrindo TODAS as partidas com gols ou ao vivo
     var fixturesToEnrichEvents = []
     for (var preI = 0; preI < allFixtures.length; preI++) {
       var preItem = allFixtures[preI]
@@ -2741,44 +2866,54 @@ routerAdd('GET', '/backend/v1/jogos-do-dia', (e) => {
       var preHasEvents = Array.isArray(preItem.events) && preItem.events.length > 0
       if ((preIsLive || preHasGoals) && !preHasEvents && preItem.fixture && preItem.fixture.id) {
         fixturesToEnrichEvents.push(preItem)
-        if (fixturesToEnrichEvents.length >= 4) break
       }
     }
 
     if (fixturesToEnrichEvents.length > 0 && apiFootballKey && !rateLimitHit) {
-      for (var enrI = 0; enrI < fixturesToEnrichEvents.length; enrI++) {
-        var fixToEnrich = fixturesToEnrichEvents[enrI]
+      // Divide em blocos de até 20 fixtures (suportado por ?ids= da API-Football)
+      for (var fbi = 0; fbi < fixturesToEnrichEvents.length; fbi += 20) {
+        var enrichChunk = fixturesToEnrichEvents.slice(fbi, fbi + 20)
+        var enrichIds = enrichChunk.map(function (c) {
+          return c.fixture.id
+        })
         try {
           var enrichUrl =
             baseUrl +
-            '?id=' +
-            encodeURIComponent(fixToEnrich.fixture.id) +
+            '?ids=' +
+            encodeURIComponent(enrichIds.join('-')) +
             '&timezone=America%2FSao_Paulo'
           var enrichResp = $http.send({
             url: enrichUrl,
             method: 'GET',
             headers: headers,
-            timeout: 5,
+            timeout: 7,
           })
           if (
             enrichResp &&
             enrichResp.statusCode === 200 &&
             enrichResp.json &&
-            Array.isArray(enrichResp.json.response) &&
-            enrichResp.json.response.length > 0
+            Array.isArray(enrichResp.json.response)
           ) {
-            var fullFixtureData = enrichResp.json.response[0]
-            if (Array.isArray(fullFixtureData.events) && fullFixtureData.events.length > 0) {
-              fixToEnrich.events = fullFixtureData.events
+            var chunkEventsMap = {}
+            for (var erpi = 0; erpi < enrichResp.json.response.length; erpi++) {
+              var fullFixtureData = enrichResp.json.response[erpi]
+              if (
+                fullFixtureData.fixture &&
+                fullFixtureData.fixture.id &&
+                Array.isArray(fullFixtureData.events)
+              ) {
+                chunkEventsMap[fullFixtureData.fixture.id] = fullFixtureData.events
+              }
+            }
+            for (var eci = 0; eci < enrichChunk.length; eci++) {
+              var targetFixToEnrich = enrichChunk[eci]
+              if (chunkEventsMap[targetFixToEnrich.fixture.id]) {
+                targetFixToEnrich.events = chunkEventsMap[targetFixToEnrich.fixture.id]
+              }
             }
           }
         } catch (enrichErr) {
-          console.log(
-            '[Enrich Fixture Events] Erro ao buscar eventos para fixture ' +
-              fixToEnrich.fixture.id +
-              ':',
-            enrichErr,
-          )
+          console.log('[Enrich Fixture Events Batch] Erro ao buscar eventos em lote:', enrichErr)
         }
       }
     }
@@ -2834,27 +2969,60 @@ routerAdd('GET', '/backend/v1/jogos-do-dia', (e) => {
       if (Array.isArray(item.events)) {
         for (var ei = 0; ei < item.events.length; ei++) {
           var ev = item.events[ei]
-          if (ev && ev.type === 'Goal' && ev.player && ev.player.name) {
-            var isOwnGoal = ev.detail && ev.detail.toLowerCase().indexOf('own') !== -1
-            var scorerNameStr = String(ev.player.name).trim()
-            if (isOwnGoal) {
-              scorerNameStr += ' (contra)'
+          var evType = ev && ev.type ? String(ev.type).toLowerCase() : ''
+          var evDetail = ev && ev.detail ? String(ev.detail).toLowerCase() : ''
+          if (ev && (evType === 'goal' || evType === 'gol')) {
+            var rawName =
+              (ev.player && (ev.player.name || ev.player.shortName)) ||
+              ev.player_name ||
+              (ev.scorer && (ev.scorer.name || ev.scorer.shortName)) ||
+              ev.name ||
+              ev.strPlayer ||
+              ''
+            if (rawName && String(rawName).trim()) {
+              var isOwnGoal = evDetail.indexOf('own') !== -1 || evType === 'own'
+              var scorerNameStr = String(rawName).trim()
+              if (isOwnGoal && scorerNameStr.toLowerCase().indexOf('contra') === -1) {
+                scorerNameStr += ' (contra)'
+              }
+              var evMin =
+                ev.time && ev.time.elapsed != null
+                  ? ev.time.elapsed
+                  : ev.minute != null
+                    ? ev.minute
+                    : ev.intMinute != null
+                      ? ev.intMinute
+                      : ev.intGoalScoredTime != null
+                        ? ev.intGoalScoredTime
+                        : null
+              var evExtra = ev.time && ev.time.extra != null ? ev.time.extra : null
+              var evTeamId = ev.team ? ev.team.id : null
+              var evTeamName = ev.team ? ev.team.name : null
+              var evSide = null
+              if (item.teams && item.teams.home && evTeamId && evTeamId === item.teams.home.id) {
+                evSide = 'home'
+              } else if (
+                item.teams &&
+                item.teams.away &&
+                evTeamId &&
+                evTeamId === item.teams.away.id
+              ) {
+                evSide = 'away'
+              }
+
+              scorersList.push({
+                name: scorerNameStr,
+                minute: evMin,
+                extraMinute: evExtra,
+                teamId: evTeamId,
+                teamName: evTeamName,
+                teamSide: evSide,
+              })
             }
-            scorersList.push({
-              name: scorerNameStr,
-              minute: ev.time ? ev.time.elapsed : null,
-              extraMinute: ev.time ? ev.time.extra : null,
-              teamId: ev.team ? ev.team.id : null,
-              teamName: ev.team ? ev.team.name : null,
-              teamSide:
-                item.teams && item.teams.home && ev.team && ev.team.id === item.teams.home.id
-                  ? 'home'
-                  : item.teams && item.teams.away && ev.team && ev.team.id === item.teams.away.id
-                    ? 'away'
-                    : null,
-            })
           }
         }
+      } else if (Array.isArray(item.scorers)) {
+        scorersList = item.scorers
       }
 
       var leagueId = item.league ? item.league.id : null
