@@ -88,9 +88,13 @@ interface ApiResponse {
   fixtures: DayFixture[]
   cached?: boolean
   cacheAgeSeconds?: number
+  ttlSeconds?: number
+  ttlRemainingSeconds?: number
   updatedAt?: string
   message?: string
   error?: string
+  warning?: string
+  rate_limited?: boolean
 }
 
 export default function JogosDoDia() {
@@ -103,6 +107,8 @@ export default function JogosDoDia() {
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
   const [isCached, setIsCached] = useState<boolean>(false)
   const [cacheAge, setCacheAge] = useState<number>(0)
+  const [ttlRemaining, setTtlRemaining] = useState<number>(0)
+  const [isRateLimited, setIsRateLimited] = useState<boolean>(false)
   const [lastUpdated, setLastUpdated] = useState<string>('')
 
   // Filtros
@@ -159,10 +165,16 @@ export default function JogosDoDia() {
       setFixtures(Array.isArray(data.fixtures) ? data.fixtures : [])
       setIsCached(Boolean(data.cached))
       setCacheAge(data.cacheAgeSeconds || 0)
+      setTtlRemaining(data.ttlRemainingSeconds ?? 0)
+      setIsRateLimited(Boolean(data.rate_limited))
       setLastUpdated(data.updatedAt || new Date().toISOString())
 
-      // Se retornou partidas mesmo com aviso, prioriza exibir os dados
-      if (data.error && (!data.fixtures || data.fixtures.length === 0)) {
+      // Se rate limit foi sinalizado (429 tratado com status 200)
+      if (data.rate_limited) {
+        setErrorMessage(
+          'Dados ao vivo temporariamente indisponíveis (limite de requisições excedido). Tente novamente mais tarde.',
+        )
+      } else if (data.error && (!data.fixtures || data.fixtures.length === 0)) {
         setErrorMessage(data.error)
       } else if (data.message && !data.configured) {
         setErrorMessage(data.message)
@@ -305,17 +317,17 @@ export default function JogosDoDia() {
   }, [relevantFixtures, selectedDate, fetchJogos])
 
   // Polling periódico APENAS quando há jogos efetivamente com status "Ao Vivo"
+  // E nunca se tiver atingido rate limit
   useEffect(() => {
-    // Se não há nenhum jogo ao vivo, NÃO fazer polling periódico (preserva cota da API)
-    if (counts.live === 0) {
+    if (counts.live === 0 || isRateLimited) {
       return
     }
 
     const timer = setInterval(() => {
       fetchJogos(selectedDate, false)
-    }, 60000)
+    }, 300000) // 5 minutos enquanto houver ao vivo, respeitando o cache mínimo
     return () => clearInterval(timer)
-  }, [counts.live, selectedDate, fetchJogos])
+  }, [counts.live, isRateLimited, selectedDate, fetchJogos])
 
   // Filtragem e busca baseadas no conjunto de ligas relevantes
   const filteredFixtures = useMemo(() => {
@@ -529,14 +541,36 @@ export default function JogosDoDia() {
         </div>
       </div>
 
+      {/* Alerta de Rate Limit com mensagem amigável exata */}
+      {isRateLimited && (
+        <div className="flex items-center justify-between rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-xs text-amber-900 shadow-xs">
+          <div className="flex items-center gap-2">
+            <AlertCircle className="h-4 w-4 text-amber-700 shrink-0" />
+            <span className="font-semibold">
+              Dados ao vivo temporariamente indisponíveis (limite de requisições excedido). Tente
+              novamente mais tarde.
+            </span>
+          </div>
+          {fixtures.length > 0 && (
+            <span className="text-[11px] text-amber-800 bg-amber-100/80 px-2 py-0.5 rounded font-medium">
+              Exibindo dados em cache seguro
+            </span>
+          )}
+        </div>
+      )}
+
       {/* Alerta de cache e cota */}
       {isCached && (
         <div className="flex items-center justify-between rounded-lg border border-blue-200 bg-blue-50/60 px-4 py-2 text-[11px] text-blue-900">
           <div className="flex items-center gap-1.5">
             <Globe2 className="h-3.5 w-3.5 text-blue-600" />
             <span>
-              Resposta em cache compartilhado no servidor ({cacheAge}s atrás). Atualização
-              automática a cada 60s para otimizar consumo de cota da API.
+              Servido do cache do servidor (atualizado há{' '}
+              {cacheAge < 60 ? `${cacheAge}s` : `${Math.round(cacheAge / 60)} min`}
+              ).{' '}
+              {ttlRemaining > 0
+                ? `Revalidação sob demanda liberada em ${Math.ceil(ttlRemaining / 60)} min.`
+                : 'Revalidação disponível pelo botão Atualizar.'}
             </span>
           </div>
           {lastUpdated && (
@@ -650,15 +684,27 @@ export default function JogosDoDia() {
           </p>
         </Card>
       ) : errorMessage && fixtures.length === 0 ? (
-        <Card className="rounded-[14px] border-rose-200 bg-rose-50/60 p-8 text-center text-xs text-rose-800">
-          <AlertCircle className="mx-auto h-7 w-7 text-rose-600 mb-2" />
+        <Card
+          className={`rounded-[14px] p-8 text-center text-xs ${
+            isRateLimited
+              ? 'border-amber-300 bg-amber-50/70 text-amber-900'
+              : 'border-rose-200 bg-rose-50/60 text-rose-800'
+          }`}
+        >
+          <AlertCircle
+            className={`mx-auto h-7 w-7 mb-2 ${isRateLimited ? 'text-amber-600' : 'text-rose-600'}`}
+          />
           <p className="font-bold">{errorMessage}</p>
           <Button
             type="button"
             variant="outline"
             size="sm"
             onClick={() => fetchJogos(selectedDate, true)}
-            className="mt-3 h-8 text-xs font-semibold bg-white border-rose-300 text-rose-900 hover:bg-rose-100"
+            className={`mt-3 h-8 text-xs font-semibold bg-white ${
+              isRateLimited
+                ? 'border-amber-300 text-amber-900 hover:bg-amber-100'
+                : 'border-rose-300 text-rose-900 hover:bg-rose-100'
+            }`}
           >
             Tentar novamente
           </Button>

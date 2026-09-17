@@ -15,6 +15,7 @@ import {
   Radio,
   Edit3,
   RefreshCcw,
+  AlertCircle,
 } from 'lucide-react'
 import pb from '@/lib/pocketbase/client'
 import { useAuth, BOLAO_MEMBERS } from '@/context/AuthContext'
@@ -158,6 +159,8 @@ export default function BolaoDashboard() {
     >
   >({})
 
+  const [isRateLimited, setIsRateLimited] = useState<boolean>(false)
+
   // Modal de sobrescrita manual de partida em andamento pelo Admin Douglas
   const [adminSobrescritaJogo, setAdminSobrescritaJogo] = useState<{
     jogo: Jogo
@@ -226,6 +229,11 @@ export default function BolaoDashboard() {
       if (res.ok) {
         const data = await res.json()
         setApiConfigured(Boolean(data.configured))
+        if (data.rate_limited) {
+          setIsRateLimited(true)
+        } else {
+          setIsRateLimited(false)
+        }
         if (data.provider) {
           setApiProvider(data.provider)
         }
@@ -862,9 +870,12 @@ export default function BolaoDashboard() {
   }, [isGeral, allJogos, jogos, fetchLiveScores])
 
   // 2. REGRA DO POLLING: APENAS quando há jogos liberados/em andamento ou com partidas ao vivo na API
+  // E nunca se tiver atingido rate limit
   useEffect(() => {
-    // Verifica se há alguma partida pendente cujo horário já passou (jogosLiberados)
-    // OU se a API já retornou alguma partida ao vivo
+    if (isRateLimited) {
+      return
+    }
+
     const hasAnyLiveGame =
       jogosLiberados.length > 0 || apiFixtures.some((f) => isFixtureLive(f.fixture?.status?.short))
 
@@ -873,9 +884,10 @@ export default function BolaoDashboard() {
       return
     }
 
-    const interval = setInterval(fetchLiveScores, 60000)
+    // Polling a cada 5 min (300.000ms) respeitando o cache mínimo de ao vivo
+    const interval = setInterval(fetchLiveScores, 300000)
     return () => clearInterval(interval)
-  }, [jogosLiberados.length, apiFixtures, fetchLiveScores])
+  }, [jogosLiberados.length, apiFixtures, isRateLimited, fetchLiveScores])
 
   // Quick stats com fallback para o último valor válido conhecido
   // NUNCA zera as estatísticas por falta de tempo de resposta ou carregamento
@@ -1045,6 +1057,22 @@ export default function BolaoDashboard() {
           >
             Tentar novamente
           </button>
+        </div>
+      )}
+
+      {/* Banner de Rate Limit no Dashboard com mensagem exata solicitada */}
+      {isRateLimited && (
+        <div className="flex items-center justify-between rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-xs text-amber-900 shadow-xs">
+          <div className="flex items-center gap-2">
+            <AlertCircle className="h-4 w-4 text-amber-700 shrink-0" />
+            <span className="font-semibold">
+              Dados ao vivo temporariamente indisponíveis (limite de requisições excedido). Tente
+              novamente mais tarde.
+            </span>
+          </div>
+          <span className="text-[11px] text-amber-800 bg-amber-100/80 px-2 py-0.5 rounded font-medium">
+            Placares protegidos
+          </span>
         </div>
       )}
 

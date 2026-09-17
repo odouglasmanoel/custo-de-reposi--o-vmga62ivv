@@ -5,17 +5,17 @@
  * 2. thesportsdb (TheSportsDB - API v1/livescore.php e eventsday.php com chave pública ou privada)
  * 3. api_football (API-Football / api-sports / RapidAPI - mantido como fallback/opção)
  *
- * Ordem de prioridade da API Key:
- * 1. Chave salva no banco de dados na collection `config_integracoes` (gerenciada pelo Admin no próprio app)
- * 2. Secrets/Env existentes (API_FOOTBALL_KEY / RAPIDAPI_KEY / FOOTBALL_DATA_KEY / THESPORTSDB_KEY)
- *
- * Endpoints:
- * - GET  /backend/v1/placar-ao-vivo: Consulta partidas ao vivo e do dia
- * - GET  /backend/v1/placar-ao-vivo/config: Consulta status da config (apenas admin, chave mascarada)
- * - POST /backend/v1/placar-ao-vivo/config: Salva provedor e nova chave (apenas admin)
- * - POST /backend/v1/placar-ao-vivo/test: Testa conexão com a API externa (apenas admin)
+ * REGRAS CRÍTICAS DE ECONOMIA DE COTA E CACHE:
+ * 1. Cache obrigatório server-side de 30 minutos para calendário/dia e 5 minutos enquanto houver jogos ao vivo.
+ * 2. Deduplicação de requisições externas e proteção contra loop / recarregamentos simultâneos.
+ * 3. Tratamento elegante de cota excedida (HTTP 429 ou corpo com "requests limit reached" / plano esgotado)
+ *    retornando HTTP 200 com rate_limited: true sem quebrar telas nem inventar placar falso.
+ * 4. Carregamento passivo serve SEMPRE do cache interno se válido; revalidação externa sob demanda.
  */
 
+// -------------------------------------------------------------
+// GET /backend/v1/placar-ao-vivo
+// -------------------------------------------------------------
 routerAdd('GET', '/backend/v1/placar-ao-vivo', (e) => {
   try {
     const authRecord = e.auth
@@ -76,8 +76,12 @@ routerAdd('GET', '/backend/v1/placar-ao-vivo', (e) => {
             ''
           if (legacyKey) {
             apiKey = legacyKey
-            // Se o admin não selecionou explicitamente no banco, preserva o provedor api_football para compatibilidade
-            if (!configRecordFound()) {
+            try {
+              const r = $app.findFirstRecordByData('config_integracoes', 'chave', 'placar_ao_vivo')
+              if (!r || !r.getString('api_key')) {
+                provedor = 'api_football'
+              }
+            } catch (_) {
               provedor = 'api_football'
             }
           }
@@ -85,16 +89,7 @@ routerAdd('GET', '/backend/v1/placar-ao-vivo', (e) => {
       }
     }
 
-    function configRecordFound() {
-      try {
-        const r = $app.findFirstRecordByData('config_integracoes', 'chave', 'placar_ao_vivo')
-        return Boolean(r && r.getString('api_key'))
-      } catch (_) {
-        return false
-      }
-    }
-
-    // Provedor TheSportsDB pode funcionar com a chave pública "3" (ou "123") se nenhuma outra for inserida
+    // Provedor TheSportsDB pode funcionar com a chave pública "3" se nenhuma outra for inserida
     if (provedor === 'thesportsdb' && !apiKey) {
       apiKey = '3'
     }
@@ -119,6 +114,7 @@ routerAdd('GET', '/backend/v1/placar-ao-vivo', (e) => {
         message: 'Integração de placar ao vivo desativada nas configurações.',
         live: [],
         dateFixtures: [],
+        directFixtures: [],
         sobrescritas: sobrescritasMap,
       })
     }
@@ -130,31 +126,213 @@ routerAdd('GET', '/backend/v1/placar-ao-vivo', (e) => {
         message: 'Chave da API de futebol não configurada.',
         live: [],
         dateFixtures: [],
+        directFixtures: [],
         sobrescritas: sobrescritasMap,
       })
     }
 
-    const dateQuery = (e.requestInfo().query.date || '').trim()
+    var dateQuery = (e.requestInfo().query.date || '').trim()
+    var directFixtureParam = (
+      e.requestInfo().query.fixture_id ||
+      e.requestInfo().query.ids ||
+      ''
+    ).trim()
+    var forceRefresh = e.requestInfo().query.refresh === '1'
+
+    // Garante que a data padrão seja a data de hoje em Brasília (America/Sao_Paulo)
+    if (!dateQuery || !/^\d{4}-\d{2}-\d{2}$/.test(dateQuery)) {
+      var nowSP = new Date(Date.now() - 3 * 3600 * 1000)
+      var ymSP = ('0' + (nowSP.getUTCMonth() + 1)).slice(-2)
+      var ydSP = ('0' + nowSP.getUTCDate()).slice(-2)
+      dateQuery = nowSP.getUTCFullYear() + '-' + ymSP + '-' + ydSP
+    }
+
+    // Coleta IDs diretos enviados na query e pendentes no banco
+    var directFixtureIds = []
+    if (directFixtureParam) {
+      var rawIds = directFixtureParam.split(',')
+      for (var idi = 0; idi < rawIds.length; idi++) {
+        var cleanId = rawIds[idi].trim()
+        if (cleanId && directFixtureIds.indexOf(cleanId) === -1) {
+          directFixtureIds.push(cleanId)
+        }
+      }
+    }
+
+    try {
+      var pendentesComId = $app.findRecordsByFilter(
+        'jogos',
+        "resultado_finalizado = false && fixture_id != ''",
+        '-data',
+        50,
+        0,
+      )
+      if (Array.isArray(pendentesComId)) {
+        for (var pii = 0; pii < pendentesComId.length; pii++) {
+          var fIdFromDb = (pendentesComId[pii].getString('fixture_id') || '').trim()
+          if (fIdFromDb && directFixtureIds.indexOf(fIdFromDb) === -1) {
+            directFixtureIds.push(fIdFromDb)
+          }
+        }
+      }
+    } catch (_) {}
+    directFixtureIds.sort()
 
     // -------------------------------------------------------------
-    // PROVEDOR 1: Football-Data.org (Recomendada)
+    // CAMADA DE CACHE SERVER-SIDE COM TTL DINÂMICO E DEDUPLICAÇÃO
+    // -------------------------------------------------------------
+    if (typeof globalThis !== 'undefined' && !globalThis.__placarAoVivoCacheStore) {
+      globalThis.__placarAoVivoCacheStore = {}
+    }
+    var cacheStore = typeof globalThis !== 'undefined' ? globalThis.__placarAoVivoCacheStore : null
+    var cacheKey = provedor + '_' + dateQuery + '_' + directFixtureIds.join('-')
+    var cacheEntry = cacheStore ? cacheStore[cacheKey] : null
+    var nowMs = Date.now()
+
+    var isLiveStatus = function (st) {
+      if (!st) return false
+      var s = String(st).toUpperCase().trim()
+      return (
+        s === '1H' ||
+        s === 'HT' ||
+        s === '2H' ||
+        s === 'ET' ||
+        s === 'BT' ||
+        s === 'P' ||
+        s === 'LIVE' ||
+        s === 'IN_PLAY' ||
+        s === 'PAUSED'
+      )
+    }
+
+    // Verifica se os dados em cache têm qualquer jogo ao vivo
+    var entryHasLive = false
+    if (cacheEntry && cacheEntry.data) {
+      if (Array.isArray(cacheEntry.data.live) && cacheEntry.data.live.length > 0) {
+        entryHasLive = true
+      }
+      if (!entryHasLive && Array.isArray(cacheEntry.data.directFixtures)) {
+        for (var dxi = 0; dxi < cacheEntry.data.directFixtures.length; dxi++) {
+          var dfSt =
+            cacheEntry.data.directFixtures[dxi].fixture &&
+            cacheEntry.data.directFixtures[dxi].fixture.status &&
+            cacheEntry.data.directFixtures[dxi].fixture.status.short
+          if (isLiveStatus(dfSt)) {
+            entryHasLive = true
+            break
+          }
+        }
+      }
+      if (!entryHasLive && Array.isArray(cacheEntry.data.dateFixtures)) {
+        for (var dti = 0; dti < cacheEntry.data.dateFixtures.length; dti++) {
+          var dtSt =
+            cacheEntry.data.dateFixtures[dti].fixture &&
+            cacheEntry.data.dateFixtures[dti].fixture.status &&
+            cacheEntry.data.dateFixtures[dti].fixture.status.short
+          if (isLiveStatus(dtSt)) {
+            entryHasLive = true
+            break
+          }
+        }
+      }
+    }
+
+    // TTL: ~30 min para jogos agendados/calendário, 5 min enquanto houver jogo ao vivo
+    var effectiveTTL = entryHasLive ? 5 * 60 * 1000 : 30 * 60 * 1000
+    var cacheAgeMs = cacheEntry ? nowMs - cacheEntry.timestamp : 999999999
+
+    // Se o cache é válido, serve diretamente do cache interno SEM fazer nenhuma chamada externa
+    if (cacheEntry && cacheEntry.data) {
+      if (!forceRefresh || cacheAgeMs < effectiveTTL) {
+        var cachedPayload = Object.assign({}, cacheEntry.data, {
+          sobrescritas: sobrescritasMap,
+          cached: true,
+          cacheAgeSeconds: Math.round(cacheAgeMs / 1000),
+          ttlSeconds: Math.round(effectiveTTL / 1000),
+          hasLive: entryHasLive,
+        })
+        return e.json(200, cachedPayload)
+      }
+    }
+
+    // DEDUPLICAÇÃO DE REQUISIÇÕES EM CURSO: se outra requisição já iniciou a busca externa há menos de 10s, serve o cache anterior imediatamente
+    if (cacheEntry && cacheEntry.fetching && nowMs - cacheEntry.fetching < 10000) {
+      if (cacheEntry.data) {
+        var dedupPayload = Object.assign({}, cacheEntry.data, {
+          sobrescritas: sobrescritasMap,
+          cached: true,
+          deduplicated: true,
+          cacheAgeSeconds: Math.round(cacheAgeMs / 1000),
+          ttlSeconds: Math.round(effectiveTTL / 1000),
+          hasLive: entryHasLive,
+        })
+        return e.json(200, dedupPayload)
+      }
+    }
+
+    // Marca início de requisição externa para deduplicar
+    if (cacheStore) {
+      if (!cacheStore[cacheKey]) {
+        cacheStore[cacheKey] = { timestamp: 0, data: null, fetching: nowMs }
+      } else {
+        cacheStore[cacheKey].fetching = nowMs
+      }
+    }
+
+    // -------------------------------------------------------------
+    // HELPER PARA DETECÇÃO DE RATE LIMIT / COTA EXCEDIDA (429)
+    // -------------------------------------------------------------
+    var isRateLimitError = function (statusCode, responseBody) {
+      if (statusCode === 429) return true
+      if (!responseBody) return false
+      var strBody = ''
+      try {
+        strBody = typeof responseBody === 'string' ? responseBody : JSON.stringify(responseBody)
+      } catch (_) {
+        strBody = String(responseBody)
+      }
+      strBody = strBody.toLowerCase()
+      if (
+        strBody.indexOf('requests limit reached') !== -1 ||
+        strBody.indexOf('request limit reached') !== -1 ||
+        strBody.indexOf('rate limit') !== -1 ||
+        strBody.indexOf('plan reached') !== -1 ||
+        strBody.indexOf('too many requests') !== -1 ||
+        strBody.indexOf('quota exceeded') !== -1 ||
+        strBody.indexOf('exceeded the maximum') !== -1 ||
+        strBody.indexOf('free-tier limit') !== -1
+      ) {
+        return true
+      }
+      return false
+    }
+
+    var rateLimitDetected = false
+    var rateLimitMessage =
+      'Dados ao vivo temporariamente indisponíveis (limite de requisições excedido). Tente novamente mais tarde.'
+
+    // -------------------------------------------------------------
+    // PROVEDOR 1: Football-Data.org
     // -------------------------------------------------------------
     if (provedor === 'football_data') {
       let liveFixtures = []
       let dateFixtures = []
 
-      // 1.1 Partidas ao vivo (filtro status=LIVE ou status=IN_PLAY,PAUSED)
       try {
         const resLive = $http.send({
           url: 'https://api.football-data.org/v4/matches?status=LIVE',
           method: 'GET',
-          headers: {
-            'X-Auth-Token': apiKey,
-          },
+          headers: { 'X-Auth-Token': apiKey },
           timeout: 10,
         })
 
-        if (resLive.statusCode === 200 && resLive.json && Array.isArray(resLive.json.matches)) {
+        if (isRateLimitError(resLive.statusCode, resLive.json || resLive.raw)) {
+          rateLimitDetected = true
+        } else if (
+          resLive.statusCode === 200 &&
+          resLive.json &&
+          Array.isArray(resLive.json.matches)
+        ) {
           liveFixtures = resLive.json.matches.map(function (m) {
             const homeScore = m.score && m.score.fullTime ? m.score.fullTime.home : null
             const awayScore = m.score && m.score.fullTime ? m.score.fullTime.away : null
@@ -197,125 +375,168 @@ routerAdd('GET', '/backend/v1/placar-ao-vivo', (e) => {
                 },
               },
               goals: {
-                home: typeof homeScore === 'number' ? homeScore : 0,
-                away: typeof awayScore === 'number' ? awayScore : 0,
+                home: typeof homeScore === 'number' ? homeScore : null,
+                away: typeof awayScore === 'number' ? awayScore : null,
               },
               scorers: scorersList,
             }
           })
         }
       } catch (errLive) {
-        console.log(
-          'Aviso ao consultar live Football-Data.org:',
-          errLive ? errLive.message : errLive,
-        )
+        console.log('Aviso ao consultar live Football-Data.org:', errLive)
       }
 
-      // 1.2 Partidas da data atual/especificada (com margem de fuso dateFrom / dateTo)
-      try {
-        let urlDate = 'https://api.football-data.org/v4/matches'
-        if (dateQuery && /^\d{4}-\d{2}-\d{2}$/.test(dateQuery)) {
-          var pFD = dateQuery.split('-')
-          var yFD = parseInt(pFD[0], 10)
-          var mFD = parseInt(pFD[1], 10) - 1
-          var dFD = parseInt(pFD[2], 10)
+      if (!rateLimitDetected) {
+        try {
+          let urlDate = 'https://api.football-data.org/v4/matches'
+          if (dateQuery && /^\d{4}-\d{2}-\d{2}$/.test(dateQuery)) {
+            var pFD = dateQuery.split('-')
+            var yFD = parseInt(pFD[0], 10)
+            var mFD = parseInt(pFD[1], 10) - 1
+            var dFD = parseInt(pFD[2], 10)
 
-          var prevFD = new Date(Date.UTC(yFD, mFD, dFD - 1))
-          var prevFDM = ('0' + (prevFD.getUTCMonth() + 1)).slice(-2)
-          var prevFDD = ('0' + prevFD.getUTCDate()).slice(-2)
-          var dateFrom = prevFD.getUTCFullYear() + '-' + prevFDM + '-' + prevFDD
+            var prevFD = new Date(Date.UTC(yFD, mFD, dFD - 1))
+            var prevFDM = ('0' + (prevFD.getUTCMonth() + 1)).slice(-2)
+            var prevFDD = ('0' + prevFD.getUTCDate()).slice(-2)
+            var dateFrom = prevFD.getUTCFullYear() + '-' + prevFDM + '-' + prevFDD
 
-          var nextFD = new Date(Date.UTC(yFD, mFD, dFD + 1))
-          var nextFDM = ('0' + (nextFD.getUTCMonth() + 1)).slice(-2)
-          var nextFDD = ('0' + nextFD.getUTCDate()).slice(-2)
-          var dateTo = nextFD.getUTCFullYear() + '-' + nextFDM + '-' + nextFDD
+            var nextFD = new Date(Date.UTC(yFD, mFD, dFD + 1))
+            var nextFDM = ('0' + (nextFD.getUTCMonth() + 1)).slice(-2)
+            var nextFDD = ('0' + nextFD.getUTCDate()).slice(-2)
+            var dateTo = nextFD.getUTCFullYear() + '-' + nextFDM + '-' + nextFDD
 
-          urlDate +=
-            '?dateFrom=' + encodeURIComponent(dateFrom) + '&dateTo=' + encodeURIComponent(dateTo)
-        }
+            urlDate +=
+              '?dateFrom=' + encodeURIComponent(dateFrom) + '&dateTo=' + encodeURIComponent(dateTo)
+          }
 
-        const resDate = $http.send({
-          url: urlDate,
-          method: 'GET',
-          headers: {
-            'X-Auth-Token': apiKey,
-          },
-          timeout: 10,
-        })
-        if (resDate.statusCode === 200 && resDate.json && Array.isArray(resDate.json.matches)) {
-          dateFixtures = resDate.json.matches.map(function (m) {
-            const homeScore = m.score && m.score.fullTime ? m.score.fullTime.home : null
-            const awayScore = m.score && m.score.fullTime ? m.score.fullTime.away : null
-            var scorersList = []
-            if (Array.isArray(m.goals)) {
-              for (var gi = 0; gi < m.goals.length; gi++) {
-                var g = m.goals[gi]
-                var scorerName = (g.scorer && (g.scorer.name || g.scorer.shortName)) || ''
-                if (scorerName) {
-                  scorersList.push({
-                    name: scorerName,
-                    minute: g.minute || null,
-                    teamId: g.team ? g.team.id : null,
-                    teamName: g.team ? g.team.name || g.team.shortName : null,
-                  })
+          const resDate = $http.send({
+            url: urlDate,
+            method: 'GET',
+            headers: { 'X-Auth-Token': apiKey },
+            timeout: 10,
+          })
+
+          if (isRateLimitError(resDate.statusCode, resDate.json || resDate.raw)) {
+            rateLimitDetected = true
+          } else if (
+            resDate.statusCode === 200 &&
+            resDate.json &&
+            Array.isArray(resDate.json.matches)
+          ) {
+            dateFixtures = resDate.json.matches.map(function (m) {
+              const homeScore = m.score && m.score.fullTime ? m.score.fullTime.home : null
+              const awayScore = m.score && m.score.fullTime ? m.score.fullTime.away : null
+              var scorersList = []
+              if (Array.isArray(m.goals)) {
+                for (var gi = 0; gi < m.goals.length; gi++) {
+                  var g = m.goals[gi]
+                  var scorerName = (g.scorer && (g.scorer.name || g.scorer.shortName)) || ''
+                  if (scorerName) {
+                    scorersList.push({
+                      name: scorerName,
+                      minute: g.minute || null,
+                      teamId: g.team ? g.team.id : null,
+                      teamName: g.team ? g.team.name || g.team.shortName : null,
+                    })
+                  }
                 }
               }
-            }
-            return {
-              provider: 'football_data',
-              fixture: {
-                id: m.id,
-                date: m.utcDate,
-                status: {
-                  short: m.status === 'PAUSED' ? 'HT' : m.status === 'IN_PLAY' ? '1H' : m.status,
-                  long: m.status,
-                  elapsed: m.minute || null,
+              return {
+                provider: 'football_data',
+                fixture: {
+                  id: m.id,
+                  date: m.utcDate,
+                  status: {
+                    short: m.status === 'PAUSED' ? 'HT' : m.status === 'IN_PLAY' ? '1H' : m.status,
+                    long: m.status,
+                    elapsed: m.minute || null,
+                  },
                 },
-              },
-              teams: {
-                home: {
-                  id: m.homeTeam ? m.homeTeam.id : undefined,
-                  name: (m.homeTeam && (m.homeTeam.name || m.homeTeam.shortName)) || '',
-                  logo: m.homeTeam ? m.homeTeam.crest : '',
+                teams: {
+                  home: {
+                    id: m.homeTeam ? m.homeTeam.id : undefined,
+                    name: (m.homeTeam && (m.homeTeam.name || m.homeTeam.shortName)) || '',
+                    logo: m.homeTeam ? m.homeTeam.crest : '',
+                  },
+                  away: {
+                    id: m.awayTeam ? m.awayTeam.id : undefined,
+                    name: (m.awayTeam && (m.awayTeam.name || m.awayTeam.shortName)) || '',
+                    logo: m.awayTeam ? m.awayTeam.crest : '',
+                  },
                 },
-                away: {
-                  id: m.awayTeam ? m.awayTeam.id : undefined,
-                  name: (m.awayTeam && (m.awayTeam.name || m.awayTeam.shortName)) || '',
-                  logo: m.awayTeam ? m.awayTeam.crest : '',
+                goals: {
+                  home: typeof homeScore === 'number' ? homeScore : null,
+                  away: typeof awayScore === 'number' ? awayScore : null,
                 },
-              },
-              goals: {
-                home: typeof homeScore === 'number' ? homeScore : 0,
-                away: typeof awayScore === 'number' ? awayScore : 0,
-              },
-              scorers: scorersList,
-            }
-          })
+                scorers: scorersList,
+              }
+            })
+          }
+        } catch (errDate) {
+          console.log('Aviso ao consultar date Football-Data.org:', errDate)
         }
-      } catch (errDate) {
-        console.log(
-          'Aviso ao consultar date Football-Data.org:',
-          errDate ? errDate.message : errDate,
-        )
       }
 
-      return e.json(200, {
+      if (rateLimitDetected) {
+        if (cacheEntry && cacheEntry.data) {
+          return e.json(200, {
+            configured: true,
+            provider: 'football_data',
+            live: cacheEntry.data.live || [],
+            dateFixtures: cacheEntry.data.dateFixtures || [],
+            directFixtures: cacheEntry.data.directFixtures || [],
+            sobrescritas: sobrescritasMap,
+            cached: true,
+            fallback: true,
+            rate_limited: true,
+            warning: rateLimitMessage,
+          })
+        }
+        return e.json(200, {
+          configured: true,
+          provider: 'football_data',
+          live: [],
+          dateFixtures: [],
+          directFixtures: [],
+          sobrescritas: sobrescritasMap,
+          rate_limited: true,
+          error: rateLimitMessage,
+        })
+      }
+
+      var fdPayload = {
         configured: true,
         provider: 'football_data',
         live: liveFixtures,
         dateFixtures: dateFixtures,
-        sobrescritas: sobrescritasMap,
-      })
+        directFixtures: [],
+        updatedAt: new Date().toISOString(),
+      }
+
+      if (cacheStore) {
+        cacheStore[cacheKey] = {
+          timestamp: Date.now(),
+          data: fdPayload,
+          fetching: 0,
+        }
+      }
+
+      return e.json(
+        200,
+        Object.assign({}, fdPayload, {
+          sobrescritas: sobrescritasMap,
+          cached: false,
+        }),
+      )
     }
 
     // -------------------------------------------------------------
-    // PROVEDOR 2: TheSportsDB (Alternativa gratuita)
+    // PROVEDOR 2: TheSportsDB
     // -------------------------------------------------------------
     if (provedor === 'thesportsdb') {
       let liveFixtures = []
       let dateFixtures = []
 
-      // 2.1 Consulta endpoint de livescore do TheSportsDB
       try {
         const resLive = $http.send({
           url:
@@ -326,14 +547,19 @@ routerAdd('GET', '/backend/v1/placar-ao-vivo', (e) => {
           timeout: 10,
         })
 
-        if (resLive.statusCode === 200 && resLive.json && Array.isArray(resLive.json.livescore)) {
+        if (isRateLimitError(resLive.statusCode, resLive.json || resLive.raw)) {
+          rateLimitDetected = true
+        } else if (
+          resLive.statusCode === 200 &&
+          resLive.json &&
+          Array.isArray(resLive.json.livescore)
+        ) {
           liveFixtures = resLive.json.livescore.map(function (item) {
             const hScore = parseInt(item.intHomeScore, 10)
             const aScore = parseInt(item.intAwayScore, 10)
             const elapsed = parseInt(item.strProgress, 10)
             const st = (item.strStatus || 'LIVE').toUpperCase()
 
-            // Extrai autores de gols caso o TheSportsDB forneça strHomeGoalDetails/strAwayGoalDetails
             var scorersList = []
             var parseTsdbDetails = function (detailStr, teamSide) {
               if (typeof detailStr !== 'string' || !detailStr.trim()) return
@@ -341,7 +567,6 @@ routerAdd('GET', '/backend/v1/placar-ao-vivo', (e) => {
               for (var pi = 0; pi < parts.length; pi++) {
                 var rawPart = parts[pi].trim()
                 if (!rawPart) continue
-                // Ex: "23':Neymar", "Neymar 23'", "Neymar"
                 var minMatch = rawPart.match(/(\d+)'?/)
                 var extractedMin = minMatch ? parseInt(minMatch[1], 10) : null
                 var nameClean = rawPart
@@ -384,138 +609,72 @@ routerAdd('GET', '/backend/v1/placar-ao-vivo', (e) => {
                 },
               },
               goals: {
-                home: isNaN(hScore) ? 0 : hScore,
-                away: isNaN(aScore) ? 0 : aScore,
+                home: isNaN(hScore) ? null : hScore,
+                away: isNaN(aScore) ? null : aScore,
               },
               scorers: scorersList,
             }
           })
         }
       } catch (errLive) {
-        console.log('Aviso ao consultar live TheSportsDB:', errLive ? errLive.message : errLive)
+        console.log('Aviso ao consultar live TheSportsDB:', errLive)
       }
 
-      // 2.2 Se solicitou data específica ou para complementar com eventos do dia (-1/+1 dia)
-      if (dateQuery && /^\d{4}-\d{2}-\d{2}$/.test(dateQuery)) {
-        var tsdbDates = [dateQuery]
-        try {
-          var pTS = dateQuery.split('-')
-          var yTS = parseInt(pTS[0], 10)
-          var mTS = parseInt(pTS[1], 10) - 1
-          var dTS = parseInt(pTS[2], 10)
-
-          var prevTS = new Date(Date.UTC(yTS, mTS, dTS - 1))
-          var prevTSM = ('0' + (prevTS.getUTCMonth() + 1)).slice(-2)
-          var prevTSD = ('0' + prevTS.getUTCDate()).slice(-2)
-          tsdbDates.push(prevTS.getUTCFullYear() + '-' + prevTSM + '-' + prevTSD)
-
-          var nextTS = new Date(Date.UTC(yTS, mTS, dTS + 1))
-          var nextTSM = ('0' + (nextTS.getUTCMonth() + 1)).slice(-2)
-          var nextTSD = ('0' + nextTS.getUTCDate()).slice(-2)
-          tsdbDates.push(nextTS.getUTCFullYear() + '-' + nextTSM + '-' + nextTSD)
-        } catch (_) {}
-
-        var seenTsdbIds = {}
-        for (var ti = 0; ti < tsdbDates.length; ti++) {
-          var currentTsdbDate = tsdbDates[ti]
-          try {
-            const resDay = $http.send({
-              url:
-                'https://www.thesportsdb.com/api/v1/json/' +
-                encodeURIComponent(apiKey) +
-                '/eventsday.php?d=' +
-                encodeURIComponent(currentTsdbDate) +
-                '&s=Soccer',
-              method: 'GET',
-              timeout: 10,
-            })
-            if (resDay.statusCode === 200 && resDay.json && Array.isArray(resDay.json.events)) {
-              for (var evi = 0; evi < resDay.json.events.length; evi++) {
-                var item = resDay.json.events[evi]
-                var evId = item.idEvent || currentTsdbDate + '_' + evi
-                if (seenTsdbIds[evId]) continue
-                seenTsdbIds[evId] = true
-
-                const hScore = parseInt(item.intHomeScore, 10)
-                const aScore = parseInt(item.intAwayScore, 10)
-                const st = (item.strStatus || '').toUpperCase()
-
-                var scorersList = []
-                var parseTsdbDetails = function (detailStr, teamSide) {
-                  if (typeof detailStr !== 'string' || !detailStr.trim()) return
-                  var parts = detailStr.split(';')
-                  for (var pi = 0; pi < parts.length; pi++) {
-                    var rawPart = parts[pi].trim()
-                    if (!rawPart) continue
-                    var minMatch = rawPart.match(/(\d+)'?/)
-                    var extractedMin = minMatch ? parseInt(minMatch[1], 10) : null
-                    var nameClean = rawPart
-                      .replace(/^\d+'?:?/, '')
-                      .replace(/\s*\d+'?$/, '')
-                      .trim()
-                    if (nameClean) {
-                      scorersList.push({
-                        name: nameClean,
-                        minute: extractedMin,
-                        teamSide: teamSide,
-                      })
-                    }
-                  }
-                }
-                parseTsdbDetails(item.strHomeGoalDetails, 'home')
-                parseTsdbDetails(item.strAwayGoalDetails, 'away')
-
-                dateFixtures.push({
-                  provider: 'thesportsdb',
-                  fixture: {
-                    id: item.idEvent,
-                    date: item.strTimestamp || item.dateEvent,
-                    status: {
-                      short: st,
-                      long: item.strStatus || '',
-                      elapsed: null,
-                    },
-                  },
-                  teams: {
-                    home: {
-                      id: item.idHomeTeam,
-                      name: item.strHomeTeam || '',
-                      logo: item.strHomeTeamBadge || '',
-                    },
-                    away: {
-                      id: item.idAwayTeam,
-                      name: item.strAwayTeam || '',
-                      logo: item.strAwayTeamBadge || '',
-                    },
-                  },
-                  goals: {
-                    home: isNaN(hScore) ? 0 : hScore,
-                    away: isNaN(aScore) ? 0 : aScore,
-                  },
-                  scorers: scorersList,
-                })
-              }
-            }
-          } catch (errDay) {
-            console.log(
-              'Aviso ao consultar eventsday TheSportsDB:',
-              errDay ? errDay.message : errDay,
-            )
-          }
+      if (rateLimitDetected) {
+        if (cacheEntry && cacheEntry.data) {
+          return e.json(200, {
+            configured: true,
+            provider: 'thesportsdb',
+            live: cacheEntry.data.live || [],
+            dateFixtures: cacheEntry.data.dateFixtures || [],
+            directFixtures: cacheEntry.data.directFixtures || [],
+            sobrescritas: sobrescritasMap,
+            cached: true,
+            fallback: true,
+            rate_limited: true,
+            warning: rateLimitMessage,
+          })
         }
+        return e.json(200, {
+          configured: true,
+          provider: 'thesportsdb',
+          live: [],
+          dateFixtures: [],
+          directFixtures: [],
+          sobrescritas: sobrescritasMap,
+          rate_limited: true,
+          error: rateLimitMessage,
+        })
       }
 
-      return e.json(200, {
+      var tsdbPayload = {
         configured: true,
         provider: 'thesportsdb',
         live: liveFixtures,
         dateFixtures: dateFixtures,
-        sobrescritas: sobrescritasMap,
-      })
+        directFixtures: [],
+        updatedAt: new Date().toISOString(),
+      }
+
+      if (cacheStore) {
+        cacheStore[cacheKey] = {
+          timestamp: Date.now(),
+          data: tsdbPayload,
+          fetching: 0,
+        }
+      }
+
+      return e.json(
+        200,
+        Object.assign({}, tsdbPayload, {
+          sobrescritas: sobrescritasMap,
+          cached: false,
+        }),
+      )
     }
 
     // -------------------------------------------------------------
-    // PROVEDOR 3: API-Football (Legado / Fallback mantido)
+    // PROVEDOR 3: API-Football (Legado / Principal de Jogos)
     // -------------------------------------------------------------
     const isRapidApi =
       ($secrets.has && $secrets.has('RAPIDAPI_KEY')) ||
@@ -536,10 +695,9 @@ routerAdd('GET', '/backend/v1/placar-ao-vivo', (e) => {
       }
     }
 
-    // Helper interno para converter fixtures da API-Football extraindo marcadores de eventos
+    // Helper interno para converter fixtures da API-Football
     var mapApiFootballItem = function (item) {
       var scorersList = []
-      // 1. Extrai de item.events
       if (Array.isArray(item.events)) {
         for (var ei = 0; ei < item.events.length; ei++) {
           var ev = item.events[ei]
@@ -576,50 +734,10 @@ routerAdd('GET', '/backend/v1/placar-ao-vivo', (e) => {
       }
     }
 
-    // -------------------------------------------------------------
-    // CONSULTA DIRETA POR FIXTURE_ID (prioridade máxima via API-Football)
-    // Se o cliente enviar ?fixture_id=123 ou ?ids=123,456 ou se houver partidas pendentes
-    // cadastradas no banco com fixture_id preenchido.
-    // Endpoint direto da API-Football: https://v3.football.api-sports.io/fixtures?id=FIXTURE_ID
-    // -------------------------------------------------------------
-    var directFixtureParam = (
-      e.requestInfo().query.fixture_id ||
-      e.requestInfo().query.ids ||
-      ''
-    ).trim()
-    var directFixtureIds = []
-    if (directFixtureParam) {
-      var rawIds = directFixtureParam.split(',')
-      for (var idi = 0; idi < rawIds.length; idi++) {
-        var cleanId = rawIds[idi].trim()
-        if (cleanId && directFixtureIds.indexOf(cleanId) === -1) {
-          directFixtureIds.push(cleanId)
-        }
-      }
-    }
-
-    // Também verifica no banco todos os jogos pendentes (resultado_finalizado = false) que possuem fixture_id preenchido
-    try {
-      var pendentesComId = $app.findRecordsByFilter(
-        'jogos',
-        "resultado_finalizado = false && fixture_id != ''",
-        '-data',
-        50,
-        0,
-      )
-      if (Array.isArray(pendentesComId)) {
-        for (var pii = 0; pii < pendentesComId.length; pii++) {
-          var fIdFromDb = (pendentesComId[pii].getString('fixture_id') || '').trim()
-          if (fIdFromDb && directFixtureIds.indexOf(fIdFromDb) === -1) {
-            directFixtureIds.push(fIdFromDb)
-          }
-        }
-      }
-    } catch (_) {}
-
     var directFixtures = []
     var seenDirectIds = {}
 
+    // Executa busca direta de fixtures com proteção contra 429
     for (var fxi = 0; fxi < directFixtureIds.length; fxi++) {
       var targetFixtureId = directFixtureIds[fxi]
       if (!targetFixtureId || seenDirectIds[targetFixtureId]) continue
@@ -640,6 +758,12 @@ routerAdd('GET', '/backend/v1/placar-ao-vivo', (e) => {
           headers: headers,
           timeout: 10,
         })
+
+        if (isRateLimitError(resDirect.statusCode, resDirect.json || resDirect.raw)) {
+          rateLimitDetected = true
+          break
+        }
+
         if (
           resDirect.statusCode === 200 &&
           resDirect.json &&
@@ -657,142 +781,120 @@ routerAdd('GET', '/backend/v1/placar-ao-vivo', (e) => {
           }
         }
       } catch (errDirect) {
-        console.log(
-          'Aviso ao consultar fixture_id direto (' + targetFixtureId + '):',
-          errDirect ? errDirect.message : errDirect,
-        )
+        console.log('Aviso ao consultar fixture_id direto (' + targetFixtureId + '):', errDirect)
       }
     }
 
     let liveFixtures = []
-    try {
-      const resLive = $http.send({
-        url: urlLive,
-        method: 'GET',
-        headers: headers,
-        timeout: 10,
-      })
-      if (resLive.statusCode === 200 && resLive.json && Array.isArray(resLive.json.response)) {
-        liveFixtures = resLive.json.response.map(mapApiFootballItem)
-      }
-    } catch (errLive) {
-      console.log(
-        'Aviso ao consultar live fixtures API-Football:',
-        errLive ? errLive.message : errLive,
-      )
-    }
-
-    let dateFixtures = []
-    // Sempre consulta data informada (ou hoje) considerando margem de fuso (-1 dia e +1 dia)
-    // e com o parâmetro timezone=America/Sao_Paulo
-    if (dateQuery && /^\d{4}-\d{2}-\d{2}$/.test(dateQuery)) {
-      var computeNeighborDates = function (baseDateStr) {
-        var dates = [baseDateStr]
-        try {
-          var p = baseDateStr.split('-')
-          var y = parseInt(p[0], 10)
-          var m = parseInt(p[1], 10) - 1
-          var d = parseInt(p[2], 10)
-
-          // -1 dia
-          var prev = new Date(Date.UTC(y, m, d - 1))
-          var prevM = ('0' + (prev.getUTCMonth() + 1)).slice(-2)
-          var prevD = ('0' + prev.getUTCDate()).slice(-2)
-          dates.push(prev.getUTCFullYear() + '-' + prevM + '-' + prevD)
-
-          // +1 dia
-          var next = new Date(Date.UTC(y, m, d + 1))
-          var nextM = ('0' + (next.getUTCMonth() + 1)).slice(-2)
-          var nextD = ('0' + next.getUTCDate()).slice(-2)
-          dates.push(next.getUTCFullYear() + '-' + nextM + '-' + nextD)
-        } catch (_) {}
-        return dates
-      }
-
-      var datesToFetch = computeNeighborDates(dateQuery)
-      var seenFixtureIds = {}
-
-      for (var di = 0; di < datesToFetch.length; di++) {
-        var dStr = datesToFetch[di]
-        var baseUrlDate = isRapidApi
-          ? 'https://api-football-v1.p.rapidapi.com/v3/fixtures'
-          : 'https://v3.football.api-sports.io/fixtures'
-        var urlDate =
-          baseUrlDate + '?date=' + encodeURIComponent(dStr) + '&timezone=America%2FSao_Paulo'
-
-        try {
-          var resDate = $http.send({
-            url: urlDate,
-            method: 'GET',
-            headers: headers,
-            timeout: 10,
-          })
-          if (resDate.statusCode === 200 && resDate.json && Array.isArray(resDate.json.response)) {
-            for (var ri = 0; ri < resDate.json.response.length; ri++) {
-              var rawItem = resDate.json.response[ri]
-              var fId = (rawItem.fixture && rawItem.fixture.id) || ri
-              if (!seenFixtureIds[fId]) {
-                seenFixtureIds[fId] = true
-                dateFixtures.push(mapApiFootballItem(rawItem))
-              }
-            }
-          }
-        } catch (errDate) {
-          console.log(
-            'Aviso ao consultar date fixtures API-Football para ' + dStr + ':',
-            errDate ? errDate.message : errDate,
-          )
-        }
-      }
-    }
-
-    // Se dateQuery não veio na query mas o provedor é api_football,
-    // busca a data de hoje no fuso de Brasília para popular dateFixtures
-    if (!dateQuery) {
+    if (!rateLimitDetected) {
       try {
-        var nowSPDate = new Date(Date.now() - 3 * 3600 * 1000)
-        var spM = ('0' + (nowSPDate.getUTCMonth() + 1)).slice(-2)
-        var spD = ('0' + nowSPDate.getUTCDate()).slice(-2)
-        var todaySPStr = nowSPDate.getUTCFullYear() + '-' + spM + '-' + spD
-
-        var baseUrlToday = isRapidApi
-          ? 'https://api-football-v1.p.rapidapi.com/v3/fixtures'
-          : 'https://v3.football.api-sports.io/fixtures'
-        var urlToday =
-          baseUrlToday + '?date=' + encodeURIComponent(todaySPStr) + '&timezone=America%2FSao_Paulo'
-
-        var resToday = $http.send({
-          url: urlToday,
+        const resLive = $http.send({
+          url: urlLive,
           method: 'GET',
           headers: headers,
           timeout: 10,
         })
-        if (resToday.statusCode === 200 && resToday.json && Array.isArray(resToday.json.response)) {
-          for (var rti = 0; rti < resToday.json.response.length; rti++) {
-            dateFixtures.push(mapApiFootballItem(resToday.json.response[rti]))
-          }
+
+        if (isRateLimitError(resLive.statusCode, resLive.json || resLive.raw)) {
+          rateLimitDetected = true
+        } else if (
+          resLive.statusCode === 200 &&
+          resLive.json &&
+          Array.isArray(resLive.json.response)
+        ) {
+          liveFixtures = resLive.json.response.map(mapApiFootballItem)
         }
-      } catch (errToday) {
-        console.log(
-          'Aviso ao consultar date fixtures de hoje API-Football:',
-          errToday ? errToday.message : errToday,
-        )
+      } catch (errLive) {
+        console.log('Aviso ao consultar live fixtures API-Football:', errLive)
       }
     }
 
-    return e.json(200, {
+    let dateFixtures = []
+    if (!rateLimitDetected && dateQuery && /^\d{4}-\d{2}-\d{2}$/.test(dateQuery)) {
+      var baseUrlDate = isRapidApi
+        ? 'https://api-football-v1.p.rapidapi.com/v3/fixtures'
+        : 'https://v3.football.api-sports.io/fixtures'
+      var urlDate =
+        baseUrlDate + '?date=' + encodeURIComponent(dateQuery) + '&timezone=America%2FSao_Paulo'
+
+      try {
+        var resDate = $http.send({
+          url: urlDate,
+          method: 'GET',
+          headers: headers,
+          timeout: 10,
+        })
+
+        if (isRateLimitError(resDate.statusCode, resDate.json || resDate.raw)) {
+          rateLimitDetected = true
+        } else if (
+          resDate.statusCode === 200 &&
+          resDate.json &&
+          Array.isArray(resDate.json.response)
+        ) {
+          for (var ri = 0; ri < resDate.json.response.length; ri++) {
+            dateFixtures.push(mapApiFootballItem(resDate.json.response[ri]))
+          }
+        }
+      } catch (errDate) {
+        console.log('Aviso ao consultar date fixtures API-Football:', errDate)
+      }
+    }
+
+    // Se rate limit foi detectado em qualquer uma das chamadas da API-Football
+    if (rateLimitDetected) {
+      if (cacheEntry && cacheEntry.data) {
+        return e.json(200, {
+          configured: true,
+          provider: 'api_football',
+          directFixtures: cacheEntry.data.directFixtures || [],
+          live: cacheEntry.data.live || [],
+          dateFixtures: cacheEntry.data.dateFixtures || [],
+          sobrescritas: sobrescritasMap,
+          cached: true,
+          fallback: true,
+          rate_limited: true,
+          warning: rateLimitMessage,
+        })
+      }
+      return e.json(200, {
+        configured: true,
+        provider: 'api_football',
+        directFixtures: [],
+        live: [],
+        dateFixtures: [],
+        sobrescritas: sobrescritasMap,
+        rate_limited: true,
+        error: rateLimitMessage,
+      })
+    }
+
+    var apiFootballPayload = {
       configured: true,
       provider: 'api_football',
       directFixtures: directFixtures,
       live: liveFixtures,
       dateFixtures: dateFixtures,
-      sobrescritas: sobrescritasMap,
-    })
-  } catch (err) {
-    console.log(
-      'Aviso ao consultar placar ao vivo (recuperado de forma segura):',
-      err ? err.message : err,
+      updatedAt: new Date().toISOString(),
+    }
+
+    if (cacheStore) {
+      cacheStore[cacheKey] = {
+        timestamp: Date.now(),
+        data: apiFootballPayload,
+        fetching: 0,
+      }
+    }
+
+    return e.json(
+      200,
+      Object.assign({}, apiFootballPayload, {
+        sobrescritas: sobrescritasMap,
+        cached: false,
+      }),
     )
+  } catch (err) {
+    console.log('Aviso ao consultar placar ao vivo:', err ? err.message : err)
     return e.json(200, {
       configured: true,
       provider: 'api_football',
@@ -806,13 +908,374 @@ routerAdd('GET', '/backend/v1/placar-ao-vivo', (e) => {
 })
 
 // -------------------------------------------------------------
-// ENDPOINTS DE ADMINISTRAÇÃO DAS INTEGRAÇÕES
+// GET /backend/v1/jogos-do-dia
 // -------------------------------------------------------------
+routerAdd('GET', '/backend/v1/jogos-do-dia', (e) => {
+  try {
+    var dateQuery = (e.requestInfo().query.date || '').trim()
+    var forceRefresh = e.requestInfo().query.refresh === '1'
 
-/**
- * GET /backend/v1/placar-ao-vivo/config
- * Retorna as configurações atuais (sem vazar a chave em texto plano)
- */
+    // Formato de data padrão YYYY-MM-DD no fuso de Brasília (UTC-3)
+    if (!dateQuery || !/^\d{4}-\d{2}-\d{2}$/.test(dateQuery)) {
+      var now = new Date(Date.now() - 3 * 3600 * 1000)
+      var ym = ('0' + (now.getUTCMonth() + 1)).slice(-2)
+      var yd = ('0' + now.getUTCDate()).slice(-2)
+      dateQuery = now.getUTCFullYear() + '-' + ym + '-' + yd
+    }
+
+    // Inicializa store global de cache de jogos do dia
+    if (typeof globalThis !== 'undefined' && !globalThis.__jogosDoDiaStore) {
+      globalThis.__jogosDoDiaStore = {}
+    }
+    var dayStore = typeof globalThis !== 'undefined' ? globalThis.__jogosDoDiaStore : null
+    var dayEntry = dayStore ? dayStore[dateQuery] : null
+    var nowMs = Date.now()
+    var cacheAgeMs = dayEntry ? nowMs - dayEntry.timestamp : 999999999
+
+    var entryHasLive = Boolean(dayEntry && dayEntry.payload && dayEntry.payload.hasLive === true)
+    // TTL OBRIGATÓRIO: Topo da faixa (~30 minutos para o calendário; 5 min enquanto houver jogo "Ao Vivo")
+    var maxAgeMs = entryHasLive ? 5 * 60 * 1000 : 30 * 60 * 1000
+
+    // REGRA DE ON-DEMAND FETCHING E CARREGAMENTO PASSIVO:
+    // Carregamento passivo da página deve servir SEMPRE do cache interno do servidor se válido.
+    // O botão Atualizar (forceRefresh) pode forçar revalidação apenas quando o TTL já expirou;
+    // se o TTL ainda estiver válido, mostra os dados em cache imediatamente.
+    if (dayEntry && dayEntry.payload) {
+      // Se forceRefresh não foi solicitado OU se o TTL ainda está válido, retorna o cache
+      if (!forceRefresh || cacheAgeMs < maxAgeMs) {
+        var cachedResp = Object.assign({}, dayEntry.payload, {
+          cached: true,
+          cacheAgeSeconds: Math.round(cacheAgeMs / 1000),
+          ttlSeconds: Math.round(maxAgeMs / 1000),
+          ttlRemainingSeconds: Math.max(0, Math.round((maxAgeMs - cacheAgeMs) / 1000)),
+        })
+        return e.json(200, cachedResp)
+      }
+    }
+
+    // Deduplicação de requisições externas para o mesmo dia
+    if (dayEntry && dayEntry.fetching && nowMs - dayEntry.fetching < 10000) {
+      if (dayEntry.payload) {
+        var dedupResp = Object.assign({}, dayEntry.payload, {
+          cached: true,
+          deduplicated: true,
+          cacheAgeSeconds: Math.round(cacheAgeMs / 1000),
+          ttlSeconds: Math.round(maxAgeMs / 1000),
+        })
+        return e.json(200, dedupResp)
+      }
+    }
+
+    // Marca início de fetch para evitar que múltiplas abas chamem a API-Football ao mesmo tempo
+    if (dayStore) {
+      if (!dayStore[dateQuery]) {
+        dayStore[dateQuery] = { timestamp: 0, payload: null, fetching: nowMs }
+      } else {
+        dayStore[dateQuery].fetching = nowMs
+      }
+    }
+
+    // Buscar credenciais configuradas
+    var apiKey = ''
+    var isRapidApi = false
+    try {
+      var configRecord = $app.findFirstRecordByData('config_integracoes', 'chave', 'placar_ao_vivo')
+      if (configRecord) {
+        apiKey = (configRecord.getString('api_key') || '').trim()
+      }
+    } catch (_) {}
+
+    if (!apiKey) {
+      if ($secrets.has && $secrets.has('API_FOOTBALL_KEY')) {
+        apiKey = $secrets.get('API_FOOTBALL_KEY')
+      } else if ($secrets.has && $secrets.has('RAPIDAPI_KEY')) {
+        apiKey = $secrets.get('RAPIDAPI_KEY')
+        isRapidApi = true
+      } else if ($os.getenv('API_FOOTBALL_KEY')) {
+        apiKey = $os.getenv('API_FOOTBALL_KEY')
+      } else if ($os.getenv('RAPIDAPI_KEY')) {
+        apiKey = $os.getenv('RAPIDAPI_KEY')
+        isRapidApi = true
+      }
+    }
+
+    if (apiKey.length > 40) {
+      isRapidApi = true
+    }
+
+    if (!apiKey) {
+      return e.json(200, {
+        configured: false,
+        date: dateQuery,
+        fixtures: [],
+        message: 'API de futebol não configurada pelo administrador.',
+      })
+    }
+
+    var baseUrl = isRapidApi
+      ? 'https://api-football-v1.p.rapidapi.com/v3/fixtures'
+      : 'https://v3.football.api-sports.io/fixtures'
+
+    var headers = isRapidApi
+      ? {
+          'x-rapidapi-key': apiKey,
+          'x-rapidapi-host': 'api-football-v1.p.rapidapi.com',
+        }
+      : {
+          'x-apisports-key': apiKey,
+        }
+
+    var callUrl =
+      baseUrl + '?date=' + encodeURIComponent(dateQuery) + '&timezone=America%2FSao_Paulo'
+    var isRateLimitErrorDay = function (statusCode, responseBody) {
+      if (statusCode === 429) return true
+      if (!responseBody) return false
+      var strBody = ''
+      try {
+        strBody = typeof responseBody === 'string' ? responseBody : JSON.stringify(responseBody)
+      } catch (_) {
+        strBody = String(responseBody)
+      }
+      strBody = strBody.toLowerCase()
+      if (
+        strBody.indexOf('requests limit reached') !== -1 ||
+        strBody.indexOf('request limit reached') !== -1 ||
+        strBody.indexOf('rate limit') !== -1 ||
+        strBody.indexOf('plan reached') !== -1 ||
+        strBody.indexOf('too many requests') !== -1 ||
+        strBody.indexOf('quota exceeded') !== -1 ||
+        strBody.indexOf('exceeded the maximum') !== -1 ||
+        strBody.indexOf('free-tier limit') !== -1
+      ) {
+        return true
+      }
+      return false
+    }
+
+    var rateLimitMessage =
+      'Dados ao vivo temporariamente indisponíveis (limite de requisições excedido). Tente novamente mais tarde.'
+
+    var allFixtures = null
+    var rateLimitHit = false
+
+    try {
+      var resp = $http.send({
+        url: callUrl,
+        method: 'GET',
+        headers: headers,
+        timeout: 10,
+      })
+
+      if (isRateLimitErrorDay(resp.statusCode, resp.json || resp.raw)) {
+        rateLimitHit = true
+      } else if (
+        resp &&
+        resp.statusCode === 200 &&
+        resp.json &&
+        Array.isArray(resp.json.response)
+      ) {
+        allFixtures = resp.json.response
+      }
+    } catch (eH) {
+      console.log('Aviso ao consultar data ' + dateQuery + ':', eH)
+    }
+
+    // Tratamento Gracioso para cota excedida (429 ou mensagem de limite)
+    if (rateLimitHit) {
+      if (dayEntry && dayEntry.payload) {
+        var fallbackResp = Object.assign({}, dayEntry.payload, {
+          cached: true,
+          fallback: true,
+          rate_limited: true,
+          warning: rateLimitMessage,
+          cacheAgeSeconds: Math.round(cacheAgeMs / 1000),
+          ttlSeconds: Math.round(maxAgeMs / 1000),
+        })
+        return e.json(200, fallbackResp)
+      }
+
+      return e.json(200, {
+        configured: true,
+        date: dateQuery,
+        total: 0,
+        hasLive: false,
+        fixtures: [],
+        rate_limited: true,
+        error: rateLimitMessage,
+      })
+    }
+
+    // Se falhou e temos cache antigo, entrega stale
+    if (!allFixtures) {
+      if (dayEntry && dayEntry.payload) {
+        var staleResp = Object.assign({}, dayEntry.payload, {
+          cached: true,
+          fallback: true,
+          cacheAgeSeconds: Math.round(cacheAgeMs / 1000),
+        })
+        return e.json(200, staleResp)
+      }
+
+      return e.json(200, {
+        configured: true,
+        date: dateQuery,
+        total: 0,
+        hasLive: false,
+        fixtures: [],
+        error:
+          'A API externa de futebol está temporariamente instável ou indisponível. Tente novamente em instantes.',
+      })
+    }
+
+    var rawFixtures = []
+    var hasLiveMatch = false
+    var seenFixtureIds = {}
+
+    for (var i = 0; i < allFixtures.length; i++) {
+      var item = allFixtures[i]
+      var fId = (item.fixture && item.fixture.id) || i
+      if (seenFixtureIds[fId]) continue
+      seenFixtureIds[fId] = true
+
+      var statusShort = (item.fixture && item.fixture.status && item.fixture.status.short) || ''
+      var isLive = ['1H', 'HT', '2H', 'ET', 'BT', 'P', 'LIVE'].indexOf(statusShort) !== -1
+      if (isLive) {
+        hasLiveMatch = true
+      }
+
+      var scorersList = []
+      if (Array.isArray(item.events)) {
+        for (var ei = 0; ei < item.events.length; ei++) {
+          var ev = item.events[ei]
+          if (ev && ev.type === 'Goal' && ev.player && ev.player.name) {
+            var isOwnGoal = ev.detail && ev.detail.toLowerCase().indexOf('own') !== -1
+            var scorerNameStr = String(ev.player.name).trim()
+            if (isOwnGoal) {
+              scorerNameStr += ' (contra)'
+            }
+            scorersList.push({
+              name: scorerNameStr,
+              minute: ev.time ? ev.time.elapsed : null,
+              extraMinute: ev.time ? ev.time.extra : null,
+              teamId: ev.team ? ev.team.id : null,
+              teamName: ev.team ? ev.team.name : null,
+              teamSide:
+                item.teams && item.teams.home && ev.team && ev.team.id === item.teams.home.id
+                  ? 'home'
+                  : item.teams && item.teams.away && ev.team && ev.team.id === item.teams.away.id
+                    ? 'away'
+                    : null,
+            })
+          }
+        }
+      }
+
+      var leagueId = item.league ? item.league.id : null
+      var region = 'Outros'
+      if (
+        leagueId === 71 ||
+        leagueId === 72 ||
+        leagueId === 73 ||
+        leagueId === 74 ||
+        leagueId === 75 ||
+        leagueId === 76
+      ) {
+        region = 'Brasileirão & Copas'
+      } else if (leagueId === 13 || leagueId === 11 || leagueId === 450) {
+        region = 'Sul-Americana'
+      } else if (
+        leagueId === 2 ||
+        leagueId === 3 ||
+        leagueId === 848 ||
+        leagueId === 39 ||
+        leagueId === 140 ||
+        leagueId === 135 ||
+        leagueId === 78 ||
+        leagueId === 61 ||
+        leagueId === 45 ||
+        leagueId === 48 ||
+        leagueId === 143 ||
+        leagueId === 137 ||
+        leagueId === 81 ||
+        leagueId === 66
+      ) {
+        region = 'Futebol Europeu'
+      }
+
+      rawFixtures.push({
+        fixture: item.fixture,
+        league: {
+          id: item.league ? item.league.id : null,
+          name: item.league ? item.league.name : '',
+          country: item.league ? item.league.country : '',
+          logo: item.league ? item.league.logo : '',
+          flag: item.league ? item.league.flag : '',
+          round: item.league ? item.league.round : '',
+          region: region,
+        },
+        teams: item.teams,
+        goals: item.goals,
+        score: item.score,
+        scorers: scorersList,
+        isLive: isLive,
+      })
+    }
+
+    var payload = {
+      configured: true,
+      date: dateQuery,
+      total: rawFixtures.length,
+      hasLive: hasLiveMatch,
+      fixtures: rawFixtures,
+      updatedAt: new Date().toISOString(),
+    }
+
+    if (dayStore) {
+      dayStore[dateQuery] = {
+        timestamp: Date.now(),
+        payload: payload,
+        fetching: 0,
+      }
+    }
+
+    return e.json(
+      200,
+      Object.assign({}, payload, {
+        cached: false,
+        ttlSeconds: Math.round((hasLiveMatch ? 5 * 60 * 1000 : 30 * 60 * 1000) / 1000),
+      }),
+    )
+  } catch (err) {
+    console.log('Erro capturado no endpoint jogos-do-dia:', err)
+    if (
+      typeof globalThis !== 'undefined' &&
+      globalThis.__jogosDoDiaStore &&
+      globalThis.__jogosDoDiaStore[dateQuery] &&
+      globalThis.__jogosDoDiaStore[dateQuery].payload
+    ) {
+      return e.json(
+        200,
+        Object.assign({}, globalThis.__jogosDoDiaStore[dateQuery].payload, {
+          cached: true,
+          fallback: true,
+        }),
+      )
+    }
+
+    return e.json(200, {
+      configured: true,
+      date: dateQuery || '',
+      total: 0,
+      hasLive: false,
+      fixtures: [],
+      error: 'Não foi possível carregar as partidas agora. Tente novamente mais tarde.',
+    })
+  }
+})
+
+// -------------------------------------------------------------
+// GET /backend/v1/placar-ao-vivo/config
+// -------------------------------------------------------------
 routerAdd('GET', '/backend/v1/placar-ao-vivo/config', (e) => {
   try {
     const authRecord = e.auth
@@ -849,7 +1312,6 @@ routerAdd('GET', '/backend/v1/placar-ao-vivo/config', (e) => {
       }
     } catch (_) {}
 
-    // Verifica se há chave em secrets como fallback
     let hasSecretFallback = false
     try {
       if (
@@ -880,10 +1342,9 @@ routerAdd('GET', '/backend/v1/placar-ao-vivo/config', (e) => {
   }
 })
 
-/**
- * POST /backend/v1/placar-ao-vivo/config
- * Salva ou atualiza o provedor e a API key na collection config_integracoes
- */
+// -------------------------------------------------------------
+// POST /backend/v1/placar-ao-vivo/config
+// -------------------------------------------------------------
 routerAdd('POST', '/backend/v1/placar-ao-vivo/config', (e) => {
   try {
     const authRecord = e.auth
@@ -914,12 +1375,19 @@ routerAdd('POST', '/backend/v1/placar-ao-vivo/config', (e) => {
 
     record.set('provedor', provedor)
     record.set('ativo', ativo)
-    // Se apiKey for passada (mesmo vazia se o usuário quiser limpar), atualiza; se omitida (undefined), mantém
     if (apiKey !== undefined) {
       record.set('api_key', apiKey)
     }
 
     $app.save(record)
+
+    // Invalida caches ao salvar nova chave para que o admin possa testar imediatamente
+    try {
+      if (typeof globalThis !== 'undefined') {
+        globalThis.__placarAoVivoCacheStore = {}
+        globalThis.__jogosDoDiaStore = {}
+      }
+    } catch (_) {}
 
     const savedKey = record.getString('api_key') || ''
     const maskedKey = savedKey
@@ -943,10 +1411,9 @@ routerAdd('POST', '/backend/v1/placar-ao-vivo/config', (e) => {
   }
 })
 
-/**
- * POST /backend/v1/placar-ao-vivo/test
- * Testa a conexão com o provedor escolhido usando a chave informada no body (ou a salva no banco)
- */
+// -------------------------------------------------------------
+// POST /backend/v1/placar-ao-vivo/test
+// -------------------------------------------------------------
 routerAdd('POST', '/backend/v1/placar-ao-vivo/test', (e) => {
   try {
     const authRecord = e.auth
@@ -965,7 +1432,6 @@ routerAdd('POST', '/backend/v1/placar-ao-vivo/test', (e) => {
     const provedor = (body.provedor || 'football_data').trim()
     let apiKey = typeof body.api_key === 'string' ? body.api_key.trim() : ''
 
-    // Se chave não foi enviada no teste, pega a salva no banco
     if (!apiKey) {
       try {
         const configRecord = $app.findFirstRecordByData(
@@ -979,7 +1445,6 @@ routerAdd('POST', '/backend/v1/placar-ao-vivo/test', (e) => {
       } catch (_) {}
     }
 
-    // Se for thesportsdb e nenhuma chave foi fornecida, usa chave de teste '3'
     if (provedor === 'thesportsdb' && !apiKey) {
       apiKey = '3'
     }
@@ -997,9 +1462,7 @@ routerAdd('POST', '/backend/v1/placar-ao-vivo/test', (e) => {
         const res = $http.send({
           url: 'https://api.football-data.org/v4/competitions',
           method: 'GET',
-          headers: {
-            'X-Auth-Token': apiKey,
-          },
+          headers: { 'X-Auth-Token': apiKey },
           timeout: 10,
         })
 
@@ -1114,6 +1577,15 @@ routerAdd('POST', '/backend/v1/placar-ao-vivo/test', (e) => {
             statusCode: res.statusCode,
             message: 'Conexão com API-Football bem-sucedida! Conta ativa e autorizada.',
           })
+        } else if (res.statusCode === 429) {
+          return e.json(200, {
+            success: false,
+            rate_limited: true,
+            provider: 'api_football',
+            statusCode: 429,
+            message:
+              'Dados ao vivo temporariamente indisponíveis (limite de requisições excedido). Tente novamente mais tarde.',
+          })
         } else {
           return e.json(400, {
             success: false,
@@ -1145,12 +1617,9 @@ routerAdd('POST', '/backend/v1/placar-ao-vivo/test', (e) => {
   }
 })
 
-/**
- * POST /backend/v1/placar-ao-vivo/sobrescrever
- * Salva ou limpa sobrescrita manual de placar e marcadores feita pelo Admin Douglas
- * para partidas em andamento.
- * Body esperado: { jogo_id: string, placar_a?: number, placar_b?: number, marcadores?: string[] | string, ativo?: boolean }
- */
+// -------------------------------------------------------------
+// POST /backend/v1/placar-ao-vivo/sobrescrever
+// -------------------------------------------------------------
 routerAdd('POST', '/backend/v1/placar-ao-vivo/sobrescrever', (e) => {
   try {
     const authRecord = e.auth
@@ -1190,7 +1659,6 @@ routerAdd('POST', '/backend/v1/placar-ao-vivo/sobrescrever', (e) => {
       }
     } catch (_) {}
 
-    // Se remover ou limpar
     if (body.remover === true) {
       delete map[jogoId]
     } else {
@@ -1218,7 +1686,6 @@ routerAdd('POST', '/backend/v1/placar-ao-vivo/sobrescrever', (e) => {
       var marcadoresListB = parseNamesList(body.marcadores_b)
       var marcadoresList = parseNamesList(body.marcadores)
 
-      // Se marcadores_a ou marcadores_b foram enviados, compõe marcadoresList caso esteja vazio
       if (
         marcadoresList.length === 0 &&
         (marcadoresListA.length > 0 || marcadoresListB.length > 0)
@@ -1252,335 +1719,6 @@ routerAdd('POST', '/backend/v1/placar-ao-vivo/sobrescrever', (e) => {
     return e.json(500, {
       success: false,
       error: err ? err.message : 'Erro ao salvar sobrescrita manual',
-    })
-  }
-})
-
-/**
- * GET /backend/v1/jogos-do-dia
- * Calendário e acompanhamento ao vivo dos jogos do dia centralizado via API-Football
- * com cache em memória no servidor (globalThis.__jogosDoDiaCache).
- */
-routerAdd('GET', '/backend/v1/jogos-do-dia', (e) => {
-  try {
-    var dateQuery = (e.requestInfo().query.date || '').trim()
-    var forceRefresh = e.requestInfo().query.refresh === '1'
-
-    // Formato de data padrão YYYY-MM-DD
-    if (!dateQuery || !/^\d{4}-\d{2}-\d{2}$/.test(dateQuery)) {
-      // Data de hoje em São Paulo (UTC-3)
-      var now = new Date(Date.now() - 3 * 3600 * 1000)
-      var ym = ('0' + (now.getUTCMonth() + 1)).slice(-2)
-      var yd = ('0' + now.getUTCDate()).slice(-2)
-      dateQuery = now.getUTCFullYear() + '-' + ym + '-' + yd
-    }
-
-    // Cache em tabela ou em objeto global seguro
-    var cacheObj = null
-    try {
-      if (typeof globalThis !== 'undefined' && globalThis.__jogosDoDiaCache) {
-        cacheObj = globalThis.__jogosDoDiaCache
-      }
-    } catch (_) {}
-
-    var nowMs = Date.now()
-    var cacheAge = cacheObj && cacheObj.timestamp ? nowMs - cacheObj.timestamp : 9999999
-
-    // Verificar se podemos retornar cache (5 minutos se ao vivo, 15 minutos se calendário/agendado)
-    if (!forceRefresh && cacheObj && cacheObj.payload && cacheObj.dataKey === dateQuery) {
-      var hasAnyLive = cacheObj.payload.hasLive === true
-      var maxAge = hasAnyLive ? 5 * 60 * 1000 : 15 * 60 * 1000
-      if (cacheAge < maxAge) {
-        var cachedResp = Object.assign({}, cacheObj.payload, {
-          cached: true,
-          cacheAgeSeconds: Math.round(cacheAge / 1000),
-        })
-        return e.json(200, cachedResp)
-      }
-    }
-
-    // Lista oficial de IDs de ligas requeridas (API-Football v3):
-    // Brasileirão Série A (71), Série B (72), Série C (73 / 75), Série D (74 / 76), Copa do Brasil (73 / 74)
-    // Libertadores (13) e Sul-Americana (450 / 11) -> filtrando confrontos com clubes brasileiros
-    // Premier League (39), La Liga (140), Serie A (135), Bundesliga (78), Ligue 1 (61)
-    // Copas nacionais: Copa da Inglaterra (45), Copa da Liga Inglesa (48), Copa do Rei (143), Copa da Itália (137), Copa da Alemanha (81), Copa da França (66)
-    // UEFA Champions League (2), Europa League (3), Conference League (848)
-    var targetLeagueSet = {
-      71: true, // Brasileirão Série A
-      72: true, // Brasileirão Série B
-      73: true, // Copa do Brasil (ou Série C em algumas numerações)
-      74: true, // Copa do Brasil / Série D
-      75: true, // Brasileirão Série C
-      76: true, // Brasileirão Série D
-      13: true, // Copa Libertadores
-      11: true, // CONMEBOL Sudamericana (legado)
-      450: true, // Copa Sudamericana (API-Football v3 oficial)
-      39: true, // Premier League
-      140: true, // La Liga
-      135: true, // Serie A Itália
-      78: true, // Bundesliga
-      61: true, // Ligue 1
-      45: true, // FA Cup
-      48: true, // EFL Cup
-      143: true, // Copa del Rey
-      137: true, // Coppa Italia
-      81: true, // DFB Pokal
-      66: true, // Coupe de France
-      2: true, // UEFA Champions League
-      3: true, // UEFA Europa League
-      848: true, // UEFA Conference League
-    }
-
-    // Buscar credenciais configuradas
-    var apiKey = ''
-    var isRapidApi = false
-    try {
-      var configRecord = $app.findFirstRecordByData('config_integracoes', 'chave', 'placar_ao_vivo')
-      if (configRecord) {
-        apiKey = (configRecord.getString('api_key') || '').trim()
-      }
-    } catch (_) {}
-
-    if (!apiKey) {
-      if ($secrets.has && $secrets.has('API_FOOTBALL_KEY')) {
-        apiKey = $secrets.get('API_FOOTBALL_KEY')
-      } else if ($secrets.has && $secrets.has('RAPIDAPI_KEY')) {
-        apiKey = $secrets.get('RAPIDAPI_KEY')
-        isRapidApi = true
-      } else if ($os.getenv('API_FOOTBALL_KEY')) {
-        apiKey = $os.getenv('API_FOOTBALL_KEY')
-      } else if ($os.getenv('RAPIDAPI_KEY')) {
-        apiKey = $os.getenv('RAPIDAPI_KEY')
-        isRapidApi = true
-      }
-    }
-
-    if (apiKey.length > 40) {
-      isRapidApi = true
-    }
-
-    // Se nenhuma chave estiver configurada, retornar indicativo claro
-    if (!apiKey) {
-      return e.json(200, {
-        configured: false,
-        date: dateQuery,
-        fixtures: [],
-        message: 'API de futebol não configurada pelo administrador.',
-      })
-    }
-
-    var baseUrl = isRapidApi
-      ? 'https://api-football-v1.p.rapidapi.com/v3/fixtures'
-      : 'https://v3.football.api-sports.io/fixtures'
-
-    var headers = isRapidApi
-      ? {
-          'x-rapidapi-key': apiKey,
-          'x-rapidapi-host': 'api-football-v1.p.rapidapi.com',
-        }
-      : {
-          'x-apisports-key': apiKey,
-        }
-
-    // Buscar partidas da data no fuso de São Paulo com try/catch e margem -1/+1 dia se necessário.
-    // Primeiro consulta a data solicitada (com timezone=America/Sao_Paulo).
-    // Para garantir que partidas da noite no fuso do Brasil ou partidas internacionais sejam
-    // encontradas mesmo com pequenas divergências de fuso horário, buscamos a data do dia corrente.
-    // Endpoint genérico oficial da API-Football v3 no fuso de Brasília:
-    // https://v3.football.api-sports.io/fixtures?date=YYYY-MM-DD&timezone=America/Sao_Paulo
-    // Uma chamada direta com a data corrente em Brasília (America/Sao_Paulo).
-    var callApiDate = function (targetDateStr) {
-      var callUrl =
-        baseUrl + '?date=' + encodeURIComponent(targetDateStr) + '&timezone=America%2FSao_Paulo'
-      try {
-        var resp = $http.send({
-          url: callUrl,
-          method: 'GET',
-          headers: headers,
-          timeout: 10,
-        })
-        if (resp && resp.statusCode === 200 && resp.json && Array.isArray(resp.json.response)) {
-          return resp.json.response
-        }
-      } catch (eH) {
-        console.log('Aviso ao consultar data ' + targetDateStr + ':', eH ? eH.message : eH)
-      }
-      return null
-    }
-
-    var allFixtures = callApiDate(dateQuery)
-
-    // Se a chamada principal falhou e temos cache para esta data, serve stale cache
-    if (!allFixtures) {
-      if (cacheObj && cacheObj.payload && cacheObj.dataKey === dateQuery) {
-        var staleResp = Object.assign({}, cacheObj.payload, {
-          cached: true,
-          fallback: true,
-          cacheAgeSeconds: Math.round(cacheAge / 1000),
-        })
-        return e.json(200, staleResp)
-      }
-
-      return e.json(200, {
-        configured: true,
-        date: dateQuery,
-        total: 0,
-        hasLive: false,
-        fixtures: [],
-        error:
-          'A API externa de futebol está temporariamente instável ou indisponível. Tente novamente em instantes.',
-      })
-    }
-
-    // Processamento de todos os itens retornados pela API-Football
-    // Formatando e extraindo eventos, marcadores e status
-    var rawFixtures = []
-    var hasLiveMatch = false
-    var seenFixtureIds = {}
-
-    for (var i = 0; i < allFixtures.length; i++) {
-      var item = allFixtures[i]
-      var fId = (item.fixture && item.fixture.id) || i
-      if (seenFixtureIds[fId]) continue
-      seenFixtureIds[fId] = true
-
-      // Extrair status e verificar se está ao vivo
-      var statusShort = (item.fixture && item.fixture.status && item.fixture.status.short) || ''
-      var isLive = ['1H', 'HT', '2H', 'ET', 'BT', 'P', 'LIVE'].indexOf(statusShort) !== -1
-      if (isLive) {
-        hasLiveMatch = true
-      }
-
-      // Extrair marcadores dos gols com minutagem
-      var scorersList = []
-      if (Array.isArray(item.events)) {
-        for (var ei = 0; ei < item.events.length; ei++) {
-          var ev = item.events[ei]
-          if (ev && ev.type === 'Goal' && ev.player && ev.player.name) {
-            var isOwnGoal = ev.detail && ev.detail.toLowerCase().indexOf('own') !== -1
-            var scorerNameStr = String(ev.player.name).trim()
-            if (isOwnGoal) {
-              scorerNameStr += ' (contra)'
-            }
-            scorersList.push({
-              name: scorerNameStr,
-              minute: ev.time ? ev.time.elapsed : null,
-              extraMinute: ev.time ? ev.time.extra : null,
-              teamId: ev.team ? ev.team.id : null,
-              teamName: ev.team ? ev.team.name : null,
-              teamSide:
-                item.teams && item.teams.home && ev.team && ev.team.id === item.teams.home.id
-                  ? 'home'
-                  : item.teams && item.teams.away && ev.team && ev.team.id === item.teams.away.id
-                    ? 'away'
-                    : null,
-            })
-          }
-        }
-      }
-
-      var leagueId = item.league ? item.league.id : null
-      var region = 'Outros'
-      if (
-        leagueId === 71 || // Série A
-        leagueId === 72 || // Série B
-        leagueId === 73 || // Copa do Brasil / Série C
-        leagueId === 74 || // Copa do Brasil / Série D
-        leagueId === 75 || // Série C
-        leagueId === 76 // Série D
-      ) {
-        region = 'Brasileirão & Copas'
-      } else if (leagueId === 13 || leagueId === 11 || leagueId === 450) {
-        region = 'Sul-Americana'
-      } else if (
-        leagueId === 2 || // UCL
-        leagueId === 3 || // UEL
-        leagueId === 848 || // UECL
-        leagueId === 39 || // Premier
-        leagueId === 140 || // La Liga
-        leagueId === 135 || // Serie A
-        leagueId === 78 || // Bundesliga
-        leagueId === 61 || // Ligue 1
-        leagueId === 45 || // FA Cup
-        leagueId === 48 || // EFL Cup
-        leagueId === 143 || // Copa del Rey
-        leagueId === 137 || // Coppa Italia
-        leagueId === 81 || // DFB Pokal
-        leagueId === 66 // Coupe de France
-      ) {
-        region = 'Futebol Europeu'
-      }
-
-      rawFixtures.push({
-        fixture: item.fixture,
-        league: {
-          id: item.league ? item.league.id : null,
-          name: item.league ? item.league.name : '',
-          country: item.league ? item.league.country : '',
-          logo: item.league ? item.league.logo : '',
-          flag: item.league ? item.league.flag : '',
-          round: item.league ? item.league.round : '',
-          region: region,
-        },
-        teams: item.teams,
-        goals: item.goals,
-        score: item.score,
-        scorers: scorersList,
-        isLive: isLive,
-      })
-    }
-
-    var payload = {
-      configured: true,
-      date: dateQuery,
-      total: rawFixtures.length,
-      hasLive: hasLiveMatch,
-      fixtures: rawFixtures,
-      updatedAt: new Date().toISOString(),
-    }
-
-    // Salva em cache na memória do hook
-    try {
-      if (typeof globalThis !== 'undefined') {
-        globalThis.__jogosDoDiaCache = {
-          dataKey: dateQuery,
-          timestamp: Date.now(),
-          payload: payload,
-        }
-      }
-    } catch (_) {}
-
-    var finalSuccessResp = Object.assign({}, payload, {
-      cached: false,
-    })
-    return e.json(200, finalSuccessResp)
-  } catch (err) {
-    console.log('Erro capturado no endpoint jogos-do-dia:', err ? err.message : err)
-
-    // Se houver qualquer cache anterior, retorna ele em vez de 500
-    try {
-      if (
-        typeof globalThis !== 'undefined' &&
-        globalThis.__jogosDoDiaCache &&
-        globalThis.__jogosDoDiaCache.payload
-      ) {
-        var fallbackResp = Object.assign({}, globalThis.__jogosDoDiaCache.payload, {
-          cached: true,
-          fallback: true,
-        })
-        return e.json(200, fallbackResp)
-      }
-    } catch (_) {}
-
-    return e.json(200, {
-      configured: true,
-      date: dateQuery || '',
-      total: 0,
-      hasLive: false,
-      fixtures: [],
-      error:
-        'Não foi possível carregar as partidas agora: ' +
-        (err ? err.message : 'instabilidade momentânea'),
     })
   }
 })
