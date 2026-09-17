@@ -126,9 +126,30 @@ export default function JogosDoDia() {
         dateStr,
       )}${force ? '&refresh=1' : ''}`
 
-      const res = await fetch(url, { headers })
+      // Timeout seguro de 10s no client para nunca travar a tela
+      const controller = new AbortController()
+      const timeoutId = setTimeout(() => controller.abort(), 10000)
+
+      let res: Response
+      try {
+        res = await fetch(url, { headers, signal: controller.signal })
+      } finally {
+        clearTimeout(timeoutId)
+      }
+
       if (!res.ok) {
-        throw new Error(`Falha na resposta do servidor (HTTP ${res.status})`)
+        // Tratar 500 ou qualquer outro status sem explodir
+        let errorBodyText = ''
+        try {
+          const errJson = await res.json()
+          errorBodyText = errJson?.error || errJson?.message || ''
+        } catch {
+          /* intentionally ignored */
+        }
+        throw new Error(
+          errorBodyText ||
+            `Instabilidade momentânea no servidor de dados (HTTP ${res.status}). Os dados serão recarregados automaticamente.`,
+        )
       }
 
       const data: ApiResponse = await res.json()
@@ -138,17 +159,23 @@ export default function JogosDoDia() {
       setCacheAge(data.cacheAgeSeconds || 0)
       setLastUpdated(data.updatedAt || new Date().toISOString())
 
-      if (data.error) {
+      // Se retornou partidas mesmo com aviso, prioriza exibir os dados
+      if (data.error && (!data.fixtures || data.fixtures.length === 0)) {
         setErrorMessage(data.error)
       } else if (data.message && !data.configured) {
         setErrorMessage(data.message)
+      } else {
+        setErrorMessage(null)
       }
     } catch (err: unknown) {
       console.error('Erro ao buscar jogos do dia:', err)
+      const isAbort = err instanceof DOMException && err.name === 'AbortError'
       setErrorMessage(
-        err instanceof Error
-          ? err.message
-          : 'Não foi possível carregar os jogos do dia. Verifique sua conexão.',
+        isAbort
+          ? 'Tempo de resposta excedido ao buscar jogos do dia. Tente atualizar novamente.'
+          : err instanceof Error
+            ? err.message
+            : 'Não foi possível carregar os jogos do dia. Verifique sua conexão.',
       )
     } finally {
       setLoading(false)

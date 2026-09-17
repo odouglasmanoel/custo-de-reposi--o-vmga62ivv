@@ -1231,29 +1231,27 @@ routerAdd('GET', '/backend/v1/jogos-do-dia', (e) => {
       dateQuery = now.getUTCFullYear() + '-' + ym + '-' + yd
     }
 
-    // Cache em globalThis para persistir entre chamadas sem violar o escopo do JSVM
-    if (!globalThis.__jogosDoDiaCache) {
-      globalThis.__jogosDoDiaCache = {
-        dataKey: null,
-        timestamp: 0,
-        payload: null,
+    // Cache em tabela ou em objeto global seguro
+    var cacheObj = null
+    try {
+      if (typeof globalThis !== 'undefined' && globalThis.__jogosDoDiaCache) {
+        cacheObj = globalThis.__jogosDoDiaCache
       }
-    }
+    } catch (_) {}
 
-    var currentCache = globalThis.__jogosDoDiaCache
     var nowMs = Date.now()
-    var cacheAge = nowMs - currentCache.timestamp
+    var cacheAge = cacheObj && cacheObj.timestamp ? nowMs - cacheObj.timestamp : 9999999
 
-    // Verificar se podemos retornar cache
-    if (!forceRefresh && currentCache.payload && currentCache.dataKey === dateQuery) {
-      var hasAnyLive = currentCache.payload.hasLive === true
-      var maxAge = hasAnyLive ? 60 * 1000 : 30 * 60 * 1000 // 60s se live, 30min se agendado/finalizado
+    // Verificar se podemos retornar cache (5 minutos se ao vivo, 15 minutos se calendário/agendado)
+    if (!forceRefresh && cacheObj && cacheObj.payload && cacheObj.dataKey === dateQuery) {
+      var hasAnyLive = cacheObj.payload.hasLive === true
+      var maxAge = hasAnyLive ? 5 * 60 * 1000 : 15 * 60 * 1000
       if (cacheAge < maxAge) {
-        return e.json(200, {
-          ...currentCache.payload,
+        var cachedResp = Object.assign({}, cacheObj.payload, {
           cached: true,
           cacheAgeSeconds: Math.round(cacheAge / 1000),
         })
+        return e.json(200, cachedResp)
       }
     }
 
@@ -1338,31 +1336,45 @@ routerAdd('GET', '/backend/v1/jogos-do-dia', (e) => {
           'x-apisports-key': apiKey,
         }
 
-    // Buscar partidas da data no fuso de São Paulo
+    // Buscar partidas da data no fuso de São Paulo com try/catch e timeout curto (8s)
     var urlDate =
       baseUrl + '?date=' + encodeURIComponent(dateQuery) + '&timezone=America%2FSao_Paulo'
-    var res = $http.send({
-      url: urlDate,
-      method: 'GET',
-      headers: headers,
-      timeout: 15,
-    })
+    var res = null
+    try {
+      res = $http.send({
+        url: urlDate,
+        method: 'GET',
+        headers: headers,
+        timeout: 8,
+      })
+    } catch (errHttp) {
+      console.log(
+        'Aviso ao consultar API-Football para jogos do dia:',
+        errHttp ? errHttp.message : errHttp,
+      )
+    }
 
-    if (res.statusCode !== 200 || !res.json || !Array.isArray(res.json.response)) {
-      // Se tiver cache expirado mas falhar a chamada externa, serve o cache como fallback
-      if (currentCache.payload && currentCache.dataKey === dateQuery) {
-        return e.json(200, {
-          ...currentCache.payload,
+    if (!res || res.statusCode !== 200 || !res.json || !Array.isArray(res.json.response)) {
+      // Se tiver cache expirado mas falhar a chamada externa, serve o cache como stale-while-revalidate fallback
+      if (cacheObj && cacheObj.payload && cacheObj.dataKey === dateQuery) {
+        var staleResp = Object.assign({}, cacheObj.payload, {
           cached: true,
           fallback: true,
+          cacheAgeSeconds: Math.round(cacheAge / 1000),
         })
+        return e.json(200, staleResp)
       }
 
       return e.json(200, {
         configured: true,
         date: dateQuery,
+        total: 0,
+        hasLive: false,
         fixtures: [],
-        error: 'API retornou status ' + res.statusCode,
+        error:
+          'A API externa de futebol está temporariamente instável ou indisponível (status ' +
+          (res ? res.statusCode : 'timeout') +
+          '). Tente novamente em instantes.',
       })
     }
 
@@ -1477,20 +1489,47 @@ routerAdd('GET', '/backend/v1/jogos-do-dia', (e) => {
     }
 
     // Salva em cache na memória do hook
-    globalThis.__jogosDoDiaCache = {
-      dataKey: dateQuery,
-      timestamp: Date.now(),
-      payload: payload,
-    }
+    try {
+      if (typeof globalThis !== 'undefined') {
+        globalThis.__jogosDoDiaCache = {
+          dataKey: dateQuery,
+          timestamp: Date.now(),
+          payload: payload,
+        }
+      }
+    } catch (_) {}
 
-    return e.json(200, {
-      ...payload,
+    var finalSuccessResp = Object.assign({}, payload, {
       cached: false,
     })
+    return e.json(200, finalSuccessResp)
   } catch (err) {
-    return e.json(500, {
-      configured: false,
-      error: err ? err.message : 'Erro interno ao consultar jogos do dia',
+    console.log('Erro capturado no endpoint jogos-do-dia:', err ? err.message : err)
+
+    // Se houver qualquer cache anterior, retorna ele em vez de 500
+    try {
+      if (
+        typeof globalThis !== 'undefined' &&
+        globalThis.__jogosDoDiaCache &&
+        globalThis.__jogosDoDiaCache.payload
+      ) {
+        var fallbackResp = Object.assign({}, globalThis.__jogosDoDiaCache.payload, {
+          cached: true,
+          fallback: true,
+        })
+        return e.json(200, fallbackResp)
+      }
+    } catch (_) {}
+
+    return e.json(200, {
+      configured: true,
+      date: dateQuery || '',
+      total: 0,
+      hasLive: false,
+      fixtures: [],
+      error:
+        'Não foi possível carregar as partidas agora: ' +
+        (err ? err.message : 'instabilidade momentânea'),
     })
   }
 })
