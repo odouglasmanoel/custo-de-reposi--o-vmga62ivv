@@ -37,6 +37,7 @@ import {
   formatHoraBR,
   isPalpiteEncerrado,
   formatHoraEncerramento,
+  sortJogosCadastrados,
 } from '@/lib/dateUtils'
 import { formatPalpiteMarcadoresSummary, getPalpiteMarcadoresPorTime } from '@/lib/scorerUtils'
 
@@ -896,7 +897,9 @@ export default function Palpites() {
     return map
   }, [participantesList])
 
-  const displayedJogos = jogos
+  const displayedJogos = useMemo(() => {
+    return sortJogosCadastrados(jogos)
+  }, [jogos])
   const hasMore = currentPage < totalPages
 
   return (

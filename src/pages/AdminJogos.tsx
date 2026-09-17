@@ -21,7 +21,7 @@ import { useActivePool } from '@/context/ActivePoolContext'
 import { useRealtime } from '@/hooks/use-realtime'
 import type { Jogo } from '@/types/bolao'
 import { formatBolaoLabel } from '@/types/bolao'
-import { formatDataBR, formatHoraBR } from '@/lib/dateUtils'
+import { formatDataBR, formatHoraBR, sortJogosCadastrados } from '@/lib/dateUtils'
 import {
   parseSpreadsheet,
   importBolaoSpreadsheet,
@@ -624,7 +624,7 @@ export default function AdminJogos() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {jogos.map((jogo) => {
+                {sortJogosCadastrados(jogos).map((jogo) => {
                   const finalizado = jogo.resultado_finalizado
 
                   return (

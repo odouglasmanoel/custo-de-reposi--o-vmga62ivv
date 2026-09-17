@@ -9,6 +9,8 @@ import {
   normalizeDataISO,
   isJogoHoje,
   isJogoHojeNaoIniciado,
+  compareJogosCadastrados,
+  sortJogosCadastrados,
 } from './dateUtils'
 
 describe('dateUtils - Jogos de Hoje e Fuso de Brasília', () => {
@@ -71,5 +73,34 @@ describe('dateUtils - Jogos de Hoje e Fuso de Brasília', () => {
 
     // Jogo de outro dia (amanhã)
     expect(isJogoHojeNaoIniciado('2026-06-16', '19h00', beforeKickoff)).toBe(false)
+  })
+
+  describe('compareJogosCadastrados / sortJogosCadastrados', () => {
+    it('ordena jogos pendentes primeiro, data decrescente e horário crescente', () => {
+      const jogosTeste = [
+        { id: '1', data: '2026-06-10', hora: '21:30', resultado_finalizado: true },
+        { id: '2', data: '2026-06-12', hora: '20:00', resultado_finalizado: false },
+        { id: '3', data: '2026-06-12', hora: '16:00', resultado_finalizado: false },
+        { id: '4', data: '2026-06-15', hora: '18:00', resultado_finalizado: false },
+        { id: '5', data: '2026-06-11', hora: '16:00', resultado_finalizado: true },
+        { id: '6', data: '2026-06-10', hora: '16:00', resultado_finalizado: true },
+      ]
+
+      const sorted = sortJogosCadastrados(jogosTeste)
+
+      // 1. Jogos pendentes vêm primeiro: ids 4, 3, 2
+      // Na data mais recente (2026-06-15): id 4
+      // Na data seguinte (2026-06-12): id 3 (16:00) antes de id 2 (20:00)
+      expect(sorted[0].id).toBe('4')
+      expect(sorted[1].id).toBe('3')
+      expect(sorted[2].id).toBe('2')
+
+      // 2. Jogos finalizados vêm depois:
+      // Data mais recente dos finalizados: 2026-06-11 (id 5)
+      expect(sorted[3].id).toBe('5')
+      // Na data 2026-06-10: id 6 (16:00) antes de id 1 (21:30)
+      expect(sorted[4].id).toBe('6')
+      expect(sorted[5].id).toBe('1')
+    })
   })
 })

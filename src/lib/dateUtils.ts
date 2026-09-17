@@ -295,3 +295,56 @@ export function isJogoHojeNaoIniciado(
   if (!kickoffMs) return false
   return kickoffMs > nowMs
 }
+
+/**
+ * Interface mínima para itens que podem ser ordenados pela regra oficial de "Jogos Cadastrados":
+ * 1. Status/Pendência: jogos pendentes (não finalizados / sem resultado registrado) primeiro, no topo.
+ * 2. Data: datas em ordem decrescente (datas mais recentes/futuras primeiro).
+ * 3. Horário: para jogos na mesma data, horário em ordem crescente (mais cedo primeiro — ex.: 16:00 antes de 21:30).
+ */
+export interface JogoSortable {
+  resultado_finalizado?: boolean | null
+  data: string | Date
+  hora?: string | null
+  placar_a?: number | null
+  placar_b?: number | null
+}
+
+/**
+ * Função comparadora para ordenação da Lista de Jogos Cadastrados.
+ * Critérios em ordem estrita de prioridade:
+ * 1. Pendente primeiro (resultado_finalizado === false ou sem resultado registrado antes de encerrado).
+ * 2. Data decrescente (mais recente/futura antes).
+ * 3. Horário crescente na mesma data (mais cedo antes: 16:00 antes de 21:30).
+ */
+export function compareJogosCadastrados<T extends JogoSortable>(a: T, b: T): number {
+  const finalizadoA = Boolean(a.resultado_finalizado)
+  const finalizadoB = Boolean(b.resultado_finalizado)
+
+  // 1. Status/Pendência: pendentes (false) primeiro, encerrados (true) depois
+  if (finalizadoA !== finalizadoB) {
+    return finalizadoA ? 1 : -1
+  }
+
+  // 2. Data: ordem decrescente (mais recente/futura primeiro)
+  const isoA = normalizeDataISO(a.data) || ''
+  const isoB = normalizeDataISO(b.data) || ''
+  if (isoA !== isoB) {
+    return isoB.localeCompare(isoA)
+  }
+
+  // 3. Horário: na mesma data, ordem crescente (mais cedo primeiro: ex 16:00 antes de 21:30)
+  const timeA = parseHoraJogo(a.hora)
+  const timeB = parseHoraJogo(b.hora)
+  const minutesA = timeA.hours * 60 + timeA.minutes
+  const minutesB = timeB.hours * 60 + timeB.minutes
+
+  return minutesA - minutesB
+}
+
+/**
+ * Helper que retorna uma nova cópia do array ordenada pela regra oficial.
+ */
+export function sortJogosCadastrados<T extends JogoSortable>(jogos: T[]): T[] {
+  return [...jogos].sort(compareJogosCadastrados)
+}
