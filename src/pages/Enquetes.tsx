@@ -39,7 +39,12 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { useToast } from '@/hooks/use-toast'
-import { formatDataBR, formatHoraBR } from '@/lib/dateUtils'
+import {
+  formatDataBR,
+  formatHoraBR,
+  formatDataHoraSaoPaulo,
+  satisfiesEnqueteMinTimeMargin,
+} from '@/lib/dateUtils'
 import {
   type EnqueteModel,
   type JogoComVotos,
@@ -142,7 +147,18 @@ export default function Enquetes() {
       try {
         const dados = await obterDadosEnquete(enqueteId, user?.id)
         setEnqueteAtiva(dados.enquete)
-        setJogosEnquete(dados.jogos)
+
+        // Assegura conversão de datas e horários dos jogos para o fuso America/Sao_Paulo (UTC-3)
+        const jogosNormalizados = dados.jogos.map((j) => {
+          const sp = formatDataHoraSaoPaulo(j.data, j.horario)
+          return {
+            ...j,
+            data: sp.data || j.data,
+            horario: sp.horario || j.horario || '16:00',
+          }
+        })
+
+        setJogosEnquete(jogosNormalizados)
         setMeusVotosIds(dados.meusVotosIds)
       } catch (err) {
         console.error('Erro ao obter detalhes da enquete:', err)
@@ -309,12 +325,27 @@ export default function Enquetes() {
     setBuscandoJogos(true)
     try {
       const fixtures = await buscarJogosIntervalo(dataInicio, dataFim)
-      setJogosEncontrados(fixtures)
-      // Por padrão, pré-seleciona todos os jogos encontrados para a enquete
-      setJogosPreSelecionados(new Set(fixtures.map((f) => f.id)))
-      if (fixtures.length === 0) {
+
+      // Regra 1: Garantir que todas as partidas estejam expressas no fuso America/Sao_Paulo (UTC-3)
+      // Regra 2: Filtro de margem mínima de +3 horas a partir do momento da busca/criação
+      const nowMs = Date.now()
+      const normalizedFixtures: JogoBuscado[] = fixtures
+        .map((f) => {
+          const spConverted = formatDataHoraSaoPaulo(f.data, f.horario)
+          return {
+            ...f,
+            data: spConverted.data || f.data,
+            horario: spConverted.horario || f.horario || '16:00',
+          }
+        })
+        .filter((f) => satisfiesEnqueteMinTimeMargin(f.data, f.horario, nowMs, 3))
+
+      setJogosEncontrados(normalizedFixtures)
+      // Por padrão, pré-seleciona todos os jogos filtrados para a enquete
+      setJogosPreSelecionados(new Set(normalizedFixtures.map((f) => f.id)))
+      if (normalizedFixtures.length === 0) {
         setErroBuscaJogos(
-          'Nenhum confronto das competições principais encontrado para o período informado.',
+          'Nenhum confronto das competições principais encontrado para o período informado (partidas com menos de 3 horas de antecedência foram desconsideradas).',
         )
       } else if (!tituloEnquete) {
         setTituloEnquete(
@@ -1208,7 +1239,9 @@ export default function Enquetes() {
             <div className="flex items-center justify-between gap-2 rounded-lg border border-slate-200 bg-slate-50 p-3">
               <div className="text-xs text-slate-600">
                 Filtra automaticamente: <strong>Série A do Brasileirão</strong>,{' '}
-                <strong>Champions League</strong> e <strong>Grandes da Europa</strong>.
+                <strong>Champions League</strong> e <strong>Grandes da Europa</strong>,
+                desconsiderando partidas que começam em menos de <strong>3 horas</strong> e
+                convertendo horários para o fuso de Brasília (<strong>UTC-3</strong>).
               </div>
               <Button
                 type="button"

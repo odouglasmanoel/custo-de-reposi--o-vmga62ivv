@@ -11,6 +11,8 @@ import {
   isJogoHojeNaoIniciado,
   compareJogosCadastrados,
   sortJogosCadastrados,
+  formatDataHoraSaoPaulo,
+  satisfiesEnqueteMinTimeMargin,
 } from './dateUtils'
 
 describe('dateUtils - Jogos de Hoje e Fuso de Brasília', () => {
@@ -73,6 +75,64 @@ describe('dateUtils - Jogos de Hoje e Fuso de Brasília', () => {
 
     // Jogo de outro dia (amanhã)
     expect(isJogoHojeNaoIniciado('2026-06-16', '19h00', beforeKickoff)).toBe(false)
+  })
+
+  describe('formatDataHoraSaoPaulo (Conversão de APIs para America/Sao_Paulo UTC-3)', () => {
+    it('converte corretamente ISO UTC de partida para data e hora em Brasília', () => {
+      // 2026-06-15T21:30:00Z em UTC -> 18:30 em Brasília (UTC-3)
+      const res1 = formatDataHoraSaoPaulo('2026-06-15T21:30:00Z')
+      expect(res1.data).toBe('2026-06-15')
+      expect(res1.horario).toBe('18:30')
+
+      // 2026-06-16T01:00:00Z em UTC -> 22:00 do dia 15 em Brasília
+      const res2 = formatDataHoraSaoPaulo('2026-06-16T01:00:00Z')
+      expect(res2.data).toBe('2026-06-15')
+      expect(res2.horario).toBe('22:00')
+
+      // Date simples com hora em formato string
+      const res3 = formatDataHoraSaoPaulo('2026-06-15', '16:00')
+      expect(res3.data).toBe('2026-06-15')
+      expect(res3.horario).toBe('16:00')
+    })
+  })
+
+  describe('satisfiesEnqueteMinTimeMargin (Filtro de Margem Mínima de +3 Horas)', () => {
+    // Momento da criação da enquete: 15/06/2026 às 12h00 em Brasília (15h00 UTC)
+    const agoraCriacaoEnquete = Date.UTC(2026, 5, 15, 15, 0, 0)
+
+    it('rejeita partidas que começam em menos de 3 horas', () => {
+      // Começa às 14h00 em Brasília (faltam 2 horas) -> Rejeita
+      expect(satisfiesEnqueteMinTimeMargin('2026-06-15', '14:00', agoraCriacaoEnquete, 3)).toBe(
+        false,
+      )
+
+      // Começa às 14h59 em Brasília (faltam 2h59min) -> Rejeita
+      expect(satisfiesEnqueteMinTimeMargin('2026-06-15', '14:59', agoraCriacaoEnquete, 3)).toBe(
+        false,
+      )
+
+      // Já começou (11h00 em Brasília) -> Rejeita
+      expect(satisfiesEnqueteMinTimeMargin('2026-06-15', '11:00', agoraCriacaoEnquete, 3)).toBe(
+        false,
+      )
+    })
+
+    it('aceita partidas que começam com exatamente ou mais de 3 horas de antecedência', () => {
+      // Começa às 15h00 em Brasília (exatas 3 horas a partir das 12h00) -> Aceita
+      expect(satisfiesEnqueteMinTimeMargin('2026-06-15', '15:00', agoraCriacaoEnquete, 3)).toBe(
+        true,
+      )
+
+      // Começa às 16h00 em Brasília (4 horas a partir das 12h00) -> Aceita
+      expect(satisfiesEnqueteMinTimeMargin('2026-06-15', '16:00', agoraCriacaoEnquete, 3)).toBe(
+        true,
+      )
+
+      // Partida do dia seguinte -> Aceita
+      expect(satisfiesEnqueteMinTimeMargin('2026-06-16', '16:00', agoraCriacaoEnquete, 3)).toBe(
+        true,
+      )
+    })
   })
 
   describe('compareJogosCadastrados / sortJogosCadastrados', () => {

@@ -164,6 +164,7 @@ routerAdd(
         }
       }
 
+      // Helper: Converte horário UTC para HH:mm em America/Sao_Paulo (UTC-3)
       var toTimeStringSaoPaulo = function (dateInput) {
         if (!dateInput) return '16:00'
         try {
@@ -175,6 +176,38 @@ routerAdd(
           return h + ':' + m
         } catch (_) {
           return '16:00'
+        }
+      }
+
+      // Helper: Converte data (YYYY-MM-DD) e hora (HH:mm) do fuso America/Sao_Paulo (UTC-3)
+      // para timestamp numérico UTC absoluto do kickoff
+      var getKickoffTimestampSaoPaulo = function (dateStrSP, timeStrSP, rawUtcDate) {
+        if (rawUtcDate) {
+          try {
+            var rawD = new Date(rawUtcDate)
+            if (!isNaN(rawD.getTime())) {
+              return rawD.getTime()
+            }
+          } catch (_) {}
+        }
+        if (!dateStrSP) return null
+        try {
+          var dParts = dateStrSP.split('-')
+          if (dParts.length !== 3) return null
+          var yr = parseInt(dParts[0], 10)
+          var mo = parseInt(dParts[1], 10) - 1
+          var dy = parseInt(dParts[2], 10)
+          var hr = 16
+          var mn = 0
+          if (timeStrSP) {
+            var tParts = timeStrSP.split(':')
+            if (tParts.length >= 1) hr = parseInt(tParts[0], 10) || 0
+            if (tParts.length >= 2) mn = parseInt(tParts[1], 10) || 0
+          }
+          // America/Sao_Paulo (UTC-3): horário local + 3 horas = UTC
+          return Date.UTC(yr, mo, dy, hr + 3, mn, 0, 0)
+        } catch (_) {
+          return null
         }
       }
 
@@ -587,14 +620,22 @@ routerAdd(
                   var aName = (ev.strAwayTeam || '').trim()
                   if (!hName || !aName) continue
 
-                  var evTimeStr = (ev.strTime || '20:00:00').slice(0, 5)
+                  // TheSportsDB: strTimestamp é UTC ISO "2026-06-15T19:00:00". Se ausente, usa dateEvent + strTime + Z (UTC)
+                  var tsdbRawUtc = ev.strTimestamp
+                    ? ev.strTimestamp.indexOf('Z') === -1
+                      ? ev.strTimestamp + 'Z'
+                      : ev.strTimestamp
+                    : ev.dateEvent
+                      ? ev.dateEvent + 'T' + (ev.strTime || '20:00:00') + 'Z'
+                      : targetDate + 'T20:00:00Z'
+
+                  var tsdbDateSP = toDateStringSaoPaulo(tsdbRawUtc) || ev.dateEvent || targetDate
+                  var tsdbTimeSP = toTimeStringSaoPaulo(tsdbRawUtc)
 
                   dayFixturesForDate.push({
                     fixture: {
                       id: 'tsdb_' + (ev.idEvent || tLeague.id + '_' + tei),
-                      date: ev.dateEvent
-                        ? ev.dateEvent + 'T' + (ev.strTime || '20:00:00') + 'Z'
-                        : targetDate,
+                      date: tsdbRawUtc,
                       status: { short: 'NS' },
                     },
                     league: {
@@ -621,8 +662,8 @@ routerAdd(
                         logo: ev.strAwayTeamBadge || '',
                       },
                     },
-                    dateSP: ev.dateEvent || targetDate,
-                    timeSP: evTimeStr || '20:00',
+                    dateSP: tsdbDateSP,
+                    timeSP: tsdbTimeSP,
                     provider: 'thesportsdb',
                   })
                 }
@@ -656,8 +697,24 @@ routerAdd(
           var tEval = isTargetCompetition(lIdCheck, lNameCheck, '')
           if (!tEval.valid) continue
 
-          var gameDate = f.dateSP || toDateStringSaoPaulo(f.fixture && f.fixture.date) || targetDate
-          var gameTime = f.timeSP || toTimeStringSaoPaulo(f.fixture && f.fixture.date) || '16:00'
+          var rawDateSource = f.fixture && f.fixture.date ? String(f.fixture.date) : ''
+          var gameDate = f.dateSP || toDateStringSaoPaulo(rawDateSource) || targetDate
+          var gameTime = f.timeSP || toTimeStringSaoPaulo(rawDateSource) || '16:00'
+
+          // -----------------------------------------------------------------
+          // REGRA DE FILTRO: Margem Mínima de Tempo (+3 Horas)
+          // "Ao buscar os jogos no período selecionado, ignore qualquer partida
+          // que comece em menos de 3 horas a partir do exato momento em que a
+          // busca/enquete é criada."
+          // Cutoff: agora + 3 horas.
+          // O jogo só é incluído se kickoffTimestamp >= agora + 3 horas.
+          // -----------------------------------------------------------------
+          var kickoffTs = getKickoffTimestampSaoPaulo(gameDate, gameTime, rawDateSource)
+          var minAllowedKickoff = nowMs + 3 * 3600 * 1000
+          if (kickoffTs !== null && kickoffTs < minAllowedKickoff) {
+            // Partida começa em menos de 3 horas (ou já começou/terminou): filtrar fora
+            continue
+          }
 
           // Chave de confronto única (data + par de times)
           var normH = normalizeTeamDedup(homeName)

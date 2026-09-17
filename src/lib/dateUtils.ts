@@ -297,6 +297,77 @@ export function isJogoHojeNaoIniciado(
 }
 
 /**
+ * Converte data e hora de qualquer formato (ISO UTC, Date, ou local SP)
+ * para a representação canônica em America/Sao_Paulo (UTC-3).
+ * Retorna { data: "YYYY-MM-DD", horario: "HH:mm" }
+ */
+export function formatDataHoraSaoPaulo(
+  dataInput?: string | Date | null,
+  horaInput?: string | null,
+): { data: string; horario: string } {
+  if (!dataInput) {
+    return { data: '', horario: horaInput ? formatHoraEncerramento(horaInput) : '16:00' }
+  }
+
+  // Se já for uma ISO com 'T' ou Date ou timestamp UTC completo
+  if (
+    dataInput instanceof Date ||
+    (typeof dataInput === 'string' && (dataInput.includes('T') || dataInput.endsWith('Z')))
+  ) {
+    try {
+      const d = dataInput instanceof Date ? dataInput : new Date(dataInput)
+      if (!isNaN(d.getTime())) {
+        const dateFormatter = new Intl.DateTimeFormat('en-CA', {
+          timeZone: 'America/Sao_Paulo',
+          year: 'numeric',
+          month: '2-digit',
+          day: '2-digit',
+        })
+        const timeFormatter = new Intl.DateTimeFormat('pt-BR', {
+          timeZone: 'America/Sao_Paulo',
+          hour: '2-digit',
+          minute: '2-digit',
+          hour12: false,
+        })
+        const dataSP = dateFormatter.format(d)
+        const horarioSP = timeFormatter.format(d).replace(':', ':')
+        return { data: dataSP, horario: horarioSP }
+      }
+    } catch {
+      /* intentionally ignored */
+    }
+  }
+
+  // Se já for string "YYYY-MM-DD" simples ou "DD/MM/YYYY"
+  const normalizedData = normalizeDataISO(dataInput) || ''
+  const parsedHora = parseHoraJogo(horaInput)
+  const horarioStr = `${String(parsedHora.hours).padStart(2, '0')}:${String(parsedHora.minutes).padStart(2, '0')}`
+
+  return { data: normalizedData, horario: horarioStr }
+}
+
+/**
+ * Regra de Filtro de Margem Mínima de Tempo (+3 Horas) para Enquetes:
+ * "Ao buscar os jogos no período selecionado, ignore qualquer partida
+ * que comece em menos de 3 horas a partir do exato momento em que a busca/enquete é criada."
+ *
+ * Retorna true se a partida começar com pelo menos 3 horas de antecedência
+ * a partir de nowMs (padrão Date.now()).
+ * Retorna false se a partida já tiver começado ou se faltar menos de 3 horas para o kickoff.
+ */
+export function satisfiesEnqueteMinTimeMargin(
+  dataValue?: string | Date | null,
+  horaValue?: string | null,
+  nowMs: number = Date.now(),
+  minHoursMargin = 3,
+): boolean {
+  const kickoffMs = getJogoKickoffTimestamp(dataValue, horaValue)
+  if (!kickoffMs) return false
+  const minAllowedKickoff = nowMs + minHoursMargin * 3600 * 1000
+  return kickoffMs >= minAllowedKickoff
+}
+
+/**
  * Interface mínima para itens que podem ser ordenados pela regra oficial de "Jogos Cadastrados":
  * 1. Status/Pendência: jogos pendentes (não finalizados / sem resultado registrado) primeiro, no topo.
  * 2. Data: datas em ordem decrescente (datas mais recentes/futuras primeiro).
