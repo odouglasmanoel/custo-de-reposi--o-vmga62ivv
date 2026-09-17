@@ -20,6 +20,8 @@ import {
   Info,
   Radio,
   ExternalLink,
+  ChevronDown,
+  ChevronUp,
 } from 'lucide-react'
 import pb from '@/lib/pocketbase/client'
 import { useAuth } from '@/context/AuthContext'
@@ -86,6 +88,23 @@ export default function Enquetes() {
   const [jogosPreSelecionados, setJogosPreSelecionados] = useState<Set<string>>(new Set())
   const [publicandoEnquete, setPublicandoEnquete] = useState(false)
   const [erroBuscaJogos, setErroBuscaJogos] = useState<string | null>(null)
+
+  // Formulário expansível de adição manual de confronto
+  const [formManualAberto, setFormManualAberto] = useState(false)
+  const [manualTimeA, setManualTimeA] = useState('')
+  const [manualTimeB, setManualTimeB] = useState('')
+  const [manualCompeticao, setManualCompeticao] = useState('')
+  const [manualData, setManualData] = useState(datasPadrao.dataInicio)
+  const [manualHorario, setManualHorario] = useState('16:00')
+  const [manualAvisoMargem, setManualAvisoMargem] = useState<string | null>(null)
+  const [manualAvisoDuplicado, setManualAvisoDuplicado] = useState<string | null>(null)
+
+  // Atualiza data padrão do formulário manual ao alterar dataInicio da busca
+  useEffect(() => {
+    if (dataInicio) {
+      setManualData(dataInicio)
+    }
+  }, [dataInicio])
 
   // Ações do Admin no Apurador
   const [cadastrandoConi, setCadastrandoConi] = useState(false)
@@ -336,13 +355,23 @@ export default function Enquetes() {
             ...f,
             data: spConverted.data || f.data,
             horario: spConverted.horario || f.horario || '16:00',
+            origem: 'api' as const,
           }
         })
         .filter((f) => satisfiesEnqueteMinTimeMargin(f.data, f.horario, nowMs, 3))
 
-      setJogosEncontrados(normalizedFixtures)
-      // Por padrão, pré-seleciona todos os jogos filtrados para a enquete
-      setJogosPreSelecionados(new Set(normalizedFixtures.map((f) => f.id)))
+      // Preserva jogos manuais já inseridos pelo admin se ele fizer uma nova busca
+      setJogosEncontrados((prev) => {
+        const manuaisExistentes = prev.filter((j) => j.origem === 'manual')
+        return [...manuaisExistentes, ...normalizedFixtures]
+      })
+
+      // Mantém selecionados os manuais e seleciona também os novos jogos da API
+      setJogosPreSelecionados((prev) => {
+        const next = new Set(prev)
+        normalizedFixtures.forEach((f) => next.add(f.id))
+        return next
+      })
       if (normalizedFixtures.length === 0) {
         setErroBuscaJogos(
           'Nenhum confronto das competições principais encontrado para o período informado (partidas com menos de 3 horas de antecedência foram desconsideradas).',
@@ -366,6 +395,124 @@ export default function Enquetes() {
       const next = new Set(prev)
       if (next.has(jogoId)) next.delete(jogoId)
       else next.add(jogoId)
+      return next
+    })
+  }
+
+  // Admin: Adicionar jogo manualmente no modal de criação
+  const handleAdicionarJogoManual = () => {
+    const timeA = manualTimeA.trim()
+    const timeB = manualTimeB.trim()
+    const competicao = manualCompeticao.trim() || 'Amistoso / Outros'
+    const dataJogo = manualData.trim()
+    const horarioJogo = manualHorario.trim() || '16:00'
+
+    // Validações obrigatórias
+    if (!timeA || !timeB) {
+      toast({
+        title: 'Campos incompletos',
+        description: 'Informe tanto o time mandante quanto o time visitante.',
+        variant: 'destructive',
+      })
+      return
+    }
+
+    if (timeA.toLowerCase() === timeB.toLowerCase()) {
+      toast({
+        title: 'Equipes idênticas',
+        description: 'O time mandante e o time visitante devem ser diferentes entre si.',
+        variant: 'destructive',
+      })
+      return
+    }
+
+    if (!dataJogo) {
+      toast({
+        title: 'Data obrigatória',
+        description: 'Selecione a data da partida no formato YYYY-MM-DD.',
+        variant: 'destructive',
+      })
+      return
+    }
+
+    // Normaliza para fuso de Brasília e verifica margem de 3 horas
+    const spConverted = formatDataHoraSaoPaulo(dataJogo, horarioJogo)
+    const dataFinal = spConverted.data || dataJogo
+    const horaFinal = spConverted.horario || horarioJogo
+
+    const nowMs = Date.now()
+    const respeitaMargem = satisfiesEnqueteMinTimeMargin(dataFinal, horaFinal, nowMs, 3)
+    if (!respeitaMargem) {
+      setManualAvisoMargem(
+        'Atenção: Este confronto está agendado para menos de 3 horas a partir de agora (ou no passado). Você pode adicioná-lo manualmente se desejar manter.',
+      )
+    } else {
+      setManualAvisoMargem(null)
+    }
+
+    // Verifica se já existe jogo semelhante na mesma data (duplicação potencial)
+    const norm = (s: string) =>
+      s
+        .toLowerCase()
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .replace(/[^a-z0-9]/g, '')
+    const pairNew = [norm(timeA), norm(timeB)].sort().join('___')
+    const duplicado = jogosEncontrados.some((j) => {
+      const pairExisting = [norm(j.time_a), norm(j.time_b)].sort().join('___')
+      return j.data === dataFinal && pairExisting === pairNew
+    })
+
+    if (duplicado) {
+      setManualAvisoDuplicado(
+        `Aviso: Já existe uma partida cadastrada entre ${timeA} e ${timeB} na data ${formatDataBR(dataFinal)}. O confronto foi inserido mantendo a distinção.`,
+      )
+    } else {
+      setManualAvisoDuplicado(null)
+    }
+
+    const regiaoCalculada =
+      competicao.toLowerCase().includes('brasileir') || competicao.toLowerCase().includes('copa')
+        ? 'Brasileirão & Copas'
+        : 'Futebol Europeu'
+
+    const novoJogoManual: JogoBuscado = {
+      id: `manual_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+      time_a: timeA,
+      time_b: timeB,
+      campeonato: competicao,
+      prioridade: 5,
+      regiao: regiaoCalculada,
+      data: dataFinal,
+      horario: horaFinal,
+      origem: 'manual',
+    }
+
+    // Adiciona na lista geral de jogos da enquete em criação e já pré-seleciona
+    setJogosEncontrados((prev) => [novoJogoManual, ...prev])
+    setJogosPreSelecionados((prev) => new Set(prev).add(novoJogoManual.id))
+
+    // Se o título ainda não foi preenchido, sugere
+    if (!tituloEnquete) {
+      setTituloEnquete(`Enquete Copa Coni — ${formatDataBR(dataInicio)} a ${formatDataBR(dataFim)}`)
+    }
+
+    toast({
+      title: 'Jogo manual adicionado!',
+      description: `${timeA} x ${timeB} incluído na lista para publicação.`,
+    })
+
+    // Limpa campos do time mas mantém data e competição se admin quiser cadastrar mais jogos
+    setManualTimeA('')
+    setManualTimeB('')
+  }
+
+  // Admin: Remover jogo da lista de criação (seja manual ou api)
+  const handleRemoverJogoCriacao = (jogoId: string) => {
+    setJogosEncontrados((prev) => prev.filter((j) => j.id !== jogoId))
+    setJogosPreSelecionados((prev) => {
+      const next = new Set(prev)
+      next.delete(jogoId)
       return next
     })
   }
@@ -412,6 +559,12 @@ export default function Enquetes() {
       setJogosPreSelecionados(new Set())
       setTituloEnquete('')
       setDescricaoEnquete('')
+      setFormManualAberto(false)
+      setManualTimeA('')
+      setManualTimeB('')
+      setManualCompeticao('')
+      setManualAvisoMargem(null)
+      setManualAvisoDuplicado(null)
 
       await carregarListaEnquetes(false)
       setEnqueteAtivaId(nova.id)
@@ -892,12 +1045,22 @@ export default function Enquetes() {
                     )}
 
                     <CardContent className="p-4">
-                      {/* Topo do Card: Campeonato e Data */}
+                      {/* Topo do Card: Campeonato, Origem e Data */}
                       <div className="flex items-center justify-between gap-2 border-b border-slate-100 pb-2">
-                        <span className="line-clamp-1 text-[11px] font-bold text-slate-600">
-                          {jogo.campeonato || 'Competição'}
-                        </span>
-                        <div className="flex items-center gap-1 text-[11px] font-medium text-slate-500">
+                        <div className="flex items-center gap-1.5 min-w-0">
+                          <span className="truncate text-[11px] font-bold text-slate-600">
+                            {jogo.campeonato || 'Competição'}
+                          </span>
+                          {jogo.origem === 'manual' && (
+                            <Badge
+                              variant="outline"
+                              className="border-amber-300 bg-amber-50 px-1.5 py-0 text-[9px] font-bold text-amber-700"
+                            >
+                              Manual
+                            </Badge>
+                          )}
+                        </div>
+                        <div className="flex items-center gap-1 shrink-0 text-[11px] font-medium text-slate-500">
                           <Calendar className="h-3 w-3 text-slate-400" />
                           <span>{formatDataBR(jogo.data)}</span>
                           <Clock className="ml-1 h-3 w-3 text-slate-400" />
@@ -1106,6 +1269,15 @@ export default function Enquetes() {
                                 {jogo.time_a} x {jogo.time_b}
                               </span>
 
+                              {jogo.origem === 'manual' && (
+                                <Badge
+                                  variant="outline"
+                                  className="border-amber-300 bg-amber-50 text-[10px] font-bold text-amber-700"
+                                >
+                                  Manual
+                                </Badge>
+                              )}
+
                               {isTop4 && (
                                 <Badge className="border-none bg-amber-500 text-[10px] font-black uppercase text-white">
                                   Top 4
@@ -1296,13 +1468,178 @@ export default function Enquetes() {
               </div>
             </div>
 
-            {/* Lista dos Jogos Encontrados para Pré-Seleção */}
+            {/* Seção Expansível: Adicionar Jogo Manualmente */}
+            <div className="rounded-lg border border-amber-200 bg-amber-50/40 p-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <span className="flex h-6 w-6 items-center justify-center rounded-full bg-amber-500 text-xs font-bold text-white">
+                    <Plus className="h-3.5 w-3.5" />
+                  </span>
+                  <div>
+                    <h4 className="text-xs font-bold text-amber-950">Adicionar Jogo Manualmente</h4>
+                    <p className="text-[11px] text-amber-800">
+                      Inclua confrontos extras não encontrados nas APIs ou clássicos regionais.
+                    </p>
+                  </div>
+                </div>
+
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setFormManualAberto((prev) => !prev)}
+                  className="h-7 border-amber-300 bg-white text-xs font-semibold text-amber-900 hover:bg-amber-100"
+                >
+                  {formManualAberto ? (
+                    <>
+                      <ChevronUp className="mr-1 h-3.5 w-3.5" />
+                      Recolher Formulário
+                    </>
+                  ) : (
+                    <>
+                      <ChevronDown className="mr-1 h-3.5 w-3.5" />
+                      Adicionar Jogo Manualmente
+                    </>
+                  )}
+                </Button>
+              </div>
+
+              {formManualAberto && (
+                <div className="mt-3 space-y-3 border-t border-amber-200/70 pt-3">
+                  <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
+                    {/* Mandante */}
+                    <div className="space-y-1">
+                      <Label htmlFor="manual-time-a" className="text-xs font-bold text-slate-700">
+                        Mandante (Time Casa) *:
+                      </Label>
+                      <Input
+                        id="manual-time-a"
+                        placeholder="Ex.: Flamengo"
+                        value={manualTimeA}
+                        onChange={(e) => setManualTimeA(e.target.value)}
+                        className="h-8 bg-white text-xs"
+                      />
+                    </div>
+
+                    {/* Visitante */}
+                    <div className="space-y-1">
+                      <Label htmlFor="manual-time-b" className="text-xs font-bold text-slate-700">
+                        Visitante (Time Fora) *:
+                      </Label>
+                      <Input
+                        id="manual-time-b"
+                        placeholder="Ex.: Palmeiras"
+                        value={manualTimeB}
+                        onChange={(e) => setManualTimeB(e.target.value)}
+                        className="h-8 bg-white text-xs"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-3">
+                    {/* Competição com Datalist de sugestões */}
+                    <div className="space-y-1 sm:col-span-1">
+                      <Label
+                        htmlFor="manual-competicao"
+                        className="text-xs font-bold text-slate-700"
+                      >
+                        Competição *:
+                      </Label>
+                      <Input
+                        id="manual-competicao"
+                        list="sugestoes-competicoes"
+                        placeholder="Ex.: Brasileirão Série A"
+                        value={manualCompeticao}
+                        onChange={(e) => setManualCompeticao(e.target.value)}
+                        className="h-8 bg-white text-xs"
+                      />
+                      <datalist id="sugestoes-competicoes">
+                        <option value="Brasileirão Série A" />
+                        <option value="Champions League" />
+                        <option value="Premier League (Inglaterra)" />
+                        <option value="La Liga (Espanha)" />
+                        <option value="Serie A (Itália)" />
+                        <option value="Bundesliga (Alemanha)" />
+                        <option value="Ligue 1 (França)" />
+                        <option value="Copa Libertadores" />
+                        <option value="Copa Sul-Americana" />
+                        <option value="Copa do Brasil" />
+                        <option value="UEFA Europa League" />
+                      </datalist>
+                    </div>
+
+                    {/* Data */}
+                    <div className="space-y-1">
+                      <Label htmlFor="manual-data" className="text-xs font-bold text-slate-700">
+                        Data (Brasília) *:
+                      </Label>
+                      <Input
+                        id="manual-data"
+                        type="date"
+                        value={manualData}
+                        onChange={(e) => setManualData(e.target.value)}
+                        className="h-8 bg-white text-xs"
+                      />
+                    </div>
+
+                    {/* Horário */}
+                    <div className="space-y-1">
+                      <Label htmlFor="manual-horario" className="text-xs font-bold text-slate-700">
+                        Horário (Brasília UTC-3) *:
+                      </Label>
+                      <Input
+                        id="manual-horario"
+                        type="time"
+                        value={manualHorario}
+                        onChange={(e) => setManualHorario(e.target.value)}
+                        className="h-8 bg-white text-xs"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Avisos leves (margem / duplicação) */}
+                  {manualAvisoMargem && (
+                    <div className="flex items-center gap-2 rounded-md border border-amber-300 bg-amber-100/70 p-2 text-[11px] text-amber-900">
+                      <AlertCircle className="h-3.5 w-3.5 shrink-0 text-amber-700" />
+                      <span>{manualAvisoMargem}</span>
+                    </div>
+                  )}
+
+                  {manualAvisoDuplicado && (
+                    <div className="flex items-center gap-2 rounded-md border border-blue-200 bg-blue-50 p-2 text-[11px] text-blue-800">
+                      <Info className="h-3.5 w-3.5 shrink-0 text-blue-600" />
+                      <span>{manualAvisoDuplicado}</span>
+                    </div>
+                  )}
+
+                  <div className="flex justify-end pt-1">
+                    <Button
+                      type="button"
+                      size="sm"
+                      onClick={handleAdicionarJogoManual}
+                      className="bg-amber-600 text-xs font-bold text-white hover:bg-amber-700"
+                    >
+                      <Plus className="mr-1 h-3.5 w-3.5" />
+                      Adicionar à Lista da Enquete
+                    </Button>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Lista dos Jogos para Pré-Seleção (Mesclando API e Manuais) */}
             {jogosEncontrados.length > 0 && (
               <div className="space-y-2 border-t border-slate-100 pt-3">
                 <div className="flex items-center justify-between">
-                  <span className="text-xs font-bold text-slate-700">
-                    Jogos Encontrados ({jogosEncontrados.length} partidas no período):
-                  </span>
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-bold text-slate-700">
+                      Jogos na Enquete ({jogosEncontrados.length} confrontos):
+                    </span>
+                    <span className="text-[11px] text-slate-500">
+                      ({jogosEncontrados.filter((j) => j.origem === 'manual').length} manuais,{' '}
+                      {jogosEncontrados.filter((j) => j.origem !== 'manual').length} de API)
+                    </span>
+                  </div>
                   <div className="flex items-center gap-2">
                     <button
                       type="button"
@@ -1327,6 +1664,7 @@ export default function Enquetes() {
                 <div className="max-h-60 overflow-y-auto divide-y divide-slate-100 rounded-lg border border-slate-200">
                   {jogosEncontrados.map((j) => {
                     const sel = jogosPreSelecionados.has(j.id)
+                    const isManual = j.origem === 'manual'
                     return (
                       <div
                         key={j.id}
@@ -1344,6 +1682,14 @@ export default function Enquetes() {
                           <span className="font-bold text-slate-800">
                             {j.time_a} x {j.time_b}
                           </span>
+                          {isManual && (
+                            <Badge
+                              variant="outline"
+                              className="border-amber-300 bg-amber-50 px-1.5 py-0 text-[9px] font-bold text-amber-800"
+                            >
+                              Manual
+                            </Badge>
+                          )}
                         </div>
                         <div className="flex items-center gap-2 text-[11px] text-slate-500">
                           <span className="font-medium">{j.campeonato}</span>
@@ -1351,6 +1697,17 @@ export default function Enquetes() {
                           <span>
                             {formatDataBR(j.data)} {formatHoraBR(j.horario)}
                           </span>
+                          <button
+                            type="button"
+                            title="Remover jogo desta enquete"
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              handleRemoverJogoCriacao(j.id)
+                            }}
+                            className="ml-1 p-1 text-slate-400 hover:text-rose-600"
+                          >
+                            <Trash2 className="h-3 w-3" />
+                          </button>
                         </div>
                       </div>
                     )

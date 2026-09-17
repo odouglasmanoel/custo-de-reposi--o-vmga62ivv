@@ -25,6 +25,7 @@ export interface EnqueteJogoModel extends RecordModel {
   campeonato_logo?: string
   selecionado_admin?: boolean
   cadastrado_bolao?: boolean
+  origem?: 'api' | 'manual'
 }
 
 export interface EnqueteVotoModel extends RecordModel {
@@ -47,6 +48,7 @@ export interface JogoBuscado {
   logo_casa?: string
   logo_visitante?: string
   campeonato_logo?: string
+  origem?: 'api' | 'manual'
 }
 
 export interface JogoComVotos extends EnqueteJogoModel {
@@ -198,6 +200,7 @@ export async function criarEnquete(params: {
         campeonato_logo: j.campeonato_logo || '',
         selecionado_admin: false,
         cadastrado_bolao: false,
+        origem: j.origem || 'api',
       })
     } catch (err) {
       console.error('Erro ao adicionar jogo na enquete:', err)
