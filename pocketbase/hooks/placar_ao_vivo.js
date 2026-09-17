@@ -2099,7 +2099,18 @@ routerAdd('GET', '/backend/v1/jogos-do-dia', (e) => {
               id: 99990 + fmi,
               name: fbCampeonato,
               country: 'América do Sul',
-              logo: '',
+              logo: (function (cName) {
+                if (!cName) return ''
+                var cLower = cName.toLowerCase()
+                if (
+                  typeof globalThis !== 'undefined' &&
+                  globalThis.__tsdbLeagueCache &&
+                  globalThis.__tsdbLeagueCache[cLower] !== undefined
+                ) {
+                  return globalThis.__tsdbLeagueCache[cLower] || ''
+                }
+                return ''
+              })(fbCampeonato),
               flag: '',
               round: fbObs || 'Manual',
               region: fbRegiao,
@@ -2473,7 +2484,61 @@ routerAdd('GET', '/backend/v1/jogos-do-dia', (e) => {
             id: 99990 + mi,
             name: mCampeonato,
             country: 'América do Sul',
-            logo: '',
+            logo: (function (cName) {
+              if (!cName) return ''
+              var cLower = cName.toLowerCase()
+              if (
+                typeof globalThis !== 'undefined' &&
+                globalThis.__tsdbLeagueCache &&
+                globalThis.__tsdbLeagueCache[cLower] !== undefined
+              ) {
+                return globalThis.__tsdbLeagueCache[cLower] || ''
+              }
+              try {
+                var lTsdbKey = '3'
+                try {
+                  var lRec = $app.findFirstRecordByData(
+                    'config_integracoes',
+                    'chave',
+                    'thesportsdb_fallback',
+                  )
+                  if (lRec && lRec.getString('api_key')) {
+                    lTsdbKey = lRec.getString('api_key').trim() || '3'
+                  }
+                } catch (_) {}
+                var lRes = $http.send({
+                  url:
+                    'https://www.thesportsdb.com/api/v1/json/' +
+                    encodeURIComponent(lTsdbKey) +
+                    '/search_all_leagues.php?s=Soccer',
+                  method: 'GET',
+                  timeout: 4,
+                })
+                var foundLogo = ''
+                if (lRes.statusCode === 200 && lRes.json && Array.isArray(lRes.json.countries)) {
+                  for (var cli = 0; cli < lRes.json.countries.length; cli++) {
+                    var lItem = lRes.json.countries[cli]
+                    var strL = (lItem.strLeague || '').toLowerCase()
+                    var strA = (lItem.strLeagueAlternate || '').toLowerCase()
+                    if (
+                      strL.indexOf(cLower) !== -1 ||
+                      cLower.indexOf(strL) !== -1 ||
+                      (strA && strA.indexOf(cLower) !== -1)
+                    ) {
+                      foundLogo = (lItem.strBadge || lItem.strLogo || '').trim()
+                      if (foundLogo) break
+                    }
+                  }
+                }
+                if (typeof globalThis !== 'undefined') {
+                  if (!globalThis.__tsdbLeagueCache) globalThis.__tsdbLeagueCache = {}
+                  globalThis.__tsdbLeagueCache[cLower] = foundLogo
+                }
+                return foundLogo
+              } catch (_) {
+                return ''
+              }
+            })(mCampeonato),
             flag: '',
             round: mObs || 'Manual',
             region: mRegiao,
@@ -3307,3 +3372,238 @@ routerAdd('POST', '/backend/v1/placar-ao-vivo/sobrescrever', (e) => {
     })
   }
 })
+
+// -------------------------------------------------------------
+// Hooks do Ciclo de Vida de Jogos Manuais (jogos_do_dia_manuais):
+// 1. Purge imediato do cache de partidas do dia ao criar, editar ou excluir.
+// 2. Busca automática de escudos (TheSportsDB searchteams.php) quando logo_casa/logo_visitante estiverem vazios.
+// -------------------------------------------------------------
+
+onRecordCreate((e) => {
+  var rec = e.record
+
+  // Invalidação imediata do cache em memória do servidor
+  try {
+    if (typeof globalThis !== 'undefined') {
+      globalThis.__placarAoVivoCacheStore = {}
+      globalThis.__jogosDoDiaStore = {}
+    }
+  } catch (_) {}
+
+  // Autocompletar escudos no TheSportsDB se não informados
+  try {
+    var logoCasa = (rec.getString('logo_casa') || '').trim()
+    var logoVis = (rec.getString('logo_visitante') || '').trim()
+    var timeCasa = (rec.getString('time_casa') || '').trim()
+    var timeVis = (rec.getString('time_visitante') || '').trim()
+
+    if (!logoCasa || !logoVis) {
+      if (typeof globalThis !== 'undefined' && !globalThis.__tsdbBadgeCache) {
+        globalThis.__tsdbBadgeCache = {}
+      }
+
+      // Lê chave de contingência TheSportsDB
+      var tsdbKey = ''
+      try {
+        var cRec = $app.findFirstRecordByData('config_integracoes', 'chave', 'thesportsdb_fallback')
+        if (cRec) {
+          tsdbKey = (cRec.getString('api_key') || '').trim()
+        }
+      } catch (_) {}
+
+      if (!tsdbKey) {
+        try {
+          if ($secrets && $secrets.has && $secrets.has('THESPORTSDB_KEY')) {
+            tsdbKey = ($secrets.get('THESPORTSDB_KEY') || '').trim()
+          } else if ($os && $os.getenv) {
+            tsdbKey = ($os.getenv('THESPORTSDB_KEY') || '').trim()
+          }
+        } catch (_) {}
+      }
+      if (!tsdbKey) {
+        tsdbKey = '3'
+      }
+
+      var fetchBadge = function (teamName) {
+        if (!teamName) return ''
+        var cleanKey = teamName.toLowerCase().trim()
+        if (
+          typeof globalThis !== 'undefined' &&
+          globalThis.__tsdbBadgeCache &&
+          globalThis.__tsdbBadgeCache[cleanKey] !== undefined
+        ) {
+          return globalThis.__tsdbBadgeCache[cleanKey] || ''
+        }
+
+        try {
+          var res = $http.send({
+            url:
+              'https://www.thesportsdb.com/api/v1/json/' +
+              encodeURIComponent(tsdbKey) +
+              '/searchteams.php?t=' +
+              encodeURIComponent(teamName),
+            method: 'GET',
+            timeout: 4,
+          })
+
+          var badgeUrl = ''
+          if (
+            res.statusCode === 200 &&
+            res.json &&
+            Array.isArray(res.json.teams) &&
+            res.json.teams.length > 0
+          ) {
+            var teamObj = res.json.teams[0]
+            badgeUrl = (teamObj.strBadge || teamObj.strTeamBadge || teamObj.strLogo || '').trim()
+          }
+
+          if (typeof globalThis !== 'undefined' && globalThis.__tsdbBadgeCache) {
+            globalThis.__tsdbBadgeCache[cleanKey] = badgeUrl
+          }
+          return badgeUrl
+        } catch (errSearch) {
+          console.log('[TSDB Escudo] Erro na busca por ' + teamName + ':', errSearch)
+          return ''
+        }
+      }
+
+      if (!logoCasa && timeCasa) {
+        var foundCasa = fetchBadge(timeCasa)
+        if (foundCasa) {
+          rec.set('logo_casa', foundCasa)
+        }
+      }
+
+      if (!logoVis && timeVis) {
+        var foundVis = fetchBadge(timeVis)
+        if (foundVis) {
+          rec.set('logo_visitante', foundVis)
+        }
+      }
+    }
+  } catch (errBadge) {
+    console.log('[TSDB Escudo onRecordCreate] Aviso:', errBadge)
+  }
+
+  e.next()
+}, 'jogos_do_dia_manuais')
+
+onRecordUpdate((e) => {
+  var rec = e.record
+
+  // Invalidação imediata do cache em memória do servidor
+  try {
+    if (typeof globalThis !== 'undefined') {
+      globalThis.__placarAoVivoCacheStore = {}
+      globalThis.__jogosDoDiaStore = {}
+    }
+  } catch (_) {}
+
+  // Autocompletar escudos no TheSportsDB se não informados
+  try {
+    var logoCasa = (rec.getString('logo_casa') || '').trim()
+    var logoVis = (rec.getString('logo_visitante') || '').trim()
+    var timeCasa = (rec.getString('time_casa') || '').trim()
+    var timeVis = (rec.getString('time_visitante') || '').trim()
+
+    if (!logoCasa || !logoVis) {
+      if (typeof globalThis !== 'undefined' && !globalThis.__tsdbBadgeCache) {
+        globalThis.__tsdbBadgeCache = {}
+      }
+
+      var tsdbKey = ''
+      try {
+        var cRec = $app.findFirstRecordByData('config_integracoes', 'chave', 'thesportsdb_fallback')
+        if (cRec) {
+          tsdbKey = (cRec.getString('api_key') || '').trim()
+        }
+      } catch (_) {}
+
+      if (!tsdbKey) {
+        try {
+          if ($secrets && $secrets.has && $secrets.has('THESPORTSDB_KEY')) {
+            tsdbKey = ($secrets.get('THESPORTSDB_KEY') || '').trim()
+          } else if ($os && $os.getenv) {
+            tsdbKey = ($os.getenv('THESPORTSDB_KEY') || '').trim()
+          }
+        } catch (_) {}
+      }
+      if (!tsdbKey) {
+        tsdbKey = '3'
+      }
+
+      var fetchBadge = function (teamName) {
+        if (!teamName) return ''
+        var cleanKey = teamName.toLowerCase().trim()
+        if (
+          typeof globalThis !== 'undefined' &&
+          globalThis.__tsdbBadgeCache &&
+          globalThis.__tsdbBadgeCache[cleanKey] !== undefined
+        ) {
+          return globalThis.__tsdbBadgeCache[cleanKey] || ''
+        }
+
+        try {
+          var res = $http.send({
+            url:
+              'https://www.thesportsdb.com/api/v1/json/' +
+              encodeURIComponent(tsdbKey) +
+              '/searchteams.php?t=' +
+              encodeURIComponent(teamName),
+            method: 'GET',
+            timeout: 4,
+          })
+
+          var badgeUrl = ''
+          if (
+            res.statusCode === 200 &&
+            res.json &&
+            Array.isArray(res.json.teams) &&
+            res.json.teams.length > 0
+          ) {
+            var teamObj = res.json.teams[0]
+            badgeUrl = (teamObj.strBadge || teamObj.strTeamBadge || teamObj.strLogo || '').trim()
+          }
+
+          if (typeof globalThis !== 'undefined' && globalThis.__tsdbBadgeCache) {
+            globalThis.__tsdbBadgeCache[cleanKey] = badgeUrl
+          }
+          return badgeUrl
+        } catch (errSearch) {
+          console.log('[TSDB Escudo] Erro na busca por ' + teamName + ':', errSearch)
+          return ''
+        }
+      }
+
+      if (!logoCasa && timeCasa) {
+        var foundCasa = fetchBadge(timeCasa)
+        if (foundCasa) {
+          rec.set('logo_casa', foundCasa)
+        }
+      }
+
+      if (!logoVis && timeVis) {
+        var foundVis = fetchBadge(timeVis)
+        if (foundVis) {
+          rec.set('logo_visitante', foundVis)
+        }
+      }
+    }
+  } catch (errBadge) {
+    console.log('[TSDB Escudo onRecordUpdate] Aviso:', errBadge)
+  }
+
+  e.next()
+}, 'jogos_do_dia_manuais')
+
+onRecordDelete((e) => {
+  // Invalidação imediata do cache em memória do servidor
+  try {
+    if (typeof globalThis !== 'undefined') {
+      globalThis.__placarAoVivoCacheStore = {}
+      globalThis.__jogosDoDiaStore = {}
+    }
+  } catch (_) {}
+
+  e.next()
+}, 'jogos_do_dia_manuais')

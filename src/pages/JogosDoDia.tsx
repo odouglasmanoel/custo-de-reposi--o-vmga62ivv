@@ -16,6 +16,7 @@ import {
   Pencil,
   Trash2,
   Sparkles,
+  Shield,
 } from 'lucide-react'
 import pb from '@/lib/pocketbase/client'
 import { useAuth } from '@/context/AuthContext'
@@ -273,6 +274,22 @@ export default function JogosDoDia() {
         })
       }
 
+      // Purge imediato do cache de partidas do dia via endpoint Admin
+      try {
+        const cacheHeaders: Record<string, string> = {
+          'Content-Type': 'application/json',
+        }
+        if (pb.authStore.token) {
+          cacheHeaders['Authorization'] = pb.authStore.token
+        }
+        await fetch(`${import.meta.env.VITE_POCKETBASE_URL}/backend/v1/limpar-cache`, {
+          method: 'POST',
+          headers: cacheHeaders,
+        })
+      } catch (errCache) {
+        console.warn('Aviso ao disparar limpeza de cache imediata:', errCache)
+      }
+
       setManualModalOpen(false)
       // Recarrega jogos do dia (com forçamento)
       await fetchJogos(selectedDate, true)
@@ -295,6 +312,23 @@ export default function JogosDoDia() {
     setDeletingManualId(recordId)
     try {
       await pb.collection('jogos_do_dia_manuais').delete(recordId)
+
+      // Purge imediato do cache de partidas do dia via endpoint Admin
+      try {
+        const cacheHeaders: Record<string, string> = {
+          'Content-Type': 'application/json',
+        }
+        if (pb.authStore.token) {
+          cacheHeaders['Authorization'] = pb.authStore.token
+        }
+        await fetch(`${import.meta.env.VITE_POCKETBASE_URL}/backend/v1/limpar-cache`, {
+          method: 'POST',
+          headers: cacheHeaders,
+        })
+      } catch (errCache) {
+        console.warn('Aviso ao disparar limpeza de cache imediata na exclusão:', errCache)
+      }
+
       toast({
         title: 'Jogo manual removido',
         description: 'A partida manual foi excluída com sucesso.',
@@ -1117,7 +1151,7 @@ export default function JogosDoDia() {
                                 >
                                   {match.teams.home.name}
                                 </span>
-                                {match.teams.home.logo && (
+                                {match.teams.home.logo ? (
                                   <img
                                     src={match.teams.home.logo}
                                     alt={match.teams.home.name}
@@ -1127,9 +1161,26 @@ export default function JogosDoDia() {
                                     loading="lazy"
                                     onError={(e) => {
                                       e.currentTarget.style.display = 'none'
+                                      const fallback = e.currentTarget
+                                        .nextElementSibling as HTMLElement | null
+                                      if (fallback) fallback.style.display = 'flex'
                                     }}
                                   />
-                                )}
+                                ) : null}
+                                <div
+                                  className={`h-6 w-6 rounded-full bg-slate-100 border border-slate-200 flex items-center justify-center shrink-0 ${
+                                    match.teams.home.logo ? 'hidden' : 'flex'
+                                  }`}
+                                  title={match.teams.home.name}
+                                >
+                                  {match.teams.home.name ? (
+                                    <span className="text-[10px] font-black uppercase text-slate-600">
+                                      {match.teams.home.name.substring(0, 2)}
+                                    </span>
+                                  ) : (
+                                    <Shield className="h-3.5 w-3.5 text-slate-400" />
+                                  )}
+                                </div>
                               </div>
 
                               {/* Placar Central ou Badge de Adiado/Cancelado */}
@@ -1147,7 +1198,7 @@ export default function JogosDoDia() {
 
                               {/* Time Visitante */}
                               <div className="flex flex-1 items-center justify-start gap-2.5 text-left">
-                                {match.teams.away.logo && (
+                                {match.teams.away.logo ? (
                                   <img
                                     src={match.teams.away.logo}
                                     alt={match.teams.away.name}
@@ -1157,9 +1208,26 @@ export default function JogosDoDia() {
                                     loading="lazy"
                                     onError={(e) => {
                                       e.currentTarget.style.display = 'none'
+                                      const fallback = e.currentTarget
+                                        .nextElementSibling as HTMLElement | null
+                                      if (fallback) fallback.style.display = 'flex'
                                     }}
                                   />
-                                )}
+                                ) : null}
+                                <div
+                                  className={`h-6 w-6 rounded-full bg-slate-100 border border-slate-200 flex items-center justify-center shrink-0 ${
+                                    match.teams.away.logo ? 'hidden' : 'flex'
+                                  }`}
+                                  title={match.teams.away.name}
+                                >
+                                  {match.teams.away.name ? (
+                                    <span className="text-[10px] font-black uppercase text-slate-600">
+                                      {match.teams.away.name.substring(0, 2)}
+                                    </span>
+                                  ) : (
+                                    <Shield className="h-3.5 w-3.5 text-slate-400" />
+                                  )}
+                                </div>
                                 <span
                                   className={`text-sm font-bold sm:text-base truncate ${
                                     isPstOrCanc ? 'text-slate-600' : 'text-[#0F172A]'
