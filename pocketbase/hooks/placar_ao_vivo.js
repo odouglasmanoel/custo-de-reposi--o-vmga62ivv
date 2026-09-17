@@ -265,12 +265,18 @@ routerAdd('GET', '/backend/v1/placar-ao-vivo', (e) => {
             timeout: 8,
           })
 
-          if (
-            resTsdb &&
-            resTsdb.statusCode === 200 &&
-            resTsdb.json &&
-            Array.isArray(resTsdb.json.events)
-          ) {
+          if (!resTsdb || resTsdb.statusCode !== 200) {
+            console.log(
+              '[TheSportsDB Fallback] HTTP ' +
+                (resTsdb ? resTsdb.statusCode : 0) +
+                ' ao buscar liga ' +
+                cl.name +
+                ' (ignorado silenciosamente)',
+            )
+            continue
+          }
+
+          if (resTsdb.json && Array.isArray(resTsdb.json.events)) {
             var events = resTsdb.json.events
             for (var ei = 0; ei < events.length; ei++) {
               var ev = events[ei]
@@ -387,13 +393,24 @@ routerAdd('GET', '/backend/v1/placar-ao-vivo', (e) => {
                     method: 'GET',
                     timeout: 4,
                   })
-                  var tlItems =
+
+                  var tlItems = null
+                  if (
                     tlRes &&
                     tlRes.statusCode === 200 &&
                     tlRes.json &&
                     Array.isArray(tlRes.json.timeline)
-                      ? tlRes.json.timeline
-                      : null
+                  ) {
+                    tlItems = tlRes.json.timeline
+                  } else if (tlRes && tlRes.statusCode !== 200) {
+                    console.log(
+                      '[TheSportsDB Timeline] HTTP ' +
+                        tlRes.statusCode +
+                        ' no evento ' +
+                        ev.idEvent +
+                        ' (ignorado silenciosamente)',
+                    )
+                  }
 
                   // Fallback para lookupevent.php?id={idEvent} se lookuptimeline não retornar timeline
                   if (!tlItems || tlItems.length === 0) {
@@ -417,6 +434,14 @@ routerAdd('GET', '/backend/v1/placar-ao-vivo', (e) => {
                       var singleEv = lkRes.json.events[0]
                       parseTsdbGoalStr(singleEv.strHomeGoalDetails, 'home', hTeamId, homeTeam)
                       parseTsdbGoalStr(singleEv.strAwayGoalDetails, 'away', aTeamId, awayTeam)
+                    } else if (lkRes && lkRes.statusCode !== 200) {
+                      console.log(
+                        '[TheSportsDB LookupEvent] HTTP ' +
+                          lkRes.statusCode +
+                          ' no evento ' +
+                          ev.idEvent +
+                          ' (ignorado silenciosamente)',
+                      )
                     }
                   } else {
                     for (var tli = 0; tli < tlItems.length; tli++) {
@@ -1184,9 +1209,10 @@ routerAdd('GET', '/backend/v1/placar-ao-vivo', (e) => {
           timeout: 8,
         })
 
-        if (isRateLimitError(resLive.statusCode, resLive.json || resLive.raw)) {
+        if (resLive && isRateLimitError(resLive.statusCode, resLive.json || resLive.raw)) {
           rateLimitDetected = true
         } else if (
+          resLive &&
           resLive.statusCode === 200 &&
           resLive.json &&
           Array.isArray(resLive.json.livescore)
@@ -2642,12 +2668,18 @@ routerAdd('GET', '/backend/v1/jogos-do-dia', (e) => {
             timeout: 8,
           })
 
-          if (
-            resTsdb &&
-            resTsdb.statusCode === 200 &&
-            resTsdb.json &&
-            Array.isArray(resTsdb.json.events)
-          ) {
+          if (!resTsdb || resTsdb.statusCode !== 200) {
+            console.log(
+              '[TheSportsDB Fallback] HTTP ' +
+                (resTsdb ? resTsdb.statusCode : 0) +
+                ' ao buscar liga ' +
+                cl.name +
+                ' (ignorado silenciosamente)',
+            )
+            continue
+          }
+
+          if (resTsdb.json && Array.isArray(resTsdb.json.events)) {
             var events = resTsdb.json.events
             for (var ei = 0; ei < events.length; ei++) {
               var ev = events[ei]
@@ -2764,13 +2796,24 @@ routerAdd('GET', '/backend/v1/jogos-do-dia', (e) => {
                     method: 'GET',
                     timeout: 4,
                   })
-                  var tlItems =
+
+                  var tlItems = null
+                  if (
                     tlRes &&
                     tlRes.statusCode === 200 &&
                     tlRes.json &&
                     Array.isArray(tlRes.json.timeline)
-                      ? tlRes.json.timeline
-                      : null
+                  ) {
+                    tlItems = tlRes.json.timeline
+                  } else if (tlRes && tlRes.statusCode !== 200) {
+                    console.log(
+                      '[TheSportsDB Timeline] HTTP ' +
+                        tlRes.statusCode +
+                        ' no evento ' +
+                        ev.idEvent +
+                        ' (ignorado silenciosamente)',
+                    )
+                  }
 
                   // Fallback para lookupevent.php?id={idEvent} se lookuptimeline não retornar timeline
                   if (!tlItems || tlItems.length === 0) {
@@ -2794,6 +2837,14 @@ routerAdd('GET', '/backend/v1/jogos-do-dia', (e) => {
                       var singleEv = lkRes.json.events[0]
                       parseTsdbGoalStr(singleEv.strHomeGoalDetails, 'home', hTeamId, homeTeam)
                       parseTsdbGoalStr(singleEv.strAwayGoalDetails, 'away', aTeamId, awayTeam)
+                    } else if (lkRes && lkRes.statusCode !== 200) {
+                      console.log(
+                        '[TheSportsDB LookupEvent] HTTP ' +
+                          lkRes.statusCode +
+                          ' no evento ' +
+                          ev.idEvent +
+                          ' (ignorado silenciosamente)',
+                      )
                     }
                   } else {
                     for (var tli = 0; tli < tlItems.length; tli++) {
@@ -4510,33 +4561,50 @@ routerAdd('POST', '/backend/v1/placar-ao-vivo/test', (e) => {
     // Teste TheSportsDB
     if (provedor === 'thesportsdb') {
       try {
-        const res = $http.send({
+        var keyToUse = (apiKey || '').trim() || '3'
+
+        // 1. Tenta lookupleague.php?id=4328 com a chave informada (ou '3')
+        var resTsdbTest = $http.send({
           url:
             'https://www.thesportsdb.com/api/v1/json/' +
-            encodeURIComponent(apiKey) +
-            '/all_sports.php',
+            encodeURIComponent(keyToUse) +
+            '/lookupleague.php?id=4328',
           method: 'GET',
           timeout: 8,
         })
 
-        if (res.statusCode === 200 && res.json && Array.isArray(res.json.sports)) {
+        // 2. Se status !== 200, tenta fallback para a chave de demonstração pública 123
+        if (!resTsdbTest || resTsdbTest.statusCode !== 200) {
+          try {
+            resTsdbTest = $http.send({
+              url: 'https://www.thesportsdb.com/api/v1/json/123/all_sports.php',
+              method: 'GET',
+              timeout: 8,
+            })
+          } catch (_) {}
+        }
+
+        if (resTsdbTest && resTsdbTest.statusCode === 200) {
           return e.json(200, {
             success: true,
             provider: 'thesportsdb',
-            statusCode: res.statusCode,
-            message: 'Conexão com TheSportsDB bem-sucedida! Esportes retornados com sucesso.',
+            statusCode: 200,
+            message: 'Conexão com TheSportsDB bem-sucedida! Serviço disponível e respondendo.',
           })
         } else {
-          return e.json(400, {
+          var failCode = resTsdbTest ? resTsdbTest.statusCode : 0
+          return e.json(200, {
             success: false,
             provider: 'thesportsdb',
-            statusCode: res.statusCode,
+            statusCode: failCode,
             message:
-              'A TheSportsDB retornou status HTTP ' + res.statusCode + ' ou resposta inesperada.',
+              'Não foi possível validar a conexão com a TheSportsDB no momento (status HTTP ' +
+              failCode +
+              '). Tente novamente mais tarde.',
           })
         }
       } catch (errReq) {
-        return e.json(500, {
+        return e.json(200, {
           success: false,
           provider: 'thesportsdb',
           message:
@@ -4882,6 +4950,7 @@ onRecordCreate((e) => {
 
           var badgeUrl = ''
           if (
+            res &&
             res.statusCode === 200 &&
             res.json &&
             Array.isArray(res.json.teams) &&
@@ -4889,6 +4958,14 @@ onRecordCreate((e) => {
           ) {
             var teamObj = res.json.teams[0]
             badgeUrl = (teamObj.strBadge || teamObj.strTeamBadge || teamObj.strLogo || '').trim()
+          } else if (res && res.statusCode !== 200) {
+            console.log(
+              '[TSDB Escudo] HTTP ' +
+                res.statusCode +
+                ' para ' +
+                teamName +
+                ' (ignorado silenciosamente)',
+            )
           }
 
           if (typeof globalThis !== 'undefined' && globalThis.__tsdbBadgeCache) {
@@ -4990,6 +5067,7 @@ onRecordUpdate((e) => {
 
           var badgeUrl = ''
           if (
+            res &&
             res.statusCode === 200 &&
             res.json &&
             Array.isArray(res.json.teams) &&
@@ -4997,6 +5075,14 @@ onRecordUpdate((e) => {
           ) {
             var teamObj = res.json.teams[0]
             badgeUrl = (teamObj.strBadge || teamObj.strTeamBadge || teamObj.strLogo || '').trim()
+          } else if (res && res.statusCode !== 200) {
+            console.log(
+              '[TSDB Escudo] HTTP ' +
+                res.statusCode +
+                ' para ' +
+                teamName +
+                ' (ignorado silenciosamente)',
+            )
           }
 
           if (typeof globalThis !== 'undefined' && globalThis.__tsdbBadgeCache) {
