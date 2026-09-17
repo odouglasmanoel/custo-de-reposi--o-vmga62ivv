@@ -91,9 +91,33 @@ const App = () => (
               }
             />
 
+            {/* Alias direto /meus-palpites */}
+            <Route
+              path="/meus-palpites"
+              element={
+                <BolaoRoute>
+                  <Layout>
+                    <Palpites />
+                  </Layout>
+                </BolaoRoute>
+              }
+            />
+
             {/* Central de Jogos do Dia & Placar Ao Vivo */}
             <Route
               path="/bolao/jogos-do-dia"
+              element={
+                <BolaoRoute>
+                  <Layout>
+                    <JogosDoDia />
+                  </Layout>
+                </BolaoRoute>
+              }
+            />
+
+            {/* Alias direto /jogos-do-dia */}
+            <Route
+              path="/jogos-do-dia"
               element={
                 <BolaoRoute>
                   <Layout>

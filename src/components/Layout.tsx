@@ -61,13 +61,14 @@ const NAV_ITEMS: NavItem[] = [
     label: 'Meus Palpites',
     path: '/bolao/meus-palpites',
     icon: CheckCircle2,
-    aliases: ['/bolao/palpites'],
+    aliases: ['/bolao/palpites', '/meus-palpites'],
   },
   {
     id: 'jogos-do-dia',
     label: 'Jogos do Dia',
     path: '/bolao/jogos-do-dia',
     icon: Radio,
+    aliases: ['/jogos-do-dia'],
   },
   {
     id: 'enquetes',
@@ -153,7 +154,9 @@ export default function Layout({ children }: LayoutProps) {
     location.pathname === '/bolao/enquetes' ||
     location.pathname === '/bolao/palpites' ||
     location.pathname === '/bolao/meus-palpites' ||
+    location.pathname === '/meus-palpites' ||
     location.pathname === '/bolao/jogos-do-dia' ||
+    location.pathname === '/jogos-do-dia' ||
     location.pathname === '/bolao/historico' ||
     location.pathname === '/bolao/estatisticas' ||
     location.pathname === '/bolao/configuracoes' ||
@@ -170,7 +173,9 @@ export default function Layout({ children }: LayoutProps) {
       location.pathname === '/bolao/enquetes' ||
       location.pathname === '/bolao/palpites' ||
       location.pathname === '/bolao/meus-palpites' ||
+      location.pathname === '/meus-palpites' ||
       location.pathname === '/bolao/jogos-do-dia' ||
+      location.pathname === '/jogos-do-dia' ||
       location.pathname === '/bolao/historico' ||
       location.pathname === '/bolao/estatisticas'
     ) {

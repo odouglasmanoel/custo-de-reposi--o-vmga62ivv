@@ -419,3 +419,42 @@ export function compareJogosCadastrados<T extends JogoSortable>(a: T, b: T): num
 export function sortJogosCadastrados<T extends JogoSortable>(jogos: T[]): T[] {
   return [...jogos].sort(compareJogosCadastrados)
 }
+
+/**
+ * Função comparadora para ordenação da aba Meus Palpites em Ordem Crescente:
+ * 1. Status/Pendência: jogos pendentes primeiro (no topo), finalizados depois.
+ * 2. Data crescente: datas mais próximas/anteriores primeiro (ex: 12/06 antes de 15/06).
+ * 3. Horário crescente na mesma data: mais cedo primeiro (ex: 16:00 antes de 20:00).
+ */
+export function compareJogosCrescente<T extends JogoSortable>(a: T, b: T): number {
+  const finalizadoA = Boolean(a.resultado_finalizado)
+  const finalizadoB = Boolean(b.resultado_finalizado)
+
+  // 1. Status/Pendência: pendentes (false) primeiro, encerrados (true) depois
+  if (finalizadoA !== finalizadoB) {
+    return finalizadoA ? 1 : -1
+  }
+
+  // 2. Data: ordem crescente (jogos mais próximos de acontecer ficam no topo/primeiro)
+  const isoA = normalizeDataISO(a.data) || ''
+  const isoB = normalizeDataISO(b.data) || ''
+  if (isoA !== isoB) {
+    return isoA.localeCompare(isoB)
+  }
+
+  // 3. Horário: na mesma data, ordem crescente (mais cedo primeiro: ex 16:00 antes de 21:30)
+  const timeA = parseHoraJogo(a.hora)
+  const timeB = parseHoraJogo(b.hora)
+  const minutesA = timeA.hours * 60 + timeA.minutes
+  const minutesB = timeB.hours * 60 + timeB.minutes
+
+  return minutesA - minutesB
+}
+
+/**
+ * Helper que retorna uma cópia de jogos ordenada em ordem crescente por data e horário
+ * (jogos pendentes primeiro, e com os jogos mais próximos de acontecer no topo).
+ */
+export function sortJogosCrescente<T extends JogoSortable>(jogos: T[]): T[] {
+  return [...jogos].sort(compareJogosCrescente)
+}

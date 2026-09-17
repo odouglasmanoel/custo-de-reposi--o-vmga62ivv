@@ -37,7 +37,7 @@ import {
   formatHoraBR,
   isPalpiteEncerrado,
   formatHoraEncerramento,
-  sortJogosCadastrados,
+  sortJogosCrescente,
 } from '@/lib/dateUtils'
 import { formatPalpiteMarcadoresSummary, getPalpiteMarcadoresPorTime } from '@/lib/scorerUtils'
 import { buscarEscudoTime, readEscudoCache } from '@/services/enquetes'
@@ -956,8 +956,8 @@ export default function Palpites() {
   }, [participantesList])
 
   const displayedJogos = useMemo(() => {
-    // FIX 4 (b): Ordenação decrescente por data/hora (mais recentes/próximos no topo)
-    return [...sortJogosCadastrados(jogos)].reverse()
+    // Ordenação crescente por data e horário (jogos mais próximos de acontecer ficam no topo/primeiro)
+    return sortJogosCrescente(jogos)
   }, [jogos])
   const hasMore = currentPage < totalPages
 
