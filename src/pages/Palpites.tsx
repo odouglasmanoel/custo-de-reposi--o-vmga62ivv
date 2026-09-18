@@ -2053,6 +2053,8 @@ export default function Palpites() {
           prev.form.goleadores_a?.join(',') === next.form.goleadores_a?.join(',') &&
           prev.form.goleadores_b?.join(',') === next.form.goleadores_b?.join(',') &&
           prev.expandedDetails === next.expandedDetails &&
+          prev.selectedBetId === next.selectedBetId &&
+          prev.isGroupBetsExpanded === next.isGroupBetsExpanded &&
           prev.betsForGame.length === next.betsForGame.length &&
           prev.loadedGroupBets === next.loadedGroupBets &&
           prev.loadingGroupBets === next.loadingGroupBets &&
