@@ -766,8 +766,8 @@ routerAdd('GET', '/backend/v1/placar-ao-vivo', (e) => {
       nowMs - cacheEntry.lastLiveTimestamp < 10 * 60 * 1000,
     )
 
-    // TTL: 1-2 min (90.000 ms) se houver jogo ao vivo ou transição recente; 30 min para dias/jogos agendados
-    var effectiveTTL = entryHasLive || hadRecentLive ? 90 * 1000 : 30 * 60 * 1000
+    // TTL: 1-2 min (90.000 ms) se houver jogo ao vivo ou transição recente; 7 min (faixa 5-10 min) para dias/jogos agendados sem live
+    var effectiveTTL = entryHasLive || hadRecentLive ? 90 * 1000 : 7 * 60 * 1000
     var cacheAgeMs = cacheEntry ? nowMs - cacheEntry.timestamp : 999999999
 
     // Se o cache é válido, serve diretamente do cache interno SEM fazer nenhuma chamada externa
@@ -2197,7 +2197,7 @@ routerAdd('GET', '/backend/v1/jogos-do-dia', (e) => {
     // TTL:
     // - Se a entrada foi gravada por contingência/degradada (is_contingency/fallback_active), TTL é curto (60s)
     //   para revalidar automaticamente e restaurar os 400+ jogos assim que a cota da API-Football renovar.
-    // - 1-2 min (90.000 ms) se houver jogo ao vivo ou transição recente; 30 min sem jogo ao vivo
+    // - 1-2 min (90.000 ms) se houver jogo ao vivo ou transição recente; 7 min sem jogo ao vivo (faixa 5-10 min)
     var isContingencyEntry = Boolean(
       dayEntry &&
       dayEntry.payload &&
@@ -2209,7 +2209,7 @@ routerAdd('GET', '/backend/v1/jogos-do-dia', (e) => {
       ? 60 * 1000
       : entryHasLive || dayHadRecentLive
         ? 90 * 1000
-        : 30 * 60 * 1000
+        : 7 * 60 * 1000
 
     // REGRA DE ON-DEMAND FETCHING E CARREGAMENTO PASSIVO:
     // Se há cache válido para a API externa, concatenamos SEMPRE os jogos manuais do banco no TOPO
@@ -2578,10 +2578,11 @@ routerAdd('GET', '/backend/v1/jogos-do-dia', (e) => {
         var compId = (m.competition && m.competition.id) || 1000 + fdi
 
         var region = 'Outros'
+        var compNameLower = compName.toLowerCase()
         if (
           compCode === 'BSA' ||
-          compName.indexOf('Brasileiro') !== -1 ||
-          compName.indexOf('Serie A') !== -1
+          compNameLower.indexOf('brasileir') !== -1 ||
+          compNameLower.indexOf('brazil') !== -1
         ) {
           region = 'Brasileirão & Copas'
           compId = 71
@@ -3405,7 +3406,7 @@ routerAdd('GET', '/backend/v1/jogos-do-dia', (e) => {
                 Object.assign({}, fdPrimaryPayload, {
                   cached: false,
                   ttlSeconds: Math.round(
-                    (fdPrimaryPayload.hasLive ? 90 * 1000 : 30 * 60 * 1000) / 1000,
+                    (fdPrimaryPayload.hasLive ? 90 * 1000 : 7 * 60 * 1000) / 1000,
                   ),
                 }),
               )
@@ -4287,7 +4288,7 @@ routerAdd('GET', '/backend/v1/jogos-do-dia', (e) => {
       200,
       Object.assign({}, finalPayload, {
         cached: false,
-        ttlSeconds: Math.round((hasLiveMatch ? 90 * 1000 : 30 * 60 * 1000) / 1000),
+        ttlSeconds: Math.round((hasLiveMatch ? 90 * 1000 : 7 * 60 * 1000) / 1000),
       }),
     )
   } catch (err) {

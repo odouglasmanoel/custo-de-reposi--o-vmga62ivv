@@ -1,7 +1,7 @@
 /**
  * Hook dedicado para busca de jogos em intervalo de datas para Enquetes da Copa Coni.
  * Reutiliza os provedores esportivos (API-Football -> Football-Data.org -> TheSportsDB)
- * com cache em memória (TTL 30 min por data), deduplicação e filtragem das principais competições:
+ * com cache em memória (TTL 7 min por data), deduplicação e filtragem das principais competições:
  * - Série A do Brasileirão
  * - Champions League
  * - Grandes da Europa (Premier League, La Liga, Serie A Itália, Bundesliga, Ligue 1)
@@ -411,8 +411,14 @@ routerAdd(
           cachedEntry.payload.fixtures.length > 0
         ) {
           var cAge = nowMs - cachedEntry.timestamp
-          // Cache válido por até 6 horas para datas passadas/futuras de busca de enquetes
-          if (cAge < 6 * 3600 * 1000) {
+          // Se for entrada em contingência/degradada, respeita TTL curto de 60s
+          var isDegradedEntry = Boolean(
+            cachedEntry.payload.fallback_active === true ||
+            cachedEntry.payload.is_contingency === true ||
+            cachedEntry.payload.contingency === true,
+          )
+          var allowedStoreAge = isDegradedEntry ? 60 * 1000 : 7 * 60 * 1000
+          if (cAge < allowedStoreAge) {
             dayFixturesForDate = cachedEntry.payload.fixtures
           }
         }
@@ -456,6 +462,8 @@ routerAdd(
                   var fixDate = item.fixture && item.fixture.date ? String(item.fixture.date) : ''
                   var dateSP = toDateStringSaoPaulo(fixDate) || targetDate
                   var timeSP = toTimeStringSaoPaulo(fixDate)
+                  var authenticAFName =
+                    (item.league && item.league.name) || tCheck.categoria || 'Futebol'
 
                   dayFixturesForDate.push({
                     fixture: {
@@ -469,7 +477,7 @@ routerAdd(
                     },
                     league: {
                       id: lId,
-                      name: tCheck.categoria,
+                      name: authenticAFName,
                       categoria: tCheck.categoria,
                       prioridade: tCheck.prioridade,
                       logo: item.league ? item.league.logo : '',
@@ -537,6 +545,8 @@ routerAdd(
                   var targetCheck = isTargetCompetition(compId, compName, compCode)
                   if (!targetCheck.valid) continue
 
+                  var authenticFdName = compName || targetCheck.categoria || 'Futebol'
+
                   dayFixturesForDate.push({
                     fixture: {
                       id: String(m.id),
@@ -545,7 +555,7 @@ routerAdd(
                     },
                     league: {
                       id: compId,
-                      name: targetCheck.categoria,
+                      name: authenticFdName,
                       categoria: targetCheck.categoria,
                       prioridade: targetCheck.prioridade,
                       logo: (m.competition && m.competition.emblem) || '',
@@ -815,12 +825,14 @@ routerAdd(
           }
           seenConfrontations[confrontationKey] = true
 
+          var displayedCampeonato = (f.league && f.league.name) || tEval.categoria || 'Futebol'
           allFixtures.push({
             id: (f.fixture && f.fixture.id) || 'match_' + allFixtures.length,
             fixture_id: f.fixture && f.fixture.id ? String(f.fixture.id) : '',
             time_a: homeName,
             time_b: awayName,
-            campeonato: tEval.categoria || f.league.name || 'Futebol',
+            campeonato: displayedCampeonato,
+            categoria_interna: tEval.categoria || displayedCampeonato,
             prioridade: tEval.prioridade || 10,
             regiao:
               tEval.categoria.indexOf('Brasileir') !== -1

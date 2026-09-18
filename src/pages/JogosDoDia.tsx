@@ -24,7 +24,7 @@ import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { getHojeDataSaoPaulo } from '@/lib/dateUtils'
+import { getHojeDataSaoPaulo, getJogoKickoffTimestamp, parseHoraJogo } from '@/lib/dateUtils'
 import {
   cleanTeamName,
   stringSimilarity,
@@ -614,7 +614,7 @@ export default function JogosDoDia() {
               ...matchingLiveFixture,
               league: {
                 ...matchingLiveFixture.league,
-                name: ej.campeonato || matchingLiveFixture.league.name,
+                name: matchingLiveFixture.league.name || ej.campeonato,
                 logo: ej.campeonato_logo || matchingLiveFixture.league.logo,
                 region: (ej.regiao as any) || matchingLiveFixture.league.region,
               },
@@ -899,6 +899,29 @@ export default function JogosDoDia() {
     }
   }, [availableRounds, selectedRound])
 
+  // Função utilitária para extrair timestamp absoluto de kickoff para ordenação
+  const resolveKickoffTimestamp = useCallback((fixture: DayFixture): number => {
+    const rawDate = fixture.fixture?.date
+    if (!rawDate) return 0
+
+    // Se já é uma ISO completa ou data com hora UTC/offset
+    if (rawDate.includes('T')) {
+      const parsedUtc = new Date(rawDate).getTime()
+      if (!isNaN(parsedUtc)) {
+        return parsedUtc
+      }
+    }
+
+    // Se for string no formato data ou data com hora separada
+    const ts = getJogoKickoffTimestamp(rawDate)
+    if (ts !== null && !isNaN(ts)) {
+      return ts
+    }
+
+    const fallbackDate = new Date(rawDate).getTime()
+    return !isNaN(fallbackDate) ? fallbackDate : 0
+  }, [])
+
   // Filtragem e busca baseadas no conjunto de ligas relevantes
   const filteredFixtures = useMemo(() => {
     return relevantFixtures.filter((f) => {
@@ -968,7 +991,21 @@ export default function JogosDoDia() {
       }
     }
 
-    return Array.from(map.values()).sort((a, b) => {
+    const groups = Array.from(map.values())
+
+    // Ordenação interna das partidas dentro de cada grupo por horário cronológico e competição
+    for (const group of groups) {
+      group.matches.sort((a, b) => {
+        const timeA = resolveKickoffTimestamp(a)
+        const timeB = resolveKickoffTimestamp(b)
+        if (timeA !== timeB) {
+          return timeA - timeB
+        }
+        return (a.league?.name || '').localeCompare(b.league?.name || '')
+      })
+    }
+
+    return groups.sort((a, b) => {
       // Prioridade máxima: ligas com jogos manuais inseridos pelo Admin
       const aHasManual = a.matches.some((m) => m.isManual || m.fixture?.isManual)
       const bHasManual = b.matches.some((m) => m.isManual || m.fixture?.isManual)
@@ -980,7 +1017,15 @@ export default function JogosDoDia() {
       const bHasLive = b.matches.some((m) => m.isLive)
       if (aHasLive && !bHasLive) return -1
       if (!aHasLive && bHasLive) return 1
-      return a.league.name.localeCompare(b.league.name)
+
+      // Ordenação cronológica pelo horário da primeira partida do grupo
+      const earliestA = a.matches.length > 0 ? resolveKickoffTimestamp(a.matches[0]) : 0
+      const earliestB = b.matches.length > 0 ? resolveKickoffTimestamp(b.matches[0]) : 0
+      if (earliestA !== earliestB) {
+        return earliestA - earliestB
+      }
+
+      return (a.league?.name || '').localeCompare(b.league?.name || '')
     })
   }, [filteredFixtures])
 
