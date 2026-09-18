@@ -229,6 +229,23 @@ export default function BolaoDashboard() {
   const [apiConfigured, setApiConfigured] = useState<boolean | null>(null)
   const [apiProvider, setApiProvider] = useState<string>('football_data')
 
+  // Mapa de escudos dos times em cache / sob demanda
+  const [escudosMap, setEscudosMap] = useState<Record<string, string>>(() => {
+    const initialMap: Record<string, string> = {}
+    const games = initialDashboardCache?.allJogos || initialDashboardCache?.jogos || []
+    for (const j of games) {
+      if (j.time_a) {
+        const cA = readEscudoCache(j.time_a.trim())
+        if (cA) initialMap[j.time_a.trim()] = cA
+      }
+      if (j.time_b) {
+        const cB = readEscudoCache(j.time_b.trim())
+        if (cB) initialMap[j.time_b.trim()] = cB
+      }
+    }
+    return initialMap
+  })
+
   // Sobrescritas manuais de partidas em andamento salvas pelo Admin Douglas
   const [sobrescritasAdmin, setSobrescritasAdmin] = useState<
     Record<
@@ -1045,6 +1062,65 @@ export default function BolaoDashboard() {
     return () => clearInterval(interval)
   }, [jogosLiberados.length, apiFixtures, isRateLimited, fetchLiveScores])
 
+  // Carregamento de escudos para os times dos Jogos de Hoje / Jogos Liberados
+  useEffect(() => {
+    const relevant = isGeral ? allJogos : jogos
+    if (!relevant || relevant.length === 0) return
+
+    const teamNames = new Set<string>()
+    for (const j of relevant) {
+      if (j.time_a && j.time_a.trim()) teamNames.add(j.time_a.trim())
+      if (j.time_b && j.time_b.trim()) teamNames.add(j.time_b.trim())
+    }
+
+    const missingTeams: string[] = []
+    const initialFound: Record<string, string> = {}
+
+    teamNames.forEach((t) => {
+      const cached = readEscudoCache(t)
+      if (cached) {
+        initialFound[t] = cached
+      } else {
+        missingTeams.push(t)
+      }
+    })
+
+    if (Object.keys(initialFound).length > 0) {
+      setEscudosMap((prev) => ({ ...prev, ...initialFound }))
+    }
+
+    if (missingTeams.length > 0) {
+      let isMounted = true
+      Promise.all(
+        missingTeams.map(async (time) => {
+          try {
+            const url = await buscarEscudoTime(time)
+            return { time, url }
+          } catch {
+            return { time, url: '' }
+          }
+        }),
+      ).then((results) => {
+        if (!isMounted) return
+        setEscudosMap((prev) => {
+          let changed = false
+          const next = { ...prev }
+          for (const res of results) {
+            if (res.url && next[res.time] !== res.url) {
+              next[res.time] = res.url
+              changed = true
+            }
+          }
+          return changed ? next : prev
+        })
+      })
+
+      return () => {
+        isMounted = false
+      }
+    }
+  }, [isGeral, allJogos, jogos])
+
   // Quick stats com fallback para o último valor válido conhecido
   // NUNCA zera as estatísticas por falta de tempo de resposta ou carregamento
   const stats: { registrados: number; pendentes: number } | null = useMemo(() => {
@@ -1426,12 +1502,32 @@ export default function BolaoDashboard() {
                 <div className="mt-1.5 space-y-1.5 max-h-24 overflow-y-auto pr-1">
                   {jogosDeHoje.map((jogo) => {
                     const bolaoOrigem = isGeral ? bolaoMap.get(jogo.bolao) : null
+                    const jogoDataISO = normalizeDataISO(jogo.data)
+                    const matchedLive = resolveLiveScoreForGame(
+                      jogo,
+                      apiFixtures,
+                      0.55,
+                      jogoDataISO,
+                    )
+                    const logoCasa =
+                      escudosMap[jogo.time_a?.trim()] ||
+                      matchedLive?.homeTeamLogo ||
+                      readEscudoCache(jogo.time_a?.trim() || '') ||
+                      ''
+                    const logoVisitante =
+                      escudosMap[jogo.time_b?.trim()] ||
+                      matchedLive?.awayTeamLogo ||
+                      readEscudoCache(jogo.time_b?.trim() || '') ||
+                      ''
+                    const initialsA = (jogo.time_a || '').slice(0, 2).toUpperCase()
+                    const initialsB = (jogo.time_b || '').slice(0, 2).toUpperCase()
+
                     return (
                       <div
                         key={jogo.id}
-                        className="flex items-center justify-between gap-2 text-xs"
+                        className="flex items-center justify-between gap-2 text-xs py-0.5"
                       >
-                        <div className="flex items-center gap-1.5 min-w-0">
+                        <div className="flex items-center gap-1.5 min-w-0 flex-1">
                           {bolaoOrigem && (
                             <Badge
                               variant="secondary"
@@ -1440,9 +1536,25 @@ export default function BolaoDashboard() {
                               {bolaoOrigem.nome.replace('Copa ', '')}
                             </Badge>
                           )}
-                          <span className="font-bold text-[#0F172A] truncate">
-                            {jogo.time_a} x {jogo.time_b}
-                          </span>
+                          <div className="flex items-center gap-1 min-w-0 truncate">
+                            <TeamShield
+                              escudo={logoCasa}
+                              nomeTime={jogo.time_a}
+                              sigla={initialsA}
+                              sizeClass="h-4 w-4"
+                              textClass="text-[8px] font-black"
+                            />
+                            <span className="font-bold text-[#0F172A] truncate">{jogo.time_a}</span>
+                            <span className="text-slate-400 font-bold px-0.5 shrink-0">x</span>
+                            <span className="font-bold text-[#0F172A] truncate">{jogo.time_b}</span>
+                            <TeamShield
+                              escudo={logoVisitante}
+                              nomeTime={jogo.time_b}
+                              sigla={initialsB}
+                              sizeClass="h-4 w-4"
+                              textClass="text-[8px] font-black"
+                            />
+                          </div>
                         </div>
                         <span className="shrink-0 font-semibold text-[#0F2A43] bg-slate-100 px-1.5 py-0.5 rounded text-[11px]">
                           {formatHoraBR(jogo.hora) || '—'}
@@ -1599,9 +1711,42 @@ export default function BolaoDashboard() {
                               🏆 {bolaoOrigem.nome}
                             </Badge>
                           )}
-                          <span className="font-bold text-sm text-[#0F172A] tracking-tight">
-                            {tituloConfronto}
-                          </span>
+                          {(() => {
+                            const logoCasa =
+                              escudosMap[jogo.time_a?.trim()] ||
+                              matchedLive?.homeTeamLogo ||
+                              readEscudoCache(jogo.time_a?.trim() || '') ||
+                              ''
+                            const logoVisitante =
+                              escudosMap[jogo.time_b?.trim()] ||
+                              matchedLive?.awayTeamLogo ||
+                              readEscudoCache(jogo.time_b?.trim() || '') ||
+                              ''
+                            const initialsA = (jogo.time_a || '').slice(0, 2).toUpperCase()
+                            const initialsB = (jogo.time_b || '').slice(0, 2).toUpperCase()
+
+                            return (
+                              <div className="flex items-center gap-1.5 shrink-0">
+                                <TeamShield
+                                  escudo={logoCasa}
+                                  nomeTime={jogo.time_a}
+                                  sigla={initialsA}
+                                  sizeClass="h-5 w-5"
+                                  textClass="text-[9px] font-black"
+                                />
+                                <span className="font-bold text-sm text-[#0F172A] tracking-tight">
+                                  {tituloConfronto}
+                                </span>
+                                <TeamShield
+                                  escudo={logoVisitante}
+                                  nomeTime={jogo.time_b}
+                                  sigla={initialsB}
+                                  sizeClass="h-5 w-5"
+                                  textClass="text-[9px] font-black"
+                                />
+                              </div>
+                            )
+                          })()}
                           {jogo.competicao && (
                             <span className="text-[11px] text-slate-500 font-medium">
                               • {jogo.competicao}
