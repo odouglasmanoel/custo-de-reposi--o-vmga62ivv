@@ -41,6 +41,8 @@ import {
 } from '@/lib/dateUtils'
 import { formatPalpiteMarcadoresSummary, getPalpiteMarcadoresPorTime } from '@/lib/scorerUtils'
 import { buscarEscudoTime, readEscudoCache } from '@/services/enquetes'
+import { GameLineupAccordion } from '@/components/GameLineupAccordion'
+import { checkPlayerInLineup, LineupResponse } from '@/services/escalacoes'
 
 interface PalpiteFormData {
   placar_a: number | string
@@ -171,6 +173,7 @@ export default function Palpites() {
   const [editingGames, setEditingGames] = useState<Record<string, boolean>>({})
   const [savingGameId, setSavingGameId] = useState<string | null>(null)
   const [expandedDetails, setExpandedDetails] = useState<Record<string, boolean>>({})
+  const [loadedLineups, setLoadedLineups] = useState<Record<string, LineupResponse>>({})
   const [adminEditingPalpite, setAdminEditingPalpite] = useState<{
     palpite: Palpite
     participanteNome: string
@@ -429,7 +432,7 @@ export default function Palpites() {
               filter: gamesFilter || undefined,
               sort: 'data,hora',
               fields:
-                'id,bolao,time_a,time_b,data,hora,competicao,resultado_finalizado,placar_a,placar_b,tem_penaltis,vencedor_penaltis',
+                'id,bolao,time_a,time_b,data,hora,competicao,resultado_finalizado,placar_a,placar_b,tem_penaltis,vencedor_penaltis,fixture_id',
             })
 
             // Buscar registros de participante deste usuário
@@ -564,7 +567,7 @@ export default function Palpites() {
               filter: specificFilter,
               sort: 'data,hora',
               fields:
-                'id,bolao,time_a,time_b,data,hora,competicao,resultado_finalizado,placar_a,placar_b,tem_penaltis,vencedor_penaltis',
+                'id,bolao,time_a,time_b,data,hora,competicao,resultado_finalizado,placar_a,placar_b,tem_penaltis,vencedor_penaltis,fixture_id',
             })
 
             const [gamesResult] = await Promise.race([
@@ -989,6 +992,8 @@ export default function Palpites() {
         participantName,
         isAdmin,
         expandedDetails,
+        currentLineup,
+        onLineupLoaded,
         onToggleDetails,
         onLoadGroupBets,
         onSetEditing,
@@ -1023,6 +1028,8 @@ export default function Palpites() {
         participantName: string
         isAdmin: boolean
         expandedDetails: boolean
+        currentLineup: LineupResponse | undefined
+        onLineupLoaded: (lineup: LineupResponse) => void
         onToggleDetails: (id: string) => void
         onLoadGroupBets: () => void
         onSetEditing: (id: string, editing: boolean) => void
@@ -1447,8 +1454,19 @@ export default function Palpites() {
                     </div>
                   )}
 
+                  {/* Botão retrátil [ Ver Escalações ] */}
+                  <GameLineupAccordion
+                    jogoId={jogo.id}
+                    fixtureId={jogo.fixture_id}
+                    timeA={jogo.time_a}
+                    timeB={jogo.time_b}
+                    data={jogo.data}
+                    onLineupLoaded={onLineupLoaded}
+                  />
+
                   {/* Score inputs with compact team shields: [Escudo A] [input placar A] x [input placar B] [Escudo B] */}
                   <div className="flex items-center justify-center gap-2 py-1">
+                    {' '}
                     <div className="flex flex-col items-center shrink-0">
                       {escudoA ? (
                         <img
@@ -1467,7 +1485,6 @@ export default function Palpites() {
                         </div>
                       )}
                     </div>
-
                     <Input
                       type="number"
                       min="0"
@@ -1479,9 +1496,7 @@ export default function Palpites() {
                         isLocked ? 'bg-slate-100 cursor-not-allowed opacity-90' : ''
                       }`}
                     />
-
                     <span className="text-xs font-bold text-slate-400 px-0.5">X</span>
-
                     <Input
                       type="number"
                       min="0"
@@ -1493,7 +1508,6 @@ export default function Palpites() {
                         isLocked ? 'bg-slate-100 cursor-not-allowed opacity-90' : ''
                       }`}
                     />
-
                     <div className="flex flex-col items-center shrink-0">
                       {escudoB ? (
                         <img
@@ -1555,24 +1569,80 @@ export default function Palpites() {
                             </p>
                           ) : (
                             <div className="space-y-2">
-                              {Array.from({ length: numGolsA }).map((_, idx) => (
-                                <div key={idx} className="flex items-center gap-2">
-                                  <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-slate-200 text-[10px] font-bold text-slate-700">
-                                    {idx + 1}º
-                                  </span>
-                                  <Input
-                                    disabled={isLocked}
-                                    placeholder={`Nome do autor do ${idx + 1}º gol (ex: Pedro Raul)`}
-                                    value={form.goleadores_a?.[idx] || ''}
-                                    onChange={(e) =>
-                                      onScorerLineChange(jogo.id, 'a', idx, e.target.value)
-                                    }
-                                    className={`h-8 border-[#CBD5E1] bg-white text-xs focus-visible:border-[#10B981] focus-visible:ring-[#10B981] ${
-                                      isLocked ? 'bg-slate-100 cursor-not-allowed opacity-90' : ''
-                                    }`}
-                                  />
-                                </div>
-                              ))}
+                              {Array.from({ length: numGolsA }).map((_, idx) => {
+                                const currentScorer = form.goleadores_a?.[idx] || ''
+                                const lineupCheck = checkPlayerInLineup(
+                                  currentScorer,
+                                  currentLineup?.teams?.[0],
+                                )
+                                const isStarter = lineupCheck.role === 'titular'
+                                const isSub = lineupCheck.role === 'reserva'
+
+                                return (
+                                  <div key={idx} className="space-y-1">
+                                    <div className="flex items-center gap-2">
+                                      <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-slate-200 text-[10px] font-bold text-slate-700">
+                                        {idx + 1}º
+                                      </span>
+                                      <div className="relative flex-1">
+                                        <Input
+                                          disabled={isLocked}
+                                          placeholder={`Nome do autor do ${idx + 1}º gol (ex: Pedro Raul)`}
+                                          value={currentScorer}
+                                          onChange={(e) =>
+                                            onScorerLineChange(jogo.id, 'a', idx, e.target.value)
+                                          }
+                                          className={`h-8 border-[#CBD5E1] bg-white text-xs pr-7 focus-visible:border-[#10B981] focus-visible:ring-[#10B981] ${
+                                            isLocked
+                                              ? 'bg-slate-100 cursor-not-allowed opacity-90'
+                                              : ''
+                                          } ${
+                                            isStarter
+                                              ? 'border-emerald-400 bg-emerald-50/20'
+                                              : isSub
+                                                ? 'border-amber-400 bg-amber-50/20'
+                                                : ''
+                                          }`}
+                                        />
+                                        {/* Indicador visual quando o jogador está na escalação */}
+                                        {isStarter && (
+                                          <div
+                                            className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center"
+                                            title="Titular confirmado na escalação!"
+                                          >
+                                            <span className="flex h-2.5 w-2.5 rounded-full bg-emerald-500 ring-2 ring-emerald-200" />
+                                          </div>
+                                        )}
+                                        {isSub && (
+                                          <div
+                                            className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center"
+                                            title="No banco de reservas!"
+                                          >
+                                            <span className="flex h-2.5 w-2.5 rounded-full bg-amber-500 ring-2 ring-amber-200" />
+                                          </div>
+                                        )}
+                                      </div>
+                                    </div>
+                                    {/* Badge explicativa discreta se houver match */}
+                                    {isStarter && (
+                                      <div className="ml-8 flex items-center gap-1 text-[10px] font-medium text-emerald-700">
+                                        <CheckCircle2 className="h-2.5 w-2.5" />
+                                        <span>
+                                          Titular na escalação ({lineupCheck.matchedPlayer?.name})
+                                        </span>
+                                      </div>
+                                    )}
+                                    {isSub && (
+                                      <div className="ml-8 flex items-center gap-1 text-[10px] font-medium text-amber-700">
+                                        <span className="h-1.5 w-1.5 rounded-full bg-amber-500" />
+                                        <span>
+                                          Banco de reservas ({lineupCheck.matchedPlayer?.name})
+                                        </span>
+                                      </div>
+                                    )}
+                                  </div>
+                                )
+                              })}
                               <p className="mt-1 text-[10px] text-slate-500">
                                 Pode repetir o mesmo jogador caso aposte em múltiplos gols dele.
                               </p>
@@ -1606,24 +1676,80 @@ export default function Palpites() {
                             </p>
                           ) : (
                             <div className="space-y-2">
-                              {Array.from({ length: numGolsB }).map((_, idx) => (
-                                <div key={idx} className="flex items-center gap-2">
-                                  <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-slate-200 text-[10px] font-bold text-slate-700">
-                                    {idx + 1}º
-                                  </span>
-                                  <Input
-                                    disabled={isLocked}
-                                    placeholder={`Nome do autor do ${idx + 1}º gol (ex: Veiga)`}
-                                    value={form.goleadores_b?.[idx] || ''}
-                                    onChange={(e) =>
-                                      onScorerLineChange(jogo.id, 'b', idx, e.target.value)
-                                    }
-                                    className={`h-8 border-[#CBD5E1] bg-white text-xs focus-visible:border-[#10B981] focus-visible:ring-[#10B981] ${
-                                      isLocked ? 'bg-slate-100 cursor-not-allowed opacity-90' : ''
-                                    }`}
-                                  />
-                                </div>
-                              ))}
+                              {Array.from({ length: numGolsB }).map((_, idx) => {
+                                const currentScorer = form.goleadores_b?.[idx] || ''
+                                const lineupCheck = checkPlayerInLineup(
+                                  currentScorer,
+                                  currentLineup?.teams?.[1],
+                                )
+                                const isStarter = lineupCheck.role === 'titular'
+                                const isSub = lineupCheck.role === 'reserva'
+
+                                return (
+                                  <div key={idx} className="space-y-1">
+                                    <div className="flex items-center gap-2">
+                                      <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-slate-200 text-[10px] font-bold text-slate-700">
+                                        {idx + 1}º
+                                      </span>
+                                      <div className="relative flex-1">
+                                        <Input
+                                          disabled={isLocked}
+                                          placeholder={`Nome do autor do ${idx + 1}º gol (ex: Veiga)`}
+                                          value={currentScorer}
+                                          onChange={(e) =>
+                                            onScorerLineChange(jogo.id, 'b', idx, e.target.value)
+                                          }
+                                          className={`h-8 border-[#CBD5E1] bg-white text-xs pr-7 focus-visible:border-[#10B981] focus-visible:ring-[#10B981] ${
+                                            isLocked
+                                              ? 'bg-slate-100 cursor-not-allowed opacity-90'
+                                              : ''
+                                          } ${
+                                            isStarter
+                                              ? 'border-emerald-400 bg-emerald-50/20'
+                                              : isSub
+                                                ? 'border-amber-400 bg-amber-50/20'
+                                                : ''
+                                          }`}
+                                        />
+                                        {/* Indicador visual quando o jogador está na escalação */}
+                                        {isStarter && (
+                                          <div
+                                            className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center"
+                                            title="Titular confirmado na escalação!"
+                                          >
+                                            <span className="flex h-2.5 w-2.5 rounded-full bg-emerald-500 ring-2 ring-emerald-200" />
+                                          </div>
+                                        )}
+                                        {isSub && (
+                                          <div
+                                            className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center"
+                                            title="No banco de reservas!"
+                                          >
+                                            <span className="flex h-2.5 w-2.5 rounded-full bg-amber-500 ring-2 ring-amber-200" />
+                                          </div>
+                                        )}
+                                      </div>
+                                    </div>
+                                    {/* Badge explicativa discreta se houver match */}
+                                    {isStarter && (
+                                      <div className="ml-8 flex items-center gap-1 text-[10px] font-medium text-emerald-700">
+                                        <CheckCircle2 className="h-2.5 w-2.5" />
+                                        <span>
+                                          Titular na escalação ({lineupCheck.matchedPlayer?.name})
+                                        </span>
+                                      </div>
+                                    )}
+                                    {isSub && (
+                                      <div className="ml-8 flex items-center gap-1 text-[10px] font-medium text-amber-700">
+                                        <span className="h-1.5 w-1.5 rounded-full bg-amber-500" />
+                                        <span>
+                                          Banco de reservas ({lineupCheck.matchedPlayer?.name})
+                                        </span>
+                                      </div>
+                                    )}
+                                  </div>
+                                )
+                              })}
                               <p className="mt-1 text-[10px] text-slate-500">
                                 Pode repetir o mesmo jogador caso aposte em múltiplos gols dele.
                               </p>
@@ -1719,12 +1845,12 @@ export default function Palpites() {
           prev.expandedDetails === next.expandedDetails &&
           prev.betsForGame.length === next.betsForGame.length &&
           prev.loadedGroupBets === next.loadedGroupBets &&
-          prev.loadingGroupBets === next.loadingGroupBets
+          prev.loadingGroupBets === next.loadingGroupBets &&
+          prev.currentLineup === next.currentLineup
         )
       },
     )
   }, [])
-
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -1942,6 +2068,7 @@ export default function Palpites() {
             const isEditing = Boolean(editingGames[jogo.id]) && !isExpired
             const isLocked = (isSaved && !isEditing) || isExpired
             const betsForGame = allGroupPalpites.filter((p) => p.jogo === jogo.id)
+            const currentLineup = loadedLineups[jogo.id]
 
             return (
               <PalpiteItemCard
@@ -1970,6 +2097,13 @@ export default function Palpites() {
                 participantName={participantName}
                 isAdmin={isAdmin}
                 expandedDetails={Boolean(expandedDetails[jogo.id])}
+                currentLineup={currentLineup}
+                onLineupLoaded={(ln) => {
+                  setLoadedLineups((prev) => ({
+                    ...prev,
+                    [jogo.id]: ln,
+                  }))
+                }}
                 onToggleDetails={toggleDetails}
                 onLoadGroupBets={loadGroupBetsOnDemand}
                 onSetEditing={(id, editing) =>
