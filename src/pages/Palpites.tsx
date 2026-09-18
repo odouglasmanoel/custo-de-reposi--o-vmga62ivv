@@ -994,11 +994,18 @@ export default function Palpites() {
   }, [jogos, selectedCompeticao, bolaoMap])
 
   // Helper canônico para cálculo de timestamp em milissegundos
-  const getGameTimestampMs = (jogo: Jogo): number => {
-    const dataISO = normalizeDataISO(jogo.data)
-    if (!dataISO) return 0
-    const hora = (jogo.hora || '12:00').trim().substring(0, 5)
-    const ts = new Date(`${dataISO}T${hora}:00`).getTime()
+  const getMatchSortTimestamp = (jogo: Jogo): number => {
+    if (!jogo.data) return 0
+    let isoDate = jogo.data
+    if (isoDate.includes('/')) {
+      const [d, m, y] = isoDate.split('/')
+      isoDate = `${y}-${m.padStart(2, '0')}-${d.padStart(2, '0')}`
+    } else {
+      const normalized = normalizeDataISO(isoDate)
+      if (normalized) isoDate = normalized
+    }
+    const hora = (jogo.hora || (jogo as any).horario || '00:00').slice(0, 5)
+    const ts = new Date(`${isoDate}T${hora}:00`).getTime()
     return isNaN(ts) ? 0 : ts
   }
 
@@ -1007,7 +1014,7 @@ export default function Palpites() {
 
   const displayedJogos = useMemo(() => {
     const copy = [...filteredJogos]
-    copy.sort((a, b) => {
+    return copy.sort((a, b) => {
       // 1. Mantém jogos pendentes no topo quando na visualização geral
       const finA = Boolean(a.resultado_finalizado)
       const finB = Boolean(b.resultado_finalizado)
@@ -1016,11 +1023,10 @@ export default function Palpites() {
       }
 
       // 2. Ordenação por timestamp milissegundo conforme o seletor Crescente/Decrescente
-      const tsA = getGameTimestampMs(a)
-      const tsB = getGameTimestampMs(b)
+      const tsA = getMatchSortTimestamp(a)
+      const tsB = getMatchSortTimestamp(b)
       return sortOrder === 'asc' ? tsA - tsB : tsB - tsA
     })
-    return copy
   }, [filteredJogos, sortOrder])
   const hasMore = currentPage < totalPages
 

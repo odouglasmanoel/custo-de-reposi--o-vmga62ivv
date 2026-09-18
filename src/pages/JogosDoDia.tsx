@@ -1862,14 +1862,6 @@ export default function JogosDoDia() {
                   </div>
 
                   <div className="flex items-center gap-2">
-                    {league.region && league.region !== 'Outros' && (
-                      <Badge
-                        variant="secondary"
-                        className="text-[10px] font-bold border-slate-200 bg-white"
-                      >
-                        {league.region}
-                      </Badge>
-                    )}
                     {hasLiveInLeague && (
                       <span className="flex h-2 w-2 rounded-full bg-rose-500 animate-ping" />
                     )}
