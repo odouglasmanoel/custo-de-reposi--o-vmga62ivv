@@ -32,6 +32,13 @@ import {
 } from '@/lib/apiFootballMatcher'
 import { getRegionAndCountryByTournament } from '@/lib/tournamentRegionMatcher'
 import { buscarJogosIntervalo, JogoBuscado } from '@/services/enquetes'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 
 export interface FixtureScorer {
   name: string
@@ -422,7 +429,8 @@ export default function JogosDoDia() {
   const activeFetchAbortRef = useRef<AbortController | null>(null)
 
   // Filtros
-  const [selectedRegion, setSelectedRegion] = useState<string>('todos')
+  const [selectedCompetition, setSelectedCompetition] = useState<string>('todos')
+  const [selectedRound, setSelectedRound] = useState<string>('todos')
   const [selectedStatus, setSelectedStatus] = useState<string>('todos') // todos, ao-vivo, em-breve, finalizado
   const [searchTerm, setSearchTerm] = useState<string>('')
 
@@ -708,88 +716,22 @@ export default function JogosDoDia() {
     fetchJogos(selectedDate)
   }, [selectedDate, fetchJogos])
 
-  // Ligas e competições relevantes acompanhadas pelo app:
-  // Brasileirão A-D, Copa do Brasil, Libertadores, Sul-Americana,
-  // Champions League, Europa League, Conference League, Premier League,
-  // La Liga, Serie A, Bundesliga, Ligue 1 e principais copas nacionais europeias.
+  // Lista todos os jogos do mundo retornados pelos provedores (/backend/v1/jogos-do-dia e buscarJogosIntervalo semCorte=true).
+  // Sem travas de exclusão por região 'Outros' ou condição de times brasileiros em Libertadores/Sul-Americana.
   const relevantFixtures = useMemo(() => {
-    const targetLeagueSet = new Set<number>([
-      71, // Brasileirão Série A
-      72, // Série B
-      73, // Copa do Brasil / Série C
-      74, // Copa do Brasil / Série D
-      75, // Série C
-      76, // Série D
-      13, // Copa Libertadores
-      11, // Copa Sudamericana
-      450, // Copa Sudamericana alternativa
-      4501, // TheSportsDB Copa Libertadores
-      4724, // TheSportsDB Copa Sudamericana
-      4351, // TheSportsDB Brazilian Serie A
-      4404, // TheSportsDB Brazilian Serie B
-      4725, // TheSportsDB Copa do Brasil
-      4480, // UEFA Champions League
-      4400, // La Liga 2
-      2, // UEFA Champions League (CL)
-      3, // UEFA Europa League (EL)
-      848, // UEFA Conference League
-      39, // Premier League (Inglaterra)
-      140, // La Liga (Espanha)
-      141, // La Liga 2 (Espanha)
-      135, // Serie A (Itália)
-      78, // Bundesliga (Alemanha)
-      61, // Ligue 1 (França)
-      45, // FA Cup
-      48, // EFL Carabao Cup
-      143, // Copa del Rey
-      4483, // Copa del Rey (TheSportsDB)
-      137, // Coppa Italia
-      81, // DFB-Pokal
-      66, // Coupe de France
-      2013, // Football-Data.org Brasileirão Série A
-      2001, // Football-Data.org UEFA Champions League
-      2021, // Football-Data.org Premier League
-      2014, // Football-Data.org La Liga
-      2019, // Football-Data.org Serie A
-      2002, // Football-Data.org Bundesliga
-      2015, // Football-Data.org Ligue 1
-    ])
-
     const seenMatchupKeys = new Set<string>()
     const deduplicated: DayFixture[] = []
 
     for (const item of fixtures) {
-      // Jogos manuais cadastrados pelo Admin têm passe livre e NUNCA devem ser descartados
-      const isManualMatch = Boolean(
-        item.isManual ||
-        item.fixture?.isManual ||
-        item.manualRecordId ||
-        (typeof item.fixture?.id === 'string' && item.fixture.id.startsWith('manual_')),
-      )
-
-      // FILTRO ESTRITO DE FUSO HORÁRIO (America/Sao_Paulo - UTC-3):
+      // FILTRO DE FUSO HORÁRIO (America/Sao_Paulo - UTC-3):
       // Converte o horário da partida para a data no fuso de Brasília.
       // Se a partida pertence a outro dia que não a selectedDate selecionada no datepicker,
-      // descarta imediatamente (evitando jogos de ontem).
+      // descarta para evitar contaminação de datas vizinhas.
       const fixtureDateStr = item.fixture?.date
       if (selectedDate && fixtureDateStr) {
         const fixtureDateSP = getFixtureDateSaoPaulo(fixtureDateStr)
         if (fixtureDateSP && fixtureDateSP !== selectedDate) {
           continue
-        }
-      }
-
-      if (!isManualMatch) {
-        const lid = item.league?.id
-        // Se a partida veio do serviço de Enquetes ou possui campeonato mapeado
-        if (item.league?.region && item.league.region !== 'Outros') {
-          // Aceita torneios categorizados diretamente
-        } else if (lid && targetLeagueSet.has(lid)) {
-          // Aceita ID alvo
-        } else if (!lid && item.league?.name) {
-          // Aceita se tiver nome de campeonato
-        } else if (!lid) {
-          // Permite se houver dados de times
         }
       }
 
@@ -886,12 +828,160 @@ export default function JogosDoDia() {
     return () => clearInterval(timer)
   }, [counts.live, isRateLimited, selectedDate, fetchJogos])
 
+  // Helper para classificar cada partida na categoria de Competição:
+  // - brasileirao_copas: Brasileirão & Copas Nacionais
+  // - conmebol: Libertadores & Sul-Americana
+  // - champions_uefa: Champions League & UEFA
+  // - grandes_ligas_europeias: Grandes Ligas Europeias
+  // - outras: Outras Competições (dinâmicas conforme a data)
+  const getCompetitionCategory = useCallback((f: DayFixture): string => {
+    const lid = Number(f.league?.id) || 0
+    const name = (f.league?.name || '').toLowerCase()
+    const country = (f.league?.country || '').toLowerCase()
+
+    // 1. Brasileirão & Copas Nacionais
+    const isBrasileiraoOrCopas =
+      lid === 71 ||
+      lid === 72 ||
+      lid === 73 ||
+      lid === 74 ||
+      lid === 75 ||
+      lid === 76 ||
+      lid === 2013 ||
+      lid === 4351 ||
+      lid === 4404 ||
+      lid === 4725 ||
+      name.includes('brasileir') ||
+      name.includes('copa do brasil') ||
+      name.includes('paulist') ||
+      name.includes('carioca') ||
+      name.includes('mineiro') ||
+      name.includes('gaucho') ||
+      name.includes('paranaense') ||
+      name.includes('catarinense') ||
+      name.includes('copa do nordeste') ||
+      name.includes('copa verde') ||
+      name.includes('supercopa do brasil') ||
+      name.includes('supercopa rei') ||
+      ((country === 'brazil' || country === 'brasil') &&
+        (name.includes('série') || name.includes('serie') || name.includes('copa')))
+
+    if (isBrasileiraoOrCopas) return 'brasileirao_copas'
+
+    // 2. Libertadores & Sul-Americana
+    const isConmebol =
+      lid === 13 ||
+      lid === 11 ||
+      lid === 450 ||
+      lid === 4501 ||
+      lid === 4724 ||
+      name.includes('libertadores') ||
+      name.includes('sudamericana') ||
+      name.includes('sul-americana') ||
+      name.includes('sul americana') ||
+      name.includes('recopa sudamericana') ||
+      name.includes('conmebol')
+
+    if (isConmebol) return 'conmebol'
+
+    // 3. Champions League & UEFA
+    const isChampionsUefa =
+      lid === 2 ||
+      lid === 3 ||
+      lid === 848 ||
+      lid === 2001 ||
+      lid === 4480 ||
+      lid === 4481 ||
+      lid === 5071 ||
+      name.includes('champions league') ||
+      name.includes('uefa') ||
+      name.includes('europa league') ||
+      name.includes('conference league') ||
+      name.includes('super cup') ||
+      name.includes('nations league')
+
+    if (isChampionsUefa) return 'champions_uefa'
+
+    // 4. Grandes Ligas Europeias (Premier League, La Liga, Serie A, Bundesliga, Ligue 1 e suas copas nacionais)
+    const isBigEuropeanLeague =
+      lid === 39 ||
+      lid === 140 ||
+      lid === 141 ||
+      lid === 135 ||
+      lid === 78 ||
+      lid === 61 ||
+      lid === 45 ||
+      lid === 48 ||
+      lid === 143 ||
+      lid === 137 ||
+      lid === 81 ||
+      lid === 66 ||
+      lid === 2021 ||
+      lid === 2014 ||
+      lid === 2019 ||
+      lid === 2002 ||
+      lid === 2015 ||
+      lid === 4400 ||
+      lid === 4483 ||
+      name.includes('premier league') ||
+      name.includes('la liga') ||
+      name.includes('serie a tim') ||
+      (name.includes('serie a') && (country.includes('italy') || country.includes('itália'))) ||
+      name.includes('bundesliga') ||
+      name.includes('ligue 1') ||
+      name.includes('ligue 2') ||
+      name.includes('fa cup') ||
+      name.includes('carabao') ||
+      name.includes('copa del rey') ||
+      name.includes('coppa italia') ||
+      name.includes('dfb-pokal') ||
+      name.includes('dfb pokal') ||
+      name.includes('coupe de france')
+
+    if (isBigEuropeanLeague) return 'grandes_ligas_europeias'
+
+    // 5. Outras Competições (dinâmicas conforme a data)
+    return 'outras'
+  }, [])
+
+  // Lista dinâmica de rounds/fases com base nos jogos da competição selecionada
+  const availableRounds = useMemo(() => {
+    const roundsSet = new Set<string>()
+    for (const f of relevantFixtures) {
+      if (selectedCompetition !== 'todos') {
+        const cat = getCompetitionCategory(f)
+        if (cat !== selectedCompetition) continue
+      }
+      const r = (f.league?.round || '').trim()
+      if (r) {
+        roundsSet.add(r)
+      }
+    }
+    return Array.from(roundsSet).sort((a, b) => a.localeCompare(b))
+  }, [relevantFixtures, selectedCompetition, getCompetitionCategory])
+
+  // Reseta selectedRound caso o round atual não exista mais nas opções da competição selecionada
+  useEffect(() => {
+    if (selectedRound !== 'todos' && !availableRounds.includes(selectedRound)) {
+      setSelectedRound('todos')
+    }
+  }, [availableRounds, selectedRound])
+
   // Filtragem e busca baseadas no conjunto de ligas relevantes
   const filteredFixtures = useMemo(() => {
     return relevantFixtures.filter((f) => {
-      // Filtro de região: se o usuário selecionou uma região específica, confere
-      if (selectedRegion !== 'todos') {
-        if (f.league.region !== selectedRegion) {
+      // Filtro de competição
+      if (selectedCompetition !== 'todos') {
+        const cat = getCompetitionCategory(f)
+        if (cat !== selectedCompetition) {
+          return false
+        }
+      }
+
+      // Filtro de divisão / fase
+      if (selectedRound !== 'todos') {
+        const r = (f.league?.round || '').trim()
+        if (r !== selectedRound) {
           return false
         }
       }
@@ -921,7 +1011,14 @@ export default function JogosDoDia() {
 
       return true
     })
-  }, [relevantFixtures, selectedRegion, selectedStatus, searchTerm])
+  }, [
+    relevantFixtures,
+    selectedCompetition,
+    selectedRound,
+    selectedStatus,
+    searchTerm,
+    getCompetitionCategory,
+  ])
 
   // Agrupamento por competição/liga
   const groupedByLeague = useMemo(() => {
@@ -1579,38 +1676,70 @@ export default function JogosDoDia() {
       )}
 
       {/* Barra de Filtros e Busca */}
-      <div className="flex flex-col gap-3 rounded-[14px] border border-[#E2E8F0] bg-white p-4 shadow-xs lg:flex-row lg:items-center lg:justify-between">
-        {/* Filtro por Região */}
-        <div className="flex flex-wrap items-center gap-1">
-          <span className="text-xs font-bold text-slate-500 mr-1 flex items-center gap-1">
-            <Filter className="h-3.5 w-3.5" />
-            Região:
-          </span>
-          {[
-            { id: 'todos', label: 'Todos' },
-            { id: 'Brasileirão & Copas', label: 'Brasileirão & Copas' },
-            { id: 'Sul-Americana', label: 'Sul-Americana / Liberta' },
-            { id: 'Futebol Europeu', label: 'Futebol Europeu' },
-          ].map((reg) => (
-            <Button
-              key={reg.id}
-              type="button"
-              variant={selectedRegion === reg.id ? 'default' : 'outline'}
-              size="sm"
-              onClick={() => setSelectedRegion(reg.id)}
-              className={`h-7 px-2.5 text-xs font-semibold ${
-                selectedRegion === reg.id
-                  ? 'bg-[#0F2A43] text-white hover:bg-[#1B3A5C]'
-                  : 'border-slate-200 text-slate-700 hover:bg-slate-50'
-              }`}
-            >
-              {reg.label}
-            </Button>
-          ))}
+      <div className="flex flex-col gap-3 rounded-[14px] border border-[#E2E8F0] bg-white p-4 shadow-xs">
+        {/* Linha superior: Filtro de Competição e Seletor de Divisão / Fase */}
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+          {/* Filtro por Competição */}
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span className="text-xs font-bold text-slate-500 mr-1 flex items-center gap-1">
+              <Filter className="h-3.5 w-3.5" />
+              Competição:
+            </span>
+            {[
+              { id: 'todos', label: 'Todos' },
+              { id: 'brasileirao_copas', label: 'Brasileirão & Copas Nacionais' },
+              { id: 'conmebol', label: 'Libertadores & Sul-Americana' },
+              { id: 'champions_uefa', label: 'Champions League & UEFA' },
+              { id: 'grandes_ligas_europeias', label: 'Grandes Ligas Europeias' },
+              { id: 'outras', label: 'Outras Competições' },
+            ].map((comp) => (
+              <Button
+                key={comp.id}
+                type="button"
+                variant={selectedCompetition === comp.id ? 'default' : 'outline'}
+                size="sm"
+                onClick={() => {
+                  setSelectedCompetition(comp.id)
+                  setSelectedRound('todos')
+                }}
+                className={`h-7 px-2.5 text-xs font-semibold ${
+                  selectedCompetition === comp.id
+                    ? 'bg-[#0F2A43] text-white hover:bg-[#1B3A5C]'
+                    : 'border-slate-200 text-slate-700 hover:bg-slate-50'
+                }`}
+              >
+                {comp.label}
+              </Button>
+            ))}
+          </div>
+
+          {/* Filtro secundário: Divisão / Fase */}
+          {availableRounds.length > 0 && (
+            <div className="flex items-center gap-2 shrink-0">
+              <span className="text-xs font-semibold text-slate-500 whitespace-nowrap">
+                Divisão / Fase:
+              </span>
+              <Select value={selectedRound} onValueChange={setSelectedRound}>
+                <SelectTrigger className="h-8 min-w-[200px] max-w-[280px] text-xs bg-slate-50 border-slate-200">
+                  <SelectValue placeholder="Todas as Fases / Divisões" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="todos" className="text-xs font-medium">
+                    Todas as Fases / Divisões
+                  </SelectItem>
+                  {availableRounds.map((r) => (
+                    <SelectItem key={r} value={r} className="text-xs">
+                      {r}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
         </div>
 
-        {/* Filtro por Status e Busca */}
-        <div className="flex flex-wrap items-center gap-2">
+        {/* Linha inferior: Filtro por Status e Busca */}
+        <div className="flex flex-col gap-3 pt-2 border-t border-slate-100 sm:flex-row sm:items-center sm:justify-between">
           <Tabs value={selectedStatus} onValueChange={setSelectedStatus} className="w-auto">
             <TabsList className="bg-slate-100 p-0.5 h-8">
               <TabsTrigger value="todos" className="text-xs font-semibold h-7 px-2.5">
@@ -1631,7 +1760,7 @@ export default function JogosDoDia() {
             </TabsList>
           </Tabs>
 
-          <div className="relative w-full sm:w-48">
+          <div className="relative w-full sm:w-64">
             <Search className="absolute left-2.5 top-2.5 h-3.5 w-3.5 text-slate-400" />
             <Input
               type="text"
@@ -1701,32 +1830,13 @@ export default function JogosDoDia() {
       ) : groupedByLeague.length === 0 ? (
         <Card className="rounded-[14px] border-[#E2E8F0] bg-white p-12 text-center text-xs text-slate-500 shadow-xs">
           <Trophy className="mx-auto h-8 w-8 text-slate-300 mb-2" />
-          {activeProvider === 'football_data' &&
-          (selectedRegion === 'Sul-Americana' ||
-            (selectedRegion === 'Brasileirão & Copas' &&
-              relevantFixtures.filter((f) => f.league.region === 'Brasileirão & Copas').length ===
-                0)) ? (
-            <div className="space-y-1">
-              <p className="font-semibold text-slate-700">
-                Sem cobertura neste provedor ({selectedRegion})
-              </p>
-              <p className="mt-1 text-slate-400 max-w-md mx-auto">
-                O provedor ativo (Football-Data.org) cobre apenas grandes ligas (Brasileirão Série
-                A, Champions League, Premier League, La Liga, Serie A, Bundesliga e Ligue 1).
-                Torneios como Séries B/C/D, Copa do Brasil ou Sul-Americana não são transmitidos por
-                ele.
-              </p>
-            </div>
-          ) : (
-            <>
-              <p className="font-semibold text-slate-700">
-                Nenhuma partida encontrada para os critérios selecionados.
-              </p>
-              <p className="mt-1 text-slate-400">
-                Tente selecionar outra data ou ajustar os filtros de região e status acima.
-              </p>
-            </>
-          )}
+          <p className="font-semibold text-slate-700">
+            Nenhuma partida encontrada para os critérios selecionados.
+          </p>
+          <p className="mt-1 text-slate-400">
+            Tente selecionar outra data ou ajustar os filtros de competição, divisão/fase e status
+            acima.
+          </p>
         </Card>
       ) : (
         <div className="space-y-6">
@@ -1764,12 +1874,14 @@ export default function JogosDoDia() {
                   </div>
 
                   <div className="flex items-center gap-2">
-                    <Badge
-                      variant="secondary"
-                      className="text-[10px] font-bold border-slate-200 bg-white"
-                    >
-                      {league.region}
-                    </Badge>
+                    {league.region && league.region !== 'Outros' && (
+                      <Badge
+                        variant="secondary"
+                        className="text-[10px] font-bold border-slate-200 bg-white"
+                      >
+                        {league.region}
+                      </Badge>
+                    )}
                     {hasLiveInLeague && (
                       <span className="flex h-2 w-2 rounded-full bg-rose-500 animate-ping" />
                     )}
