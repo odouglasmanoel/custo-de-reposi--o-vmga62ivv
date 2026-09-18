@@ -182,6 +182,7 @@ export default function Palpites() {
     timeB: string
   } | null>(null)
   const [filterPendentes, setFilterPendentes] = useState<boolean>(initialPendentes)
+  const [selectedCompeticao, setSelectedCompeticao] = useState<string>('todas')
   const [manualSort, setManualSort] = useState<'asc' | 'desc' | null>(null)
   const [loadingGroupBets, setLoadingGroupBets] = useState(false)
   const [loadedGroupBets, setLoadedGroupBets] = useState(false)
@@ -429,8 +430,8 @@ export default function Palpites() {
           }
 
           if (isGeralParam) {
-            // MODO GERAL: Carregamento paginado de 20 jogos no backend
-            const gamesListPromise = pb.collection('jogos').getList<Jogo>(pageToLoad, 20, {
+            // MODO GERAL: Carregamento completo de todos os jogos do bolão geral (sem corte de 20 que oculta datas futuras)
+            const gamesListPromise = pb.collection('jogos').getFullList<Jogo>({
               filter: gamesFilter || undefined,
               sort: 'data,hora',
               fields:
@@ -455,7 +456,7 @@ export default function Palpites() {
             setUserParticipantsMap(myPartMapByBolao)
 
             // Buscar palpites do usuário logado para as partidas retornadas
-            const loadedGameIds = gamesResult.items.map((j) => j.id)
+            const loadedGameIds = gamesResult.map((j) => j.id)
             let myPalpites: Palpite[] = []
 
             if (loadedGameIds.length > 0 && myParts.length > 0) {
@@ -473,20 +474,20 @@ export default function Palpites() {
               ])
             }
 
-            setCurrentPage(gamesResult.page)
-            setTotalPages(gamesResult.totalPages)
-            setTotalItems(gamesResult.totalItems)
+            setCurrentPage(1)
+            setTotalPages(1)
+            setTotalItems(gamesResult.length)
 
             if (append) {
               setJogos((prev) => {
                 const existingMap = new Map(prev.map((j) => [j.id, j]))
-                for (const item of gamesResult.items) {
+                for (const item of gamesResult) {
                   existingMap.set(item.id, item)
                 }
                 return Array.from(existingMap.values())
               })
             } else {
-              setJogos(gamesResult.items)
+              setJogos(gamesResult)
             }
 
             const nextPalpitesMap: Record<string, Palpite> = append ? { ...palpites } : {}
@@ -512,16 +513,16 @@ export default function Palpites() {
             // Grava no cache local para renderização instantânea nas próximas visitas (SWR)
             const uid = (user.id as string) || (user.email as string) || ''
             writeLocalCache(uid, GERAL_BOLAO_ID, filterPendentes, {
-              jogos: gamesResult.items,
+              jogos: gamesResult,
               palpites: nextPalpitesMap,
               formData: nextFormDataMap,
-              currentPage: gamesResult.page,
-              totalPages: gamesResult.totalPages,
-              totalItems: gamesResult.totalItems,
+              currentPage: 1,
+              totalPages: 1,
+              totalItems: gamesResult.length,
               userParticipantsMap: myPartMapByBolao,
             })
           } else {
-            // MODO BOLÃO ESPECÍFICO: Buscar dados do bolão selecionado com LIMIT 20 real no backend
+            // MODO BOLÃO ESPECÍFICO: Buscar conjunto completo de jogos do bolão selecionado
             const currentTargetBolaoId =
               activeBolaoId && activeBolaoId !== GERAL_BOLAO_ID
                 ? activeBolaoId
@@ -565,7 +566,7 @@ export default function Palpites() {
               ? `bolao = '${currentTargetBolaoId}' && ${gamesFilter}`
               : `bolao = '${currentTargetBolaoId}'`
 
-            const gamesListPromise = pb.collection('jogos').getList<Jogo>(pageToLoad, 20, {
+            const gamesListPromise = pb.collection('jogos').getFullList<Jogo>({
               filter: specificFilter,
               sort: 'data,hora',
               fields:
@@ -577,7 +578,7 @@ export default function Palpites() {
               timeoutPromise,
             ])
 
-            const loadedGameIds = gamesResult.items.map((j) => j.id)
+            const loadedGameIds = gamesResult.map((j) => j.id)
             let myPalpites: Palpite[] = []
 
             if (participanteId && loadedGameIds.length > 0) {
@@ -592,20 +593,20 @@ export default function Palpites() {
               ])
             }
 
-            setCurrentPage(gamesResult.page)
-            setTotalPages(gamesResult.totalPages)
-            setTotalItems(gamesResult.totalItems)
+            setCurrentPage(1)
+            setTotalPages(1)
+            setTotalItems(gamesResult.length)
 
             if (append) {
               setJogos((prev) => {
                 const existingMap = new Map(prev.map((j) => [j.id, j]))
-                for (const item of gamesResult.items) {
+                for (const item of gamesResult) {
                   existingMap.set(item.id, item)
                 }
                 return Array.from(existingMap.values())
               })
             } else {
-              setJogos(gamesResult.items)
+              setJogos(gamesResult)
             }
 
             const nextPalpitesMap: Record<string, Palpite> = append ? { ...palpites } : {}
@@ -631,12 +632,12 @@ export default function Palpites() {
             // Grava no cache local para renderização instantânea nas próximas visitas (SWR)
             const uid = (user.id as string) || (user.email as string) || ''
             writeLocalCache(uid, currentTargetBolaoId, filterPendentes, {
-              jogos: gamesResult.items,
+              jogos: gamesResult,
               palpites: nextPalpitesMap,
               formData: nextFormDataMap,
-              currentPage: gamesResult.page,
-              totalPages: gamesResult.totalPages,
-              totalItems: gamesResult.totalItems,
+              currentPage: 1,
+              totalPages: 1,
+              totalItems: gamesResult.length,
               userParticipantsMap: userParticipantsMap,
             })
           }
@@ -960,10 +961,32 @@ export default function Palpites() {
     return map
   }, [participantesList])
 
+  // Lista dinâmica das competições presentes nos jogos carregados
+  const availableCompeticoes = useMemo(() => {
+    const set = new Set<string>()
+    for (const j of jogos) {
+      const comp = (j.competicao || '').trim()
+      if (comp) {
+        set.add(comp)
+      }
+    }
+    return Array.from(set).sort((a, b) => a.localeCompare(b))
+  }, [jogos])
+
+  // Lista filtrada por competição antes da ordenação
+  const filteredJogos = useMemo(() => {
+    if (!selectedCompeticao || selectedCompeticao === 'todas') {
+      return jogos
+    }
+    return jogos.filter((j) => (j.competicao || '').trim() === selectedCompeticao)
+  }, [jogos, selectedCompeticao])
+
   const displayedJogos = useMemo(() => {
     const effectiveSort = manualSort !== null ? manualSort : filterPendentes ? 'asc' : 'desc'
-    return effectiveSort === 'asc' ? sortJogosCrescente(jogos) : sortJogosDecrescente(jogos)
-  }, [jogos, manualSort, filterPendentes])
+    return effectiveSort === 'asc'
+      ? sortJogosCrescente(filteredJogos)
+      : sortJogosDecrescente(filteredJogos)
+  }, [filteredJogos, manualSort, filterPendentes])
   const hasMore = currentPage < totalPages
 
   // Subcomponente de Card de Palpite individual memoizado com React.memo
@@ -1951,6 +1974,29 @@ export default function Palpites() {
             <span>{filterPendentes ? 'Filtrando: Jogos Pendentes' : 'Apenas Pendentes'}</span>
           </Button>
 
+          {/* Seletor de Filtro por Copa */}
+          <div className="flex items-center gap-1.5">
+            <label
+              htmlFor="select-competicao-palpites"
+              className="text-xs font-medium text-slate-600"
+            >
+              Filtrar por Copa:
+            </label>
+            <select
+              id="select-competicao-palpites"
+              value={selectedCompeticao}
+              onChange={(e) => setSelectedCompeticao(e.target.value)}
+              className="h-8 rounded-lg border border-slate-300 bg-white px-2.5 text-xs font-medium text-slate-700 hover:bg-slate-50 focus:border-[#0F2A43] focus:outline-hidden"
+            >
+              <option value="todas">Todas as Copas</option>
+              {availableCompeticoes.map((comp) => (
+                <option key={comp} value={comp}>
+                  {comp}
+                </option>
+              ))}
+            </select>
+          </div>
+
           {/* Segmented control para ordenação manual Crescente / Decrescente */}
           <div className="inline-flex items-center rounded-lg border border-slate-200 bg-slate-50 p-0.5 text-xs">
             <button
@@ -1980,7 +2026,7 @@ export default function Palpites() {
           </div>
 
           <Badge variant="outline" className="border-slate-300 text-xs text-slate-700 py-1">
-            {totalItems} jogo(s) {filterPendentes ? 'pendente(s)' : 'total'}
+            {displayedJogos.length} jogo(s) {filterPendentes ? 'pendente(s)' : 'total'}
           </Badge>
         </div>
       </div>

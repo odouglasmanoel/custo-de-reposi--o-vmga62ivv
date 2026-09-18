@@ -194,6 +194,22 @@ export function getJogoKickoffTimestamp(
 }
 
 /**
+ * Retorna o timestamp UTC exato combinado no fuso de Brasília (UTC = hora + 3)
+ * para fins de ordenação cronológica precisa entre datas e horários distintos.
+ */
+export function getJogoSortTimestamp(
+  dataValue?: string | Date | null,
+  horaValue?: string | null,
+): number {
+  const ts = getJogoKickoffTimestamp(dataValue, horaValue)
+  if (ts !== null && !isNaN(ts)) {
+    return ts
+  }
+  // Fallback seguro caso a data não seja válida
+  return 0
+}
+
+/**
  * Checks if a game's prediction deadline has passed.
  * The deadline expires the moment the game starts (dataHoraAtual >= dataHoraJogo)
  * in America/Sao_Paulo (UTC-3).
@@ -435,20 +451,14 @@ export function compareJogosCrescente<T extends JogoSortable>(a: T, b: T): numbe
     return finalizadoA ? 1 : -1
   }
 
-  // 2. Data: ordem crescente (jogos mais próximos de acontecer ficam no topo/primeiro)
-  const isoA = normalizeDataISO(a.data) || ''
-  const isoB = normalizeDataISO(b.data) || ''
-  if (isoA !== isoB) {
-    return isoA.localeCompare(isoB)
+  // 2. Timestamp UTC combinado no fuso de Brasília: ordem crescente (mais cedo / mais próximo primeiro)
+  const tsA = getJogoSortTimestamp(a.data, a.hora)
+  const tsB = getJogoSortTimestamp(b.data, b.hora)
+  if (tsA !== tsB) {
+    return tsA - tsB
   }
 
-  // 3. Horário: na mesma data, ordem crescente (mais cedo primeiro: ex 16:00 antes de 21:30)
-  const timeA = parseHoraJogo(a.hora)
-  const timeB = parseHoraJogo(b.hora)
-  const minutesA = timeA.hours * 60 + timeA.minutes
-  const minutesB = timeB.hours * 60 + timeB.minutes
-
-  return minutesA - minutesB
+  return 0
 }
 
 /**
@@ -469,12 +479,15 @@ export function compareJogosDecrescente<T extends JogoSortable>(a: T, b: T): num
   const finalizadoA = Boolean(a.resultado_finalizado)
   const finalizadoB = Boolean(b.resultado_finalizado)
   if (finalizadoA !== finalizadoB) return finalizadoA ? 1 : -1
-  const isoA = normalizeDataISO(a.data) || ''
-  const isoB = normalizeDataISO(b.data) || ''
-  if (isoA !== isoB) return isoB.localeCompare(isoA)
-  const timeA = parseHoraJogo(a.hora)
-  const timeB = parseHoraJogo(b.hora)
-  return timeB.hours * 60 + timeB.minutes - (timeA.hours * 60 + timeA.minutes)
+
+  // Timestamp UTC combinado no fuso de Brasília: mais futuro/recente primeiro (tsB - tsA)
+  const tsA = getJogoSortTimestamp(a.data, a.hora)
+  const tsB = getJogoSortTimestamp(b.data, b.hora)
+  if (tsA !== tsB) {
+    return tsB - tsA
+  }
+
+  return 0
 }
 
 /**

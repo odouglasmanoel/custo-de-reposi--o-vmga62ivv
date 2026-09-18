@@ -579,6 +579,7 @@ export default function JogosDoDia() {
 
           if (matchingLiveFixture) {
             // Se encontrou ao vivo, usa os dados ao vivo preservando dados completos de campeonato/logos
+            // e propagando explicitamente events e scorers para evitar perda de dados dos marcadores
             const combined: DayFixture = {
               ...matchingLiveFixture,
               league: {
@@ -597,6 +598,8 @@ export default function JogosDoDia() {
                   logo: matchingLiveFixture.teams.away.logo || ej.logo_visitante || '',
                 },
               },
+              events: matchingLiveFixture.events || [],
+              scorers: matchingLiveFixture.scorers || [],
             }
             mergedFixtures.push(combined)
           } else {
@@ -1317,18 +1320,21 @@ export default function JogosDoDia() {
     ) {
       for (let i = 0; i < fixture.events.length; i++) {
         const ev = fixture.events[i]
-        const evType = String(ev?.type || '').toLowerCase()
-        const evDetail = String(ev?.detail || '').toLowerCase()
-        if (
-          ev &&
-          (evType === 'goal' ||
-            evType === 'gol' ||
-            evType === 'own goal' ||
-            evDetail.includes('goal'))
-        ) {
-          const playerName = extractNameFromEv(ev)
+        const evType = String(ev?.type || '')
+          .toLowerCase()
+          .trim()
+        const evDetail = String(ev?.detail || '')
+          .toLowerCase()
+          .trim()
+        if (ev && (evType === 'goal' || evType === 'gol' || evDetail.includes('goal'))) {
+          // Nome de ev.player?.name || ev.scorer?.name (via extractNameFromEv)
+          const playerName = ev.player?.name || ev.scorer?.name || extractNameFromEv(ev)
+          // Gol contra quando evDetail.includes('own')
           const isOwn = evDetail.includes('own') || evType.includes('own')
-          const { minute, extra } = extractMinuteFromEv(ev)
+          // Minuto de ev.time?.elapsed ?? ev.minute; extra de ev.time?.extra
+          const minute = ev.time?.elapsed ?? ev.minute ?? extractMinuteFromEv(ev).minute
+          const extra = ev.time?.extra ?? extractMinuteFromEv(ev).extra
+          // Lado via resolveSide(ev.team?.id, ev.team?.name, null)
           const side = resolveSide(ev.team?.id, ev.team?.name, null)
           addScorer(playerName, minute, side, isOwn, extra, evDetail || evType, i)
         }

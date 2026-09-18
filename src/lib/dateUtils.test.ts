@@ -3,6 +3,7 @@ import {
   formatDataBR,
   formatHoraBR,
   getJogoKickoffTimestamp,
+  getJogoSortTimestamp,
   isPalpiteEncerrado,
   getHojeDataSaoPaulo,
   getTodayDateString,
@@ -225,6 +226,19 @@ describe('dateUtils - Jogos de Hoje e Fuso de Brasília', () => {
       // Na data 2026-06-10: mais tarde primeiro (21:30 -> id 6) antes de (16:00 -> id 4)
       expect(sorted[4].id).toBe('6')
       expect(sorted[5].id).toBe('4')
+    })
+
+    it('posiciona corretamente jogos futuros no modo decrescente (ex: 17/09/2026 antes de 16/09/2026)', () => {
+      const jogosTeste = [
+        { id: 'flamengo_idv', data: '2026-09-17', hora: '21:30', resultado_finalizado: false },
+        { id: 'jogo_16_01', data: '2026-09-16', hora: '19:00', resultado_finalizado: false },
+        { id: 'jogo_16_02', data: '2026-09-16', hora: '21:30', resultado_finalizado: false },
+      ]
+
+      const sorted = sortJogosDecrescente(jogosTeste)
+      expect(sorted[0].id).toBe('flamengo_idv')
+      expect(sorted[1].id).toBe('jogo_16_02')
+      expect(sorted[2].id).toBe('jogo_16_01')
     })
   })
 })
