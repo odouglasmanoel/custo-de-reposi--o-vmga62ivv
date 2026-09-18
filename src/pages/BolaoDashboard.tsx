@@ -1536,24 +1536,32 @@ export default function BolaoDashboard() {
                               {bolaoOrigem.nome.replace('Copa ', '')}
                             </Badge>
                           )}
-                          <div className="flex items-center gap-1 min-w-0 truncate">
-                            <TeamShield
-                              escudo={logoCasa}
-                              nomeTime={jogo.time_a}
-                              sigla={initialsA}
-                              sizeClass="h-4 w-4"
-                              textClass="text-[8px] font-black"
-                            />
-                            <span className="font-bold text-[#0F172A] truncate">{jogo.time_a}</span>
+                          <div className="flex items-center gap-1.5 min-w-0 truncate">
+                            <span className="flex items-center gap-1 min-w-0 truncate">
+                              <TeamShield
+                                escudo={logoCasa}
+                                nomeTime={jogo.time_a}
+                                sigla={initialsA}
+                                sizeClass="h-5 w-5"
+                                textClass="text-[8px] font-black"
+                              />
+                              <span className="font-bold text-[#0F172A] truncate">
+                                {jogo.time_a}
+                              </span>
+                            </span>
                             <span className="text-slate-400 font-bold px-0.5 shrink-0">x</span>
-                            <span className="font-bold text-[#0F172A] truncate">{jogo.time_b}</span>
-                            <TeamShield
-                              escudo={logoVisitante}
-                              nomeTime={jogo.time_b}
-                              sigla={initialsB}
-                              sizeClass="h-4 w-4"
-                              textClass="text-[8px] font-black"
-                            />
+                            <span className="flex items-center gap-1 min-w-0 truncate">
+                              <TeamShield
+                                escudo={logoVisitante}
+                                nomeTime={jogo.time_b}
+                                sigla={initialsB}
+                                sizeClass="h-5 w-5"
+                                textClass="text-[8px] font-black"
+                              />
+                              <span className="font-bold text-[#0F172A] truncate">
+                                {jogo.time_b}
+                              </span>
+                            </span>
                           </div>
                         </div>
                         <span className="shrink-0 font-semibold text-[#0F2A43] bg-slate-100 px-1.5 py-0.5 rounded text-[11px]">
