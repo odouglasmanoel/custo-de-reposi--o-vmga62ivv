@@ -13,6 +13,8 @@ import {
   sortJogosCadastrados,
   compareJogosCrescente,
   sortJogosCrescente,
+  compareJogosDecrescente,
+  sortJogosDecrescente,
   formatDataHoraSaoPaulo,
   satisfiesEnqueteMinTimeMargin,
 } from './dateUtils'
@@ -194,6 +196,35 @@ describe('dateUtils - Jogos de Hoje e Fuso de Brasília', () => {
       expect(sorted[4].id).toBe('4')
       // 2026-06-11 às 16:00 (id 5)
       expect(sorted[5].id).toBe('5')
+    })
+  })
+
+  describe('compareJogosDecrescente / sortJogosDecrescente', () => {
+    it('ordena jogos pendentes primeiro, com datas e horários em ordem decrescente (mais recentes/distantes no topo)', () => {
+      const jogosTeste = [
+        { id: '1', data: '2026-06-12', hora: '16:00', resultado_finalizado: false },
+        { id: '2', data: '2026-06-15', hora: '18:00', resultado_finalizado: false },
+        { id: '3', data: '2026-06-12', hora: '20:00', resultado_finalizado: false },
+        { id: '4', data: '2026-06-10', hora: '16:00', resultado_finalizado: true },
+        { id: '5', data: '2026-06-11', hora: '16:00', resultado_finalizado: true },
+        { id: '6', data: '2026-06-10', hora: '21:30', resultado_finalizado: true },
+      ]
+
+      const sorted = sortJogosDecrescente(jogosTeste)
+
+      // 1. Jogos pendentes vêm primeiro, em ordem decrescente de data e horário:
+      // Mais distante/futuro: 2026-06-15 às 18:00 (id 2)
+      expect(sorted[0].id).toBe('2')
+      // Na data 2026-06-12: mais tarde primeiro (20:00 -> id 3) antes de (16:00 -> id 1)
+      expect(sorted[1].id).toBe('3')
+      expect(sorted[2].id).toBe('1')
+
+      // 2. Jogos finalizados vêm depois, também em ordem decrescente:
+      // Mais recente: 2026-06-11 às 16:00 (id 5)
+      expect(sorted[3].id).toBe('5')
+      // Na data 2026-06-10: mais tarde primeiro (21:30 -> id 6) antes de (16:00 -> id 4)
+      expect(sorted[4].id).toBe('6')
+      expect(sorted[5].id).toBe('4')
     })
   })
 })

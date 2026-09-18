@@ -38,6 +38,7 @@ import {
   isPalpiteEncerrado,
   formatHoraEncerramento,
   sortJogosCrescente,
+  sortJogosDecrescente,
 } from '@/lib/dateUtils'
 import { formatPalpiteMarcadoresSummary, getPalpiteMarcadoresPorTime } from '@/lib/scorerUtils'
 import { buscarEscudoTime, readEscudoCache } from '@/services/enquetes'
@@ -181,6 +182,7 @@ export default function Palpites() {
     timeB: string
   } | null>(null)
   const [filterPendentes, setFilterPendentes] = useState<boolean>(initialPendentes)
+  const [manualSort, setManualSort] = useState<'asc' | 'desc' | null>(null)
   const [loadingGroupBets, setLoadingGroupBets] = useState(false)
   const [loadedGroupBets, setLoadedGroupBets] = useState(false)
   // Se houver cache inicial para este escopo, a tela NÃO bloqueia em spinner, entra revalidando em background
@@ -959,9 +961,9 @@ export default function Palpites() {
   }, [participantesList])
 
   const displayedJogos = useMemo(() => {
-    // Ordenação crescente por data e horário (jogos mais próximos de acontecer ficam no topo/primeiro)
-    return sortJogosCrescente(jogos)
-  }, [jogos])
+    const effectiveSort = manualSort !== null ? manualSort : filterPendentes ? 'asc' : 'desc'
+    return effectiveSort === 'asc' ? sortJogosCrescente(jogos) : sortJogosDecrescente(jogos)
+  }, [jogos, manualSort, filterPendentes])
   const hasMore = currentPage < totalPages
 
   // Subcomponente de Card de Palpite individual memoizado com React.memo
@@ -1928,6 +1930,7 @@ export default function Palpites() {
             onClick={() => {
               const nextState = !filterPendentes
               setFilterPendentes(nextState)
+              setManualSort(null)
               setSearchParams((prev) => {
                 const updated = new URLSearchParams(prev)
                 if (nextState) {
@@ -1947,6 +1950,34 @@ export default function Palpites() {
             <Clock className="h-3.5 w-3.5" />
             <span>{filterPendentes ? 'Filtrando: Jogos Pendentes' : 'Apenas Pendentes'}</span>
           </Button>
+
+          {/* Segmented control para ordenação manual Crescente / Decrescente */}
+          <div className="inline-flex items-center rounded-lg border border-slate-200 bg-slate-50 p-0.5 text-xs">
+            <button
+              type="button"
+              onClick={() => setManualSort('asc')}
+              title="Ordenar por data/hora crescente (próximos jogos primeiro)"
+              className={`inline-flex items-center gap-1 rounded-md px-2.5 py-1 text-xs font-medium transition ${
+                (manualSort !== null ? manualSort === 'asc' : filterPendentes)
+                  ? 'bg-[#0F2A43] text-white shadow-2xs font-semibold'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              Crescente ⬆️
+            </button>
+            <button
+              type="button"
+              onClick={() => setManualSort('desc')}
+              title="Ordenar por data/hora decrescente (jogos mais recentes no topo)"
+              className={`inline-flex items-center gap-1 rounded-md px-2.5 py-1 text-xs font-medium transition ${
+                (manualSort !== null ? manualSort === 'desc' : !filterPendentes)
+                  ? 'bg-[#0F2A43] text-white shadow-2xs font-semibold'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              Decrescente ⬇️
+            </button>
+          </div>
 
           <Badge variant="outline" className="border-slate-300 text-xs text-slate-700 py-1">
             {totalItems} jogo(s) {filterPendentes ? 'pendente(s)' : 'total'}
@@ -1980,6 +2011,7 @@ export default function Palpites() {
             type="button"
             onClick={() => {
               setFilterPendentes(false)
+              setManualSort(null)
               setSearchParams((prev) => {
                 const updated = new URLSearchParams(prev)
                 updated.set('pendentes', '0')
@@ -1998,6 +2030,7 @@ export default function Palpites() {
             type="button"
             onClick={() => {
               setFilterPendentes(true)
+              setManualSort(null)
               setSearchParams((prev) => {
                 const updated = new URLSearchParams(prev)
                 updated.set('pendentes', '1')
