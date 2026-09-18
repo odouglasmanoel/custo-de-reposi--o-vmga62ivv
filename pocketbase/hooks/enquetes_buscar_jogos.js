@@ -274,19 +274,30 @@ routerAdd(
         var name = normalizeLeagueName(leagueName)
         var code = (compCode || '').toUpperCase()
 
-        // Brasileirão Série A
+        // Serie A Itália (Checar ANTES de checagens genéricas de Serie A para garantir desambiguação)
+        if (
+          leagueId === 135 ||
+          leagueId === 2019 ||
+          code === 'SA' ||
+          (name.indexOf('serie a') !== -1 && (name.indexOf('ital') !== -1 || code === 'SA'))
+        ) {
+          return { valid: true, categoria: 'Serie A (Itália)', prioridade: 5 }
+        }
+
+        // Brasileirão Série A (Apenas com indicador EXPLÍCITO do Brasil)
         if (
           leagueId === 71 ||
           leagueId === 2013 ||
           code === 'BSA' ||
           name.indexOf('brasileiro serie a') !== -1 ||
+          name.indexOf('brasileirao') !== -1 ||
           (name.indexOf('serie a') !== -1 &&
-            (name.indexOf('brasil') !== -1 || name.indexOf('brazil') !== -1)) ||
-          name.indexOf('brasileirao') !== -1
+            (name.indexOf('brasil') !== -1 ||
+              name.indexOf('brazil') !== -1 ||
+              name.indexOf('brasileir') !== -1))
         ) {
           return { valid: true, categoria: 'Brasileirão Série A', prioridade: 1 }
-        }
-        // Champions League
+        } // Champions League
         if (
           leagueId === 2 ||
           leagueId === 2001 ||
@@ -315,15 +326,7 @@ routerAdd(
         ) {
           return { valid: true, categoria: 'La Liga (Espanha)', prioridade: 4 }
         }
-        // Serie A Itália
-        if (
-          leagueId === 135 ||
-          leagueId === 2019 ||
-          code === 'SA' ||
-          (name.indexOf('serie a') !== -1 && (name.indexOf('ital') !== -1 || code === 'SA'))
-        ) {
-          return { valid: true, categoria: 'Serie A (Itália)', prioridade: 5 }
-        }
+        // Serie A Itália já avaliada acima
         // Bundesliga
         if (
           leagueId === 78 ||
@@ -737,13 +740,14 @@ routerAdd(
                       },
                       league: {
                         id: tLeague.id,
-                        name: tLeague.cat,
+                        name: tLeague.name || tLeague.cat,
                         categoria: tLeague.cat,
                         prioridade: tLeague.prio,
                         logo: ev.strLeagueBadge || ev.strBadge || '',
                         region:
                           tLeague.cat.indexOf('Brasileir') !== -1 ||
-                          tLeague.cat.indexOf('Copa') !== -1
+                          (tLeague.cat.indexOf('Copa') !== -1 &&
+                            tLeague.cat.indexOf('Europa') === -1)
                             ? 'Brasileirão & Copas'
                             : 'Futebol Europeu',
                       },

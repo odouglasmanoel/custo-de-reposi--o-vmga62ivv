@@ -59,6 +59,8 @@ export interface MatchedLiveScore {
   provider?: string
   homeTeamName: string
   awayTeamName: string
+  homeTeamLogo?: string
+  awayTeamLogo?: string
   placarA: number
   placarB: number
   statusShort: string
@@ -191,12 +193,17 @@ export function formatFixtureToLiveScore(
     golsSummary = `Gols: ${scorerTokens.join(', ')}`
   }
 
+  const homeLogo = isHomeA ? fixture.teams?.home?.logo || '' : fixture.teams?.away?.logo || ''
+  const awayLogo = isHomeA ? fixture.teams?.away?.logo || '' : fixture.teams?.home?.logo || ''
+
   return {
     found: true,
     fixtureId: fixture.fixture?.id,
     provider: fixture.provider,
     homeTeamName: homeName,
     awayTeamName: awayName,
+    homeTeamLogo: homeLogo,
+    awayTeamLogo: awayLogo,
     placarA,
     placarB,
     statusShort,
@@ -765,12 +772,17 @@ export function matchGameWithApiFixtures(
     golsSummary = `Gols: ${scorerTokens.join(', ')}`
   }
 
+  const homeLogo = isHomeA ? fixture.teams?.home?.logo || '' : fixture.teams?.away?.logo || ''
+  const awayLogo = isHomeA ? fixture.teams?.away?.logo || '' : fixture.teams?.home?.logo || ''
+
   return {
     found: true,
     fixtureId: fixture.fixture?.id,
     provider: fixture.provider,
     homeTeamName: fixture.teams?.home?.name || '',
     awayTeamName: fixture.teams?.away?.name || '',
+    homeTeamLogo: homeLogo,
+    awayTeamLogo: awayLogo,
     placarA,
     placarB,
     statusShort,

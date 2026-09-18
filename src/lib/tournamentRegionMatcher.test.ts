@@ -66,4 +66,16 @@ describe('tournamentRegionMatcher', () => {
     expect(r.region).toBe('Outros')
     expect(r.country).not.toBe('América do Sul')
   })
+
+  it('mapeia Championship inglesa para Futebol Europeu / Inglaterra sem confundir com Champions League', () => {
+    const r = getRegionAndCountryByTournament('Championship')
+    expect(r.region).toBe('Futebol Europeu')
+    expect(r.country).toBe('Inglaterra')
+  })
+
+  it('mapeia Serie A da Itália para Futebol Europeu / Itália sem confundir com Brasileirão', () => {
+    const r = getRegionAndCountryByTournament('Serie A', 135)
+    expect(r.region).toBe('Futebol Europeu')
+    expect(r.country).toBe('Itália')
+  })
 })

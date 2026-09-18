@@ -52,6 +52,42 @@ import {
 } from '@/lib/apiFootballMatcher'
 import { AdminEditMarcadoresModal } from '@/components/AdminEditMarcadoresModal'
 import { Users } from 'lucide-react'
+import { buscarEscudoTime, readEscudoCache } from '@/services/enquetes'
+
+function TeamShield({
+  escudo,
+  nomeTime,
+  sigla,
+  sizeClass = 'h-6 w-6',
+  textClass = 'text-[10px] font-bold text-slate-700',
+}: {
+  escudo: string | undefined
+  nomeTime: string
+  sigla: string
+  sizeClass?: string
+  textClass?: string
+}) {
+  const [hasError, setHasError] = useState(false)
+  if (!escudo || hasError) {
+    return (
+      <div
+        className={`${sizeClass} rounded-full bg-slate-100 border border-slate-300 flex items-center justify-center shrink-0 ${textClass}`}
+      >
+        {sigla}
+      </div>
+    )
+  }
+  return (
+    <img
+      src={escudo}
+      alt={nomeTime}
+      className={`${sizeClass} object-contain shrink-0 drop-shadow-xs`}
+      loading="eager"
+      decoding="async"
+      onError={() => setHasError(true)}
+    />
+  )
+}
 
 interface DashboardCachePayload {
   participantes: Participante[]

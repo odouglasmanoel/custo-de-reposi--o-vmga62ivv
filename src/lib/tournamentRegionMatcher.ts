@@ -132,7 +132,6 @@ export function getRegionAndCountryByTournament(
     norm.includes('dfb pokal') ||
     norm.includes('carabao') ||
     norm.includes('coupe de france') ||
-    norm.includes('championship') ||
     norm.includes('eredivisie') ||
     norm.includes('primeira liga') ||
     norm.includes('futebol europeu') ||
@@ -157,12 +156,18 @@ export function getRegionAndCountryByTournament(
     return { region: 'Futebol Europeu', country }
   }
 
-  // Brasileirão e Copas Nacionais
+  // English Championship / EFL Championship
+  if (norm.includes('championship')) {
+    return { region: 'Futebol Europeu', country: 'Inglaterra' }
+  }
+
+  // Brasileirão e Copas Nacionais (Apenas com indicador EXPLÍCITO do Brasil para não capturar Serie A italiana)
   if (
     norm.includes('brasileirao') ||
     norm.includes('brasileiro') ||
     norm.includes('copa do brasil') ||
-    norm.includes('serie a') ||
+    (norm.includes('serie a') &&
+      (norm.includes('brasil') || norm.includes('brazil') || norm.includes('brasileir'))) ||
     norm.includes('serie b') ||
     norm.includes('serie c') ||
     norm.includes('serie d') ||

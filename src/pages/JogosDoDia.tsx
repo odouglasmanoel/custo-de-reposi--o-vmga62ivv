@@ -538,7 +538,6 @@ export default function JogosDoDia() {
         const rawLiveFixtures: DayFixture[] =
           liveData && Array.isArray(liveData.fixtures) ? liveData.fixtures : []
 
-        setIsConfigured(liveData ? Boolean(liveData.configured) : true)
         setActiveProvider(liveData?.provider || 'api_football')
         setIsCached(Boolean(liveData?.cached))
         setCacheAge(liveData?.cacheAgeSeconds || 0)
@@ -688,6 +687,12 @@ export default function JogosDoDia() {
         const finalFixturesList = mergedFixtures.length > 0 ? mergedFixtures : rawLiveFixtures
         setFixtures(finalFixturesList)
 
+        // Se obtivemos dados com sucesso (seja via placar ao vivo, fallback ou cache),
+        // NÃO exibir banner de não configurado. Exibir apenas se realmente não houver dados e API não configurada.
+        const effectiveConfigured =
+          finalFixturesList.length > 0 ? true : liveData ? Boolean(liveData.configured) : true
+        setIsConfigured(effectiveConfigured)
+
         const updatedTimestamp = liveData?.updatedAt || new Date().toISOString()
         setLastUpdated(updatedTimestamp)
 
@@ -695,18 +700,22 @@ export default function JogosDoDia() {
         writeJogosDiaCache(dateStr, {
           fixtures: finalFixturesList,
           provider: liveData?.provider || 'api_football',
-          configured: Boolean(liveData?.configured),
+          configured: effectiveConfigured,
           updatedAt: updatedTimestamp,
         })
 
         // Tratamento de mensagens e erros
         if (liveData?.rate_limited) {
-          setErrorMessage(
-            'Dados ao vivo temporariamente indisponíveis (limite de requisições excedido). Tente novamente mais tarde.',
-          )
+          if (finalFixturesList.length === 0) {
+            setErrorMessage(
+              'Dados ao vivo temporariamente indisponíveis (limite de requisições excedido). Tente novamente mais tarde.',
+            )
+          } else {
+            setErrorMessage(null)
+          }
         } else if (liveData?.error && finalFixturesList.length === 0) {
           setErrorMessage(liveData.error)
-        } else if (liveData?.message && !liveData?.configured) {
+        } else if (liveData?.message && !liveData?.configured && finalFixturesList.length === 0) {
           setErrorMessage(liveData.message)
         } else {
           setErrorMessage(null)
@@ -1635,8 +1644,8 @@ export default function JogosDoDia() {
         </div>
       )}
 
-      {/* Mensagem se API não configurada */}
-      {!isConfigured && (
+      {/* Mensagem se API não configurada (APENAS se não houver jogos para exibir) */}
+      {!isConfigured && fixtures.length === 0 && (
         <Card className="rounded-[14px] border-amber-200 bg-amber-50/60 p-6">
           <div className="flex items-start gap-3">
             <AlertCircle className="h-5 w-5 text-amber-600 shrink-0 mt-0.5" />
