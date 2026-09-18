@@ -130,9 +130,12 @@ export const GameLineupAccordion: React.FC<GameLineupAccordionProps> = ({
               <div className="inline-flex items-center justify-center h-8 w-8 rounded-full bg-slate-100 text-slate-400 mb-1.5">
                 <HelpCircle className="h-4 w-4" />
               </div>
-              <p className="text-xs font-semibold text-slate-700">Escalação ainda não disponível</p>
+              <p className="text-xs font-semibold text-slate-700">
+                Escalações ainda não confirmadas pelas equipes
+              </p>
               <p className="text-[11px] text-slate-400 mt-0.5 max-w-xs mx-auto">
-                As escalações oficiais são liberadas cerca de 30 a 60 minutos antes do jogo.
+                As escalações oficiais costumam ser confirmadas entre 30 e 60 minutos antes do apito
+                inicial.
               </p>
               <Button
                 type="button"
@@ -143,7 +146,7 @@ export const GameLineupAccordion: React.FC<GameLineupAccordionProps> = ({
                 className="mt-2.5 h-7 text-[11px] gap-1 border-slate-300 text-[#0F2A43]"
               >
                 <RefreshCw className={`h-3 w-3 ${loading ? 'animate-spin' : ''}`} />
-                <span>Atualizar agora</span>
+                <span>Verificar novamente</span>
               </Button>
             </div>
           ) : (

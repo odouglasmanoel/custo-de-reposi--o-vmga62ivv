@@ -3559,8 +3559,10 @@ routerAdd('GET', '/backend/v1/jogos-do-dia', (e) => {
     }
 
     // -------------------------------------------------------------
-    // CONTINGÊNCIA AUTOMÁTICA EM JOGOS DO DIA:
-    // Cascata API-Football -> Football-Data.org -> TheSportsDB
+    // CONTINGÊNCIA & UNIFICAÇÃO MULTI-FONTE EM JOGOS DO DIA:
+    // Cascata e unificação (merge/concatenação) de todas as fontes disponíveis:
+    // API-Football -> Football-Data.org -> TheSportsDB -> Banco Local de Jogos
+    // Deduplicação canônica por time_casa + time_fora (normalizado) + data.
     // -------------------------------------------------------------
     var contingencyUsed = false
     var contingencyFixtures = []
@@ -3568,9 +3570,7 @@ routerAdd('GET', '/backend/v1/jogos-do-dia', (e) => {
     var contingencyProvider = ''
 
     if ((rateLimitHit || !allFixtures || allFixtures.length === 0) && fallbackApiKey) {
-      console.log(
-        '[Contingência Jogos-do-Dia] API-Football indisponível ou sem partidas. Acionando Football-Data.org...',
-      )
+      console.log('[Contingência Jogos-do-Dia] Acionando unificação com Football-Data.org...')
       try {
         var pFD = dateQuery.split('-')
         var yFD = parseInt(pFD[0], 10)
@@ -3614,8 +3614,8 @@ routerAdd('GET', '/backend/v1/jogos-do-dia', (e) => {
       }
     }
 
-    // Se Football-Data.org foi usado OU se mesmo após API-Football e Football-Data.org ainda não temos partidas,
-    // aciona TheSportsDB para completar ou fornecer os jogos (Europa League, Conference, Libertadores, Sul-Americana)
+    // Unificação ativa: busca TheSportsDB para concatenar com as outras fontes
+    // (trazendo tanto eventos globais do dia via eventsday.php?s=Soccer quanto ligas específicas)
     if (contingencyUsed || !allFixtures || allFixtures.length === 0) {
       try {
         var tsdbContingencyFixtures = fetchConmebolFromTheSportsDb(dateQuery, theSportsDbKey)
@@ -3628,13 +3628,35 @@ routerAdd('GET', '/backend/v1/jogos-do-dia', (e) => {
               return tf.isLive
             })
           } else if (contingencyUsed) {
-            // Se já tínhamos partidas de Football-Data.org, complementa com TheSportsDB com deduplicação
+            // Concatena jogos do TheSportsDB aos de Football-Data.org com deduplicação
             for (var tcfi = 0; tcfi < tsdbContingencyFixtures.length; tcfi++) {
               var tcf = tsdbContingencyFixtures[tcfi]
               var isDuplicateConfrontation = false
               for (var cfi = 0; cfi < contingencyFixtures.length; cfi++) {
                 if (isSameMatchConfrontation(contingencyFixtures[cfi], tcf)) {
                   isDuplicateConfrontation = true
+                  // Enriquece campos ausentes
+                  if (
+                    (contingencyFixtures[cfi].goals.home === null ||
+                      contingencyFixtures[cfi].goals.home === undefined) &&
+                    tcf.goals.home !== null &&
+                    tcf.goals.home !== undefined
+                  ) {
+                    contingencyFixtures[cfi].goals.home = tcf.goals.home
+                    contingencyFixtures[cfi].goals.away = tcf.goals.away
+                  }
+                  if (
+                    (!Array.isArray(contingencyFixtures[cfi].scorers) ||
+                      contingencyFixtures[cfi].scorers.length === 0) &&
+                    Array.isArray(tcf.scorers) &&
+                    tcf.scorers.length > 0
+                  ) {
+                    contingencyFixtures[cfi].scorers = tcf.scorers
+                  }
+                  if (tcf.isLive) {
+                    contingencyFixtures[cfi].isLive = true
+                    contingencyHasLive = true
+                  }
                   break
                 }
               }
@@ -3651,7 +3673,7 @@ routerAdd('GET', '/backend/v1/jogos-do-dia', (e) => {
     }
 
     if (contingencyUsed && contingencyFixtures.length > 0) {
-      // FIX 2: Deep merge da contingência com o cache existente preservando ligas já obtidas
+      // Unifica com cache anterior existente de todas as ligas (evita perda de jogos obtidos antes de cair na contingência)
       var mergedWithExisting = contingencyFixtures.slice(0)
       if (
         dayEntry &&
@@ -3692,7 +3714,7 @@ routerAdd('GET', '/backend/v1/jogos-do-dia', (e) => {
               break
             }
           }
-          // Se a partida do cache (ex: La Liga, Brasileirão, Premier League) não estiver na contingência, PRESERVA!
+          // Se a partida do cache não estiver na contingência, PRESERVA!
           if (!matchFound) {
             mergedWithExisting.push(exFix)
             if (exFix.isLive) contingencyHasLive = true
@@ -3700,7 +3722,7 @@ routerAdd('GET', '/backend/v1/jogos-do-dia', (e) => {
         }
       }
 
-      // Mescla com eventuais jogos manuais cadastrados
+      // Mescla com todos os jogos manuais cadastrados no banco de dados local
       var freshManualsContingency = fetchManualGamesForDate(dateQuery)
       var finalContingencyFixtures = mergeManualFixturesOnTop(
         freshManualsContingency,
@@ -3709,15 +3731,13 @@ routerAdd('GET', '/backend/v1/jogos-do-dia', (e) => {
 
       var contingencyPayload = {
         configured: true,
-        provider: contingencyProvider,
+        provider: contingencyProvider || 'multi_source',
         fallback_active: true,
         is_contingency: true,
         contingency: true,
         original_provider: provedor,
         message:
-          contingencyProvider === 'football_data'
-            ? 'Contingência temporária ativada: jogos providos via Football-Data.org e TheSportsDB. Revalidação frequente ativa para restauração global automática.'
-            : 'Contingência temporária ativada: jogos providos via TheSportsDB. Revalidação frequente ativa para restauração global automática.',
+          'Modo contingência unificado: exibindo combinação completa de jogos disponíveis de Football-Data.org, TheSportsDB e banco local com revalidação automática periódica.',
         date: dateQuery,
         total: finalContingencyFixtures.length,
         hasLive:
@@ -3729,8 +3749,7 @@ routerAdd('GET', '/backend/v1/jogos-do-dia', (e) => {
         updatedAt: new Date().toISOString(),
       }
 
-      // REGRA: Payload de contingência tem cobertura restrita (ex: cota esgotada na primária).
-      // Grava no cache com flag degradada e TTL curto (60s) para revalidar com a API-Football
+      // REGRA: Grava no cache com TTL curto (60s) para revalidar com a API-Football
       // logo que a cota seja renovada, sem prender o usuário em um snapshot reduzido.
       if (dayStore && finalContingencyFixtures.length > 0) {
         dayStore[dateQuery] = {

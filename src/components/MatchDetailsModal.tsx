@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react'
+import React, { useState, useEffect, useCallback, useMemo } from 'react'
 import {
   Dialog,
   DialogContent,
@@ -8,9 +8,10 @@ import {
 } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
-import { Loader2, AlertCircle, RefreshCw, Shield } from 'lucide-react'
+import { Loader2, AlertCircle, RefreshCw, Shield, Users, HelpCircle } from 'lucide-react'
 import pb from '@/lib/pocketbase/client'
 import { isFixtureLive } from '@/lib/apiFootballMatcher'
+import { fetchGameLineup, LineupResponse, LineupTeam } from '@/services/escalacoes'
 import type { DayFixture } from '@/pages/JogosDoDia'
 
 export interface MatchEventItem {
@@ -42,111 +43,207 @@ interface MatchDetailsModalProps {
   match: DayFixture | null
 }
 
+// -------------------------------------------------------------
+// CACHE LOCAL EM MEMÓRIA DE FICHAS DETALHADAS (MATCH DETAILS)
+// Evita requisições de rede repetitivas ao clicar consecutivamente
+// em "Exibir Detalhes". TTL: 15s para ao vivo, 30 min para agendados/finalizados.
+// -------------------------------------------------------------
+interface CachedDetailsEntry {
+  events: MatchEventItem[]
+  timestamp: number
+  isLive: boolean
+}
+
+const matchDetailsMemoryCache = new Map<string, CachedDetailsEntry>()
+
+const getMatchDetailsCacheKey = (match: DayFixture | null): string => {
+  if (!match) return ''
+  const fixId = match.fixture?.id ? String(match.fixture.id).trim() : ''
+  if (fixId) return `details_${fixId}`
+  const h = (match.teams?.home?.name || '').trim().toLowerCase()
+  const a = (match.teams?.away?.name || '').trim().toLowerCase()
+  const d = (match.fixture?.date || '').split('T')[0] || ''
+  return `details_${h}__${a}__${d}`
+}
+
 export function MatchDetailsModal({ isOpen, onClose, match }: MatchDetailsModalProps) {
+  const [activeTab, setActiveTab] = useState<'timeline' | 'escalacoes'>('timeline')
   const [loading, setLoading] = useState(false)
   const [events, setEvents] = useState<MatchEventItem[]>([])
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
   const [loadedFixtureId, setLoadedFixtureId] = useState<string | number | null>(null)
 
-  const fetchDetails = useCallback(async (currentMatch: DayFixture, silent = false) => {
-    if (!currentMatch) return
-    const fixtureId = currentMatch.fixture?.id
-    const timeA = currentMatch.teams?.home?.name || ''
-    const timeB = currentMatch.teams?.away?.name || ''
-    const rawDate = currentMatch.fixture?.date || ''
-    const datePart = rawDate.split('T')[0] || ''
-    const st = (currentMatch.fixture?.status?.short || '').toUpperCase().trim()
-    const live = Boolean(currentMatch.isLive || isFixtureLive(st))
+  // Estado das Escalações Integradas no Modal
+  const [lineupLoading, setLineupLoading] = useState(false)
+  const [lineup, setLineup] = useState<LineupResponse | null>(null)
+  const [lineupTab, setLineupTab] = useState<'home' | 'away'>('home')
 
-    if (!silent) {
-      setLoading(true)
-      setErrorMessage(null)
-    }
+  const fetchDetails = useCallback(
+    async (currentMatch: DayFixture, silent = false, force = false) => {
+      if (!currentMatch) return
+      const fixtureId = currentMatch.fixture?.id
+      const timeA = currentMatch.teams?.home?.name || ''
+      const timeB = currentMatch.teams?.away?.name || ''
+      const rawDate = currentMatch.fixture?.date || ''
+      const datePart = rawDate.split('T')[0] || ''
+      const st = (currentMatch.fixture?.status?.short || '').toUpperCase().trim()
+      const live = Boolean(currentMatch.isLive || isFixtureLive(st))
 
-    try {
-      const headers: Record<string, string> = {}
-      if (pb.authStore.token) {
-        headers['Authorization'] = pb.authStore.token
+      const cacheKey = getMatchDetailsCacheKey(currentMatch)
+      const now = Date.now()
+
+      // 1. Verificação no cache em memória para evitar chamadas de rede redundantes
+      if (!force && cacheKey && matchDetailsMemoryCache.has(cacheKey)) {
+        const cached = matchDetailsMemoryCache.get(cacheKey)!
+        const maxAge = cached.isLive ? 15000 : 30 * 60 * 1000
+        if (now - cached.timestamp < maxAge) {
+          setEvents(cached.events)
+          setLoadedFixtureId(fixtureId)
+          setErrorMessage(null)
+          return
+        }
       }
 
-      const queryParams = new URLSearchParams()
-      if (fixtureId) queryParams.set('fixture_id', String(fixtureId))
-      if (timeA) queryParams.set('time_a', timeA)
-      if (timeB) queryParams.set('time_b', timeB)
-      if (datePart) queryParams.set('data', datePart)
-      if (st) queryParams.set('status', st)
-      if (live) queryParams.set('isLive', 'true')
-      if (silent) queryParams.set('refresh', '1')
-
-      const url = `${import.meta.env.VITE_POCKETBASE_URL}/backend/v1/detalhes-partida?${queryParams.toString()}`
-      const res = await fetch(url, { headers })
-
-      if (!res.ok) {
-        throw new Error(`Erro na consulta (${res.status})`)
+      if (!silent) {
+        setLoading(true)
+        setErrorMessage(null)
       }
 
-      const data = await res.json()
-      const rawEvents: MatchEventItem[] = Array.isArray(data.events) ? data.events : []
+      try {
+        const headers: Record<string, string> = {}
+        if (pb.authStore.token) {
+          headers['Authorization'] = pb.authStore.token
+        }
 
-      // Se a resposta vier vazia e a partida já tiver scorers embutidos, usa os scorers como fallback
-      if (
-        rawEvents.length === 0 &&
-        Array.isArray(currentMatch.scorers) &&
-        currentMatch.scorers.length > 0
-      ) {
-        const fallbackGols: MatchEventItem[] = currentMatch.scorers.map((sc) => ({
-          time: { elapsed: sc.minute ?? null, extra: sc.extraMinute ?? null },
-          team: {
-            id: sc.teamId ?? null,
-            name:
-              sc.teamName ??
-              (sc.teamSide === 'home'
-                ? currentMatch.teams.home.name
-                : currentMatch.teams.away.name),
-          },
-          player: { name: sc.name },
-          type: 'Goal',
-          detail: 'Normal Goal',
-        }))
-        setEvents(fallbackGols)
-      } else {
-        setEvents(rawEvents)
-      }
+        const queryParams = new URLSearchParams()
+        if (fixtureId) queryParams.set('fixture_id', String(fixtureId))
+        if (timeA) queryParams.set('time_a', timeA)
+        if (timeB) queryParams.set('time_b', timeB)
+        if (datePart) queryParams.set('data', datePart)
+        if (st) queryParams.set('status', st)
+        if (live) queryParams.set('isLive', 'true')
+        if (silent || force) queryParams.set('refresh', '1')
 
-      setLoadedFixtureId(fixtureId)
-    } catch (err: any) {
-      // Fallback local se a partida já contiver scorers
-      if (Array.isArray(currentMatch.scorers) && currentMatch.scorers.length > 0) {
-        const fallbackGols: MatchEventItem[] = currentMatch.scorers.map((sc) => ({
-          time: { elapsed: sc.minute ?? null, extra: sc.extraMinute ?? null },
-          team: {
-            name:
-              sc.teamName ??
-              (sc.teamSide === 'home'
-                ? currentMatch.teams.home.name
-                : currentMatch.teams.away.name),
-          },
-          player: { name: sc.name },
-          type: 'Goal',
-          detail: 'Normal Goal',
-        }))
-        setEvents(fallbackGols)
+        const url = `${import.meta.env.VITE_POCKETBASE_URL}/backend/v1/detalhes-partida?${queryParams.toString()}`
+        const res = await fetch(url, { headers })
+
+        if (!res.ok) {
+          throw new Error(`Erro na consulta (${res.status})`)
+        }
+
+        const data = await res.json()
+        const rawEvents: MatchEventItem[] = Array.isArray(data.events) ? data.events : []
+
+        let resolvedEvents = rawEvents
+        // Se a resposta vier vazia e a partida já tiver scorers embutidos, usa os scorers como fallback
+        if (
+          resolvedEvents.length === 0 &&
+          Array.isArray(currentMatch.scorers) &&
+          currentMatch.scorers.length > 0
+        ) {
+          resolvedEvents = currentMatch.scorers.map((sc) => ({
+            time: { elapsed: sc.minute ?? null, extra: sc.extraMinute ?? null },
+            team: {
+              id: sc.teamId ?? null,
+              name:
+                sc.teamName ??
+                (sc.teamSide === 'home'
+                  ? currentMatch.teams?.home?.name || ''
+                  : currentMatch.teams?.away?.name || ''),
+            },
+            player: { name: sc.name },
+            type: 'Goal',
+            detail: 'Normal Goal',
+          }))
+        }
+
+        setEvents(resolvedEvents)
         setLoadedFixtureId(fixtureId)
-      } else {
-        setErrorMessage(err?.message || 'Não foi possível carregar os detalhes da partida.')
+
+        // Salva no cache local em memória
+        if (cacheKey) {
+          matchDetailsMemoryCache.set(cacheKey, {
+            events: resolvedEvents,
+            timestamp: now,
+            isLive: live,
+          })
+        }
+      } catch (err: any) {
+        // Fallback local gracioso se a partida já contiver scorers
+        if (Array.isArray(currentMatch.scorers) && currentMatch.scorers.length > 0) {
+          const fallbackGols: MatchEventItem[] = currentMatch.scorers.map((sc) => ({
+            time: { elapsed: sc.minute ?? null, extra: sc.extraMinute ?? null },
+            team: {
+              name:
+                sc.teamName ??
+                (sc.teamSide === 'home'
+                  ? currentMatch.teams?.home?.name || ''
+                  : currentMatch.teams?.away?.name || ''),
+            },
+            player: { name: sc.name },
+            type: 'Goal',
+            detail: 'Normal Goal',
+          }))
+          setEvents(fallbackGols)
+          setLoadedFixtureId(fixtureId)
+        } else {
+          setErrorMessage(err?.message || 'Não foi possível carregar os detalhes da partida.')
+        }
+      } finally {
+        setLoading(false)
       }
+    },
+    [],
+  )
+
+  // Busca de escalação sob demanda para a aba "Escalações"
+  const loadModalLineup = useCallback(async (currentMatch: DayFixture, force = false) => {
+    if (!currentMatch) return
+    setLineupLoading(true)
+    try {
+      const rawDate = currentMatch.fixture?.date || ''
+      const datePart = rawDate.split('T')[0] || ''
+      const fixId = currentMatch.fixture?.id ? String(currentMatch.fixture.id) : undefined
+
+      const res = await fetchGameLineup({
+        jogoId: fixId || 'dia_match',
+        fixtureId: fixId,
+        timeA: currentMatch.teams?.home?.name || '',
+        timeB: currentMatch.teams?.away?.name || '',
+        data: datePart,
+        forceRefresh: force,
+      })
+      setLineup(res)
+    } catch (e) {
+      console.warn('Erro ao carregar escalação no modal:', e)
     } finally {
-      setLoading(false)
+      setLineupLoading(false)
     }
   }, [])
 
   useEffect(() => {
     if (isOpen && match) {
       if (loadedFixtureId !== match.fixture?.id) {
-        fetchDetails(match, false)
+        setEvents([])
+        setErrorMessage(null)
+        setLineup(null)
+        setActiveTab('timeline')
       }
+      fetchDetails(match, false, false)
+    } else if (!isOpen) {
+      setEvents([])
+      setErrorMessage(null)
+      setLoadedFixtureId(null)
+      setLineup(null)
     }
   }, [isOpen, match, loadedFixtureId, fetchDetails])
+
+  // Carrega escalação quando o usuário alternar para a aba 'escalacoes'
+  useEffect(() => {
+    if (isOpen && match && activeTab === 'escalacoes' && !lineup && !lineupLoading) {
+      loadModalLineup(match, false)
+    }
+  }, [isOpen, match, activeTab, lineup, lineupLoading, loadModalLineup])
 
   // Revalidação periódica de 35s enquanto o modal estiver aberto E o jogo for ao vivo
   useEffect(() => {
@@ -158,13 +255,16 @@ export function MatchDetailsModal({ isOpen, onClose, match }: MatchDetailsModalP
     if (!isLiveGame) return
 
     const intervalId = setInterval(() => {
-      fetchDetails(match, true)
+      fetchDetails(match, true, true)
+      if (activeTab === 'escalacoes') {
+        loadModalLineup(match, false)
+      }
     }, 35000)
 
     return () => {
       clearInterval(intervalId)
     }
-  }, [isOpen, match, fetchDetails])
+  }, [isOpen, match, activeTab, fetchDetails, loadModalLineup])
 
   if (!match) return null
 
@@ -385,93 +485,294 @@ export function MatchDetailsModal({ isOpen, onClose, match }: MatchDetailsModalP
               </span>
             </div>
           </div>
+
+          {/* Abas Superiores: Lances e Ficha vs Escalações */}
+          <div className="flex items-center gap-2 mt-4 pt-3 border-t border-white/10">
+            <button
+              type="button"
+              onClick={() => setActiveTab('timeline')}
+              className={`flex-1 py-1.5 px-3 rounded-lg text-xs font-semibold transition flex items-center justify-center gap-1.5 ${
+                activeTab === 'timeline'
+                  ? 'bg-white text-[#0F2A43] shadow-xs'
+                  : 'text-white/80 hover:bg-white/10'
+              }`}
+            >
+              <span>⚽</span> Lances e Ficha
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveTab('escalacoes')}
+              className={`flex-1 py-1.5 px-3 rounded-lg text-xs font-semibold transition flex items-center justify-center gap-1.5 ${
+                activeTab === 'escalacoes'
+                  ? 'bg-white text-[#0F2A43] shadow-xs'
+                  : 'text-white/80 hover:bg-white/10'
+              }`}
+            >
+              <Users className="h-3.5 w-3.5" /> Escalações
+              {lineup?.status === 'confirmada' && (
+                <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
+              )}
+            </button>
+          </div>
         </div>
 
-        {/* Conteúdo: Linha do Tempo e Eventos */}
+        {/* Conteúdo dinâmico de acordo com a aba ativa */}
         <div className="p-5 max-h-[60vh] overflow-y-auto space-y-5 bg-slate-50/50">
-          {loading ? (
+          {activeTab === 'timeline' ? (
+            /* ABA 1: LANCES E FICHA */
+            loading ? (
+              <div className="py-12 text-center flex flex-col items-center justify-center gap-2">
+                <Loader2 className="h-7 w-7 animate-spin text-[#0F2A43]" />
+                <p className="text-xs font-semibold text-slate-600">
+                  Carregando ficha e lances da partida...
+                </p>
+              </div>
+            ) : errorMessage && events.length === 0 ? (
+              <div className="py-10 text-center flex flex-col items-center justify-center gap-3">
+                <AlertCircle className="h-8 w-8 text-amber-500" />
+                <p className="text-xs text-slate-600 max-w-xs">{errorMessage}</p>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => fetchDetails(match, false, true)}
+                  className="text-xs h-8 gap-1.5"
+                >
+                  <RefreshCw className="h-3 w-3" /> Tentar novamente
+                </Button>
+              </div>
+            ) : events.length === 0 ? (
+              <div className="py-10 text-center">
+                <p className="text-xs text-slate-500 font-medium">
+                  Nenhum lance registrado até o momento para esta partida.
+                </p>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => fetchDetails(match, false, true)}
+                  className="text-xs text-slate-600 mt-2 gap-1"
+                >
+                  <RefreshCw className="h-3 w-3" /> Atualizar
+                </Button>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                {/* Seção de Gols */}
+                {golsList.length > 0 && (
+                  <div>
+                    <h4 className="text-xs font-bold uppercase tracking-wider text-slate-600 mb-2 flex items-center gap-1.5">
+                      <span>⚽</span> Gols e Marcadores ({golsList.length})
+                    </h4>
+                    <div className="space-y-1.5">
+                      {golsList.map((ev, idx) => renderEventItem(ev, idx))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Seção de Cartões */}
+                {cartoesList.length > 0 && (
+                  <div>
+                    <h4 className="text-xs font-bold uppercase tracking-wider text-slate-600 mb-2 flex items-center gap-1.5">
+                      <span>🟨 / 🟥</span> Cartões ({cartoesList.length})
+                    </h4>
+                    <div className="space-y-1.5">
+                      {cartoesList.map((ev, idx) => renderEventItem(ev, idx))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Seção de Substituições */}
+                {subsList.length > 0 && (
+                  <div>
+                    <h4 className="text-xs font-bold uppercase tracking-wider text-slate-600 mb-2 flex items-center gap-1.5">
+                      <span>🔄</span> Substituições ({subsList.length})
+                    </h4>
+                    <div className="space-y-1.5">
+                      {subsList.map((ev, idx) => renderEventItem(ev, idx))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Atualização e fonte */}
+                <div className="pt-2 flex items-center justify-between text-[10px] text-slate-400">
+                  <span>Total de {events.length} evento(s) registrado(s)</span>
+                  <button
+                    type="button"
+                    onClick={() => fetchDetails(match, false, true)}
+                    className="hover:text-slate-600 flex items-center gap-1 underline font-medium cursor-pointer"
+                  >
+                    <RefreshCw className="h-2.5 w-2.5" /> Reconsultar
+                  </button>
+                </div>
+              </div>
+            )
+          ) : /* ABA 2: ESCALAÇÕES */
+          lineupLoading ? (
             <div className="py-12 text-center flex flex-col items-center justify-center gap-2">
               <Loader2 className="h-7 w-7 animate-spin text-[#0F2A43]" />
               <p className="text-xs font-semibold text-slate-600">
-                Carregando ficha e lances da partida...
+                Buscando escalações oficiais...
               </p>
             </div>
-          ) : errorMessage && events.length === 0 ? (
-            <div className="py-10 text-center flex flex-col items-center justify-center gap-3">
-              <AlertCircle className="h-8 w-8 text-amber-500" />
-              <p className="text-xs text-slate-600 max-w-xs">{errorMessage}</p>
+          ) : !lineup ||
+            (!lineup.teams?.[0]?.starters?.length && !lineup.teams?.[1]?.starters?.length) ? (
+            <div className="py-8 text-center flex flex-col items-center justify-center gap-2">
+              <div className="h-10 w-10 rounded-full bg-slate-100 flex items-center justify-center text-slate-400 mb-1">
+                <HelpCircle className="h-5 w-5" />
+              </div>
+              <p className="text-sm font-semibold text-slate-700">
+                Escalações ainda não confirmadas pelas equipes
+              </p>
+              <p className="text-xs text-slate-400 max-w-xs">
+                As escalações oficiais costumam ser liberadas pelos clubes cerca de 30 a 60 minutos
+                antes do início da partida.
+              </p>
               <Button
                 size="sm"
                 variant="outline"
-                onClick={() => fetchDetails(match, false)}
-                className="text-xs h-8 gap-1.5"
+                onClick={() => loadModalLineup(match, true)}
+                className="text-xs h-8 gap-1.5 mt-2 text-[#0F2A43]"
               >
-                <RefreshCw className="h-3 w-3" /> Tentar novamente
-              </Button>
-            </div>
-          ) : events.length === 0 ? (
-            <div className="py-10 text-center">
-              <p className="text-xs text-slate-500 font-medium">
-                Nenhum detalhe ou evento disponível no momento para esta partida.
-              </p>
-              <Button
-                size="sm"
-                variant="ghost"
-                onClick={() => fetchDetails(match, false)}
-                className="text-xs text-slate-600 mt-2 gap-1"
-              >
-                <RefreshCw className="h-3 w-3" /> Atualizar
+                <RefreshCw className="h-3 w-3" /> Verificar agora
               </Button>
             </div>
           ) : (
-            <div className="space-y-4">
-              {/* Seção de Gols */}
-              {golsList.length > 0 && (
-                <div>
-                  <h4 className="text-xs font-bold uppercase tracking-wider text-slate-600 mb-2 flex items-center gap-1.5">
-                    <span>⚽</span> Gols e Marcadores ({golsList.length})
-                  </h4>
-                  <div className="space-y-1.5">
-                    {golsList.map((ev, idx) => renderEventItem(ev, idx))}
+            <div className="space-y-3">
+              {/* Seletor de time Mandante / Visitante */}
+              {(() => {
+                const teamHome = lineup.teams?.[0]
+                const teamAway = lineup.teams?.[1]
+                return (
+                  <div className="grid grid-cols-2 gap-2 bg-slate-200/60 p-1 rounded-lg">
+                    <button
+                      type="button"
+                      onClick={() => setLineupTab('home')}
+                      className={`py-1.5 px-2 rounded-md text-xs font-bold truncate transition ${
+                        lineupTab === 'home'
+                          ? 'bg-white text-slate-900 shadow-xs'
+                          : 'text-slate-600 hover:text-slate-900'
+                      }`}
+                    >
+                      {teamHome?.teamName || homeName}
+                      {teamHome?.formation ? ` (${teamHome.formation})` : ''}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setLineupTab('away')}
+                      className={`py-1.5 px-2 rounded-md text-xs font-bold truncate transition ${
+                        lineupTab === 'away'
+                          ? 'bg-white text-slate-900 shadow-xs'
+                          : 'text-slate-600 hover:text-slate-900'
+                      }`}
+                    >
+                      {teamAway?.teamName || awayName}
+                      {teamAway?.formation ? ` (${teamAway.formation})` : ''}
+                    </button>
                   </div>
-                </div>
-              )}
+                )
+              })()}
 
-              {/* Seção de Cartões */}
-              {cartoesList.length > 0 && (
-                <div>
-                  <h4 className="text-xs font-bold uppercase tracking-wider text-slate-600 mb-2 flex items-center gap-1.5">
-                    <span>🟨 / 🟥</span> Cartões ({cartoesList.length})
-                  </h4>
-                  <div className="space-y-1.5">
-                    {cartoesList.map((ev, idx) => renderEventItem(ev, idx))}
+              {/* Lista de Titulares e Reservas da equipe selecionada */}
+              {(() => {
+                const selectedTeam = lineupTab === 'home' ? lineup.teams?.[0] : lineup.teams?.[1]
+                const starters = selectedTeam?.starters || []
+                const substitutes = selectedTeam?.substitutes || []
+
+                if (starters.length === 0 && substitutes.length === 0) {
+                  return (
+                    <div className="py-6 text-center text-xs text-slate-400">
+                      Nenhum jogador listado para esta equipe no momento.
+                    </div>
+                  )
+                }
+
+                return (
+                  <div className="space-y-3">
+                    {/* Titulares */}
+                    {starters.length > 0 && (
+                      <div>
+                        <div className="flex items-center justify-between mb-1.5">
+                          <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500">
+                            Titulares ({starters.length})
+                          </span>
+                          {selectedTeam?.formation && (
+                            <Badge variant="outline" className="text-[10px] h-5 bg-white">
+                              Formação {selectedTeam.formation}
+                            </Badge>
+                          )}
+                        </div>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+                          {starters.map((pl, pIdx) => (
+                            <div
+                              key={pIdx}
+                              className="flex items-center gap-2 p-2 rounded-md bg-white border border-slate-200/80 shadow-2xs text-xs"
+                            >
+                              {pl.number != null && (
+                                <span className="font-mono font-bold text-[11px] text-slate-500 w-5 text-right shrink-0">
+                                  {pl.number}
+                                </span>
+                              )}
+                              <span className="font-medium text-slate-800 truncate flex-1">
+                                {pl.name}
+                              </span>
+                              {pl.pos && (
+                                <span className="text-[10px] uppercase font-bold text-slate-400 bg-slate-100 px-1 py-0.5 rounded shrink-0">
+                                  {pl.pos}
+                                </span>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Reservas */}
+                    {substitutes.length > 0 && (
+                      <div>
+                        <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500 block mb-1.5">
+                          Banco de Reservas ({substitutes.length})
+                        </span>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+                          {substitutes.map((pl, pIdx) => (
+                            <div
+                              key={pIdx}
+                              className="flex items-center gap-2 p-2 rounded-md bg-white/70 border border-slate-200/60 shadow-2xs text-xs"
+                            >
+                              {pl.number != null && (
+                                <span className="font-mono font-bold text-[11px] text-slate-400 w-5 text-right shrink-0">
+                                  {pl.number}
+                                </span>
+                              )}
+                              <span className="text-slate-700 truncate flex-1">{pl.name}</span>
+                              {pl.pos && (
+                                <span className="text-[10px] uppercase font-bold text-slate-400 bg-slate-100 px-1 py-0.5 rounded shrink-0">
+                                  {pl.pos}
+                                </span>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Treinador */}
+                    {selectedTeam?.coach && (
+                      <div className="text-[11px] text-slate-500 pt-1 border-t border-slate-200/60 flex items-center justify-between">
+                        <span>
+                          Treinador:{' '}
+                          <strong className="text-slate-700">{selectedTeam.coach}</strong>
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => loadModalLineup(match, true)}
+                          className="hover:text-slate-800 flex items-center gap-1 underline cursor-pointer"
+                        >
+                          <RefreshCw className="h-2.5 w-2.5" /> Atualizar
+                        </button>
+                      </div>
+                    )}
                   </div>
-                </div>
-              )}
-
-              {/* Seção de Substituições */}
-              {subsList.length > 0 && (
-                <div>
-                  <h4 className="text-xs font-bold uppercase tracking-wider text-slate-600 mb-2 flex items-center gap-1.5">
-                    <span>🔄</span> Substituições ({subsList.length})
-                  </h4>
-                  <div className="space-y-1.5">
-                    {subsList.map((ev, idx) => renderEventItem(ev, idx))}
-                  </div>
-                </div>
-              )}
-
-              {/* Atualização e fonte */}
-              <div className="pt-2 flex items-center justify-between text-[10px] text-slate-400">
-                <span>Total de {events.length} evento(s) registrado(s)</span>
-                <button
-                  type="button"
-                  onClick={() => fetchDetails(match, false)}
-                  className="hover:text-slate-600 flex items-center gap-1 underline font-medium cursor-pointer"
-                >
-                  <RefreshCw className="h-2.5 w-2.5" /> Reconsultar
-                </button>
-              </div>
+                )
+              })()}
             </div>
           )}
         </div>

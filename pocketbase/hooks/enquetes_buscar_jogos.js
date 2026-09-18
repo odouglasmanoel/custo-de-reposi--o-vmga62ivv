@@ -426,9 +426,14 @@ routerAdd(
           }
         }
 
-        // 2. Se não está em cache, faz chamada aos provedores externos com contingência
+        // 2. Se não está em cache, faz chamada aos provedores externos combinando todas as fontes (Merge Multi-API)
         if (dayFixturesForDate.length === 0) {
-          // A) API-Football: se configurada, tenta consultar a data
+          // Listas coletadas por cada fonte externa para unificação com prioridade
+          var afCollected = []
+          var fdCollected = []
+          var tsdbCollected = []
+
+          // A) API-Football: consulta a data quando chave disponível
           if (apiKey && apiKey !== fallbackApiKey) {
             var baseUrl = isRapidApi
               ? 'https://api-football-v1.p.rapidapi.com/v3/fixtures'
@@ -468,7 +473,7 @@ routerAdd(
                   var authenticAFName =
                     (item.league && item.league.name) || tCheck.categoria || 'Futebol'
 
-                  dayFixturesForDate.push({
+                  afCollected.push({
                     fixture: {
                       id: item.fixture ? String(item.fixture.id) : '',
                       date: fixDate,
@@ -504,6 +509,7 @@ routerAdd(
                     dateSP: dateSP,
                     timeSP: timeSP,
                     provider: 'api_football',
+                    sourcePriority: 1,
                   })
                 }
               }
@@ -515,11 +521,10 @@ routerAdd(
             }
           }
 
-          // B) Football-Data.org: se API-Football não retornou jogos (ou estourou cota/vazio), aciona contingência
+          // B) Football-Data.org: sempre consultado para merge quando token disponível
           var fdTokenToUse = fallbackApiKey || (provedor === 'football_data' ? apiKey : '')
-          if (dayFixturesForDate.length === 0 && fdTokenToUse) {
+          if (fdTokenToUse) {
             try {
-              // Converte data alvo para intervalo dateFrom/dateTo
               var resFD = $http.send({
                 url:
                   'https://api.football-data.org/v4/matches?dateFrom=' +
@@ -550,7 +555,7 @@ routerAdd(
 
                   var authenticFdName = compName || targetCheck.categoria || 'Futebol'
 
-                  dayFixturesForDate.push({
+                  fdCollected.push({
                     fixture: {
                       id: String(m.id),
                       date: m.utcDate,
@@ -582,6 +587,7 @@ routerAdd(
                     dateSP: mDateSP,
                     timeSP: mTimeSP,
                     provider: 'football_data',
+                    sourcePriority: 2,
                   })
                 }
               }
@@ -593,37 +599,33 @@ routerAdd(
             }
           }
 
-          // C) TheSportsDB: se ainda assim estiver vazio, ou para complementar ligas
-          // Se semCorte=true ou busca global, consulta primeiro eventsday.php?d={targetDate} sem filtro de liga
-          // para trazer todos os eventos disponíveis do dia mundo afora
+          // C) TheSportsDB: consultado para completar e expandir o merge de todas as ligas mundiais
           try {
             var tsdbKeyToUse = theSportsDbKey || '3'
             var tsdbDayEvents = []
 
-            // 1. Chamada global eventsday.php sem parâmetro de liga se semCorte
-            if (semCorte) {
-              try {
-                var resTsdbAll = $http.send({
-                  url:
-                    'https://www.thesportsdb.com/api/v1/json/' +
-                    encodeURIComponent(tsdbKeyToUse) +
-                    '/eventsday.php?d=' +
-                    encodeURIComponent(targetDate) +
-                    '&s=Soccer',
-                  method: 'GET',
-                  timeout: 8,
-                })
-                if (
-                  resTsdbAll &&
-                  resTsdbAll.statusCode === 200 &&
-                  resTsdbAll.json &&
-                  Array.isArray(resTsdbAll.json.events)
-                ) {
-                  tsdbDayEvents = resTsdbAll.json.events
-                }
-              } catch (errTsdbGlobal) {
-                console.log('[TheSportsDB Global Enquetes] Erro:', errTsdbGlobal)
+            // 1. Chamada global eventsday.php com filtro s=Soccer
+            try {
+              var resTsdbAll = $http.send({
+                url:
+                  'https://www.thesportsdb.com/api/v1/json/' +
+                  encodeURIComponent(tsdbKeyToUse) +
+                  '/eventsday.php?d=' +
+                  encodeURIComponent(targetDate) +
+                  '&s=Soccer',
+                method: 'GET',
+                timeout: 8,
+              })
+              if (
+                resTsdbAll &&
+                resTsdbAll.statusCode === 200 &&
+                resTsdbAll.json &&
+                Array.isArray(resTsdbAll.json.events)
+              ) {
+                tsdbDayEvents = resTsdbAll.json.events
               }
+            } catch (errTsdbGlobal) {
+              console.log('[TheSportsDB Global Enquetes] Erro:', errTsdbGlobal)
             }
 
             if (tsdbDayEvents.length > 0) {
@@ -646,7 +648,7 @@ routerAdd(
                 var tsdbTimeSPG = toTimeStringSaoPaulo(tsdbRawUtcG)
                 var leagueNameG = evGlobal.strLeague || 'Futebol'
 
-                dayFixturesForDate.push({
+                tsdbCollected.push({
                   fixture: {
                     id: 'tsdb_' + (evGlobal.idEvent || 'ev_' + teiGlobal),
                     date: tsdbRawUtcG,
@@ -675,6 +677,7 @@ routerAdd(
                   dateSP: tsdbDateSPG,
                   timeSP: tsdbTimeSPG,
                   provider: 'thesportsdb',
+                  sourcePriority: 3,
                 })
               }
             } else {
@@ -720,7 +723,6 @@ routerAdd(
                     var aName = (ev.strAwayTeam || '').trim()
                     if (!hName || !aName) continue
 
-                    // TheSportsDB: strTimestamp é UTC ISO "2026-06-15T19:00:00". Se ausente, usa dateEvent + strTime + Z (UTC)
                     var tsdbRawUtc = ev.strTimestamp
                       ? ev.strTimestamp.indexOf('Z') === -1
                         ? ev.strTimestamp + 'Z'
@@ -732,7 +734,7 @@ routerAdd(
                     var tsdbDateSP = toDateStringSaoPaulo(tsdbRawUtc) || ev.dateEvent || targetDate
                     var tsdbTimeSP = toTimeStringSaoPaulo(tsdbRawUtc)
 
-                    dayFixturesForDate.push({
+                    tsdbCollected.push({
                       fixture: {
                         id: 'tsdb_' + (ev.idEvent || tLeague.id + '_' + tei),
                         date: tsdbRawUtc,
@@ -766,6 +768,7 @@ routerAdd(
                       dateSP: tsdbDateSP,
                       timeSP: tsdbTimeSP,
                       provider: 'thesportsdb',
+                      sourcePriority: 3,
                     })
                   }
                 }
@@ -776,6 +779,123 @@ routerAdd(
               '[Enquetes] Erro ao consultar TheSportsDB para ' + targetDate + ':',
               errTsdb,
             )
+          }
+
+          // D) Banco de Dados Local (jogos manuais cadastrados)
+          var dbCollected = []
+          try {
+            var dbManualRecs = $app.findRecordsByFilter(
+              'jogos_do_dia_manuais',
+              "data = '" + targetDate + "'",
+              'horario',
+              100,
+              0,
+            )
+            for (var dbmi = 0; dbmi < dbManualRecs.length; dbmi++) {
+              var dbr = dbManualRecs[dbmi]
+              var dbHome = dbr.getString('time_casa') || ''
+              var dbAway = dbr.getString('time_visitante') || ''
+              var dbHora = dbr.getString('horario') || '16:00'
+              var dbCamp = dbr.getString('campeonato') || 'Futebol'
+              var dbReg = dbr.getString('regiao') || 'Brasileirão & Copas'
+              var dbIso =
+                targetDate + 'T' + (dbHora.length === 5 ? dbHora + ':00' : dbHora) + '-03:00'
+
+              if (dbHome && dbAway) {
+                dbCollected.push({
+                  fixture: {
+                    id: 'manual_' + dbr.id,
+                    date: dbIso,
+                    status: { short: (dbr.getString('status') || 'NS').trim().toUpperCase() },
+                  },
+                  league: {
+                    id: 99990 + dbmi,
+                    name: dbCamp,
+                    categoria: dbCamp,
+                    prioridade: 20,
+                    logo: '',
+                    region: dbReg,
+                  },
+                  teams: {
+                    home: {
+                      id: 0,
+                      name: dbHome,
+                      logo: dbr.getString('logo_casa') || '',
+                    },
+                    away: {
+                      id: 0,
+                      name: dbAway,
+                      logo: dbr.getString('logo_visitante') || '',
+                    },
+                  },
+                  dateSP: targetDate,
+                  timeSP: dbHora,
+                  provider: 'local_db',
+                  sourcePriority: 4,
+                })
+              }
+            }
+          } catch (_) {}
+
+          // =================================================================
+          // UNIFICAÇÃO & COMBINAÇÃO DAS FONTES (Merge com Priorização)
+          // Prioridade em duplicados: API-Football (1) > Football-Data (2) > TheSportsDB (3) > Banco (4)
+          // Deduplicação por time_casa + time_fora (normalizados, independente da ordem) + data
+          // =================================================================
+          var combinedCandidates = []
+            .concat(afCollected)
+            .concat(fdCollected)
+            .concat(tsdbCollected)
+            .concat(dbCollected)
+
+          var dedupStoreMap = {}
+          for (var cci = 0; cci < combinedCandidates.length; cci++) {
+            var cand = combinedCandidates[cci]
+            var cHName = (cand.teams && cand.teams.home && cand.teams.home.name) || ''
+            var cAName = (cand.teams && cand.teams.away && cand.teams.away.name) || ''
+            if (!cHName || !cAName) continue
+
+            var cDate = cand.dateSP || targetDate
+            var nHome = normalizeTeamDedup(cHName)
+            var nAway = normalizeTeamDedup(cAName)
+            var confrontationKey = cDate + '::' + [nHome, nAway].sort().join('___')
+
+            if (!dedupStoreMap[confrontationKey]) {
+              dedupStoreMap[confrontationKey] = cand
+            } else {
+              // Se já temos esse jogo, mantém o de maior prioridade (menor sourcePriority)
+              // e enriquece campos faltantes (logos de times, logo de campeonato)
+              var existingItem = dedupStoreMap[confrontationKey]
+              if (cand.sourcePriority < existingItem.sourcePriority) {
+                // Candidato tem maior prioridade: substitui mantendo logos se o novo não tiver
+                if (!cand.teams.home.logo && existingItem.teams.home.logo) {
+                  cand.teams.home.logo = existingItem.teams.home.logo
+                }
+                if (!cand.teams.away.logo && existingItem.teams.away.logo) {
+                  cand.teams.away.logo = existingItem.teams.away.logo
+                }
+                if (!cand.league.logo && existingItem.league.logo) {
+                  cand.league.logo = existingItem.league.logo
+                }
+                dedupStoreMap[confrontationKey] = cand
+              } else {
+                // Item existente tem maior prioridade: enriquece com dados do candidato se faltantes
+                if (!existingItem.teams.home.logo && cand.teams.home.logo) {
+                  existingItem.teams.home.logo = cand.teams.home.logo
+                }
+                if (!existingItem.teams.away.logo && cand.teams.away.logo) {
+                  existingItem.teams.away.logo = cand.teams.away.logo
+                }
+                if (!existingItem.league.logo && cand.league.logo) {
+                  existingItem.league.logo = cand.league.logo
+                }
+              }
+            }
+          }
+
+          var dedupKeys = Object.keys(dedupStoreMap)
+          for (var dki = 0; dki < dedupKeys.length; dki++) {
+            dayFixturesForDate.push(dedupStoreMap[dedupKeys[dki]])
           }
 
           // Se encontramos partidas para a data, grava no store em memória
