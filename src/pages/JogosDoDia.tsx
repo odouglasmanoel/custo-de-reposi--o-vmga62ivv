@@ -30,7 +30,6 @@ import {
   isFixtureLive,
   isFixtureFinished,
 } from '@/lib/apiFootballMatcher'
-import { getRegionAndCountryByTournament } from '@/lib/tournamentRegionMatcher'
 import { buscarJogosIntervalo, JogoBuscado } from '@/services/enquetes'
 import {
   Select,
@@ -828,137 +827,34 @@ export default function JogosDoDia() {
     return () => clearInterval(timer)
   }, [counts.live, isRateLimited, selectedDate, fetchJogos])
 
-  // Helper para classificar cada partida na categoria de Competição:
-  // - brasileirao_copas: Brasileirão & Copas Nacionais
-  // - conmebol: Libertadores & Sul-Americana
-  // - champions_uefa: Champions League & UEFA
-  // - grandes_ligas_europeias: Grandes Ligas Europeias
-  // - outras: Outras Competições (dinâmicas conforme a data)
-  const getCompetitionCategory = useCallback((f: DayFixture): string => {
-    const lid = Number(f.league?.id) || 0
-    const name = (f.league?.name || '').toLowerCase()
-    const country = (f.league?.country || '').toLowerCase()
+  // Lista de competições 100% dinâmica derivada dos jogos do dia
+  const availableCompetitions = useMemo(() => {
+    const compsMap = new Map<string, string>()
+    for (const f of relevantFixtures) {
+      const leagueName = (f.league?.name || '').trim()
+      if (leagueName) compsMap.set(leagueName, leagueName)
+    }
+    return Array.from(compsMap.keys()).sort((a, b) => a.localeCompare(b))
+  }, [relevantFixtures])
 
-    // 1. Brasileirão & Copas Nacionais
-    const isBrasileiraoOrCopas =
-      lid === 71 ||
-      lid === 72 ||
-      lid === 73 ||
-      lid === 74 ||
-      lid === 75 ||
-      lid === 76 ||
-      lid === 2013 ||
-      lid === 4351 ||
-      lid === 4404 ||
-      lid === 4725 ||
-      name.includes('brasileir') ||
-      name.includes('copa do brasil') ||
-      name.includes('paulist') ||
-      name.includes('carioca') ||
-      name.includes('mineiro') ||
-      name.includes('gaucho') ||
-      name.includes('paranaense') ||
-      name.includes('catarinense') ||
-      name.includes('copa do nordeste') ||
-      name.includes('copa verde') ||
-      name.includes('supercopa do brasil') ||
-      name.includes('supercopa rei') ||
-      ((country === 'brazil' || country === 'brasil') &&
-        (name.includes('série') || name.includes('serie') || name.includes('copa')))
-
-    if (isBrasileiraoOrCopas) return 'brasileirao_copas'
-
-    // 2. Libertadores & Sul-Americana
-    const isConmebol =
-      lid === 13 ||
-      lid === 11 ||
-      lid === 450 ||
-      lid === 4501 ||
-      lid === 4724 ||
-      name.includes('libertadores') ||
-      name.includes('sudamericana') ||
-      name.includes('sul-americana') ||
-      name.includes('sul americana') ||
-      name.includes('recopa sudamericana') ||
-      name.includes('conmebol')
-
-    if (isConmebol) return 'conmebol'
-
-    // 3. Champions League & UEFA
-    const isChampionsUefa =
-      lid === 2 ||
-      lid === 3 ||
-      lid === 848 ||
-      lid === 2001 ||
-      lid === 4480 ||
-      lid === 4481 ||
-      lid === 5071 ||
-      name.includes('champions league') ||
-      name.includes('uefa') ||
-      name.includes('europa league') ||
-      name.includes('conference league') ||
-      name.includes('super cup') ||
-      name.includes('nations league')
-
-    if (isChampionsUefa) return 'champions_uefa'
-
-    // 4. Grandes Ligas Europeias (Premier League, La Liga, Serie A, Bundesliga, Ligue 1 e suas copas nacionais)
-    const isBigEuropeanLeague =
-      lid === 39 ||
-      lid === 140 ||
-      lid === 141 ||
-      lid === 135 ||
-      lid === 78 ||
-      lid === 61 ||
-      lid === 45 ||
-      lid === 48 ||
-      lid === 143 ||
-      lid === 137 ||
-      lid === 81 ||
-      lid === 66 ||
-      lid === 2021 ||
-      lid === 2014 ||
-      lid === 2019 ||
-      lid === 2002 ||
-      lid === 2015 ||
-      lid === 4400 ||
-      lid === 4483 ||
-      name.includes('premier league') ||
-      name.includes('la liga') ||
-      name.includes('serie a tim') ||
-      (name.includes('serie a') && (country.includes('italy') || country.includes('itália'))) ||
-      name.includes('bundesliga') ||
-      name.includes('ligue 1') ||
-      name.includes('ligue 2') ||
-      name.includes('fa cup') ||
-      name.includes('carabao') ||
-      name.includes('copa del rey') ||
-      name.includes('coppa italia') ||
-      name.includes('dfb-pokal') ||
-      name.includes('dfb pokal') ||
-      name.includes('coupe de france')
-
-    if (isBigEuropeanLeague) return 'grandes_ligas_europeias'
-
-    // 5. Outras Competições (dinâmicas conforme a data)
-    return 'outras'
-  }, [])
+  // Reseta selectedCompetition se a competição selecionada não estiver mais nas disponíveis
+  useEffect(() => {
+    if (selectedCompetition !== 'todos' && !availableCompetitions.includes(selectedCompetition)) {
+      setSelectedCompetition('todos')
+    }
+  }, [availableCompetitions, selectedCompetition])
 
   // Lista dinâmica de rounds/fases com base nos jogos da competição selecionada
   const availableRounds = useMemo(() => {
     const roundsSet = new Set<string>()
     for (const f of relevantFixtures) {
-      if (selectedCompetition !== 'todos') {
-        const cat = getCompetitionCategory(f)
-        if (cat !== selectedCompetition) continue
-      }
+      if (selectedCompetition !== 'todos' && (f.league?.name || '').trim() !== selectedCompetition)
+        continue
       const r = (f.league?.round || '').trim()
-      if (r) {
-        roundsSet.add(r)
-      }
+      if (r) roundsSet.add(r)
     }
     return Array.from(roundsSet).sort((a, b) => a.localeCompare(b))
-  }, [relevantFixtures, selectedCompetition, getCompetitionCategory])
+  }, [relevantFixtures, selectedCompetition])
 
   // Reseta selectedRound caso o round atual não exista mais nas opções da competição selecionada
   useEffect(() => {
@@ -970,12 +866,12 @@ export default function JogosDoDia() {
   // Filtragem e busca baseadas no conjunto de ligas relevantes
   const filteredFixtures = useMemo(() => {
     return relevantFixtures.filter((f) => {
-      // Filtro de competição
-      if (selectedCompetition !== 'todos') {
-        const cat = getCompetitionCategory(f)
-        if (cat !== selectedCompetition) {
-          return false
-        }
+      // Filtro de competição 100% dinâmico
+      if (
+        selectedCompetition !== 'todos' &&
+        (f.league?.name || '').trim() !== selectedCompetition
+      ) {
+        return false
       }
 
       // Filtro de divisão / fase
@@ -1011,14 +907,7 @@ export default function JogosDoDia() {
 
       return true
     })
-  }, [
-    relevantFixtures,
-    selectedCompetition,
-    selectedRound,
-    selectedStatus,
-    searchTerm,
-    getCompetitionCategory,
-  ])
+  }, [relevantFixtures, selectedCompetition, selectedRound, selectedStatus, searchTerm])
 
   // Agrupamento por competição/liga
   const groupedByLeague = useMemo(() => {
@@ -1246,21 +1135,25 @@ export default function JogosDoDia() {
       let minutoNormalizado = ''
       if (parsedMin != null) {
         if (parsedExtra != null) {
-          minFormatted = ` ${parsedMin}+${parsedExtra}'`
+          minFormatted = `${parsedMin}+${parsedExtra}'`
           minutoNormalizado = `${parsedMin}+${parsedExtra}`
         } else {
-          minFormatted = ` ${parsedMin}'`
+          minFormatted = `${parsedMin}'`
           minutoNormalizado = `${parsedMin}`
         }
       }
 
-      // Se não houver nome real: entry = minFormatted ? `⚽${minFormatted}` : '⚽' — NUNCA incluir "Gol"
-      // Com nome real: `⚽ Nome 38'` (e "(contra)" quando for gol contra)
+      // Regra estrita: se não houver nome real E não houver minuto, NÃO adicionar o marcador (return)
+      if (!hasRealName && !minFormatted) {
+        return
+      }
+
+      // Com nome real: `⚽ Nome 38'` (ou sem minuto: `⚽ Nome`). Sem nome com minuto: `⚽ 38'`.
       const entry = hasRealName
-        ? `⚽ ${finalDisplayName}${minFormatted}`
-        : minFormatted
-          ? `⚽${minFormatted}`
-          : '⚽'
+        ? minFormatted
+          ? `⚽ ${finalDisplayName} ${minFormatted}`
+          : `⚽ ${finalDisplayName}`
+        : `⚽ ${minFormatted}`
 
       // Chave de deduplicação composta:
       // ${lado}__${nomeNormalizado}__${minuto}__${acrescimos||0}__${tipo||''}__${indiceDoEvento}
@@ -1332,24 +1225,25 @@ export default function JogosDoDia() {
       return null
     }
 
-    // Leitura tolerante de autor do gol
-    // Ordem exata: ev.player?.name, ev.player?.shortName, ev.event_player, ev.strPlayer,
-    // ev.player_name, ev.player (se string), ev.scorer?.name, ev.scorer?.shortName,
-    // ev.scorer (se string), ev.name, ev.strScorer, ev.strEvent, ev.detail
+    // Leitura tolerante de autor do gol tratando objetos aninhados e todas as chaves
     const extractNameFromEv = (ev: any): string => {
       if (!ev) return ''
       const candidates = [
         ev.player?.name,
         ev.player?.shortName,
-        ev.event_player,
-        ev.strPlayer,
-        ev.player_name,
-        typeof ev.player === 'string' ? ev.player : null,
+        typeof ev.player === 'object' && ev.player?.name ? ev.player.name : null,
         ev.scorer?.name,
         ev.scorer?.shortName,
+        typeof ev.scorer === 'object' && ev.scorer?.name ? ev.scorer.name : null,
+        ev.strPlayer,
+        ev.playerName,
+        ev.player_name,
+        ev.event_player,
+        ev.strScorer,
+        ev.scorer_name,
+        typeof ev.player === 'string' ? ev.player : null,
         typeof ev.scorer === 'string' ? ev.scorer : null,
         ev.name,
-        ev.strScorer,
         ev.strEvent,
         ev.detail,
       ]
@@ -1361,10 +1255,17 @@ export default function JogosDoDia() {
       return ''
     }
 
+    // Leitura de minutagem aceitando time.elapsed, minute, intMinute, intGoalScoredTime, time e strings "43'" ou "45+2'"
     const extractMinuteFromEv = (ev: any): { minute: number | null; extra: number | null } => {
       if (!ev) return { minute: null, extra: null }
       let rawMin =
-        ev.time?.elapsed ?? ev.minute ?? ev.intMinute ?? ev.intGoalScoredTime ?? ev.intTime ?? null
+        ev.time?.elapsed ??
+        ev.minute ??
+        ev.intMinute ??
+        ev.intGoalScoredTime ??
+        (typeof ev.time === 'number' || typeof ev.time === 'string' ? ev.time : null) ??
+        ev.intTime ??
+        null
       let rawExtra = ev.time?.extra ?? ev.extraMinute ?? null
 
       if (typeof rawMin === 'string') {
@@ -1515,29 +1416,12 @@ export default function JogosDoDia() {
     let finalHomeScorers = hGoals === 0 ? [] : homeScorers
     let finalAwayScorers = aGoals === 0 ? [] : awayScorers
 
-    // GARANTIA DE CONTAGEM EXATA:
-    // "Garanta que a quantidade de marcadores listados seja estritamente igual ao placar do time."
-    // 1. Se houver mais marcadores listados que o número de gols no placar, limita ao número de gols
+    // Se houver mais marcadores listados que o número de gols no placar, limita ao número de gols
     if (hGoals != null && hGoals > 0 && finalHomeScorers.length > hGoals) {
       finalHomeScorers = finalHomeScorers.slice(0, hGoals)
     }
     if (aGoals != null && aGoals > 0 && finalAwayScorers.length > aGoals) {
       finalAwayScorers = finalAwayScorers.slice(0, aGoals)
-    }
-
-    // 2. Se a quantidade de marcadores visíveis for menor que os gols do placar (ex: faltam autores),
-    // preenche marcadores genéricos "⚽" para que a contagem seja estritamente igual ao placar
-    if (hGoals != null && hGoals > 0 && finalHomeScorers.length < hGoals) {
-      const missingHome = hGoals - finalHomeScorers.length
-      for (let i = 0; i < missingHome; i++) {
-        finalHomeScorers.push('⚽')
-      }
-    }
-    if (aGoals != null && aGoals > 0 && finalAwayScorers.length < aGoals) {
-      const missingAway = aGoals - finalAwayScorers.length
-      for (let i = 0; i < missingAway; i++) {
-        finalAwayScorers.push('⚽')
-      }
     }
 
     return {
@@ -1679,36 +1563,45 @@ export default function JogosDoDia() {
       <div className="flex flex-col gap-3 rounded-[14px] border border-[#E2E8F0] bg-white p-4 shadow-xs">
         {/* Linha superior: Filtro de Competição e Seletor de Divisão / Fase */}
         <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-          {/* Filtro por Competição */}
+          {/* Filtro por Competição 100% dinâmico */}
           <div className="flex flex-wrap items-center gap-1.5">
             <span className="text-xs font-bold text-slate-500 mr-1 flex items-center gap-1">
               <Filter className="h-3.5 w-3.5" />
               Competição:
             </span>
-            {[
-              { id: 'todos', label: 'Todos' },
-              { id: 'brasileirao_copas', label: 'Brasileirão & Copas Nacionais' },
-              { id: 'conmebol', label: 'Libertadores & Sul-Americana' },
-              { id: 'champions_uefa', label: 'Champions League & UEFA' },
-              { id: 'grandes_ligas_europeias', label: 'Grandes Ligas Europeias' },
-              { id: 'outras', label: 'Outras Competições' },
-            ].map((comp) => (
+            <Button
+              type="button"
+              variant={selectedCompetition === 'todos' ? 'default' : 'outline'}
+              size="sm"
+              onClick={() => {
+                setSelectedCompetition('todos')
+                setSelectedRound('todos')
+              }}
+              className={`h-7 px-2.5 text-xs font-semibold ${
+                selectedCompetition === 'todos'
+                  ? 'bg-[#0F2A43] text-white hover:bg-[#1B3A5C]'
+                  : 'border-slate-200 text-slate-700 hover:bg-slate-50'
+              }`}
+            >
+              Todos
+            </Button>
+            {availableCompetitions.map((compName) => (
               <Button
-                key={comp.id}
+                key={compName}
                 type="button"
-                variant={selectedCompetition === comp.id ? 'default' : 'outline'}
+                variant={selectedCompetition === compName ? 'default' : 'outline'}
                 size="sm"
                 onClick={() => {
-                  setSelectedCompetition(comp.id)
+                  setSelectedCompetition(compName)
                   setSelectedRound('todos')
                 }}
                 className={`h-7 px-2.5 text-xs font-semibold ${
-                  selectedCompetition === comp.id
+                  selectedCompetition === compName
                     ? 'bg-[#0F2A43] text-white hover:bg-[#1B3A5C]'
                     : 'border-slate-200 text-slate-700 hover:bg-slate-50'
                 }`}
               >
-                {comp.label}
+                {compName}
               </Button>
             ))}
           </div>
