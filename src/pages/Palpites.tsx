@@ -161,7 +161,22 @@ export default function Palpites() {
   const [totalPages, setTotalPages] = useState<number>(() => initialCache?.totalPages || 1)
   const [totalItems, setTotalItems] = useState<number>(() => initialCache?.totalItems || 0)
   const [isLoadingMore, setIsLoadingMore] = useState<boolean>(false)
-  const [escudosMap, setEscudosMap] = useState<Record<string, string>>({})
+  const [escudosMap, setEscudosMap] = useState<Record<string, string>>(() => {
+    const initialMap: Record<string, string> = {}
+    if (initialCache?.jogos) {
+      for (const j of initialCache.jogos) {
+        if (j.time_a) {
+          const cA = readEscudoCache(j.time_a.trim())
+          if (cA) initialMap[j.time_a.trim()] = cA
+        }
+        if (j.time_b) {
+          const cB = readEscudoCache(j.time_b.trim())
+          if (cB) initialMap[j.time_b.trim()] = cB
+        }
+      }
+    }
+    return initialMap
+  })
   const [allBoloes, setAllBoloes] = useState<Bolao[]>([])
   const [participantesList, setParticipantesList] = useState<Participante[]>([])
   const [allGroupPalpites, setAllGroupPalpites] = useState<Palpite[]>([])
@@ -299,6 +314,20 @@ export default function Palpites() {
         setCurrentPage(cached.currentPage || 1)
         setTotalPages(cached.totalPages || 1)
         setTotalItems(cached.totalItems || cached.jogos.length)
+        const cachedShields: Record<string, string> = {}
+        for (const j of cached.jogos) {
+          if (j.time_a) {
+            const cA = readEscudoCache(j.time_a.trim())
+            if (cA) cachedShields[j.time_a.trim()] = cA
+          }
+          if (j.time_b) {
+            const cB = readEscudoCache(j.time_b.trim())
+            if (cB) cachedShields[j.time_b.trim()] = cB
+          }
+        }
+        if (Object.keys(cachedShields).length > 0) {
+          setEscudosMap((prev) => ({ ...prev, ...cachedShields }))
+        }
         setLoading(false)
         setIsBackgroundRevalidating(true)
       } else {
@@ -1032,6 +1061,41 @@ export default function Palpites() {
   }, [filteredJogos, sortOrder])
   const hasMore = currentPage < totalPages
 
+  function TeamShield({
+    escudo,
+    nomeTime,
+    sigla,
+    sizeClass = 'h-10 w-10 sm:h-12 sm:w-12',
+    textClass = 'text-xs font-bold text-slate-700',
+  }: {
+    escudo: string | undefined
+    nomeTime: string
+    sigla: string
+    sizeClass?: string
+    textClass?: string
+  }) {
+    const [hasError, setHasError] = useState(false)
+    if (!escudo || hasError) {
+      return (
+        <div
+          className={`${sizeClass} rounded-full bg-slate-100 border border-slate-300 flex items-center justify-center ${textClass}`}
+        >
+          {sigla}
+        </div>
+      )
+    }
+    return (
+      <img
+        src={escudo}
+        alt={nomeTime}
+        className={`${sizeClass} object-contain drop-shadow-xs`}
+        loading="eager"
+        decoding="async"
+        onError={() => setHasError(true)}
+      />
+    )
+  }
+
   // Subcomponente de Card de Palpite individual memoizado com React.memo
   const PalpiteItemCard = useMemo(() => {
     return React.memo(
@@ -1206,22 +1270,13 @@ export default function Palpites() {
                 {/* Mandante */}
                 <div className="flex flex-col items-center text-center min-w-0">
                   <div className="h-10 w-10 sm:h-12 sm:w-12 flex items-center justify-center shrink-0 mb-1.5">
-                    {escudoA ? (
-                      <img
-                        src={escudoA}
-                        alt={jogo.time_a}
-                        className="h-10 w-10 sm:h-12 sm:w-12 object-contain drop-shadow-xs"
-                        loading="lazy"
-                        decoding="async"
-                        onError={(e) => {
-                          ;(e.currentTarget as HTMLElement).style.display = 'none'
-                        }}
-                      />
-                    ) : (
-                      <div className="h-10 w-10 sm:h-12 sm:w-12 rounded-full bg-slate-100 border border-slate-300 flex items-center justify-center text-xs font-bold text-slate-700">
-                        {initialsA}
-                      </div>
-                    )}
+                    <TeamShield
+                      escudo={escudoA}
+                      nomeTime={jogo.time_a}
+                      sigla={initialsA}
+                      sizeClass="h-10 w-10 sm:h-12 sm:w-12"
+                      textClass="text-xs font-bold text-slate-700"
+                    />
                   </div>
                   <span
                     className="text-xs font-bold text-[#0F172A] leading-tight line-clamp-2 w-full px-1"
@@ -1271,22 +1326,13 @@ export default function Palpites() {
                 {/* Visitante */}
                 <div className="flex flex-col items-center text-center min-w-0">
                   <div className="h-10 w-10 sm:h-12 sm:w-12 flex items-center justify-center shrink-0 mb-1.5">
-                    {escudoB ? (
-                      <img
-                        src={escudoB}
-                        alt={jogo.time_b}
-                        className="h-10 w-10 sm:h-12 sm:w-12 object-contain drop-shadow-xs"
-                        loading="lazy"
-                        decoding="async"
-                        onError={(e) => {
-                          ;(e.currentTarget as HTMLElement).style.display = 'none'
-                        }}
-                      />
-                    ) : (
-                      <div className="h-10 w-10 sm:h-12 sm:w-12 rounded-full bg-slate-100 border border-slate-300 flex items-center justify-center text-xs font-bold text-slate-700">
-                        {initialsB}
-                      </div>
-                    )}
+                    <TeamShield
+                      escudo={escudoB}
+                      nomeTime={jogo.time_b}
+                      sigla={initialsB}
+                      sizeClass="h-10 w-10 sm:h-12 sm:w-12"
+                      textClass="text-xs font-bold text-slate-700"
+                    />
                   </div>
                   <span
                     className="text-xs font-bold text-[#0F172A] leading-tight line-clamp-2 w-full px-1"
@@ -1678,22 +1724,13 @@ export default function Palpites() {
                   <div className="flex items-center justify-center gap-2 py-1">
                     {' '}
                     <div className="flex flex-col items-center shrink-0">
-                      {escudoA ? (
-                        <img
-                          src={escudoA}
-                          alt={jogo.time_a}
-                          className="h-7 w-7 object-contain drop-shadow-2xs"
-                          loading="lazy"
-                          decoding="async"
-                          onError={(e) => {
-                            ;(e.currentTarget as HTMLElement).style.display = 'none'
-                          }}
-                        />
-                      ) : (
-                        <div className="h-7 w-7 rounded-full bg-slate-200 border border-slate-300 flex items-center justify-center text-[10px] font-bold text-slate-700">
-                          {initialsA}
-                        </div>
-                      )}
+                      <TeamShield
+                        escudo={escudoA}
+                        nomeTime={jogo.time_a}
+                        sigla={initialsA}
+                        sizeClass="h-7 w-7"
+                        textClass="text-[10px] font-bold text-slate-700 bg-slate-200"
+                      />
                     </div>
                     <Input
                       type="number"
@@ -1719,22 +1756,13 @@ export default function Palpites() {
                       }`}
                     />
                     <div className="flex flex-col items-center shrink-0">
-                      {escudoB ? (
-                        <img
-                          src={escudoB}
-                          alt={jogo.time_b}
-                          className="h-7 w-7 object-contain drop-shadow-2xs"
-                          loading="lazy"
-                          decoding="async"
-                          onError={(e) => {
-                            ;(e.currentTarget as HTMLElement).style.display = 'none'
-                          }}
-                        />
-                      ) : (
-                        <div className="h-7 w-7 rounded-full bg-slate-200 border border-slate-300 flex items-center justify-center text-[10px] font-bold text-slate-700">
-                          {initialsB}
-                        </div>
-                      )}
+                      <TeamShield
+                        escudo={escudoB}
+                        nomeTime={jogo.time_b}
+                        sigla={initialsB}
+                        sizeClass="h-7 w-7"
+                        textClass="text-[10px] font-bold text-slate-700 bg-slate-200"
+                      />
                     </div>
                   </div>
 
@@ -2040,6 +2068,10 @@ export default function Palpites() {
       },
       (prev, next) => {
         return (
+          prev.escudoA === next.escudoA &&
+          prev.escudoB === next.escudoB &&
+          prev.initialsA === next.initialsA &&
+          prev.initialsB === next.initialsB &&
           prev.jogo.id === next.jogo.id &&
           prev.finalizado === next.finalizado &&
           prev.isEditing === next.isEditing &&
