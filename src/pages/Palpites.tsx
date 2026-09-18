@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { useSearchParams, Link } from 'react-router-dom'
 import {
   Calendar,
@@ -930,12 +930,12 @@ export default function Palpites() {
     }
   }
 
-  const toggleDetails = (jogoId: string) => {
+  const toggleDetails = useCallback((jogoId: string) => {
     setExpandedDetails((prev) => ({
       ...prev,
       [jogoId]: !prev[jogoId],
     }))
-  }
+  }, [])
 
   // Mapear id do bolão para o objeto do bolão para rótulos fáceis
   const bolaoMap = useMemo(() => {
@@ -960,6 +960,770 @@ export default function Palpites() {
     return sortJogosCrescente(jogos)
   }, [jogos])
   const hasMore = currentPage < totalPages
+
+  // Subcomponente de Card de Palpite individual memoizado com React.memo
+  const PalpiteItemCard = useMemo(() => {
+    return React.memo(
+      function PalpiteItemCard({
+        jogo,
+        bolaoOrigem,
+        palpite,
+        form,
+        finalizado,
+        pontos,
+        detalhamento,
+        escudoA,
+        escudoB,
+        initialsA,
+        initialsB,
+        isEditing,
+        isExpired,
+        isSaved,
+        isLocked,
+        nowMs,
+        savingGameId,
+        loadedGroupBets,
+        loadingGroupBets,
+        betsForGame,
+        participanteMap,
+        participantName,
+        isAdmin,
+        expandedDetails,
+        onToggleDetails,
+        onLoadGroupBets,
+        onSetEditing,
+        onCancelEditing,
+        onScoreChange,
+        onScorerLineChange,
+        onPenaltisChange,
+        onSavePalpite,
+        onAdminEdit,
+      }: {
+        jogo: Jogo
+        bolaoOrigem: Bolao | undefined
+        palpite: Palpite | undefined
+        form: PalpiteFormData
+        finalizado: boolean | undefined
+        pontos: number
+        detalhamento: string[]
+        escudoA: string | undefined
+        escudoB: string | undefined
+        initialsA: string
+        initialsB: string
+        isEditing: boolean
+        isExpired: boolean
+        isSaved: boolean
+        isLocked: boolean
+        nowMs: number
+        savingGameId: string | null
+        loadedGroupBets: boolean
+        loadingGroupBets: boolean
+        betsForGame: Palpite[]
+        participanteMap: Map<string, Participante>
+        participantName: string
+        isAdmin: boolean
+        expandedDetails: boolean
+        onToggleDetails: (id: string) => void
+        onLoadGroupBets: () => void
+        onSetEditing: (id: string, editing: boolean) => void
+        onCancelEditing: (id: string, palpite: Palpite | undefined) => void
+        onScoreChange: (jogoId: string, side: 'a' | 'b', val: string) => void
+        onScorerLineChange: (jogoId: string, side: 'a' | 'b', index: number, val: string) => void
+        onPenaltisChange: (jogoId: string, val: string) => void
+        onSavePalpite: (jogo: Jogo) => void
+        onAdminEdit: (data: {
+          palpite: Palpite
+          participanteNome: string
+          timeA: string
+          timeB: string
+        }) => void
+      }) {
+        const horaEncerramento = formatHoraEncerramento(jogo.hora)
+
+        return (
+          <Card className="overflow-hidden rounded-[14px] border-[#E2E8F0] bg-white shadow-xs transition hover:shadow-sm flex flex-col justify-between">
+            {/* Match header */}
+            <div className="flex flex-wrap items-center justify-between border-b border-slate-100 bg-slate-50/70 px-4 py-2.5 gap-1.5">
+              <div className="flex flex-wrap items-center gap-1.5 text-[11px] text-slate-600">
+                {bolaoOrigem && (
+                  <Badge
+                    variant="secondary"
+                    className="border border-[#CBD5E1] bg-white text-[#0F2A43] font-bold text-[10px] px-1.5 py-0 shadow-2xs"
+                  >
+                    🏆 {bolaoOrigem.nome}
+                  </Badge>
+                )}
+                <span className="flex items-center gap-1">
+                  <Calendar className="h-3 w-3 text-slate-400" />
+                  <span>{formatDataBR(jogo.data)}</span>
+                </span>
+                <span>•</span>
+                <span className="flex items-center gap-1">
+                  <Clock className="h-3 w-3 text-slate-400" />
+                  <span>{formatHoraBR(jogo.hora)}</span>
+                </span>
+              </div>
+              {finalizado ? (
+                <div className="flex items-center gap-1.5">
+                  <span className="rounded bg-slate-900 px-1.5 py-0.5 text-[10px] font-black text-white">
+                    Real: {jogo.placar_a}x{jogo.placar_b}
+                  </span>
+                  <span
+                    className={`rounded-full px-2 py-0.2 text-[10px] font-bold ${
+                      pontos > 0 ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-200 text-slate-700'
+                    }`}
+                  >
+                    {pontos > 0 ? `+${pontos} pts` : '0 pts'}
+                  </span>
+                </div>
+              ) : isExpired ? (
+                <Badge
+                  variant="outline"
+                  className="border-rose-300 bg-rose-50 text-rose-800 text-[10px] font-semibold gap-1 px-1.5 py-0"
+                >
+                  <Lock className="h-2.5 w-2.5 text-rose-600" />
+                  Encerrado
+                </Badge>
+              ) : palpite && !isEditing ? (
+                <Badge
+                  variant="outline"
+                  className="border-emerald-300 bg-emerald-50 text-emerald-800 text-[10px] font-semibold gap-1 px-1.5 py-0"
+                >
+                  <CheckCircle2 className="h-2.5 w-2.5 text-emerald-600" />
+                  Registrado
+                </Badge>
+              ) : palpite && isEditing ? (
+                <Badge
+                  variant="outline"
+                  className="border-blue-300 bg-blue-50 text-blue-800 text-[10px] font-semibold gap-1 px-1.5 py-0"
+                >
+                  <Edit3 className="h-2.5 w-2.5 text-blue-600" />
+                  Editando
+                </Badge>
+              ) : (
+                <Badge
+                  variant="outline"
+                  className="border-amber-300 bg-amber-50 text-amber-800 text-[10px] px-1.5 py-0"
+                >
+                  Aberto
+                </Badge>
+              )}
+            </div>
+
+            <div className="p-4 flex-1 flex flex-col justify-between">
+              {jogo.competicao && (
+                <div className="text-center mb-2">
+                  <Badge
+                    variant="secondary"
+                    className="border border-indigo-200 bg-indigo-50 text-[10px] font-semibold text-indigo-700 px-1.5 py-0"
+                  >
+                    {jogo.competicao}
+                  </Badge>
+                </div>
+              )}
+
+              {/* Team names row */}
+              <div className="grid grid-cols-2 gap-2 text-center items-center mb-3">
+                <span className="text-xs font-bold text-[#0F172A] truncate" title={jogo.time_a}>
+                  {jogo.time_a}
+                </span>
+                <span className="text-xs font-bold text-[#0F172A] truncate" title={jogo.time_b}>
+                  {jogo.time_b}
+                </span>
+              </div>
+
+              {/* Grupo de palpites liberados para partidas encerradas ou com horário de kickoff atingido */}
+              {(() => {
+                const isExpiredOrFinalized =
+                  finalizado || isPalpiteEncerrado(jogo.data, jogo.hora, nowMs)
+                if (!isExpiredOrFinalized) return null
+
+                if (!loadedGroupBets) {
+                  return (
+                    <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50/80 p-3 text-center">
+                      <p className="text-xs text-slate-600 mb-2">
+                        Palpites do grupo disponíveis para esta partida encerrada ou iniciada.
+                      </p>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        disabled={loadingGroupBets}
+                        onClick={onLoadGroupBets}
+                        className="h-7 text-xs font-semibold border-slate-300 text-[#0F2A43] hover:bg-white"
+                      >
+                        {loadingGroupBets ? (
+                          <>
+                            <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                            Carregando palpites do grupo...
+                          </>
+                        ) : (
+                          <>
+                            <Users className="mr-1.5 h-3.5 w-3.5" />
+                            Carregar palpites do grupo
+                          </>
+                        )}
+                      </Button>
+                    </div>
+                  )
+                }
+
+                return (
+                  <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50/80 p-4">
+                    <div className="flex items-center justify-between pb-2 mb-3 border-b border-slate-200">
+                      <div className="flex items-center gap-1.5">
+                        <Users className="h-4 w-4 text-[#0F2A43]" />
+                        <span className="text-xs font-bold text-[#0F172A]">
+                          Palpites do Grupo Liberados
+                        </span>
+                      </div>
+                      <Badge
+                        variant="outline"
+                        className="border-slate-300 bg-white text-[10px] font-semibold text-slate-700"
+                      >
+                        {betsForGame.length} palpite(s)
+                      </Badge>
+                    </div>
+
+                    {betsForGame.length === 0 ? (
+                      <p className="text-center py-2 text-xs italic text-slate-400">
+                        Nenhum participante registrou palpite para esta partida antes do
+                        encerramento.
+                      </p>
+                    ) : (
+                      <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2 lg:grid-cols-4">
+                        {betsForGame.map((bet) => {
+                          const part = participanteMap.get(bet.participante)
+                          const nomeParticipante = part?.nome || 'Participante'
+                          const isCurrentUser =
+                            participantName &&
+                            nomeParticipante.trim().toLowerCase() ===
+                              participantName.trim().toLowerCase()
+
+                          return (
+                            <div
+                              key={bet.id}
+                              className={`rounded-lg border p-3 text-xs transition duration-150 shadow-2xs ${
+                                isCurrentUser
+                                  ? 'border-emerald-300 bg-emerald-50/80 ring-1 ring-emerald-300'
+                                  : 'border-slate-200 bg-white'
+                              }`}
+                            >
+                              <div className="flex items-center justify-between gap-1">
+                                <span className="font-bold text-[#0F172A] truncate">
+                                  {nomeParticipante}
+                                </span>
+                                <div className="flex items-center gap-1 shrink-0">
+                                  {isCurrentUser && (
+                                    <Badge className="bg-[#10B981] px-1 py-0 text-[9px] font-bold text-white hover:bg-[#10B981]">
+                                      Você
+                                    </Badge>
+                                  )}
+                                  {isAdmin && (
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        onAdminEdit({
+                                          palpite: bet,
+                                          participanteNome: nomeParticipante,
+                                          timeA: jogo.time_a,
+                                          timeB: jogo.time_b,
+                                        })
+                                      }
+                                      className="inline-flex items-center gap-0.5 rounded px-1.5 py-0.5 text-[9px] font-semibold text-amber-700 bg-amber-50 hover:bg-amber-100 border border-amber-200 transition"
+                                      title="Editar marcadores deste palpite (Admin)"
+                                    >
+                                      <Edit3 className="h-2.5 w-2.5" />
+                                      <span>Editar</span>
+                                    </button>
+                                  )}
+                                </div>
+                              </div>
+                              <div className="mt-1 text-xs font-semibold text-slate-800">
+                                Palpite:{' '}
+                                <strong className="text-sm font-black text-[#0F2A43]">
+                                  {bet.placar_a} x {bet.placar_b}
+                                </strong>
+                              </div>
+                              {(() => {
+                                const splitPalpite = getPalpiteMarcadoresPorTime(bet)
+                                const is0x0 =
+                                  splitPalpite.placarA === 0 && splitPalpite.placarB === 0
+
+                                if (is0x0) {
+                                  return (
+                                    <div className="mt-1 text-[10px] text-slate-400 italic">
+                                      Sem marcadores (0x0)
+                                    </div>
+                                  )
+                                }
+
+                                return (
+                                  <div className="mt-1.5 space-y-0.5 border-t border-slate-200/60 pt-1 text-[11px] leading-snug">
+                                    <div className="truncate text-slate-700">
+                                      <span className="font-semibold text-slate-800">
+                                        Gols Mandante:
+                                      </span>{' '}
+                                      <span
+                                        className={
+                                          splitPalpite.labelA === '-'
+                                            ? 'text-slate-400'
+                                            : 'text-slate-900 font-medium'
+                                        }
+                                      >
+                                        {splitPalpite.labelA}
+                                      </span>
+                                    </div>
+                                    <div className="truncate text-slate-700">
+                                      <span className="font-semibold text-slate-800">
+                                        Gols Visitante:
+                                      </span>{' '}
+                                      <span
+                                        className={
+                                          splitPalpite.labelB === '-'
+                                            ? 'text-slate-400'
+                                            : 'text-slate-900 font-medium'
+                                        }
+                                      >
+                                        {splitPalpite.labelB}
+                                      </span>
+                                    </div>
+                                  </div>
+                                )
+                              })()}
+                              {finalizado && (
+                                <div className="mt-1.5 pt-1.5 border-t border-slate-100 flex items-center justify-between text-[11px]">
+                                  <span className="text-slate-500 font-medium">Pontos:</span>
+                                  <span
+                                    className={`font-bold ${
+                                      bet.pontuacao_jogo > 0 ? 'text-emerald-700' : 'text-slate-500'
+                                    }`}
+                                  >
+                                    +{bet.pontuacao_jogo} pts
+                                  </span>
+                                </div>
+                              )}
+                            </div>
+                          )
+                        })}
+                      </div>
+                    )}
+                  </div>
+                )
+              })()}
+
+              {/* Form or Read-only view */}
+              {finalizado ? (
+                <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-4">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="text-xs text-slate-700">
+                      <span className="font-semibold text-slate-900">Seu palpite de placar:</span>{' '}
+                      {palpite ? (
+                        <strong className="text-sm font-black text-[#0F2A43]">
+                          {palpite.placar_a} x {palpite.placar_b}
+                        </strong>
+                      ) : (
+                        <span className="text-slate-400 italic">Nenhum palpite enviado</span>
+                      )}
+                    </div>
+
+                    {palpite && detalhamento.length > 0 && (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => onToggleDetails(jogo.id)}
+                        className="h-7 text-xs font-semibold text-[#0F2A43] hover:bg-slate-200"
+                      >
+                        <span>Detalhar pontuação</span>
+                        {expandedDetails ? (
+                          <ChevronUp className="ml-1 h-3.5 w-3.5" />
+                        ) : (
+                          <ChevronDown className="ml-1 h-3.5 w-3.5" />
+                        )}
+                      </Button>
+                    )}
+                  </div>
+
+                  {palpite && (
+                    <div className="mt-2 grid grid-cols-1 gap-2 text-xs sm:grid-cols-2">
+                      <div className="rounded bg-white p-2 border border-slate-200">
+                        <span className="text-[11px] font-medium text-slate-500">
+                          Goleadores indicados ({jogo.time_a}):
+                        </span>
+                        <p className="font-medium text-slate-800">
+                          {Array.isArray(palpite.goleadores_a) && palpite.goleadores_a.length > 0
+                            ? palpite.goleadores_a.join(', ')
+                            : 'Nenhum'}
+                        </p>
+                      </div>
+                      <div className="rounded bg-white p-2 border border-slate-200">
+                        <span className="text-[11px] font-medium text-slate-500">
+                          Goleadores indicados ({jogo.time_b}):
+                        </span>
+                        <p className="font-medium text-slate-800">
+                          {Array.isArray(palpite.goleadores_b) && palpite.goleadores_b.length > 0
+                            ? palpite.goleadores_b.join(', ')
+                            : 'Nenhum'}
+                        </p>
+                      </div>
+                    </div>
+                  )}
+
+                  {expandedDetails && detalhamento.length > 0 && (
+                    <div className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50/60 p-3 text-xs text-emerald-900 animate-in fade-in duration-200">
+                      <p className="font-bold text-emerald-950 mb-1">
+                        Critérios de pontuação atendidos:
+                      </p>
+                      <ul className="list-inside list-disc space-y-1">
+                        {detalhamento.map((item, idx) => (
+                          <li key={idx} className="font-medium">
+                            {item}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div className="mt-4 space-y-4">
+                  {isExpired && (
+                    <div className="flex items-center justify-between rounded-lg border border-rose-200 bg-rose-50 px-4 py-2.5 text-xs text-rose-900">
+                      <div className="flex items-center gap-2">
+                        <Lock className="h-4 w-4 text-rose-700 shrink-0" />
+                        <span>
+                          <strong>Palpites encerrados para esta partida</strong> (encerramento às{' '}
+                          {horaEncerramento}).
+                        </span>
+                      </div>
+                      <Badge
+                        variant="outline"
+                        className="border-rose-300 bg-white text-rose-800 text-[11px] font-bold"
+                      >
+                        Encerrado
+                      </Badge>
+                    </div>
+                  )}
+
+                  {isLocked && !isExpired && (
+                    <div className="flex items-center justify-between rounded-lg border border-emerald-200 bg-emerald-50/70 px-4 py-2.5 text-xs text-emerald-900">
+                      <div className="flex items-center gap-2">
+                        <Lock className="h-4 w-4 text-emerald-700 shrink-0" />
+                        <span>
+                          <strong>Palpite Registrado.</strong> Os campos estão travados para
+                          leitura.
+                        </span>
+                      </div>
+                      <Button
+                        type="button"
+                        size="sm"
+                        onClick={() => onSetEditing(jogo.id, true)}
+                        className="h-7 gap-1 rounded bg-[#0F2A43] px-3 text-[11px] font-semibold text-white hover:bg-[#1B3A5C]"
+                      >
+                        <Edit3 className="h-3 w-3" />
+                        Editar Palpite
+                      </Button>
+                    </div>
+                  )}
+
+                  {isEditing && !isExpired && (
+                    <div className="flex items-center justify-between rounded-lg border border-blue-200 bg-blue-50/70 px-4 py-2.5 text-xs text-blue-900">
+                      <div className="flex items-center gap-2">
+                        <Edit3 className="h-4 w-4 text-blue-700 shrink-0" />
+                        <span>
+                          Modo de edição ativo. Atualize seus palpites e clique em{' '}
+                          <strong>Salvar Palpite</strong>.
+                        </span>
+                      </div>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => onCancelEditing(jogo.id, palpite)}
+                        className="h-7 text-[11px] font-semibold text-slate-600 hover:text-slate-900"
+                      >
+                        Cancelar
+                      </Button>
+                    </div>
+                  )}
+
+                  {/* Score inputs with compact team shields: [Escudo A] [input placar A] x [input placar B] [Escudo B] */}
+                  <div className="flex items-center justify-center gap-2 py-1">
+                    <div className="flex flex-col items-center shrink-0">
+                      {escudoA ? (
+                        <img
+                          src={escudoA}
+                          alt={jogo.time_a}
+                          className="h-7 w-7 object-contain drop-shadow-2xs"
+                          loading="lazy"
+                          decoding="async"
+                          onError={(e) => {
+                            ;(e.currentTarget as HTMLElement).style.display = 'none'
+                          }}
+                        />
+                      ) : (
+                        <div className="h-7 w-7 rounded-full bg-slate-200 border border-slate-300 flex items-center justify-center text-[10px] font-bold text-slate-700">
+                          {initialsA}
+                        </div>
+                      )}
+                    </div>
+
+                    <Input
+                      type="number"
+                      min="0"
+                      disabled={isLocked}
+                      placeholder="0"
+                      value={form.placar_a ?? ''}
+                      onChange={(e) => onScoreChange(jogo.id, 'a', e.target.value)}
+                      className={`h-9 w-12 p-0 text-center text-base font-black text-[#0F2A43] focus-visible:border-[#10B981] focus-visible:ring-[#10B981] ${
+                        isLocked ? 'bg-slate-100 cursor-not-allowed opacity-90' : ''
+                      }`}
+                    />
+
+                    <span className="text-xs font-bold text-slate-400 px-0.5">X</span>
+
+                    <Input
+                      type="number"
+                      min="0"
+                      disabled={isLocked}
+                      placeholder="0"
+                      value={form.placar_b ?? ''}
+                      onChange={(e) => onScoreChange(jogo.id, 'b', e.target.value)}
+                      className={`h-9 w-12 p-0 text-center text-base font-black text-[#0F2A43] focus-visible:border-[#10B981] focus-visible:ring-[#10B981] ${
+                        isLocked ? 'bg-slate-100 cursor-not-allowed opacity-90' : ''
+                      }`}
+                    />
+
+                    <div className="flex flex-col items-center shrink-0">
+                      {escudoB ? (
+                        <img
+                          src={escudoB}
+                          alt={jogo.time_b}
+                          className="h-7 w-7 object-contain drop-shadow-2xs"
+                          loading="lazy"
+                          decoding="async"
+                          onError={(e) => {
+                            ;(e.currentTarget as HTMLElement).style.display = 'none'
+                          }}
+                        />
+                      ) : (
+                        <div className="h-7 w-7 rounded-full bg-slate-200 border border-slate-300 flex items-center justify-center text-[10px] font-bold text-slate-700">
+                          {initialsB}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Goal scorers dynamic line inputs: 1 input per goal entered in score */}
+                  {(() => {
+                    const numGolsA =
+                      form.placar_a === '' || form.placar_a === undefined
+                        ? 0
+                        : Math.max(0, Number(form.placar_a) || 0)
+                    const numGolsB =
+                      form.placar_b === '' || form.placar_b === undefined
+                        ? 0
+                        : Math.max(0, Number(form.placar_b) || 0)
+                    const isZeroA = numGolsA === 0
+                    const isZeroB = numGolsB === 0
+
+                    return (
+                      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                        {/* Team A Scorers */}
+                        <div className="rounded-lg border border-slate-200 bg-slate-50/50 p-3">
+                          <div className="flex items-center justify-between pb-1.5 border-b border-slate-200/60 mb-2">
+                            <Label className="text-xs font-bold text-slate-800">
+                              Marcadores de gols — {jogo.time_a}
+                            </Label>
+                            <Badge
+                              variant="outline"
+                              className={`text-[10px] ${
+                                isZeroA
+                                  ? 'border-slate-300 text-slate-400 bg-slate-100'
+                                  : 'border-emerald-300 text-emerald-800 bg-emerald-50'
+                              }`}
+                            >
+                              {isZeroA
+                                ? '0 gols (bloqueado)'
+                                : `${numGolsA} gol${numGolsA > 1 ? 's' : ''} previsto${numGolsA > 1 ? 's' : ''}`}
+                            </Badge>
+                          </div>
+
+                          {isZeroA ? (
+                            <p className="py-3 text-center text-xs italic text-slate-400">
+                              Placar zero (0): campo de marcadores bloqueado.
+                            </p>
+                          ) : (
+                            <div className="space-y-2">
+                              {Array.from({ length: numGolsA }).map((_, idx) => (
+                                <div key={idx} className="flex items-center gap-2">
+                                  <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-slate-200 text-[10px] font-bold text-slate-700">
+                                    {idx + 1}º
+                                  </span>
+                                  <Input
+                                    disabled={isLocked}
+                                    placeholder={`Nome do autor do ${idx + 1}º gol (ex: Pedro Raul)`}
+                                    value={form.goleadores_a?.[idx] || ''}
+                                    onChange={(e) =>
+                                      onScorerLineChange(jogo.id, 'a', idx, e.target.value)
+                                    }
+                                    className={`h-8 border-[#CBD5E1] bg-white text-xs focus-visible:border-[#10B981] focus-visible:ring-[#10B981] ${
+                                      isLocked ? 'bg-slate-100 cursor-not-allowed opacity-90' : ''
+                                    }`}
+                                  />
+                                </div>
+                              ))}
+                              <p className="mt-1 text-[10px] text-slate-500">
+                                Pode repetir o mesmo jogador caso aposte em múltiplos gols dele.
+                              </p>
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Team B Scorers */}
+                        <div className="rounded-lg border border-slate-200 bg-slate-50/50 p-3">
+                          <div className="flex items-center justify-between pb-1.5 border-b border-slate-200/60 mb-2">
+                            <Label className="text-xs font-bold text-slate-800">
+                              Marcadores de gols — {jogo.time_b}
+                            </Label>
+                            <Badge
+                              variant="outline"
+                              className={`text-[10px] ${
+                                isZeroB
+                                  ? 'border-slate-300 text-slate-400 bg-slate-100'
+                                  : 'border-emerald-300 text-emerald-800 bg-emerald-50'
+                              }`}
+                            >
+                              {isZeroB
+                                ? '0 gols (bloqueado)'
+                                : `${numGolsB} gol${numGolsB > 1 ? 's' : ''} previsto${numGolsB > 1 ? 's' : ''}`}
+                            </Badge>
+                          </div>
+
+                          {isZeroB ? (
+                            <p className="py-3 text-center text-xs italic text-slate-400">
+                              Placar zero (0): campo de marcadores bloqueado.
+                            </p>
+                          ) : (
+                            <div className="space-y-2">
+                              {Array.from({ length: numGolsB }).map((_, idx) => (
+                                <div key={idx} className="flex items-center gap-2">
+                                  <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-slate-200 text-[10px] font-bold text-slate-700">
+                                    {idx + 1}º
+                                  </span>
+                                  <Input
+                                    disabled={isLocked}
+                                    placeholder={`Nome do autor do ${idx + 1}º gol (ex: Veiga)`}
+                                    value={form.goleadores_b?.[idx] || ''}
+                                    onChange={(e) =>
+                                      onScorerLineChange(jogo.id, 'b', idx, e.target.value)
+                                    }
+                                    className={`h-8 border-[#CBD5E1] bg-white text-xs focus-visible:border-[#10B981] focus-visible:ring-[#10B981] ${
+                                      isLocked ? 'bg-slate-100 cursor-not-allowed opacity-90' : ''
+                                    }`}
+                                  />
+                                </div>
+                              ))}
+                              <p className="mt-1 text-[10px] text-slate-500">
+                                Pode repetir o mesmo jogador caso aposte em múltiplos gols dele.
+                              </p>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    )
+                  })()}
+
+                  {/* Penalties select (when game has tem_penaltis) */}
+                  {jogo.tem_penaltis && (
+                    <div className="rounded-lg border border-amber-200 bg-amber-50 p-3">
+                      <Label className="text-xs font-bold text-amber-900">
+                        Vencedor nos pênaltis (+2 pontos caso haja disputa):
+                      </Label>
+                      <select
+                        disabled={isLocked}
+                        value={form.vencedor_penaltis || 'N'}
+                        onChange={(e) => onPenaltisChange(jogo.id, e.target.value)}
+                        className={`mt-1.5 h-8 w-full sm:w-64 rounded-md border border-amber-300 bg-white px-2 text-xs font-medium text-slate-800 ${
+                          isLocked ? 'bg-slate-100 cursor-not-allowed opacity-90' : ''
+                        }`}
+                      >
+                        <option value="N">Não haverá pênaltis (vitória no tempo normal)</option>
+                        <option value="A">{jogo.time_a} passa nos pênaltis</option>
+                        <option value="B">{jogo.time_b} passa nos pênaltis</option>
+                      </select>
+                    </div>
+                  )}
+
+                  {/* Action buttons footer */}
+                  <div className="flex justify-end pt-2">
+                    {isExpired ? (
+                      <Button
+                        type="button"
+                        disabled
+                        className="h-9 cursor-not-allowed rounded-lg border border-slate-300 bg-slate-100 px-5 text-xs font-bold text-slate-400 shadow-none"
+                      >
+                        <Lock className="mr-1.5 h-3.5 w-3.5 text-slate-400" />
+                        Palpites Encerrados
+                      </Button>
+                    ) : isLocked ? (
+                      <Button
+                        type="button"
+                        onClick={() => onSetEditing(jogo.id, true)}
+                        className="h-9 rounded-lg border border-[#0F2A43] bg-white px-5 text-xs font-bold text-[#0F2A43] shadow-xs hover:bg-slate-100"
+                      >
+                        <Edit3 className="mr-1.5 h-3.5 w-3.5" />
+                        Editar Palpite
+                      </Button>
+                    ) : (
+                      <Button
+                        type="button"
+                        onClick={() => onSavePalpite(jogo)}
+                        disabled={savingGameId === jogo.id}
+                        className="h-9 rounded-lg bg-[#0F2A43] px-5 text-xs font-bold text-white shadow-xs hover:bg-[#1B3A5C]"
+                      >
+                        {savingGameId === jogo.id ? (
+                          <>
+                            <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                            Salvando...
+                          </>
+                        ) : (
+                          <>
+                            <Save className="mr-1.5 h-3.5 w-3.5 text-emerald-400" />
+                            Salvar Palpite
+                          </>
+                        )}
+                      </Button>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+          </Card>
+        )
+      },
+      (prev, next) => {
+        return (
+          prev.jogo.id === next.jogo.id &&
+          prev.finalizado === next.finalizado &&
+          prev.isEditing === next.isEditing &&
+          prev.isExpired === next.isExpired &&
+          prev.isSaved === next.isSaved &&
+          prev.isLocked === next.isLocked &&
+          prev.savingGameId === next.savingGameId &&
+          prev.form.placar_a === next.form.placar_a &&
+          prev.form.placar_b === next.form.placar_b &&
+          prev.form.vencedor_penaltis === next.form.vencedor_penaltis &&
+          prev.form.goleadores_a?.join(',') === next.form.goleadores_a?.join(',') &&
+          prev.form.goleadores_b?.join(',') === next.form.goleadores_b?.join(',') &&
+          prev.expandedDetails === next.expandedDetails &&
+          prev.betsForGame.length === next.betsForGame.length &&
+          prev.loadedGroupBets === next.loadedGroupBets &&
+          prev.loadingGroupBets === next.loadingGroupBets
+        )
+      },
+    )
+  }, [])
 
   return (
     <div className="space-y-6">
@@ -1159,8 +1923,8 @@ export default function Palpites() {
             const form = formData[jogo.id] || {
               placar_a: '',
               placar_b: '',
-              goleadores_a: '',
-              goleadores_b: '',
+              goleadores_a: [],
+              goleadores_b: [],
               vencedor_penaltis: 'N',
             }
 
@@ -1173,746 +1937,75 @@ export default function Palpites() {
             const initialsA = (jogo.time_a || '').slice(0, 2).toUpperCase()
             const initialsB = (jogo.time_b || '').slice(0, 2).toUpperCase()
 
+            const isSaved = Boolean(palpite)
+            const isExpired = isPalpiteEncerrado(jogo.data, jogo.hora, nowMs)
+            const isEditing = Boolean(editingGames[jogo.id]) && !isExpired
+            const isLocked = (isSaved && !isEditing) || isExpired
+            const betsForGame = allGroupPalpites.filter((p) => p.jogo === jogo.id)
+
             return (
-              <Card
+              <PalpiteItemCard
                 key={jogo.id}
-                className="overflow-hidden rounded-[14px] border-[#E2E8F0] bg-white shadow-xs transition hover:shadow-sm flex flex-col justify-between"
-              >
-                {/* Match header */}
-                <div className="flex flex-wrap items-center justify-between border-b border-slate-100 bg-slate-50/70 px-4 py-2.5 gap-1.5">
-                  <div className="flex flex-wrap items-center gap-1.5 text-[11px] text-slate-600">
-                    {/* Badge da Copa / Bolão de origem */}
-                    {bolaoOrigem && (
-                      <Badge
-                        variant="secondary"
-                        className="border border-[#CBD5E1] bg-white text-[#0F2A43] font-bold text-[10px] px-1.5 py-0 shadow-2xs"
-                      >
-                        🏆 {bolaoOrigem.nome}
-                      </Badge>
-                    )}
-                    <span className="flex items-center gap-1">
-                      <Calendar className="h-3 w-3 text-slate-400" />
-                      <span>{formatDataBR(jogo.data)}</span>
-                    </span>
-                    <span>•</span>
-                    <span className="flex items-center gap-1">
-                      <Clock className="h-3 w-3 text-slate-400" />
-                      <span>{formatHoraBR(jogo.hora)}</span>
-                    </span>
-                  </div>
-                  {finalizado ? (
-                    <div className="flex items-center gap-1.5">
-                      <span className="rounded bg-slate-900 px-1.5 py-0.5 text-[10px] font-black text-white">
-                        Real: {jogo.placar_a}x{jogo.placar_b}
-                      </span>
-                      <span
-                        className={`rounded-full px-2 py-0.2 text-[10px] font-bold ${
-                          pontos > 0
-                            ? 'bg-emerald-100 text-emerald-800'
-                            : 'bg-slate-200 text-slate-700'
-                        }`}
-                      >
-                        {pontos > 0 ? `+${pontos} pts` : '0 pts'}
-                      </span>
-                    </div>
-                  ) : isPalpiteEncerrado(jogo.data, jogo.hora, nowMs) ? (
-                    <Badge
-                      variant="outline"
-                      className="border-rose-300 bg-rose-50 text-rose-800 text-[10px] font-semibold gap-1 px-1.5 py-0"
-                    >
-                      <Lock className="h-2.5 w-2.5 text-rose-600" />
-                      Encerrado
-                    </Badge>
-                  ) : palpite && !editingGames[jogo.id] ? (
-                    <Badge
-                      variant="outline"
-                      className="border-emerald-300 bg-emerald-50 text-emerald-800 text-[10px] font-semibold gap-1 px-1.5 py-0"
-                    >
-                      <CheckCircle2 className="h-2.5 w-2.5 text-emerald-600" />
-                      Registrado
-                    </Badge>
-                  ) : palpite && editingGames[jogo.id] ? (
-                    <Badge
-                      variant="outline"
-                      className="border-blue-300 bg-blue-50 text-blue-800 text-[10px] font-semibold gap-1 px-1.5 py-0"
-                    >
-                      <Edit3 className="h-2.5 w-2.5 text-blue-600" />
-                      Editando
-                    </Badge>
-                  ) : (
-                    <Badge
-                      variant="outline"
-                      className="border-amber-300 bg-amber-50 text-amber-800 text-[10px] px-1.5 py-0"
-                    >
-                      Aberto
-                    </Badge>
-                  )}
-                </div>
-
-                <div className="p-4 flex-1 flex flex-col justify-between">
-                  {/* Competition label if any */}
-                  {jogo.competicao && (
-                    <div className="text-center mb-2">
-                      <Badge
-                        variant="secondary"
-                        className="border border-indigo-200 bg-indigo-50 text-[10px] font-semibold text-indigo-700 px-1.5 py-0"
-                      >
-                        {jogo.competicao}
-                      </Badge>
-                    </div>
-                  )}
-                  {/* Team names row */}
-                  <div className="grid grid-cols-2 gap-2 text-center items-center mb-3">
-                    <span className="text-xs font-bold text-[#0F172A] truncate" title={jogo.time_a}>
-                      {jogo.time_a}
-                    </span>
-                    <span className="text-xs font-bold text-[#0F172A] truncate" title={jogo.time_b}>
-                      {jogo.time_b}
-                    </span>
-                  </div>
-                  {/* Grupo de palpites liberados para partidas encerradas ou com horário de kickoff atingido */}
-                  {(() => {
-                    const isExpiredOrFinalized =
-                      finalizado || isPalpiteEncerrado(jogo.data, jogo.hora, nowMs)
-                    if (!isExpiredOrFinalized) return null
-
-                    if (!loadedGroupBets) {
-                      return (
-                        <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50/80 p-3 text-center">
-                          <p className="text-xs text-slate-600 mb-2">
-                            Palpites do grupo disponíveis para esta partida encerrada ou iniciada.
-                          </p>
-                          <Button
-                            type="button"
-                            variant="outline"
-                            size="sm"
-                            disabled={loadingGroupBets}
-                            onClick={loadGroupBetsOnDemand}
-                            className="h-7 text-xs font-semibold border-slate-300 text-[#0F2A43] hover:bg-white"
-                          >
-                            {loadingGroupBets ? (
-                              <>
-                                <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
-                                Carregando palpites do grupo...
-                              </>
-                            ) : (
-                              <>
-                                <Users className="mr-1.5 h-3.5 w-3.5" />
-                                Carregar palpites do grupo
-                              </>
-                            )}
-                          </Button>
-                        </div>
-                      )
-                    }
-
-                    const betsForGame = allGroupPalpites.filter((p) => p.jogo === jogo.id)
-
-                    return (
-                      <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50/80 p-4">
-                        <div className="flex items-center justify-between pb-2 mb-3 border-b border-slate-200">
-                          <div className="flex items-center gap-1.5">
-                            <Users className="h-4 w-4 text-[#0F2A43]" />
-                            <span className="text-xs font-bold text-[#0F172A]">
-                              Palpites do Grupo Liberados
-                            </span>
-                          </div>
-                          <Badge
-                            variant="outline"
-                            className="border-slate-300 bg-white text-[10px] font-semibold text-slate-700"
-                          >
-                            {betsForGame.length} palpite(s)
-                          </Badge>
-                        </div>
-
-                        {betsForGame.length === 0 ? (
-                          <p className="text-center py-2 text-xs italic text-slate-400">
-                            Nenhum participante registrou palpite para esta partida antes do
-                            encerramento.
-                          </p>
-                        ) : (
-                          <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2 lg:grid-cols-4">
-                            {betsForGame.map((bet) => {
-                              const part = participanteMap.get(bet.participante)
-                              const nomeParticipante = part?.nome || 'Participante'
-                              const isCurrentUser =
-                                participantName &&
-                                nomeParticipante.trim().toLowerCase() ===
-                                  participantName.trim().toLowerCase()
-
-                              return (
-                                <div
-                                  key={bet.id}
-                                  className={`rounded-lg border p-3 text-xs transition duration-150 shadow-2xs ${
-                                    isCurrentUser
-                                      ? 'border-emerald-300 bg-emerald-50/80 ring-1 ring-emerald-300'
-                                      : 'border-slate-200 bg-white'
-                                  }`}
-                                >
-                                  <div className="flex items-center justify-between gap-1">
-                                    <span className="font-bold text-[#0F172A] truncate">
-                                      {nomeParticipante}
-                                    </span>
-                                    <div className="flex items-center gap-1 shrink-0">
-                                      {isCurrentUser && (
-                                        <Badge className="bg-[#10B981] px-1 py-0 text-[9px] font-bold text-white hover:bg-[#10B981]">
-                                          Você
-                                        </Badge>
-                                      )}
-                                      {isAdmin && (
-                                        <button
-                                          type="button"
-                                          onClick={() =>
-                                            setAdminEditingPalpite({
-                                              palpite: bet,
-                                              participanteNome: nomeParticipante,
-                                              timeA: jogo.time_a,
-                                              timeB: jogo.time_b,
-                                            })
-                                          }
-                                          className="inline-flex items-center gap-0.5 rounded px-1.5 py-0.5 text-[9px] font-semibold text-amber-700 bg-amber-50 hover:bg-amber-100 border border-amber-200 transition"
-                                          title="Editar marcadores deste palpite (Admin)"
-                                        >
-                                          <Edit3 className="h-2.5 w-2.5" />
-                                          <span>Editar</span>
-                                        </button>
-                                      )}
-                                    </div>
-                                  </div>
-                                  <div className="mt-1 text-xs font-semibold text-slate-800">
-                                    Palpite:{' '}
-                                    <strong className="text-sm font-black text-[#0F2A43]">
-                                      {bet.placar_a} x {bet.placar_b}
-                                    </strong>
-                                  </div>
-                                  {(() => {
-                                    const splitPalpite = getPalpiteMarcadoresPorTime(bet)
-                                    const is0x0 =
-                                      splitPalpite.placarA === 0 && splitPalpite.placarB === 0
-
-                                    if (is0x0) {
-                                      return (
-                                        <div className="mt-1 text-[10px] text-slate-400 italic">
-                                          Sem marcadores (0x0)
-                                        </div>
-                                      )
-                                    }
-
-                                    return (
-                                      <div className="mt-1.5 space-y-0.5 border-t border-slate-200/60 pt-1 text-[11px] leading-snug">
-                                        <div className="truncate text-slate-700">
-                                          <span className="font-semibold text-slate-800">
-                                            Gols Mandante:
-                                          </span>{' '}
-                                          <span
-                                            className={
-                                              splitPalpite.labelA === '-'
-                                                ? 'text-slate-400'
-                                                : 'text-slate-900 font-medium'
-                                            }
-                                          >
-                                            {splitPalpite.labelA}
-                                          </span>
-                                        </div>
-                                        <div className="truncate text-slate-700">
-                                          <span className="font-semibold text-slate-800">
-                                            Gols Visitante:
-                                          </span>{' '}
-                                          <span
-                                            className={
-                                              splitPalpite.labelB === '-'
-                                                ? 'text-slate-400'
-                                                : 'text-slate-900 font-medium'
-                                            }
-                                          >
-                                            {splitPalpite.labelB}
-                                          </span>
-                                        </div>
-                                      </div>
-                                    )
-                                  })()}
-                                  {finalizado && (
-                                    <div className="mt-1.5 pt-1.5 border-t border-slate-100 flex items-center justify-between text-[11px]">
-                                      <span className="text-slate-500 font-medium">Pontos:</span>
-                                      <span
-                                        className={`font-bold ${
-                                          bet.pontuacao_jogo > 0
-                                            ? 'text-emerald-700'
-                                            : 'text-slate-500'
-                                        }`}
-                                      >
-                                        +{bet.pontuacao_jogo} pts
-                                      </span>
-                                    </div>
-                                  )}
-                                </div>
-                              )
-                            })}
-                          </div>
-                        )}
-                      </div>
-                    )
-                  })()}
-                  {/* Form or Read-only view */}
-                  {finalizado /* Finalized game: show participant's bet and points detail toggle */ ? (
-                    <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-4">
-                      <div className="flex flex-wrap items-center justify-between gap-2">
-                        <div className="text-xs text-slate-700">
-                          <span className="font-semibold text-slate-900">
-                            Seu palpite de placar:
-                          </span>{' '}
-                          {palpite ? (
-                            <strong className="text-sm font-black text-[#0F2A43]">
-                              {palpite.placar_a} x {palpite.placar_b}
-                            </strong>
-                          ) : (
-                            <span className="text-slate-400 italic">Nenhum palpite enviado</span>
-                          )}
-                        </div>
-
-                        {palpite && detalhamento.length > 0 && (
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => toggleDetails(jogo.id)}
-                            className="h-7 text-xs font-semibold text-[#0F2A43] hover:bg-slate-200"
-                          >
-                            <span>Detalhar pontuação</span>
-                            {expandedDetails[jogo.id] ? (
-                              <ChevronUp className="ml-1 h-3.5 w-3.5" />
-                            ) : (
-                              <ChevronDown className="ml-1 h-3.5 w-3.5" />
-                            )}
-                          </Button>
-                        )}
-                      </div>
-
-                      {/* Scorer prediction snapshot */}
-                      {palpite && (
-                        <div className="mt-2 grid grid-cols-1 gap-2 text-xs sm:grid-cols-2">
-                          <div className="rounded bg-white p-2 border border-slate-200">
-                            <span className="text-[11px] font-medium text-slate-500">
-                              Goleadores indicados ({jogo.time_a}):
-                            </span>
-                            <p className="font-medium text-slate-800">
-                              {Array.isArray(palpite.goleadores_a) &&
-                              palpite.goleadores_a.length > 0
-                                ? palpite.goleadores_a.join(', ')
-                                : 'Nenhum'}
-                            </p>
-                          </div>
-                          <div className="rounded bg-white p-2 border border-slate-200">
-                            <span className="text-[11px] font-medium text-slate-500">
-                              Goleadores indicados ({jogo.time_b}):
-                            </span>
-                            <p className="font-medium text-slate-800">
-                              {Array.isArray(palpite.goleadores_b) &&
-                              palpite.goleadores_b.length > 0
-                                ? palpite.goleadores_b.join(', ')
-                                : 'Nenhum'}
-                            </p>
-                          </div>
-                        </div>
-                      )}
-
-                      {/* Expandable breakdown list */}
-                      {expandedDetails[jogo.id] && detalhamento.length > 0 && (
-                        <div className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50/60 p-3 text-xs text-emerald-900 animate-in fade-in duration-200">
-                          <p className="font-bold text-emerald-950 mb-1">
-                            Critérios de pontuação atendidos:
-                          </p>
-                          <ul className="list-inside list-disc space-y-1">
-                            {detalhamento.map((item, idx) => (
-                              <li key={idx} className="font-medium">
-                                {item}
-                              </li>
-                            ))}
-                          </ul>
-                        </div>
-                      )}
-                    </div>
-                  ) : (
-                    /* Active game: Palpite registration form */
-                    (() => {
-                      const isSaved = Boolean(palpite)
-                      const isExpired = isPalpiteEncerrado(jogo.data, jogo.hora, nowMs)
-                      // Se o prazo expirou, não permite editar
-                      const isEditing = Boolean(editingGames[jogo.id]) && !isExpired
-                      const isLocked = (isSaved && !isEditing) || isExpired
-                      const horaEncerramento = formatHoraEncerramento(jogo.hora)
-
-                      return (
-                        <div className="mt-4 space-y-4">
-                          {/* Banner de encerramento da partida */}
-                          {isExpired && (
-                            <div className="flex items-center justify-between rounded-lg border border-rose-200 bg-rose-50 px-4 py-2.5 text-xs text-rose-900">
-                              <div className="flex items-center gap-2">
-                                <Lock className="h-4 w-4 text-rose-700 shrink-0" />
-                                <span>
-                                  <strong>Palpites encerrados para esta partida</strong>{' '}
-                                  (encerramento às {horaEncerramento}).
-                                </span>
-                              </div>
-                              <Badge
-                                variant="outline"
-                                className="border-rose-300 bg-white text-rose-800 text-[11px] font-bold"
-                              >
-                                Encerrado
-                              </Badge>
-                            </div>
-                          )}
-
-                          {/* Status banner when saved & locked (and not expired) */}
-                          {isLocked && !isExpired && (
-                            <div className="flex items-center justify-between rounded-lg border border-emerald-200 bg-emerald-50/70 px-4 py-2.5 text-xs text-emerald-900">
-                              <div className="flex items-center gap-2">
-                                <Lock className="h-4 w-4 text-emerald-700 shrink-0" />
-                                <span>
-                                  <strong>Palpite Registrado.</strong> Os campos estão travados para
-                                  leitura.
-                                </span>
-                              </div>
-                              <Button
-                                type="button"
-                                size="sm"
-                                onClick={() =>
-                                  setEditingGames((prev) => ({
-                                    ...prev,
-                                    [jogo.id]: true,
-                                  }))
-                                }
-                                className="h-7 gap-1 rounded bg-[#0F2A43] px-3 text-[11px] font-semibold text-white hover:bg-[#1B3A5C]"
-                              >
-                                <Edit3 className="h-3 w-3" />
-                                Editar Palpite
-                              </Button>
-                            </div>
-                          )}
-
-                          {isEditing && !isExpired && (
-                            <div className="flex items-center justify-between rounded-lg border border-blue-200 bg-blue-50/70 px-4 py-2.5 text-xs text-blue-900">
-                              <div className="flex items-center gap-2">
-                                <Edit3 className="h-4 w-4 text-blue-700 shrink-0" />
-                                <span>
-                                  Modo de edição ativo. Atualize seus palpites e clique em{' '}
-                                  <strong>Salvar Palpite</strong>.
-                                </span>
-                              </div>
-                              <Button
-                                type="button"
-                                variant="ghost"
-                                size="sm"
-                                onClick={() => {
-                                  // Cancel edit: revert to original saved palpite
-                                  const gA =
-                                    palpite.placar_a !== null && palpite.placar_a !== undefined
-                                      ? Number(palpite.placar_a)
-                                      : 0
-                                  const gB =
-                                    palpite.placar_b !== null && palpite.placar_b !== undefined
-                                      ? Number(palpite.placar_b)
-                                      : 0
-                                  setFormData((prev) => ({
-                                    ...prev,
-                                    [jogo.id]: {
-                                      placar_a: palpite.placar_a ?? '',
-                                      placar_b: palpite.placar_b ?? '',
-                                      goleadores_a: normalizeScorersArray(palpite.goleadores_a, gA),
-                                      goleadores_b: normalizeScorersArray(palpite.goleadores_b, gB),
-                                      vencedor_penaltis: palpite.vencedor_penaltis || 'N',
-                                    },
-                                  }))
-                                  setEditingGames((prev) => ({
-                                    ...prev,
-                                    [jogo.id]: false,
-                                  }))
-                                }}
-                                className="h-7 text-[11px] font-semibold text-slate-600 hover:text-slate-900"
-                              >
-                                Cancelar
-                              </Button>
-                            </div>
-                          )}
-
-                          {/* Score inputs with compact team shields: [Escudo A] [input placar A] x [input placar B] [Escudo B] */}
-                          <div className="flex items-center justify-center gap-2 py-1">
-                            {/* Escudo Mandante */}
-                            <div className="flex flex-col items-center shrink-0">
-                              {escudoA ? (
-                                <img
-                                  src={escudoA}
-                                  alt={jogo.time_a}
-                                  className="h-7 w-7 object-contain drop-shadow-2xs"
-                                  onError={(e) => {
-                                    ;(e.currentTarget as HTMLElement).style.display = 'none'
-                                  }}
-                                />
-                              ) : (
-                                <div className="h-7 w-7 rounded-full bg-slate-200 border border-slate-300 flex items-center justify-center text-[10px] font-bold text-slate-700">
-                                  {initialsA}
-                                </div>
-                              )}
-                            </div>
-
-                            {/* Input Placar Mandante */}
-                            <Input
-                              type="number"
-                              min="0"
-                              disabled={isLocked}
-                              placeholder="0"
-                              value={form.placar_a ?? ''}
-                              onChange={(e) => handleScoreChange(jogo.id, 'a', e.target.value)}
-                              className={`h-9 w-12 p-0 text-center text-base font-black text-[#0F2A43] focus-visible:border-[#10B981] focus-visible:ring-[#10B981] ${
-                                isLocked ? 'bg-slate-100 cursor-not-allowed opacity-90' : ''
-                              }`}
-                            />
-
-                            <span className="text-xs font-bold text-slate-400 px-0.5">X</span>
-
-                            {/* Input Placar Visitante */}
-                            <Input
-                              type="number"
-                              min="0"
-                              disabled={isLocked}
-                              placeholder="0"
-                              value={form.placar_b ?? ''}
-                              onChange={(e) => handleScoreChange(jogo.id, 'b', e.target.value)}
-                              className={`h-9 w-12 p-0 text-center text-base font-black text-[#0F2A43] focus-visible:border-[#10B981] focus-visible:ring-[#10B981] ${
-                                isLocked ? 'bg-slate-100 cursor-not-allowed opacity-90' : ''
-                              }`}
-                            />
-
-                            {/* Escudo Visitante */}
-                            <div className="flex flex-col items-center shrink-0">
-                              {escudoB ? (
-                                <img
-                                  src={escudoB}
-                                  alt={jogo.time_b}
-                                  className="h-7 w-7 object-contain drop-shadow-2xs"
-                                  onError={(e) => {
-                                    ;(e.currentTarget as HTMLElement).style.display = 'none'
-                                  }}
-                                />
-                              ) : (
-                                <div className="h-7 w-7 rounded-full bg-slate-200 border border-slate-300 flex items-center justify-center text-[10px] font-bold text-slate-700">
-                                  {initialsB}
-                                </div>
-                              )}
-                            </div>
-                          </div>
-
-                          {/* Goal scorers dynamic line inputs: 1 input per goal entered in score */}
-                          {(() => {
-                            const numGolsA =
-                              form.placar_a === '' || form.placar_a === undefined
-                                ? 0
-                                : Math.max(0, Number(form.placar_a) || 0)
-                            const numGolsB =
-                              form.placar_b === '' || form.placar_b === undefined
-                                ? 0
-                                : Math.max(0, Number(form.placar_b) || 0)
-                            const isZeroA = numGolsA === 0
-                            const isZeroB = numGolsB === 0
-
-                            return (
-                              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                                {/* Team A Scorers */}
-                                <div className="rounded-lg border border-slate-200 bg-slate-50/50 p-3">
-                                  <div className="flex items-center justify-between pb-1.5 border-b border-slate-200/60 mb-2">
-                                    <Label className="text-xs font-bold text-slate-800">
-                                      Marcadores de gols — {jogo.time_a}
-                                    </Label>
-                                    <Badge
-                                      variant="outline"
-                                      className={`text-[10px] ${
-                                        isZeroA
-                                          ? 'border-slate-300 text-slate-400 bg-slate-100'
-                                          : 'border-emerald-300 text-emerald-800 bg-emerald-50'
-                                      }`}
-                                    >
-                                      {isZeroA
-                                        ? '0 gols (bloqueado)'
-                                        : `${numGolsA} gol${numGolsA > 1 ? 's' : ''} previsto${numGolsA > 1 ? 's' : ''}`}
-                                    </Badge>
-                                  </div>
-
-                                  {isZeroA ? (
-                                    <p className="py-3 text-center text-xs italic text-slate-400">
-                                      Placar zero (0): campo de marcadores bloqueado.
-                                    </p>
-                                  ) : (
-                                    <div className="space-y-2">
-                                      {Array.from({ length: numGolsA }).map((_, idx) => (
-                                        <div key={idx} className="flex items-center gap-2">
-                                          <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-slate-200 text-[10px] font-bold text-slate-700">
-                                            {idx + 1}º
-                                          </span>
-                                          <Input
-                                            disabled={isLocked}
-                                            placeholder={`Nome do autor do ${idx + 1}º gol (ex: Pedro Raul)`}
-                                            value={form.goleadores_a?.[idx] || ''}
-                                            onChange={(e) =>
-                                              handleScorerLineChange(
-                                                jogo.id,
-                                                'a',
-                                                idx,
-                                                e.target.value,
-                                              )
-                                            }
-                                            className={`h-8 border-[#CBD5E1] bg-white text-xs focus-visible:border-[#10B981] focus-visible:ring-[#10B981] ${
-                                              isLocked
-                                                ? 'bg-slate-100 cursor-not-allowed opacity-90'
-                                                : ''
-                                            }`}
-                                          />
-                                        </div>
-                                      ))}
-                                      <p className="mt-1 text-[10px] text-slate-500">
-                                        Pode repetir o mesmo jogador caso aposte em múltiplos gols
-                                        dele.
-                                      </p>
-                                    </div>
-                                  )}
-                                </div>
-
-                                {/* Team B Scorers */}
-                                <div className="rounded-lg border border-slate-200 bg-slate-50/50 p-3">
-                                  <div className="flex items-center justify-between pb-1.5 border-b border-slate-200/60 mb-2">
-                                    <Label className="text-xs font-bold text-slate-800">
-                                      Marcadores de gols — {jogo.time_b}
-                                    </Label>
-                                    <Badge
-                                      variant="outline"
-                                      className={`text-[10px] ${
-                                        isZeroB
-                                          ? 'border-slate-300 text-slate-400 bg-slate-100'
-                                          : 'border-emerald-300 text-emerald-800 bg-emerald-50'
-                                      }`}
-                                    >
-                                      {isZeroB
-                                        ? '0 gols (bloqueado)'
-                                        : `${numGolsB} gol${numGolsB > 1 ? 's' : ''} previsto${numGolsB > 1 ? 's' : ''}`}
-                                    </Badge>
-                                  </div>
-
-                                  {isZeroB ? (
-                                    <p className="py-3 text-center text-xs italic text-slate-400">
-                                      Placar zero (0): campo de marcadores bloqueado.
-                                    </p>
-                                  ) : (
-                                    <div className="space-y-2">
-                                      {Array.from({ length: numGolsB }).map((_, idx) => (
-                                        <div key={idx} className="flex items-center gap-2">
-                                          <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-slate-200 text-[10px] font-bold text-slate-700">
-                                            {idx + 1}º
-                                          </span>
-                                          <Input
-                                            disabled={isLocked}
-                                            placeholder={`Nome do autor do ${idx + 1}º gol (ex: Veiga)`}
-                                            value={form.goleadores_b?.[idx] || ''}
-                                            onChange={(e) =>
-                                              handleScorerLineChange(
-                                                jogo.id,
-                                                'b',
-                                                idx,
-                                                e.target.value,
-                                              )
-                                            }
-                                            className={`h-8 border-[#CBD5E1] bg-white text-xs focus-visible:border-[#10B981] focus-visible:ring-[#10B981] ${
-                                              isLocked
-                                                ? 'bg-slate-100 cursor-not-allowed opacity-90'
-                                                : ''
-                                            }`}
-                                          />
-                                        </div>
-                                      ))}
-                                      <p className="mt-1 text-[10px] text-slate-500">
-                                        Pode repetir o mesmo jogador caso aposte em múltiplos gols
-                                        dele.
-                                      </p>
-                                    </div>
-                                  )}
-                                </div>
-                              </div>
-                            )
-                          })()}
-
-                          {/* Penalties select (when game has tem_penaltis) */}
-                          {jogo.tem_penaltis && (
-                            <div className="rounded-lg border border-amber-200 bg-amber-50 p-3">
-                              <Label className="text-xs font-bold text-amber-900">
-                                Vencedor nos pênaltis (+2 pontos caso haja disputa):
-                              </Label>
-                              <select
-                                disabled={isLocked}
-                                value={form.vencedor_penaltis || 'N'}
-                                onChange={(e) => handlePenaltisChange(jogo.id, e.target.value)}
-                                className={`mt-1.5 h-8 w-full sm:w-64 rounded-md border border-amber-300 bg-white px-2 text-xs font-medium text-slate-800 ${
-                                  isLocked ? 'bg-slate-100 cursor-not-allowed opacity-90' : ''
-                                }`}
-                              >
-                                <option value="N">
-                                  Não haverá pênaltis (vitória no tempo normal)
-                                </option>
-                                <option value="A">{jogo.time_a} passa nos pênaltis</option>
-                                <option value="B">{jogo.time_b} passa nos pênaltis</option>
-                              </select>
-                            </div>
-                          )}
-
-                          {/* Action buttons footer */}
-                          <div className="flex justify-end pt-2">
-                            {isExpired ? (
-                              <Button
-                                type="button"
-                                disabled
-                                className="h-9 cursor-not-allowed rounded-lg border border-slate-300 bg-slate-100 px-5 text-xs font-bold text-slate-400 shadow-none"
-                              >
-                                <Lock className="mr-1.5 h-3.5 w-3.5 text-slate-400" />
-                                Palpites Encerrados
-                              </Button>
-                            ) : isLocked ? (
-                              <Button
-                                type="button"
-                                onClick={() =>
-                                  setEditingGames((prev) => ({
-                                    ...prev,
-                                    [jogo.id]: true,
-                                  }))
-                                }
-                                className="h-9 rounded-lg border border-[#0F2A43] bg-white px-5 text-xs font-bold text-[#0F2A43] shadow-xs hover:bg-slate-100"
-                              >
-                                <Edit3 className="mr-1.5 h-3.5 w-3.5" />
-                                Editar Palpite
-                              </Button>
-                            ) : (
-                              <Button
-                                type="button"
-                                onClick={() => handleSavePalpite(jogo)}
-                                disabled={savingGameId === jogo.id}
-                                className="h-9 rounded-lg bg-[#0F2A43] px-5 text-xs font-bold text-white shadow-xs hover:bg-[#1B3A5C]"
-                              >
-                                {savingGameId === jogo.id ? (
-                                  <>
-                                    <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
-                                    Salvando...
-                                  </>
-                                ) : (
-                                  <>
-                                    <Save className="mr-1.5 h-3.5 w-3.5 text-emerald-400" />
-                                    Salvar Palpite
-                                  </>
-                                )}
-                              </Button>
-                            )}
-                          </div>
-                        </div>
-                      )
-                    })()
-                  )}{' '}
-                </div>
-              </Card>
+                jogo={jogo}
+                bolaoOrigem={bolaoOrigem}
+                palpite={palpite}
+                form={form}
+                finalizado={finalizado}
+                pontos={pontos}
+                detalhamento={detalhamento}
+                escudoA={escudoA}
+                escudoB={escudoB}
+                initialsA={initialsA}
+                initialsB={initialsB}
+                isEditing={isEditing}
+                isExpired={isExpired}
+                isSaved={isSaved}
+                isLocked={isLocked}
+                nowMs={nowMs}
+                savingGameId={savingGameId}
+                loadedGroupBets={loadedGroupBets}
+                loadingGroupBets={loadingGroupBets}
+                betsForGame={betsForGame}
+                participanteMap={participanteMap}
+                participantName={participantName}
+                isAdmin={isAdmin}
+                expandedDetails={Boolean(expandedDetails[jogo.id])}
+                onToggleDetails={toggleDetails}
+                onLoadGroupBets={loadGroupBetsOnDemand}
+                onSetEditing={(id, editing) =>
+                  setEditingGames((prev) => ({
+                    ...prev,
+                    [id]: editing,
+                  }))
+                }
+                onCancelEditing={(id, p) => {
+                  if (p) {
+                    const gA =
+                      p.placar_a !== null && p.placar_a !== undefined ? Number(p.placar_a) : 0
+                    const gB =
+                      p.placar_b !== null && p.placar_b !== undefined ? Number(p.placar_b) : 0
+                    setFormData((prev) => ({
+                      ...prev,
+                      [id]: {
+                        placar_a: p.placar_a ?? '',
+                        placar_b: p.placar_b ?? '',
+                        goleadores_a: normalizeScorersArray(p.goleadores_a, gA),
+                        goleadores_b: normalizeScorersArray(p.goleadores_b, gB),
+                        vencedor_penaltis: p.vencedor_penaltis || 'N',
+                      },
+                    }))
+                  }
+                  setEditingGames((prev) => ({
+                    ...prev,
+                    [id]: false,
+                  }))
+                }}
+                onScoreChange={handleScoreChange}
+                onScorerLineChange={handleScorerLineChange}
+                onPenaltisChange={handlePenaltisChange}
+                onSavePalpite={handleSavePalpite}
+                onAdminEdit={setAdminEditingPalpite}
+              />
             )
           })}
         </div>

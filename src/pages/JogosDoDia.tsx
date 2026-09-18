@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { Link } from 'react-router-dom'
 import {
   Radio,
@@ -162,6 +162,231 @@ function writeJogosDiaCache(dateStr: string, data: Omit<JogosDoDiaCachePayload, 
     /* ignore */
   }
 }
+
+interface MatchRowItemProps {
+  match: DayFixture
+  renderStatusBadge: (fixture: DayFixture) => React.ReactNode
+  getMatchScorers: (fixture: DayFixture) => { homeScorers: string[]; awayScorers: string[] }
+}
+
+const MatchRowItem = React.memo(
+  function MatchRowItem({ match, renderStatusBadge, getMatchScorers }: MatchRowItemProps) {
+    const { homeScorers, awayScorers } = getMatchScorers(match)
+    const stMatch = (match.fixture?.status?.short || '').toUpperCase().trim()
+    const longMatch = (match.fixture?.status?.long || '').toUpperCase().trim()
+    const matchIsPostponed = isFixturePostponed(stMatch, longMatch)
+    const matchIsCancelled = isFixtureCancelled(stMatch, longMatch)
+    const isPstOrCanc = matchIsPostponed || matchIsCancelled
+
+    const isUpcomingMatch =
+      !match.isLive &&
+      !['FT', 'AET', 'PEN'].includes(stMatch) &&
+      !matchIsPostponed &&
+      !matchIsCancelled
+
+    const hasExplicitHomeScore =
+      match.goals?.home !== null &&
+      match.goals?.home !== undefined &&
+      !isNaN(Number(match.goals?.home))
+    const hasExplicitAwayScore =
+      match.goals?.away !== null &&
+      match.goals?.away !== undefined &&
+      !isNaN(Number(match.goals?.away))
+
+    const showDash = isUpcomingMatch || !hasExplicitHomeScore || !hasExplicitAwayScore
+
+    const homeScore = showDash ? '-' : match.goals?.home
+    const awayScore = showDash ? '-' : match.goals?.away
+
+    return (
+      <div
+        className={`p-4 transition hover:bg-slate-50/60 ${
+          match.isLive ? 'bg-emerald-50/20' : isPstOrCanc ? 'bg-slate-50/40 opacity-90' : ''
+        }`}
+      >
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          {/* Status Badge */}
+          <div className="shrink-0 sm:w-36">{renderStatusBadge(match)}</div>
+
+          {/* Confronto Central: Times e Placar */}
+          <div className="flex-1 max-w-xl">
+            {(() => {
+              const isScheduledStatus = ['NS', 'TBD', 'PST', 'CANC', 'ABD', 'SUSP'].includes(
+                stMatch,
+              )
+              const hasAnyScorers = homeScorers.length > 0 || awayScorers.length > 0
+              const canShowScorers = !isPstOrCanc && !isScheduledStatus && hasAnyScorers
+
+              return (
+                <>
+                  <div className="flex items-start justify-between gap-4">
+                    {/* Time Mandante e seus marcadores logo abaixo */}
+                    <div className="flex flex-1 flex-col items-end text-right min-w-0">
+                      <div className="flex items-center justify-end gap-2.5 w-full">
+                        <span
+                          className={`text-sm font-bold sm:text-base truncate ${
+                            isPstOrCanc ? 'text-slate-600' : 'text-[#0F172A]'
+                          }`}
+                        >
+                          {match.teams.home.name}
+                        </span>
+                        {match.teams.home.logo ? (
+                          <img
+                            src={match.teams.home.logo}
+                            alt={match.teams.home.name}
+                            className={`h-6 w-6 object-contain shrink-0 ${
+                              isPstOrCanc ? 'grayscale-[50%] opacity-80' : ''
+                            }`}
+                            loading="lazy"
+                            decoding="async"
+                            onError={(e) => {
+                              e.currentTarget.style.display = 'none'
+                              const fallback = e.currentTarget
+                                .nextElementSibling as HTMLElement | null
+                              if (fallback) fallback.style.display = 'flex'
+                            }}
+                          />
+                        ) : null}
+                        <div
+                          className={`h-6 w-6 rounded-full bg-slate-100 border border-slate-200 flex items-center justify-center shrink-0 ${
+                            match.teams.home.logo ? 'hidden' : 'flex'
+                          }`}
+                          title={match.teams.home.name}
+                        >
+                          {match.teams.home.name ? (
+                            <span className="text-[10px] font-black uppercase text-slate-600">
+                              {match.teams.home.name.substring(0, 2)}
+                            </span>
+                          ) : (
+                            <Shield className="h-3.5 w-3.5 text-slate-400" />
+                          )}
+                        </div>
+                      </div>
+                      {/* Marcadores do MANDANTE logo abaixo do nome */}
+                      {canShowScorers && homeScorers.length > 0 && (
+                        <div className="mt-1 space-y-0.5 text-right w-full">
+                          {homeScorers.map((s, idx) => (
+                            <div
+                              key={idx}
+                              className="truncate text-slate-500 font-normal text-[11px]"
+                              title={s}
+                            >
+                              {s}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Placar Central ou Badge de Adiado/Cancelado */}
+                    <div className="shrink-0 flex flex-col items-center pt-0.5">
+                      {isPstOrCanc ? (
+                        <div className="flex items-center justify-center rounded-lg border border-slate-200 bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-500 shadow-2xs min-w-[72px]">
+                          <span>{matchIsPostponed ? 'Adiado' : 'Cancelado'}</span>
+                        </div>
+                      ) : (
+                        <div className="flex items-center justify-center gap-2 rounded-lg bg-slate-900 px-3 py-1 font-mono text-base font-black text-white shadow-2xs sm:text-lg min-w-[72px]">
+                          <span>{homeScore}</span>
+                          <span className="text-slate-500 font-normal">:</span>
+                          <span>{awayScore}</span>
+                        </div>
+                      )}
+
+                      {/* Detalhes de Pênaltis se houver */}
+                      {match.score?.penalty &&
+                        match.score.penalty.home !== null &&
+                        match.score.penalty.away !== null && (
+                          <div className="text-center text-[10px] font-semibold text-slate-500 mt-1">
+                            (Pên: {match.score.penalty.home}x{match.score.penalty.away})
+                          </div>
+                        )}
+                    </div>
+
+                    {/* Time Visitante e seus marcadores logo abaixo */}
+                    <div className="flex flex-1 flex-col items-start text-left min-w-0">
+                      <div className="flex items-center justify-start gap-2.5 w-full">
+                        {match.teams.away.logo ? (
+                          <img
+                            src={match.teams.away.logo}
+                            alt={match.teams.away.name}
+                            className={`h-6 w-6 object-contain shrink-0 ${
+                              isPstOrCanc ? 'grayscale-[50%] opacity-80' : ''
+                            }`}
+                            loading="lazy"
+                            decoding="async"
+                            onError={(e) => {
+                              e.currentTarget.style.display = 'none'
+                              const fallback = e.currentTarget
+                                .nextElementSibling as HTMLElement | null
+                              if (fallback) fallback.style.display = 'flex'
+                            }}
+                          />
+                        ) : null}
+                        <div
+                          className={`h-6 w-6 rounded-full bg-slate-100 border border-slate-200 flex items-center justify-center shrink-0 ${
+                            match.teams.away.logo ? 'hidden' : 'flex'
+                          }`}
+                          title={match.teams.away.name}
+                        >
+                          {match.teams.away.name ? (
+                            <span className="text-[10px] font-black uppercase text-slate-600">
+                              {match.teams.away.name.substring(0, 2)}
+                            </span>
+                          ) : (
+                            <Shield className="h-3.5 w-3.5 text-slate-400" />
+                          )}
+                        </div>
+                        <span
+                          className={`text-sm font-bold sm:text-base truncate ${
+                            isPstOrCanc ? 'text-slate-600' : 'text-[#0F172A]'
+                          }`}
+                        >
+                          {match.teams.away.name}
+                        </span>
+                      </div>
+                      {/* Marcadores do VISITANTE logo abaixo do nome */}
+                      {canShowScorers && awayScorers.length > 0 && (
+                        <div className="mt-1 space-y-0.5 text-left w-full">
+                          {awayScorers.map((s, idx) => (
+                            <div
+                              key={idx}
+                              className="truncate text-slate-500 font-normal text-[11px]"
+                              title={s}
+                            >
+                              {s}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </>
+              )
+            })()}
+          </div>
+
+          {/* Espaço lateral para ID e alinhamento uniforme */}
+          <div className="shrink-0 text-right sm:w-28 flex items-center justify-end gap-1">
+            <span className="text-[10px] text-slate-400 block truncate max-w-[70px]">
+              {match.fixture.id}
+            </span>
+          </div>
+        </div>
+      </div>
+    )
+  },
+  (prev, next) => {
+    return (
+      prev.match.fixture.id === next.match.fixture.id &&
+      prev.match.isLive === next.match.isLive &&
+      prev.match.goals?.home === next.match.goals?.home &&
+      prev.match.goals?.away === next.match.goals?.away &&
+      prev.match.fixture.status?.short === next.match.fixture.status?.short &&
+      prev.match.fixture.status?.elapsed === next.match.fixture.status?.elapsed &&
+      prev.match.scorers?.length === next.match.scorers?.length
+    )
+  },
+)
 
 export default function JogosDoDia() {
   const { user, isAdmin } = useAuth()
@@ -738,7 +963,7 @@ export default function JogosDoDia() {
   }, [filteredFixtures])
 
   // Helpers de formatação de status
-  const renderStatusBadge = (fixture: DayFixture) => {
+  const renderStatusBadge = useCallback((fixture: DayFixture) => {
     const isManual = Boolean(fixture.isManual || fixture.fixture?.isManual)
     const st = (fixture.fixture?.status?.short || '').toUpperCase().trim()
     const long = (fixture.fixture?.status?.long || '').toUpperCase().trim()
@@ -845,7 +1070,7 @@ export default function JogosDoDia() {
         )}
       </div>
     )
-  }
+  }, [])
 
   const GENERIC_GOAL_TERMS = new Set([
     'gol',
@@ -870,7 +1095,7 @@ export default function JogosDoDia() {
   // - goals / goalEvents do Football-Data.org
   // - golevents / events do TheSportsDB
   // - scorers normalizado do backend
-  const getMatchScorers = (fixture: DayFixture) => {
+  const getMatchScorers = useCallback((fixture: DayFixture) => {
     const homeScorers: string[] = []
     const awayScorers: string[] = []
     const seenScorerKeys = new Set<string>()
@@ -1222,7 +1447,7 @@ export default function JogosDoDia() {
       homeScorers: finalHomeScorers,
       awayScorers: finalAwayScorers,
     }
-  }
+  }, [])
 
   return (
     <div className="space-y-6">
@@ -1522,6 +1747,7 @@ export default function JogosDoDia() {
                         alt={league.name}
                         className="h-6 w-6 object-contain"
                         loading="lazy"
+                        decoding="async"
                         onError={(e) => {
                           e.currentTarget.style.display = 'none'
                         }}
@@ -1549,231 +1775,17 @@ export default function JogosDoDia() {
                     )}
                   </div>
                 </div>
-
                 {/* Grid de partidas da liga */}
                 <div className="divide-y divide-slate-100">
-                  {matches.map((match) => {
-                    const { homeScorers, awayScorers } = getMatchScorers(match)
-                    const stMatch = (match.fixture?.status?.short || '').toUpperCase().trim()
-                    const longMatch = (match.fixture?.status?.long || '').toUpperCase().trim()
-                    const matchIsPostponed = isFixturePostponed(stMatch, longMatch)
-                    const matchIsCancelled = isFixtureCancelled(stMatch, longMatch)
-                    const isPstOrCanc = matchIsPostponed || matchIsCancelled
-
-                    // Regra de exibição do placar central:
-                    // Se o status da partida for agendado/não iniciado (NS / Scheduled / Em Breve) ou gols null/indefinidos,
-                    // exibe "- : -". "0 : 0" só aparece se estiver Ao Vivo ou Finalizado com o placar zerado.
-                    const isUpcomingMatch =
-                      !match.isLive &&
-                      !['FT', 'AET', 'PEN'].includes(stMatch) &&
-                      !matchIsPostponed &&
-                      !matchIsCancelled
-
-                    const hasExplicitHomeScore =
-                      match.goals?.home !== null &&
-                      match.goals?.home !== undefined &&
-                      !isNaN(Number(match.goals?.home))
-                    const hasExplicitAwayScore =
-                      match.goals?.away !== null &&
-                      match.goals?.away !== undefined &&
-                      !isNaN(Number(match.goals?.away))
-
-                    const showDash =
-                      isUpcomingMatch || !hasExplicitHomeScore || !hasExplicitAwayScore
-
-                    const homeScore = showDash ? '-' : match.goals?.home
-                    const awayScore = showDash ? '-' : match.goals?.away
-
-                    return (
-                      <div
-                        key={match.fixture.id}
-                        className={`p-4 transition hover:bg-slate-50/60 ${
-                          match.isLive
-                            ? 'bg-emerald-50/20'
-                            : isPstOrCanc
-                              ? 'bg-slate-50/40 opacity-90'
-                              : ''
-                        }`}
-                      >
-                        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                          {/* Status Badge */}
-                          <div className="shrink-0 sm:w-36">{renderStatusBadge(match)}</div>
-
-                          {/* Confronto Central: Times e Placar */}
-                          <div className="flex-1 max-w-xl">
-                            {/* Confronto Central: Times e Placar com marcadores logo abaixo de cada time */}
-                            {(() => {
-                              // Condição inclusiva: exibe marcadores sempre que houver marcadores e a partida não estiver agendada/adiada/cancelada
-                              const isScheduledStatus = [
-                                'NS',
-                                'TBD',
-                                'PST',
-                                'CANC',
-                                'ABD',
-                                'SUSP',
-                              ].includes(stMatch)
-                              const hasAnyScorers = homeScorers.length > 0 || awayScorers.length > 0
-                              const canShowScorers =
-                                !isPstOrCanc && !isScheduledStatus && hasAnyScorers
-
-                              return (
-                                <>
-                                  <div className="flex items-start justify-between gap-4">
-                                    {/* Time Mandante e seus marcadores logo abaixo */}
-                                    <div className="flex flex-1 flex-col items-end text-right min-w-0">
-                                      <div className="flex items-center justify-end gap-2.5 w-full">
-                                        <span
-                                          className={`text-sm font-bold sm:text-base truncate ${
-                                            isPstOrCanc ? 'text-slate-600' : 'text-[#0F172A]'
-                                          }`}
-                                        >
-                                          {match.teams.home.name}
-                                        </span>
-                                        {match.teams.home.logo ? (
-                                          <img
-                                            src={match.teams.home.logo}
-                                            alt={match.teams.home.name}
-                                            className={`h-6 w-6 object-contain shrink-0 ${
-                                              isPstOrCanc ? 'grayscale-[50%] opacity-80' : ''
-                                            }`}
-                                            loading="lazy"
-                                            onError={(e) => {
-                                              e.currentTarget.style.display = 'none'
-                                              const fallback = e.currentTarget
-                                                .nextElementSibling as HTMLElement | null
-                                              if (fallback) fallback.style.display = 'flex'
-                                            }}
-                                          />
-                                        ) : null}
-                                        <div
-                                          className={`h-6 w-6 rounded-full bg-slate-100 border border-slate-200 flex items-center justify-center shrink-0 ${
-                                            match.teams.home.logo ? 'hidden' : 'flex'
-                                          }`}
-                                          title={match.teams.home.name}
-                                        >
-                                          {match.teams.home.name ? (
-                                            <span className="text-[10px] font-black uppercase text-slate-600">
-                                              {match.teams.home.name.substring(0, 2)}
-                                            </span>
-                                          ) : (
-                                            <Shield className="h-3.5 w-3.5 text-slate-400" />
-                                          )}
-                                        </div>
-                                      </div>
-                                      {/* Marcadores do MANDANTE logo abaixo do nome */}
-                                      {canShowScorers && homeScorers.length > 0 && (
-                                        <div className="mt-1 space-y-0.5 text-right w-full">
-                                          {homeScorers.map((s, idx) => (
-                                            <div
-                                              key={idx}
-                                              className="truncate text-slate-500 font-normal text-[11px]"
-                                              title={s}
-                                            >
-                                              {s}
-                                            </div>
-                                          ))}
-                                        </div>
-                                      )}
-                                    </div>
-
-                                    {/* Placar Central ou Badge de Adiado/Cancelado */}
-                                    <div className="shrink-0 flex flex-col items-center pt-0.5">
-                                      {isPstOrCanc ? (
-                                        <div className="flex items-center justify-center rounded-lg border border-slate-200 bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-500 shadow-2xs min-w-[72px]">
-                                          <span>{matchIsPostponed ? 'Adiado' : 'Cancelado'}</span>
-                                        </div>
-                                      ) : (
-                                        <div className="flex items-center justify-center gap-2 rounded-lg bg-slate-900 px-3 py-1 font-mono text-base font-black text-white shadow-2xs sm:text-lg min-w-[72px]">
-                                          <span>{homeScore}</span>
-                                          <span className="text-slate-500 font-normal">:</span>
-                                          <span>{awayScore}</span>
-                                        </div>
-                                      )}
-
-                                      {/* Detalhes de Pênaltis se houver */}
-                                      {match.score?.penalty &&
-                                        match.score.penalty.home !== null &&
-                                        match.score.penalty.away !== null && (
-                                          <div className="text-center text-[10px] font-semibold text-slate-500 mt-1">
-                                            (Pên: {match.score.penalty.home}x
-                                            {match.score.penalty.away})
-                                          </div>
-                                        )}
-                                    </div>
-
-                                    {/* Time Visitante e seus marcadores logo abaixo */}
-                                    <div className="flex flex-1 flex-col items-start text-left min-w-0">
-                                      <div className="flex items-center justify-start gap-2.5 w-full">
-                                        {match.teams.away.logo ? (
-                                          <img
-                                            src={match.teams.away.logo}
-                                            alt={match.teams.away.name}
-                                            className={`h-6 w-6 object-contain shrink-0 ${
-                                              isPstOrCanc ? 'grayscale-[50%] opacity-80' : ''
-                                            }`}
-                                            loading="lazy"
-                                            onError={(e) => {
-                                              e.currentTarget.style.display = 'none'
-                                              const fallback = e.currentTarget
-                                                .nextElementSibling as HTMLElement | null
-                                              if (fallback) fallback.style.display = 'flex'
-                                            }}
-                                          />
-                                        ) : null}
-                                        <div
-                                          className={`h-6 w-6 rounded-full bg-slate-100 border border-slate-200 flex items-center justify-center shrink-0 ${
-                                            match.teams.away.logo ? 'hidden' : 'flex'
-                                          }`}
-                                          title={match.teams.away.name}
-                                        >
-                                          {match.teams.away.name ? (
-                                            <span className="text-[10px] font-black uppercase text-slate-600">
-                                              {match.teams.away.name.substring(0, 2)}
-                                            </span>
-                                          ) : (
-                                            <Shield className="h-3.5 w-3.5 text-slate-400" />
-                                          )}
-                                        </div>
-                                        <span
-                                          className={`text-sm font-bold sm:text-base truncate ${
-                                            isPstOrCanc ? 'text-slate-600' : 'text-[#0F172A]'
-                                          }`}
-                                        >
-                                          {match.teams.away.name}
-                                        </span>
-                                      </div>
-                                      {/* Marcadores do VISITANTE logo abaixo do nome */}
-                                      {canShowScorers && awayScorers.length > 0 && (
-                                        <div className="mt-1 space-y-0.5 text-left w-full">
-                                          {awayScorers.map((s, idx) => (
-                                            <div
-                                              key={idx}
-                                              className="truncate text-slate-500 font-normal text-[11px]"
-                                              title={s}
-                                            >
-                                              {s}
-                                            </div>
-                                          ))}
-                                        </div>
-                                      )}
-                                    </div>
-                                  </div>
-                                </>
-                              )
-                            })()}
-                          </div>
-
-                          {/* Espaço lateral para ID e alinhamento uniforme */}
-                          <div className="shrink-0 text-right sm:w-28 flex items-center justify-end gap-1">
-                            <span className="text-[10px] text-slate-400 block truncate max-w-[70px]">
-                              {match.fixture.id}
-                            </span>
-                          </div>
-                        </div>
-                      </div>
-                    )
-                  })}
-                </div>
+                  {matches.map((match) => (
+                    <MatchRowItem
+                      key={match.fixture.id}
+                      match={match}
+                      renderStatusBadge={renderStatusBadge}
+                      getMatchScorers={getMatchScorers}
+                    />
+                  ))}
+                </div>{' '}
               </div>
             )
           })}

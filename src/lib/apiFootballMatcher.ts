@@ -146,9 +146,21 @@ export function formatFixtureToLiveScore(
     }
   } else if (Array.isArray(fixture.events) && fixture.events.length > 0) {
     for (const ev of fixture.events) {
-      if (ev && ev.type === 'Goal' && ev.player && ev.player.name) {
+      const evAny = ev as any
+      const rawPlayerName =
+        evAny.player?.name ||
+        evAny.playerName ||
+        evAny.player_name ||
+        evAny.scorer?.name ||
+        evAny.scorer?.shortName ||
+        evAny.player?.shortName ||
+        evAny.strPlayer ||
+        evAny.strPlayerName ||
+        evAny.scorer ||
+        ''
+      if (ev && ev.type === 'Goal' && rawPlayerName) {
         const isOwnGoal = ev.detail && ev.detail.toLowerCase().includes('own')
-        let scorerNameStr = String(ev.player.name).trim()
+        let scorerNameStr = String(rawPlayerName).trim()
         if (isOwnGoal) {
           scorerNameStr += ' (contra)'
         }
@@ -706,9 +718,21 @@ export function matchGameWithApiFixtures(
     }
   } else if (Array.isArray(fixture.events) && fixture.events.length > 0) {
     for (const ev of fixture.events) {
-      if (ev && ev.type === 'Goal' && ev.player && ev.player.name) {
+      const evAny = ev as any
+      const rawPlayerName =
+        evAny.player?.name ||
+        evAny.playerName ||
+        evAny.player_name ||
+        evAny.scorer?.name ||
+        evAny.scorer?.shortName ||
+        evAny.player?.shortName ||
+        evAny.strPlayer ||
+        evAny.strPlayerName ||
+        evAny.scorer ||
+        ''
+      if (ev && ev.type === 'Goal' && rawPlayerName) {
         const isOwnGoal = ev.detail && ev.detail.toLowerCase().includes('own')
-        let scorerNameStr = String(ev.player.name).trim()
+        let scorerNameStr = String(rawPlayerName).trim()
         if (isOwnGoal) {
           scorerNameStr += ' (contra)'
         }

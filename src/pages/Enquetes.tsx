@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback } from 'react'
+import React, { useState, useEffect, useMemo, useCallback } from 'react'
 import {
   Vote,
   Calendar,
@@ -1217,6 +1217,252 @@ export default function Enquetes() {
     }
   }
 
+  // Card de jogo para votação da enquete memoizado com React.memo
+  const EnqueteJogoVotacaoCard = React.useMemo(() => {
+    return React.memo(
+      function EnqueteJogoVotacaoCard({
+        jogo,
+        votado,
+        isTop4,
+        isBlocked,
+        statusEnquete,
+        participantName,
+        isAdmin,
+        onToggleVoto,
+        onEditar,
+        onExcluir,
+      }: {
+        jogo: JogoComVotos
+        votado: boolean
+        isTop4: boolean
+        isBlocked: boolean
+        statusEnquete: string
+        participantName: string
+        isAdmin: boolean
+        onToggleVoto: (id: string) => void
+        onEditar: (jogo: JogoComVotos, e: React.MouseEvent) => void
+        onExcluir: (jogo: JogoComVotos, e: React.MouseEvent) => void
+      }) {
+        return (
+          <Card
+            onClick={() => {
+              if (statusEnquete === 'aberta' && !isBlocked) {
+                onToggleVoto(jogo.id)
+              }
+            }}
+            className={`relative cursor-pointer transition-all duration-200 hover:shadow-md ${
+              votado
+                ? 'border-2 border-emerald-500 bg-emerald-50/40 shadow-xs'
+                : isBlocked
+                  ? 'border-slate-200 bg-slate-50/70 opacity-60 cursor-not-allowed'
+                  : 'border-slate-200 bg-white hover:border-slate-300'
+            }`}
+          >
+            {/* Badge de Top 4 Votados */}
+            {isTop4 && (
+              <div className="absolute -top-2.5 right-3">
+                <span className="inline-flex items-center gap-1 rounded-full bg-amber-500 px-2 py-0.5 text-[10px] font-black uppercase text-white shadow-xs">
+                  <Flame className="h-3 w-3" />
+                  Top 4
+                </span>
+              </div>
+            )}
+
+            <CardContent className="p-4">
+              {/* Topo do Card: Campeonato, Origem, Data e Botões Admin (Editar/Excluir) */}
+              <div className="flex items-center justify-between gap-2 border-b border-slate-100 pb-2">
+                <div className="flex items-center gap-1.5 min-w-0 flex-1">
+                  <span className="truncate text-[11px] font-bold text-slate-600">
+                    {jogo.campeonato || 'Competição'}
+                  </span>
+                  {jogo.origem === 'manual' && (
+                    <Badge
+                      variant="outline"
+                      className="border-amber-300 bg-amber-50 px-1.5 py-0 text-[9px] font-bold text-amber-700"
+                    >
+                      Manual
+                    </Badge>
+                  )}
+                </div>
+
+                <div className="flex items-center gap-2 shrink-0">
+                  <div className="flex items-center gap-1 text-[11px] font-medium text-slate-500">
+                    <Calendar className="h-3 w-3 text-slate-400" />
+                    <span>{formatDataBR(jogo.data)}</span>
+                    <Clock className="ml-1 h-3 w-3 text-slate-400" />
+                    <span>{formatHoraBR(jogo.horario || '16:00')}</span>
+                  </div>
+
+                  {/* Botões de Ação Admin: Editar e Excluir Jogo */}
+                  {isAdmin && (
+                    <div className="flex items-center gap-1 border-l border-slate-200 pl-1.5">
+                      <button
+                        type="button"
+                        onClick={(e) => onEditar(jogo, e)}
+                        className="rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-amber-600 transition"
+                        title="Editar jogo"
+                      >
+                        <Pencil className="h-3.5 w-3.5" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={(e) => onExcluir(jogo, e)}
+                        className="rounded p-1 text-slate-400 hover:bg-rose-50 hover:text-rose-600 transition"
+                        title="Excluir confronto da enquete"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Confronto */}
+              <div className="my-3 flex items-center justify-between gap-2">
+                {/* Time A */}
+                <div className="flex flex-1 items-center gap-2 min-w-0">
+                  {jogo.logo_casa ? (
+                    <img
+                      src={jogo.logo_casa}
+                      alt={jogo.time_a}
+                      className="h-7 w-7 object-contain shrink-0"
+                      loading="lazy"
+                      decoding="async"
+                      onError={(e) => {
+                        e.currentTarget.style.display = 'none'
+                        const fallback = e.currentTarget.nextElementSibling as HTMLElement | null
+                        if (fallback) fallback.style.display = 'flex'
+                      }}
+                    />
+                  ) : null}
+                  <div
+                    className={`h-7 w-7 rounded-full bg-slate-100 border border-slate-200 items-center justify-center shrink-0 ${
+                      jogo.logo_casa ? 'hidden' : 'flex'
+                    }`}
+                    title={jogo.time_a}
+                  >
+                    <span className="text-[10px] font-black uppercase text-slate-700">
+                      {jogo.time_a.slice(0, 2).toUpperCase()}
+                    </span>
+                  </div>
+                  <span className="text-xs font-bold text-slate-800 line-clamp-1">
+                    {jogo.time_a}
+                  </span>
+                </div>
+
+                {/* Versus */}
+                <div className="px-1 text-[11px] font-black text-slate-400 shrink-0">x</div>
+
+                {/* Time B */}
+                <div className="flex flex-1 items-center justify-end gap-2 text-right min-w-0">
+                  <span className="text-xs font-bold text-slate-800 line-clamp-1">
+                    {jogo.time_b}
+                  </span>
+                  {jogo.logo_visitante ? (
+                    <img
+                      src={jogo.logo_visitante}
+                      alt={jogo.time_b}
+                      className="h-7 w-7 object-contain shrink-0"
+                      loading="lazy"
+                      decoding="async"
+                      onError={(e) => {
+                        e.currentTarget.style.display = 'none'
+                        const fallback = e.currentTarget.nextElementSibling as HTMLElement | null
+                        if (fallback) fallback.style.display = 'flex'
+                      }}
+                    />
+                  ) : null}
+                  <div
+                    className={`h-7 w-7 rounded-full bg-slate-100 border border-slate-200 items-center justify-center shrink-0 ${
+                      jogo.logo_visitante ? 'hidden' : 'flex'
+                    }`}
+                    title={jogo.time_b}
+                  >
+                    <span className="text-[10px] font-black uppercase text-slate-700">
+                      {jogo.time_b.slice(0, 2).toUpperCase()}
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Rodapé do Card: Checkbox e Contagem de Votos */}
+              <div className="flex items-center justify-between pt-2 border-t border-slate-100">
+                {/* Indicador de Seleção / Checkbox */}
+                <button
+                  type="button"
+                  disabled={statusEnquete !== 'aberta' || isBlocked}
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    onToggleVoto(jogo.id)
+                  }}
+                  className={`flex items-center gap-1.5 text-xs font-bold transition ${
+                    votado
+                      ? 'text-emerald-700 hover:text-emerald-800'
+                      : isBlocked
+                        ? 'text-slate-400 cursor-not-allowed'
+                        : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  {votado ? (
+                    <CheckSquare className="h-5 w-5 text-emerald-600 fill-emerald-100" />
+                  ) : (
+                    <Square className="h-5 w-5 text-slate-400" />
+                  )}
+                  <span>{votado ? 'Voto selecionado' : 'Votar neste jogo'}</span>
+                </button>
+
+                {/* Contador de votos total neste jogo */}
+                <div
+                  className="flex items-center gap-1 text-xs font-bold text-slate-700"
+                  title={
+                    jogo.votantes.length > 0
+                      ? `Votado por: ${jogo.votantes.join(', ')}`
+                      : 'Nenhum voto ainda'
+                  }
+                >
+                  <Users className="h-3.5 w-3.5 text-slate-400" />
+                  <span>
+                    {jogo.totalVotos} {jogo.totalVotos === 1 ? 'voto' : 'votos'}
+                  </span>
+                </div>
+              </div>
+
+              {/* Votantes destacados */}
+              {jogo.votantes.length > 0 && (
+                <div className="mt-2 flex flex-wrap items-center gap-1 border-t border-slate-100 pt-1.5 text-[10px] text-slate-500">
+                  <span className="font-semibold text-slate-600">Votos:</span>
+                  {jogo.votantes.map((v, idx) => (
+                    <span
+                      key={idx}
+                      className={`rounded px-1.5 py-0.2 font-medium ${
+                        v === participantName
+                          ? 'bg-emerald-100 text-emerald-800 font-bold'
+                          : 'bg-slate-100 text-slate-700'
+                      }`}
+                    >
+                      {v}
+                    </span>
+                  ))}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        )
+      },
+      (prev, next) => {
+        return (
+          prev.jogo.id === next.jogo.id &&
+          prev.votado === next.votado &&
+          prev.isTop4 === next.isTop4 &&
+          prev.isBlocked === next.isBlocked &&
+          prev.statusEnquete === next.statusEnquete &&
+          prev.jogo.totalVotos === next.jogo.totalVotos &&
+          prev.jogo.votantes.length === next.jogo.votantes.length
+        )
+      },
+    )
+  }, [])
+
   return (
     <div className="space-y-6">
       {/* Cabeçalho da Página */}
@@ -1625,210 +1871,19 @@ export default function Enquetes() {
                 const isBlocked = !votado && limiteAtingido
 
                 return (
-                  <Card
+                  <EnqueteJogoVotacaoCard
                     key={jogo.id}
-                    onClick={() => {
-                      if (enqueteAtiva.status === 'aberta' && !isBlocked) {
-                        handleToggleVoto(jogo.id)
-                      }
-                    }}
-                    className={`relative cursor-pointer transition-all duration-200 hover:shadow-md ${
-                      votado
-                        ? 'border-2 border-emerald-500 bg-emerald-50/40 shadow-xs'
-                        : isBlocked
-                          ? 'border-slate-200 bg-slate-50/70 opacity-60 cursor-not-allowed'
-                          : 'border-slate-200 bg-white hover:border-slate-300'
-                    }`}
-                  >
-                    {/* Badge de Top 4 Votados */}
-                    {isTop4 && (
-                      <div className="absolute -top-2.5 right-3">
-                        <span className="inline-flex items-center gap-1 rounded-full bg-amber-500 px-2 py-0.5 text-[10px] font-black uppercase text-white shadow-xs">
-                          <Flame className="h-3 w-3" />
-                          Top 4
-                        </span>
-                      </div>
-                    )}
-
-                    <CardContent className="p-4">
-                      {/* Topo do Card: Campeonato, Origem, Data e Botões Admin (Editar/Excluir) */}
-                      <div className="flex items-center justify-between gap-2 border-b border-slate-100 pb-2">
-                        <div className="flex items-center gap-1.5 min-w-0 flex-1">
-                          <span className="truncate text-[11px] font-bold text-slate-600">
-                            {jogo.campeonato || 'Competição'}
-                          </span>
-                          {jogo.origem === 'manual' && (
-                            <Badge
-                              variant="outline"
-                              className="border-amber-300 bg-amber-50 px-1.5 py-0 text-[9px] font-bold text-amber-700"
-                            >
-                              Manual
-                            </Badge>
-                          )}
-                        </div>
-
-                        <div className="flex items-center gap-2 shrink-0">
-                          <div className="flex items-center gap-1 text-[11px] font-medium text-slate-500">
-                            <Calendar className="h-3 w-3 text-slate-400" />
-                            <span>{formatDataBR(jogo.data)}</span>
-                            <Clock className="ml-1 h-3 w-3 text-slate-400" />
-                            <span>{formatHoraBR(jogo.horario || '16:00')}</span>
-                          </div>
-
-                          {/* Botões de Ação Admin: Editar e Excluir Jogo */}
-                          {isAdmin && (
-                            <div className="flex items-center gap-1 border-l border-slate-200 pl-1.5">
-                              <button
-                                type="button"
-                                onClick={(e) => handleAbrirModalEditarJogo(jogo, e)}
-                                className="rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-amber-600 transition"
-                                title="Editar jogo"
-                              >
-                                <Pencil className="h-3.5 w-3.5" />
-                              </button>
-                              <button
-                                type="button"
-                                onClick={(e) => handleAbrirModalExcluirJogo(jogo, e)}
-                                className="rounded p-1 text-slate-400 hover:bg-rose-50 hover:text-rose-600 transition"
-                                title="Excluir confronto da enquete"
-                              >
-                                <Trash2 className="h-3.5 w-3.5" />
-                              </button>
-                            </div>
-                          )}
-                        </div>
-                      </div>
-
-                      {/* Confronto */}
-                      <div className="my-3 flex items-center justify-between gap-2">
-                        {/* Time A */}
-                        <div className="flex flex-1 items-center gap-2 min-w-0">
-                          {jogo.logo_casa ? (
-                            <img
-                              src={jogo.logo_casa}
-                              alt={jogo.time_a}
-                              className="h-7 w-7 object-contain shrink-0"
-                              loading="lazy"
-                              onError={(e) => {
-                                e.currentTarget.style.display = 'none'
-                                const fallback = e.currentTarget
-                                  .nextElementSibling as HTMLElement | null
-                                if (fallback) fallback.style.display = 'flex'
-                              }}
-                            />
-                          ) : null}
-                          <div
-                            className={`h-7 w-7 rounded-full bg-slate-100 border border-slate-200 items-center justify-center shrink-0 ${
-                              jogo.logo_casa ? 'hidden' : 'flex'
-                            }`}
-                            title={jogo.time_a}
-                          >
-                            <span className="text-[10px] font-black uppercase text-slate-700">
-                              {jogo.time_a.slice(0, 2).toUpperCase()}
-                            </span>
-                          </div>
-                          <span className="text-xs font-bold text-slate-800 line-clamp-1">
-                            {jogo.time_a}
-                          </span>
-                        </div>
-
-                        {/* Versus */}
-                        <div className="px-1 text-[11px] font-black text-slate-400 shrink-0">x</div>
-
-                        {/* Time B */}
-                        <div className="flex flex-1 items-center justify-end gap-2 text-right min-w-0">
-                          <span className="text-xs font-bold text-slate-800 line-clamp-1">
-                            {jogo.time_b}
-                          </span>
-                          {jogo.logo_visitante ? (
-                            <img
-                              src={jogo.logo_visitante}
-                              alt={jogo.time_b}
-                              className="h-7 w-7 object-contain shrink-0"
-                              loading="lazy"
-                              onError={(e) => {
-                                e.currentTarget.style.display = 'none'
-                                const fallback = e.currentTarget
-                                  .nextElementSibling as HTMLElement | null
-                                if (fallback) fallback.style.display = 'flex'
-                              }}
-                            />
-                          ) : null}
-                          <div
-                            className={`h-7 w-7 rounded-full bg-slate-100 border border-slate-200 items-center justify-center shrink-0 ${
-                              jogo.logo_visitante ? 'hidden' : 'flex'
-                            }`}
-                            title={jogo.time_b}
-                          >
-                            <span className="text-[10px] font-black uppercase text-slate-700">
-                              {jogo.time_b.slice(0, 2).toUpperCase()}
-                            </span>
-                          </div>
-                        </div>
-                      </div>
-
-                      {/* Rodapé do Card: Checkbox e Contagem de Votos */}
-                      <div className="flex items-center justify-between pt-2 border-t border-slate-100">
-                        {/* Indicador de Seleção / Checkbox */}
-                        <button
-                          type="button"
-                          disabled={enqueteAtiva.status !== 'aberta' || isBlocked}
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            handleToggleVoto(jogo.id)
-                          }}
-                          className={`flex items-center gap-1.5 text-xs font-bold transition ${
-                            votado
-                              ? 'text-emerald-700 hover:text-emerald-800'
-                              : isBlocked
-                                ? 'text-slate-400 cursor-not-allowed'
-                                : 'text-slate-600 hover:text-slate-900'
-                          }`}
-                        >
-                          {votado ? (
-                            <CheckSquare className="h-5 w-5 text-emerald-600 fill-emerald-100" />
-                          ) : (
-                            <Square className="h-5 w-5 text-slate-400" />
-                          )}
-                          <span>{votado ? 'Voto selecionado' : 'Votar neste jogo'}</span>
-                        </button>
-
-                        {/* Contador de votos total neste jogo */}
-                        <div
-                          className="flex items-center gap-1 text-xs font-bold text-slate-700"
-                          title={
-                            jogo.votantes.length > 0
-                              ? `Votado por: ${jogo.votantes.join(', ')}`
-                              : 'Nenhum voto ainda'
-                          }
-                        >
-                          <Users className="h-3.5 w-3.5 text-slate-400" />
-                          <span>
-                            {jogo.totalVotos} {jogo.totalVotos === 1 ? 'voto' : 'votos'}
-                          </span>
-                        </div>
-                      </div>
-
-                      {/* Votantes destacados */}
-                      {jogo.votantes.length > 0 && (
-                        <div className="mt-2 flex flex-wrap items-center gap-1 border-t border-slate-100 pt-1.5 text-[10px] text-slate-500">
-                          <span className="font-semibold text-slate-600">Votos:</span>
-                          {jogo.votantes.map((v, idx) => (
-                            <span
-                              key={idx}
-                              className={`rounded px-1.5 py-0.2 font-medium ${
-                                v === participantName
-                                  ? 'bg-emerald-100 text-emerald-800 font-bold'
-                                  : 'bg-slate-100 text-slate-700'
-                              }`}
-                            >
-                              {v}
-                            </span>
-                          ))}
-                        </div>
-                      )}
-                    </CardContent>
-                  </Card>
+                    jogo={jogo}
+                    votado={votado}
+                    isTop4={isTop4}
+                    isBlocked={isBlocked}
+                    statusEnquete={enqueteAtiva.status}
+                    participantName={participantName}
+                    isAdmin={isAdmin}
+                    onToggleVoto={handleToggleVoto}
+                    onEditar={handleAbrirModalEditarJogo}
+                    onExcluir={handleAbrirModalExcluirJogo}
+                  />
                 )
               })}
             </div>
@@ -1942,6 +1997,7 @@ export default function Enquetes() {
                                     alt={jogo.time_a}
                                     className="h-5 w-5 object-contain shrink-0"
                                     loading="lazy"
+                                    decoding="async"
                                     onError={(e) => {
                                       e.currentTarget.style.display = 'none'
                                       const fallback = e.currentTarget
@@ -1975,6 +2031,7 @@ export default function Enquetes() {
                                     alt={jogo.time_b}
                                     className="h-5 w-5 object-contain shrink-0"
                                     loading="lazy"
+                                    decoding="async"
                                     onError={(e) => {
                                       e.currentTarget.style.display = 'none'
                                       const fallback = e.currentTarget
@@ -2480,6 +2537,7 @@ export default function Enquetes() {
                               alt={j.time_a}
                               className="h-5 w-5 object-contain shrink-0"
                               loading="lazy"
+                              decoding="async"
                               onError={(e) => {
                                 e.currentTarget.style.display = 'none'
                                 const fallback = e.currentTarget
@@ -2507,6 +2565,7 @@ export default function Enquetes() {
                               alt={j.time_b}
                               className="h-5 w-5 object-contain shrink-0"
                               loading="lazy"
+                              decoding="async"
                               onError={(e) => {
                                 e.currentTarget.style.display = 'none'
                                 const fallback = e.currentTarget
@@ -2613,6 +2672,7 @@ export default function Enquetes() {
                       alt={j.time_a}
                       className="h-4 w-4 object-contain shrink-0"
                       loading="lazy"
+                      decoding="async"
                       onError={(e) => {
                         e.currentTarget.style.display = 'none'
                         const fallback = e.currentTarget.nextElementSibling as HTMLElement | null
@@ -2638,6 +2698,7 @@ export default function Enquetes() {
                       alt={j.time_b}
                       className="h-4 w-4 object-contain shrink-0"
                       loading="lazy"
+                      decoding="async"
                       onError={(e) => {
                         e.currentTarget.style.display = 'none'
                         const fallback = e.currentTarget.nextElementSibling as HTMLElement | null
