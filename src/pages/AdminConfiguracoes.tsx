@@ -79,9 +79,11 @@ export default function AdminConfiguracoes() {
   const [tsdbApiKeyInput, setTsdbApiKeyInput] = useState('')
   const [showTsdbKeyText, setShowTsdbKeyText] = useState(false)
   const [testingTsdb, setTestingTsdb] = useState(false)
+  const [tsdbCooldown, setTsdbCooldown] = useState(0)
   const [tsdbTestResult, setTsdbTestResult] = useState<{
     success: boolean
     message: string
+    rateLimited?: boolean
   } | null>(null)
 
   const [ativoInput, setAtivoInput] = useState(true)
@@ -137,6 +139,14 @@ export default function AdminConfiguracoes() {
   useEffect(() => {
     loadConfig()
   }, [])
+
+  useEffect(() => {
+    if (tsdbCooldown <= 0) return
+    const timer = setInterval(() => {
+      setTsdbCooldown((prev) => (prev <= 1 ? 0 : prev - 1))
+    }, 1000)
+    return () => clearInterval(timer)
+  }, [tsdbCooldown])
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -385,6 +395,7 @@ export default function AdminConfiguracoes() {
 
   // Teste de conexão específico para TheSportsDB (Sul-Americana / Libertadores)
   const handleTestTsdbConnection = async () => {
+    if (tsdbCooldown > 0) return
     setTestingTsdb(true)
     setTsdbTestResult(null)
     try {
@@ -408,7 +419,10 @@ export default function AdminConfiguracoes() {
       )
 
       const data = await res.json().catch(() => ({}))
+      const isRateLimited = data.statusCode === 429 || Boolean(data.rate_limited)
+
       if (res.ok && data.success) {
+        setTsdbCooldown(0)
         setTsdbTestResult({
           success: true,
           message: data.message || 'Conexão com TheSportsDB validada com sucesso!',
@@ -416,6 +430,22 @@ export default function AdminConfiguracoes() {
         toast({
           title: 'TheSportsDB Conectado! 🌎',
           description: 'A integração com TheSportsDB para CONMEBOL está operando.',
+        })
+      } else if (isRateLimited) {
+        const retrySecs = Number(data.retryAfter) > 0 ? Number(data.retryAfter) : 30
+        setTsdbCooldown(retrySecs)
+        const friendlyMsg =
+          data.message ||
+          'Servidor da TheSportsDB ocupado temporariamente. Aguarde alguns segundos e tente novamente.'
+        setTsdbTestResult({
+          success: false,
+          rateLimited: true,
+          message: friendlyMsg,
+        })
+        toast({
+          title: 'TheSportsDB: Limite Temporário ⏳',
+          description: friendlyMsg,
+          className: 'border-amber-300 bg-amber-50 text-amber-900',
         })
       } else {
         setTsdbTestResult({
@@ -904,20 +934,26 @@ export default function AdminConfiguracoes() {
 
                     <div className="flex items-center justify-between pt-1">
                       <span className="text-[11px] text-blue-800">
-                        Chave padrão pública "3" ativada automaticamente.
+                        Chave padrão pública "3" ativada automaticamente. Uma chave própria
+                        (Patreon) substitui a pública e elimina limites de requisições.
                       </span>
                       <Button
                         type="button"
                         variant="outline"
                         size="sm"
                         onClick={handleTestTsdbConnection}
-                        disabled={testingTsdb || saving}
-                        className="h-7 border-blue-300 bg-white text-xs font-semibold text-blue-900 hover:bg-blue-50"
+                        disabled={testingTsdb || saving || tsdbCooldown > 0}
+                        className="h-7 border-blue-300 bg-white text-xs font-semibold text-blue-900 hover:bg-blue-50 disabled:opacity-60"
                       >
                         {testingTsdb ? (
                           <>
                             <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin text-blue-700" />
                             Testando TheSportsDB...
+                          </>
+                        ) : tsdbCooldown > 0 ? (
+                          <>
+                            <Radio className="mr-1.5 h-3.5 w-3.5 text-amber-600" />
+                            Aguarde {tsdbCooldown}s...
                           </>
                         ) : (
                           <>
@@ -933,11 +969,15 @@ export default function AdminConfiguracoes() {
                         className={`flex items-start gap-2 rounded-lg border p-2.5 text-xs ${
                           tsdbTestResult.success
                             ? 'border-blue-300 bg-blue-50 text-blue-900'
-                            : 'border-red-300 bg-red-50 text-red-900'
+                            : tsdbTestResult.rateLimited
+                              ? 'border-amber-300 bg-amber-50 text-amber-900'
+                              : 'border-red-300 bg-red-50 text-red-900'
                         }`}
                       >
                         {tsdbTestResult.success ? (
                           <CheckCircle2 className="h-4 w-4 shrink-0 text-blue-600 mt-0.5" />
+                        ) : tsdbTestResult.rateLimited ? (
+                          <AlertCircle className="h-4 w-4 shrink-0 text-amber-600 mt-0.5" />
                         ) : (
                           <AlertCircle className="h-4 w-4 shrink-0 text-red-600 mt-0.5" />
                         )}
@@ -1087,7 +1127,8 @@ export default function AdminConfiguracoes() {
                 </div>
                 <p className="text-slate-600 leading-relaxed">
                   Utiliza a chave pública gratuita (padrão <strong>3</strong>) sem necessidade de
-                  cadastro complexo.
+                  cadastro complexo. Uma chave própria (Patreon/TheSportsDB) substitui a chave
+                  pública e elimina o limite de taxa.
                 </p>
               </div>
             </div>

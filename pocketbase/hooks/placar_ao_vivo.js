@@ -4759,46 +4759,74 @@ routerAdd('POST', '/backend/v1/placar-ao-vivo/test', (e) => {
     // Teste TheSportsDB
     if (provedor === 'thesportsdb') {
       try {
+        var now = Date.now()
+        if (
+          typeof globalThis !== 'undefined' &&
+          globalThis.__tsdbBackoffUntil &&
+          globalThis.__tsdbBackoffUntil > now
+        ) {
+          var remainingSecs = Math.max(1, Math.ceil((globalThis.__tsdbBackoffUntil - now) / 1000))
+          return e.json(200, {
+            success: false,
+            rate_limited: true,
+            provider: 'thesportsdb',
+            statusCode: 429,
+            retryAfter: remainingSecs,
+            message:
+              'Servidor da TheSportsDB ocupado temporariamente. Aguarde ' +
+              remainingSecs +
+              ' segundos e tente novamente.',
+          })
+        }
+
         var keyToUse = (apiKey || '').trim() || '3'
 
-        // 1. Tenta lookupleague.php?id=4328 com a chave informada (ou '3')
+        // Endpoint leve all_sports.php com uma única requisição externa
         var resTsdbTest = $http.send({
           url:
             'https://www.thesportsdb.com/api/v1/json/' +
             encodeURIComponent(keyToUse) +
-            '/lookupleague.php?id=4328',
+            '/all_sports.php',
           method: 'GET',
           timeout: 8,
         })
 
-        // 2. Se status !== 200, tenta fallback para a chave de demonstração pública 123
-        if (!resTsdbTest || resTsdbTest.statusCode !== 200) {
-          try {
-            resTsdbTest = $http.send({
-              url: 'https://www.thesportsdb.com/api/v1/json/123/all_sports.php',
-              method: 'GET',
-              timeout: 8,
-            })
-          } catch (_) {}
-        }
+        var statusCode = resTsdbTest ? resTsdbTest.statusCode : 0
 
-        if (resTsdbTest && resTsdbTest.statusCode === 200) {
+        if (statusCode === 200) {
+          if (typeof globalThis !== 'undefined') {
+            globalThis.__tsdbBackoffUntil = 0
+          }
           return e.json(200, {
             success: true,
             provider: 'thesportsdb',
             statusCode: 200,
-            message: 'Conexão com TheSportsDB bem-sucedida! Serviço disponível e respondendo.',
+            message:
+              'Conexão com TheSportsDB validada com sucesso! Serviço disponível e respondendo.',
+          })
+        } else if (statusCode === 429) {
+          if (typeof globalThis !== 'undefined') {
+            globalThis.__tsdbBackoffUntil = Date.now() + 30000
+          }
+          return e.json(200, {
+            success: false,
+            rate_limited: true,
+            provider: 'thesportsdb',
+            statusCode: 429,
+            retryAfter: 30,
+            message:
+              'Servidor da TheSportsDB ocupado temporariamente (limite de requisições da chave). Aguarde alguns segundos e tente novamente.',
           })
         } else {
-          var failCode = resTsdbTest ? resTsdbTest.statusCode : 0
           return e.json(200, {
             success: false,
             provider: 'thesportsdb',
-            statusCode: failCode,
+            statusCode: statusCode,
             message:
-              'Não foi possível validar a conexão com a TheSportsDB no momento (status HTTP ' +
-              failCode +
-              '). Tente novamente mais tarde.',
+              'TheSportsDB respondeu com status HTTP ' +
+              statusCode +
+              (resTsdbTest && resTsdbTest.raw ? ': ' + resTsdbTest.raw : '') +
+              '. Tente novamente mais tarde.',
           })
         }
       } catch (errReq) {
@@ -4806,7 +4834,7 @@ routerAdd('POST', '/backend/v1/placar-ao-vivo/test', (e) => {
           success: false,
           provider: 'thesportsdb',
           message:
-            'Erro ao conectar à TheSportsDB: ' +
+            'Erro de conexão com TheSportsDB: ' +
             (errReq ? errReq.message : 'Timeout ou erro de rede'),
         })
       }
