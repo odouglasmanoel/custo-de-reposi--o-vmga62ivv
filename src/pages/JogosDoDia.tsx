@@ -12,6 +12,8 @@ import {
   Flame,
   Globe2,
   Shield,
+  ChevronDown,
+  ChevronUp,
 } from 'lucide-react'
 import pb from '@/lib/pocketbase/client'
 import { useAuth } from '@/context/AuthContext'
@@ -429,6 +431,7 @@ export default function JogosDoDia() {
 
   // Filtros
   const [selectedCompetition, setSelectedCompetition] = useState<string>('todos')
+  const [isCompetitionsExpanded, setIsCompetitionsExpanded] = useState<boolean>(false)
   const [selectedRound, setSelectedRound] = useState<string>('todos')
   const [selectedStatus, setSelectedStatus] = useState<string>('todos') // todos, ao-vivo, em-breve, finalizado
   const [searchTerm, setSearchTerm] = useState<string>('')
@@ -1398,30 +1401,50 @@ export default function JogosDoDia() {
       }
     }
 
-    // FIX 2: Regra de placar: se gols do mandante === 0, homeScorers fica estritamente vazio []; mesmo para o visitante.
-    // Ex.: Lech Poznań 0x4 → coluna do Lech vazia.
+    // Placar do jogo
     const hGoals =
-      fixture.goals?.home != null
+      fixture.goals?.home != null && !isNaN(Number(fixture.goals.home))
         ? Number(fixture.goals.home)
-        : fixture.score?.fulltime?.home != null
+        : fixture.score?.fulltime?.home != null && !isNaN(Number(fixture.score.fulltime.home))
           ? Number(fixture.score.fulltime.home)
           : null
     const aGoals =
-      fixture.goals?.away != null
+      fixture.goals?.away != null && !isNaN(Number(fixture.goals.away))
         ? Number(fixture.goals.away)
-        : fixture.score?.fulltime?.away != null
+        : fixture.score?.fulltime?.away != null && !isNaN(Number(fixture.score.fulltime.away))
           ? Number(fixture.score.fulltime.away)
           : null
 
-    let finalHomeScorers = hGoals === 0 ? [] : homeScorers
-    let finalAwayScorers = aGoals === 0 ? [] : awayScorers
+    // Regra estrita: se o placar for 0 para o time (ou ausente), coluna de marcadores fica estritamente vazia
+    let finalHomeScorers = hGoals === 0 || hGoals == null ? [] : [...homeScorers]
+    let finalAwayScorers = aGoals === 0 || aGoals == null ? [] : [...awayScorers]
 
-    // Se houver mais marcadores listados que o número de gols no placar, limita ao número de gols
+    // Se houver mais marcadores detalhados listados que o número de gols no placar, limita ao número de gols
     if (hGoals != null && hGoals > 0 && finalHomeScorers.length > hGoals) {
       finalHomeScorers = finalHomeScorers.slice(0, hGoals)
     }
     if (aGoals != null && aGoals > 0 && finalAwayScorers.length > aGoals) {
       finalAwayScorers = finalAwayScorers.slice(0, aGoals)
+    }
+
+    // AJUSTE 2 — Restauração do fallback de gols (⚽):
+    // Se o placar do jogo tem gols (ex.: 1x1, 0x1, 4x0), o ícone ⚽ DEVE SEMPRE ser exibido
+    // abaixo do time que marcou, para CADA gol do placar. A contagem de marcadores exibida por time
+    // deve ser exatamente igual ao placar daquele time.
+    // Quando faltarem eventos para completar o placar de um time, completa a lista daquele time
+    // com entradas de ícone puro "⚽" (icon-only, sem texto genérico nem a palavra "Gol").
+    if (hGoals != null && hGoals > 0 && finalHomeScorers.length < hGoals) {
+      const neededHome = hGoals - finalHomeScorers.length
+      for (let k = 0; k < neededHome; k++) {
+        finalHomeScorers.push('⚽')
+      }
+    }
+
+    if (aGoals != null && aGoals > 0 && finalAwayScorers.length < aGoals) {
+      const neededAway = aGoals - finalAwayScorers.length
+      for (let k = 0; k < neededAway; k++) {
+        finalAwayScorers.push('⚽')
+      }
     }
 
     return {
@@ -1563,48 +1586,84 @@ export default function JogosDoDia() {
       <div className="flex flex-col gap-3 rounded-[14px] border border-[#E2E8F0] bg-white p-4 shadow-xs">
         {/* Linha superior: Filtro de Competição e Seletor de Divisão / Fase */}
         <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-          {/* Filtro por Competição 100% dinâmico */}
-          <div className="flex flex-wrap items-center gap-1.5">
-            <span className="text-xs font-bold text-slate-500 mr-1 flex items-center gap-1">
-              <Filter className="h-3.5 w-3.5" />
-              Competição:
-            </span>
-            <Button
-              type="button"
-              variant={selectedCompetition === 'todos' ? 'default' : 'outline'}
-              size="sm"
-              onClick={() => {
-                setSelectedCompetition('todos')
-                setSelectedRound('todos')
-              }}
-              className={`h-7 px-2.5 text-xs font-semibold ${
-                selectedCompetition === 'todos'
-                  ? 'bg-[#0F2A43] text-white hover:bg-[#1B3A5C]'
-                  : 'border-slate-200 text-slate-700 hover:bg-slate-50'
-              }`}
-            >
-              Todos
-            </Button>
-            {availableCompetitions.map((compName) => (
-              <Button
-                key={compName}
-                type="button"
-                variant={selectedCompetition === compName ? 'default' : 'outline'}
-                size="sm"
-                onClick={() => {
-                  setSelectedCompetition(compName)
-                  setSelectedRound('todos')
-                }}
-                className={`h-7 px-2.5 text-xs font-semibold ${
-                  selectedCompetition === compName
-                    ? 'bg-[#0F2A43] text-white hover:bg-[#1B3A5C]'
-                    : 'border-slate-200 text-slate-700 hover:bg-slate-50'
-                }`}
-              >
-                {compName}
-              </Button>
-            ))}
-          </div>
+          {/* Filtro por Competição 100% dinâmico com recolhimento */}
+          {(() => {
+            const INITIAL_COMP_LIMIT = 8
+            const hasMoreCompetitions = availableCompetitions.length > INITIAL_COMP_LIMIT
+            const displayedCompetitions = isCompetitionsExpanded
+              ? availableCompetitions
+              : availableCompetitions.slice(0, INITIAL_COMP_LIMIT)
+
+            return (
+              <div className="flex flex-wrap items-center gap-1.5">
+                <span className="text-xs font-bold text-slate-500 mr-1 flex items-center gap-1">
+                  <Filter className="h-3.5 w-3.5" />
+                  Competição:
+                </span>
+                <Button
+                  type="button"
+                  variant={selectedCompetition === 'todos' ? 'default' : 'outline'}
+                  size="sm"
+                  onClick={() => {
+                    setSelectedCompetition('todos')
+                    setSelectedRound('todos')
+                  }}
+                  className={`h-7 px-2.5 text-xs font-semibold ${
+                    selectedCompetition === 'todos'
+                      ? 'bg-[#0F2A43] text-white hover:bg-[#1B3A5C]'
+                      : 'border-slate-200 text-slate-700 hover:bg-slate-50'
+                  }`}
+                >
+                  Todos
+                </Button>
+                {displayedCompetitions.map((compName) => (
+                  <Button
+                    key={compName}
+                    type="button"
+                    variant={selectedCompetition === compName ? 'default' : 'outline'}
+                    size="sm"
+                    onClick={() => {
+                      setSelectedCompetition(compName)
+                      setSelectedRound('todos')
+                    }}
+                    className={`h-7 px-2.5 text-xs font-semibold ${
+                      selectedCompetition === compName
+                        ? 'bg-[#0F2A43] text-white hover:bg-[#1B3A5C]'
+                        : 'border-slate-200 text-slate-700 hover:bg-slate-50'
+                    }`}
+                  >
+                    {compName}
+                  </Button>
+                ))}
+                {hasMoreCompetitions && (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setIsCompetitionsExpanded((prev) => !prev)}
+                    className="h-7 px-2 text-xs font-semibold text-slate-600 hover:text-slate-900 hover:bg-slate-100 border border-dashed border-slate-300 gap-1"
+                    title={
+                      isCompetitionsExpanded
+                        ? 'Recolher competições'
+                        : `Mostrar mais ${availableCompetitions.length - INITIAL_COMP_LIMIT} competições`
+                    }
+                  >
+                    {isCompetitionsExpanded ? (
+                      <>
+                        <ChevronUp className="h-3.5 w-3.5" />
+                        <span>[ - Mostrar menos ]</span>
+                      </>
+                    ) : (
+                      <>
+                        <ChevronDown className="h-3.5 w-3.5" />
+                        <span>[ + Mostrar mais ]</span>
+                      </>
+                    )}
+                  </Button>
+                )}
+              </div>
+            )
+          })()}
 
           {/* Filtro secundário: Divisão / Fase */}
           {availableRounds.length > 0 && (
