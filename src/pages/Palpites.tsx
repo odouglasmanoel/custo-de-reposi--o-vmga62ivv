@@ -456,18 +456,16 @@ export default function Palpites() {
             }
             setUserParticipantsMap(myPartMapByBolao)
 
-            // Buscar palpites do usuário logado para as partidas retornadas
+            // Buscar palpites do usuário logado para as partidas retornadas (usando índice idx_palpites_participante direto)
             const loadedGameIds = gamesResult.map((j) => j.id)
             let myPalpites: Palpite[] = []
 
             if (loadedGameIds.length > 0 && myParts.length > 0) {
               const filterUserPartIds = myParts.map((p) => `participante = '${p.id}'`).join(' || ')
-              const filterLoadedGames = loadedGameIds.map((id) => `jogo = '${id}'`).join(' || ')
-              const combinedFilter = `(${filterUserPartIds}) && (${filterLoadedGames})`
 
               myPalpites = await Promise.race([
                 pb.collection('palpites').getFullList<Palpite>({
-                  filter: combinedFilter,
+                  filter: filterUserPartIds,
                   fields:
                     'id,bolao,jogo,participante,placar_a,placar_b,goleadores_a,goleadores_b,vencedor_penaltis,pontuacao_jogo,detalhamento',
                 }),
@@ -583,10 +581,9 @@ export default function Palpites() {
             let myPalpites: Palpite[] = []
 
             if (participanteId && loadedGameIds.length > 0) {
-              const filterLoadedGames = loadedGameIds.map((id) => `jogo = '${id}'`).join(' || ')
               myPalpites = await Promise.race([
                 pb.collection('palpites').getFullList<Palpite>({
-                  filter: `bolao = '${currentTargetBolaoId}' && participante = '${participanteId}' && (${filterLoadedGames})`,
+                  filter: `bolao = '${currentTargetBolaoId}' && participante = '${participanteId}'`,
                   fields:
                     'id,bolao,jogo,participante,placar_a,placar_b,goleadores_a,goleadores_b,vencedor_penaltis,pontuacao_jogo,detalhamento',
                 }),
