@@ -1015,7 +1015,45 @@ export default function BolaoDashboard() {
     const gamesToUse = isGeral ? allJogos : jogos
     if (gamesToUse.length > 0) {
       const registrados = gamesToUse.filter((j) => j.resultado_finalizado).length
-      const pendentes = gamesToUse.filter((j) => !j.resultado_finalizado).length
+
+      // 1. Jogo aberto: não finalizado e com horário de encerramento ainda não atingido
+      const jogosAbertos = gamesToUse.filter(
+        (j) => !j.resultado_finalizado && !isPalpiteEncerrado(j.data, j.hora, nowMs),
+      )
+
+      // Identificar os IDs dos participantes que pertencem ao usuário logado
+      const targetParts = isGeral ? allParticipantes : participantes
+      const userPartIds = new Set<string>()
+
+      if (participantName) {
+        const normTarget = normalizeMemberName(participantName).toLowerCase()
+        const lowerRaw = participantName.trim().toLowerCase()
+
+        for (const p of targetParts) {
+          const normP = normalizeMemberName(p.nome).toLowerCase()
+          const rawP = p.nome.trim().toLowerCase()
+          if (normP === normTarget || rawP === lowerRaw) {
+            userPartIds.add(p.id)
+          }
+        }
+      }
+
+      // Palpites salvos válidos do usuário com placar_a != null && placar_b != null
+      const userPalpitesGameIds = new Set<string>()
+      for (const palpite of palpites) {
+        if (
+          userPartIds.has(palpite.participante) &&
+          palpite.placar_a != null &&
+          palpite.placar_b != null
+        ) {
+          userPalpitesGameIds.add(palpite.jogo)
+        }
+      }
+
+      // 3. pendentes = jogos abertos − jogos abertos já palpitados pelo usuário
+      const abertosPalpitados = jogosAbertos.filter((j) => userPalpitesGameIds.has(j.id)).length
+      const pendentes = Math.max(0, jogosAbertos.length - abertosPalpitados)
+
       return {
         registrados,
         pendentes,
@@ -1025,7 +1063,17 @@ export default function BolaoDashboard() {
       return lastValidStats
     }
     return null
-  }, [isGeral, allJogos, jogos, lastValidStats])
+  }, [
+    isGeral,
+    allJogos,
+    jogos,
+    lastValidStats,
+    nowMs,
+    allParticipantes,
+    participantes,
+    participantName,
+    palpites,
+  ])
 
   const handleCardPendentesClick = () => {
     if (isGeral) {
@@ -1218,41 +1266,68 @@ export default function BolaoDashboard() {
           </div>
         </Card>
 
-        <Card
-          onClick={handleCardPendentesClick}
-          role="button"
-          tabIndex={0}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter' || e.key === ' ') {
-              e.preventDefault()
-              handleCardPendentesClick()
-            }
-          }}
-          className="group cursor-pointer rounded-[14px] border-[#E2E8F0] bg-white p-4 shadow-xs transition duration-200 hover:-translate-y-0.5 hover:border-amber-300 hover:shadow-md focus:outline-none focus:ring-2 focus:ring-amber-400"
-          title="Ver jogos pendentes em Meus Palpites"
-        >
-          <div className="flex items-center justify-between">
-            <div>
-              <div className="flex items-center gap-1.5">
-                <p className="text-xs font-medium text-[#64748B] group-hover:text-amber-800 transition-colors">
-                  Jogos Pendentes
-                </p>
-                <ArrowRight className="h-3.5 w-3.5 text-slate-400 opacity-0 group-hover:opacity-100 group-hover:translate-x-0.5 transition-all text-amber-600" />
+        {stats && stats.pendentes === 0 ? (
+          <Card
+            tabIndex={-1}
+            className="cursor-default opacity-80 pointer-events-none rounded-[14px] border-[#E2E8F0] bg-white p-4 shadow-xs"
+            title="Jogos pendentes em Meus Palpites"
+          >
+            <div className="flex items-center justify-between">
+              <div>
+                <div className="flex items-center gap-1.5">
+                  <p className="text-xs font-medium text-[#64748B]">Jogos Pendentes</p>
+                </div>
+                {stats === null && loading ? (
+                  <div className="mt-2 h-7 w-16 animate-pulse rounded bg-slate-200" />
+                ) : (
+                  <p className="mt-1 text-2xl font-black text-[#0F172A]">0</p>
+                )}
+                <span className="text-[10px] font-semibold text-slate-400">
+                  Clique para editar &rarr;
+                </span>
               </div>
-              {stats === null && loading ? (
-                <div className="mt-2 h-7 w-16 animate-pulse rounded bg-slate-200" />
-              ) : (
-                <p className="mt-1 text-2xl font-black text-[#0F172A]">{stats?.pendentes ?? 0}</p>
-              )}
-              <span className="text-[10px] font-semibold text-amber-600 group-hover:underline">
-                Clique para palpitar &rarr;
-              </span>
+              <div className="rounded-lg bg-amber-50 p-2.5 text-[#F59E0B] opacity-60">
+                <Clock className="h-5 w-5" />
+              </div>
             </div>
-            <div className="rounded-lg bg-amber-50 p-2.5 text-[#F59E0B] group-hover:bg-amber-100 transition-colors">
-              <Clock className="h-5 w-5" />
+          </Card>
+        ) : (
+          <Card
+            onClick={handleCardPendentesClick}
+            role="button"
+            tabIndex={0}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault()
+                handleCardPendentesClick()
+              }
+            }}
+            className="group cursor-pointer rounded-[14px] border-[#E2E8F0] bg-white p-4 shadow-xs transition duration-200 hover:-translate-y-0.5 hover:border-amber-300 hover:shadow-md focus:outline-none focus:ring-2 focus:ring-amber-400"
+            title="Ver jogos pendentes em Meus Palpites"
+          >
+            <div className="flex items-center justify-between">
+              <div>
+                <div className="flex items-center gap-1.5">
+                  <p className="text-xs font-medium text-[#64748B] group-hover:text-amber-800 transition-colors">
+                    Jogos Pendentes
+                  </p>
+                  <ArrowRight className="h-3.5 w-3.5 text-slate-400 opacity-0 group-hover:opacity-100 group-hover:translate-x-0.5 transition-all text-amber-600" />
+                </div>
+                {stats === null && loading ? (
+                  <div className="mt-2 h-7 w-16 animate-pulse rounded bg-slate-200" />
+                ) : (
+                  <p className="mt-1 text-2xl font-black text-[#0F172A]">{stats?.pendentes ?? 0}</p>
+                )}
+                <span className="text-[10px] font-semibold text-amber-600 group-hover:underline">
+                  Clique para palpitar &rarr;
+                </span>
+              </div>
+              <div className="rounded-lg bg-amber-50 p-2.5 text-[#F59E0B] group-hover:bg-amber-100 transition-colors">
+                <Clock className="h-5 w-5" />
+              </div>
             </div>
-          </div>
-        </Card>
+          </Card>
+        )}
 
         {/* Card de Atalho para Enquetes (Copa Coni) */}
         <Card

@@ -21,7 +21,7 @@ export default function Chat() {
       id: 'welcome',
       role: 'assistant',
       content:
-        'Olá! Eu sou o Assistente do Bolão do Grupo da Repress. Posso tirar dúvidas sobre as regras de pontuação oficiais, ranking atual, jogos cadastrados e palpites. Em que posso te ajudar hoje?',
+        'Olá! Eu sou o Assistente do Bolão do Grupo. Posso tirar dúvidas sobre as regras de pontuação oficiais, ranking atual, jogos cadastrados e palpites. Em que posso te ajudar hoje?',
       created: new Date().toISOString(),
     },
   ])
