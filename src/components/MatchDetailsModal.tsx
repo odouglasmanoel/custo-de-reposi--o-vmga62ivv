@@ -13,6 +13,7 @@ import pb from '@/lib/pocketbase/client'
 import { isFixtureLive } from '@/lib/apiFootballMatcher'
 import { fetchGameLineup, LineupResponse, LineupTeam } from '@/services/escalacoes'
 import type { DayFixture } from '@/pages/JogosDoDia'
+import { setWithBoundedCapacity } from '@/lib/cacheManager'
 
 export interface MatchEventItem {
   time?: {
@@ -160,13 +161,18 @@ export function MatchDetailsModal({ isOpen, onClose, match }: MatchDetailsModalP
         setEvents(resolvedEvents)
         setLoadedFixtureId(fixtureId)
 
-        // Salva no cache local em memória
+        // Salva no cache local em memória com limite de 200 entradas e evicção dos mais antigos
         if (cacheKey) {
-          matchDetailsMemoryCache.set(cacheKey, {
-            events: resolvedEvents,
-            timestamp: now,
-            isLive: live,
-          })
+          setWithBoundedCapacity(
+            matchDetailsMemoryCache,
+            cacheKey,
+            {
+              events: resolvedEvents,
+              timestamp: now,
+              isLive: live,
+            },
+            200,
+          )
         }
       } catch (err: any) {
         // Fallback local gracioso se a partida já contiver scorers

@@ -31,6 +31,8 @@ export interface LineupResponse {
 }
 
 // Cache em memória (SWR) com TTL de 5 minutos para confirmadas e 2 minutos para prováveis/vazio
+import { setWithBoundedCapacity } from '@/lib/cacheManager'
+
 interface CacheItem {
   data: LineupResponse
   timestamp: number
@@ -183,12 +185,17 @@ export async function fetchGameLineup(params: {
           ],
           error: errorJson.error || 'Não foi possível carregar a escalação.',
         }
-        lineupsMemoryCache.set(cacheKey, { data: fallback, timestamp: now })
+        setWithBoundedCapacity(
+          lineupsMemoryCache,
+          cacheKey,
+          { data: fallback, timestamp: now },
+          100,
+        )
         return fallback
       }
 
       const dataJson: LineupResponse = await response.json()
-      lineupsMemoryCache.set(cacheKey, { data: dataJson, timestamp: now })
+      setWithBoundedCapacity(lineupsMemoryCache, cacheKey, { data: dataJson, timestamp: now }, 100)
       return dataJson
     } catch (err: unknown) {
       const errorMsg = err instanceof Error ? err.message : 'Falha na conexão com o servidor'
@@ -200,6 +207,7 @@ export async function fetchGameLineup(params: {
         ],
         error: errorMsg,
       }
+      setWithBoundedCapacity(lineupsMemoryCache, cacheKey, { data: fallback, timestamp: now }, 100)
       return fallback
     } finally {
       inflightRequests.delete(cacheKey)

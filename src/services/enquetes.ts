@@ -224,6 +224,8 @@ export async function criarEnquete(params: {
 // -------------------------------------------------------------
 // Cache de Enquetes em Dois Níveis (Memória + LocalStorage/SessionStorage)
 // -------------------------------------------------------------
+import { setWithBoundedCapacity } from '@/lib/cacheManager'
+
 export interface EnqueteCachePayload {
   enquete: EnqueteModel
   jogos: JogoComVotos[]
@@ -282,7 +284,7 @@ export function readEnqueteDetalhesCache(
     const raw = localStorage.getItem(`${CACHE_ENQUETE_PREFIX}_${cacheKey}`)
     if (raw) {
       const parsed = JSON.parse(raw) as EnqueteCachePayload
-      enqueteMemoryCache.set(cacheKey, parsed)
+      setWithBoundedCapacity(enqueteMemoryCache, cacheKey, parsed, 100)
       return {
         enquete: parsed.enquete,
         jogos: parsed.jogos,
@@ -308,7 +310,7 @@ export function writeEnqueteDetalhesCache(
     timestamp: Date.now(),
   }
 
-  enqueteMemoryCache.set(cacheKey, payload)
+  setWithBoundedCapacity(enqueteMemoryCache, cacheKey, payload, 100)
   try {
     localStorage.setItem(`${CACHE_ENQUETE_PREFIX}_${cacheKey}`, JSON.stringify(payload))
   } catch {
@@ -541,7 +543,7 @@ export function readEscudoCache(teamName: string): string | null {
   try {
     const raw = localStorage.getItem(`${ESCUDO_CACHE_PREFIX}_${key}`)
     if (raw !== null) {
-      escudoMemoryCache.set(key, raw)
+      setWithBoundedCapacity(escudoMemoryCache, key, raw, 200)
       return raw
     }
   } catch {
@@ -554,11 +556,33 @@ export function writeEscudoCache(teamName: string, badgeUrl: string): void {
   const key = normalizeEscudoKey(teamName)
   if (!key) return
 
-  escudoMemoryCache.set(key, badgeUrl)
+  setWithBoundedCapacity(escudoMemoryCache, key, badgeUrl, 200)
   try {
+    // Evita crescimento descontrolado de escudos em localStorage (limite de ~500 entradas)
+    pruneEscudosLocalStorage(500)
     localStorage.setItem(`${ESCUDO_CACHE_PREFIX}_${key}`, badgeUrl)
   } catch {
     // LocalStorage indisponível ou cheio
+  }
+}
+
+function pruneEscudosLocalStorage(maxCount = 500): void {
+  try {
+    const escudoKeys: string[] = []
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i)
+      if (k && k.startsWith(`${ESCUDO_CACHE_PREFIX}_`)) {
+        escudoKeys.push(k)
+      }
+    }
+    if (escudoKeys.length >= maxCount) {
+      const toRemoveCount = escudoKeys.length - maxCount + 10
+      for (let i = 0; i < toRemoveCount; i++) {
+        localStorage.removeItem(escudoKeys[i])
+      }
+    }
+  } catch {
+    /* ignore */
   }
 }
 

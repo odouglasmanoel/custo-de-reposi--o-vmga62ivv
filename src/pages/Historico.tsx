@@ -5,6 +5,7 @@ import { normalizeMemberName } from '@/lib/statsCalculator'
 import type { Bolao, Participante, Jogo, Palpite } from '@/types/bolao'
 import { useAuth } from '@/context/AuthContext'
 import { useActivePool } from '@/context/ActivePoolContext'
+import { setWithBoundedCapacity } from '@/lib/cacheManager'
 import { toast } from '@/hooks/use-toast'
 import { Card } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -59,7 +60,7 @@ function writePoolCache(
     ...data,
     timestamp: Date.now(),
   }
-  memoryCache.set(bolaoId, payload)
+  setWithBoundedCapacity(memoryCache, bolaoId, payload, 50)
   try {
     localStorage.setItem(`${CACHE_HISTORICO_PREFIX}_${bolaoId}`, JSON.stringify(payload))
   } catch {

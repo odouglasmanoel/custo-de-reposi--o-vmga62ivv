@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useState, useRef, useEffect } from 'react'
 import { Eye, EyeOff, Lock, CheckCircle2, AlertCircle, Loader2, KeyRound } from 'lucide-react'
 import pb from '@/lib/pocketbase/client'
 import { useAuth } from '@/context/AuthContext'
@@ -38,6 +38,15 @@ export function ChangePasswordModal({ open, onOpenChange }: ChangePasswordModalP
   const [newPasswordError, setNewPasswordError] = useState<string | null>(null)
   const [confirmPasswordError, setConfirmPasswordError] = useState<string | null>(null)
   const [success, setSuccess] = useState(false)
+  const closeTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  useEffect(() => {
+    return () => {
+      if (closeTimeoutRef.current) {
+        clearTimeout(closeTimeoutRef.current)
+      }
+    }
+  }, [])
 
   const resetForm = () => {
     setCurrentPassword('')
@@ -148,8 +157,9 @@ export function ChangePasswordModal({ open, onOpenChange }: ChangePasswordModalP
         description: 'Senha alterada com sucesso!',
       })
 
-      // Fecha modal após breve confirmação
-      setTimeout(() => {
+      // Fecha modal após breve confirmação com timer rastreado para cleanup seguro
+      if (closeTimeoutRef.current) clearTimeout(closeTimeoutRef.current)
+      closeTimeoutRef.current = setTimeout(() => {
         handleOpenChange(false)
       }, 1200)
     } catch (err: unknown) {

@@ -2,6 +2,7 @@ import pb from '@/lib/pocketbase/client'
 import type { Bolao, Jogo, Palpite, Participante } from '@/types/bolao'
 import { GERAL_BOLAO_ID } from '@/types/bolao'
 import { calculateStatistics, type StatsCalculationResult } from '@/lib/statsCalculator'
+import { setWithBoundedCapacity } from '@/lib/cacheManager'
 
 export interface StatsCachePayload {
   boloes: Bolao[]
@@ -27,7 +28,7 @@ export function readStatsCache(competitionId: string): StatsCachePayload | null 
     if (raw) {
       const parsed = JSON.parse(raw) as StatsCachePayload
       if (parsed && parsed.stats && Array.isArray(parsed.stats.tabela)) {
-        statsMemoryCache.set(normKey, parsed)
+        setWithBoundedCapacity(statsMemoryCache, normKey, parsed, 50)
         return parsed
       }
     }
@@ -53,7 +54,7 @@ export function writeStatsCache(
     timestamp: Date.now(),
   }
 
-  statsMemoryCache.set(normKey, payload)
+  setWithBoundedCapacity(statsMemoryCache, normKey, payload, 50)
   try {
     localStorage.setItem(`${CACHE_STATS_PREFIX}_${normKey}`, JSON.stringify(payload))
   } catch {

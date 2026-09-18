@@ -17,6 +17,7 @@ import {
   FileText,
 } from 'lucide-react'
 import { MatchDetailsModal } from '@/components/MatchDetailsModal'
+import { setWithBoundedCapacity } from '@/lib/cacheManager'
 import pb from '@/lib/pocketbase/client'
 import { useAuth } from '@/context/AuthContext'
 import { Card } from '@/components/ui/card'
@@ -165,7 +166,7 @@ function writeJogosDiaCache(dateStr: string, data: Omit<JogosDoDiaCachePayload, 
     ...data,
     timestamp: Date.now(),
   }
-  jogosDiaMemoryCache.set(dateStr, payload)
+  setWithBoundedCapacity(jogosDiaMemoryCache, dateStr, payload, 100)
   try {
     localStorage.setItem(`${JOGOS_DO_DIA_CACHE_PREFIX}_${dateStr}`, JSON.stringify(payload))
   } catch {

@@ -39,6 +39,7 @@ import {
   getHojeDataSaoPaulo,
   normalizeDataISO,
 } from '@/lib/dateUtils'
+import { purgeObsoleteCaches, setWithBoundedCapacity } from '@/lib/cacheManager'
 import {
   formatPalpiteMarcadoresSummary,
   getPalpiteMarcadoresPorTime,
@@ -149,7 +150,7 @@ function writeDashboardCache(bolaoId: string, data: Omit<DashboardCachePayload, 
     ...data,
     timestamp: Date.now(),
   }
-  dashboardMemoryCache.set(key, payload)
+  setWithBoundedCapacity(dashboardMemoryCache, key, payload, 50)
   try {
     localStorage.setItem(`${DASHBOARD_CACHE_PREFIX}_${key}`, JSON.stringify(payload))
   } catch {
@@ -561,44 +562,10 @@ export default function BolaoDashboard() {
     }
   }
 
-  // Limpeza de caches temporários corrompidos ou legados
-  const cleanupCorruptedCaches = useCallback(() => {
-    try {
-      const keysToRemove: string[] = []
-      for (let i = 0; i < sessionStorage.length; i++) {
-        const k = sessionStorage.key(i)
-        if (
-          k &&
-          (k.startsWith('bolao_temp_') || k.startsWith('bolao_err_') || k.includes('corrupted'))
-        ) {
-          keysToRemove.push(k)
-        }
-      }
-      for (let i = 0; i < localStorage.length; i++) {
-        const k = localStorage.key(i)
-        if (
-          k &&
-          (k.startsWith('bolao_temp_') || k.startsWith('bolao_err_') || k.includes('corrupted'))
-        ) {
-          keysToRemove.push(k)
-        }
-      }
-      keysToRemove.forEach((key) => {
-        try {
-          sessionStorage.removeItem(key)
-          localStorage.removeItem(key)
-        } catch {
-          /* ignore */
-        }
-      })
-    } catch {
-      /* ignore */
-    }
-  }, [])
-
+  // Limpeza de caches temporários corrompidos ou legados (inclui versões legadas de prefixos)
   useEffect(() => {
-    cleanupCorruptedCaches()
-  }, [cleanupCorruptedCaches])
+    purgeObsoleteCaches()
+  }, [])
 
   // Carrega sobrescritas também do banco como fallback direto
   const loadSobrescritasFromDb = async () => {
