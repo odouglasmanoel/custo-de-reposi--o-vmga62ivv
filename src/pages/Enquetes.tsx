@@ -48,6 +48,8 @@ import {
   formatHoraBR,
   formatDataHoraSaoPaulo,
   satisfiesEnqueteMinTimeMargin,
+  isEnqueteExpirada,
+  formatEnquetePrazoLimiteBR,
 } from '@/lib/dateUtils'
 import { Skeleton } from '@/components/ui/skeleton'
 import {
@@ -125,6 +127,9 @@ export default function Enquetes() {
   const datasPadrao = useMemo(() => getDefaultDatasIntervalo(), [])
   const [dataInicio, setDataInicio] = useState(datasPadrao.dataInicio)
   const [dataFim, setDataFim] = useState(datasPadrao.dataFim)
+  const [dataLimiteVotacao, setDataLimiteVotacao] = useState(
+    datasPadrao.dataFim ? `${datasPadrao.dataFim}T12:00` : '',
+  )
   const [tituloEnquete, setTituloEnquete] = useState('')
   const [descricaoEnquete, setDescricaoEnquete] = useState('')
   const [buscandoJogos, setBuscandoJogos] = useState(false)
@@ -144,6 +149,11 @@ export default function Enquetes() {
   const [manualHorario, setManualHorario] = useState('16:00')
   const [manualAvisoMargem, setManualAvisoMargem] = useState<string | null>(null)
   const [manualAvisoDuplicado, setManualAvisoDuplicado] = useState<string | null>(null)
+
+  // Diálogo para Reabrir Votação com nova data limite
+  const [dialogReabrirOpen, setDialogReabrirOpen] = useState(false)
+  const [reabrirNovaDataLimite, setReabrirNovaDataLimite] = useState('')
+  const [reabrindoVotacao, setReabrindoVotacao] = useState(false)
 
   // Modal de adição de jogo manual em enquete ativa (já criada)
   const [dialogAdicionarManualAtivaOpen, setDialogAdicionarManualAtivaOpen] = useState(false)
@@ -321,18 +331,24 @@ export default function Enquetes() {
     return new Set(sorted.slice(0, 4).map((j) => j.id))
   }, [jogosEnquete])
 
-  // Jogos aprovados para Copa Coni (selecionados manualmente pelo admin OU top 4 por padrão se admin não marcou outros)
+  // Jogos aprovados para Copa Coni: estritamente marcados pelo admin ("Confirmar p/ Rodada")
   const jogosAprovadosParaConi = useMemo(() => {
-    const marcadosPeloAdmin = jogosEnquete.filter((j) => j.selecionado_admin)
-    if (marcadosPeloAdmin.length > 0) {
-      return marcadosPeloAdmin
-    }
-    // Fallback: se o admin ainda não marcou caixas manuais, sugere os 4 mais votados (com ao menos 1 voto)
-    const comVotos = [...jogosEnquete]
-      .filter((j) => j.totalVotos > 0)
-      .sort((a, b) => b.totalVotos - a.totalVotos)
-    return comVotos.slice(0, 4)
+    return jogosEnquete.filter((j) => Boolean(j.selecionado_admin))
   }, [jogosEnquete])
+
+  // Status efetivo da votação da enquete ativa:
+  // Se explicitamente 'encerrada' OU se atingiu o prazo limite configurado (data_limite_votacao / fallback data_fim)
+  const votacaoExpiradaPorPrazo = useMemo(() => {
+    if (!enqueteAtiva) return false
+    return isEnqueteExpirada(enqueteAtiva.data_limite_votacao, enqueteAtiva.data_fim)
+  }, [enqueteAtiva])
+
+  const isVotacaoEncerrada = useMemo(() => {
+    if (!enqueteAtiva) return true
+    if (enqueteAtiva.status === 'encerrada') return true
+    if (votacaoExpiradaPorPrazo) return true
+    return false
+  }, [enqueteAtiva, votacaoExpiradaPorPrazo])
 
   // Lista dinâmica de competições presentes nos jogos da enquete ativa, com contagem de jogos
   const competicoesEnquete = useMemo(() => {
@@ -379,7 +395,7 @@ export default function Enquetes() {
   // Ação: Votar / Desmarcar Jogo
   const handleToggleVoto = async (jogoId: string) => {
     if (!enqueteAtiva) return
-    if (enqueteAtiva.status !== 'aberta') {
+    if (enqueteAtiva.status !== 'aberta' || isVotacaoEncerrada) {
       toast({
         title: 'Votação encerrada',
         description: 'Esta enquete não está mais recebendo votos.',
@@ -694,6 +710,7 @@ export default function Enquetes() {
         descricao: descricaoEnquete.trim(),
         dataInicio,
         dataFim,
+        dataLimiteVotacao: dataLimiteVotacao.trim() || undefined,
         jogos: jogosParaSalvar,
         limiteVotos: 10,
       })
@@ -714,6 +731,7 @@ export default function Enquetes() {
       setManualCompeticao('')
       setManualAvisoMargem(null)
       setManualAvisoDuplicado(null)
+      setDataLimiteVotacao(datasPadrao.dataFim ? `${datasPadrao.dataFim}T12:00` : '')
 
       await carregarListaEnquetes(false)
       setEnqueteAtivaId(nova.id)
@@ -1174,15 +1192,24 @@ export default function Enquetes() {
   // Admin: Alternar status da enquete (Encerrar / Reabrir)
   const handleMudarStatusEnquete = async (novoStatus: 'aberta' | 'encerrada') => {
     if (!enqueteAtiva) return
+    if (novoStatus === 'aberta') {
+      // Abre modal para definir nova data/hora limite de votação
+      const baseData = enqueteAtiva.data_limite_votacao
+        ? enqueteAtiva.data_limite_votacao.replace(' ', 'T').slice(0, 16)
+        : enqueteAtiva.data_fim
+          ? `${enqueteAtiva.data_fim}T12:00`
+          : ''
+      setReabrirNovaDataLimite(baseData)
+      setDialogReabrirOpen(true)
+      return
+    }
+
     try {
       await atualizarStatusEnquete(enqueteAtiva.id, novoStatus)
       setEnqueteAtiva((prev) => (prev ? { ...prev, status: novoStatus } : null))
       toast({
-        title: novoStatus === 'encerrada' ? 'Votação encerrada!' : 'Votação reaberta!',
-        description:
-          novoStatus === 'encerrada'
-            ? 'Os participantes não podem mais alterar votos.'
-            : 'Os participantes podem votar normalmente.',
+        title: 'Votação encerrada!',
+        description: 'Os participantes não podem mais alterar votos.',
       })
       await carregarListaEnquetes(false)
     } catch (err) {
@@ -1191,6 +1218,39 @@ export default function Enquetes() {
         description: 'Tente novamente.',
         variant: 'destructive',
       })
+    }
+  }
+
+  // Admin: Confirmar Reabertura com Nova Data Limite
+  const handleConfirmarReabrirVotacao = async () => {
+    if (!enqueteAtiva) return
+    setReabrindoVotacao(true)
+    try {
+      const novaDataLimiteTrim = reabrirNovaDataLimite.trim()
+      await atualizarStatusEnquete(enqueteAtiva.id, 'aberta', novaDataLimiteTrim || undefined)
+      setEnqueteAtiva((prev) =>
+        prev
+          ? {
+              ...prev,
+              status: 'aberta',
+              data_limite_votacao: novaDataLimiteTrim || prev.data_limite_votacao,
+            }
+          : null,
+      )
+      toast({
+        title: 'Votação reaberta!',
+        description: 'Os participantes podem votar normalmente com o novo prazo configurado.',
+      })
+      setDialogReabrirOpen(false)
+      await carregarListaEnquetes(false)
+    } catch (err) {
+      toast({
+        title: 'Erro ao reabrir votação',
+        description: 'Tente novamente.',
+        variant: 'destructive',
+      })
+    } finally {
+      setReabrindoVotacao(false)
     }
   }
 
@@ -1633,7 +1693,7 @@ export default function Enquetes() {
                 <div className="mt-1 flex items-center gap-2">
                   <span
                     className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-bold ${
-                      enqueteAtiva.status === 'aberta'
+                      !isVotacaoEncerrada && enqueteAtiva.status === 'aberta'
                         ? 'bg-emerald-100 text-emerald-800'
                         : enqueteAtiva.status === 'cadastrada'
                           ? 'bg-indigo-100 text-indigo-800'
@@ -1642,21 +1702,30 @@ export default function Enquetes() {
                   >
                     <span
                       className={`h-2 w-2 rounded-full ${
-                        enqueteAtiva.status === 'aberta'
+                        !isVotacaoEncerrada && enqueteAtiva.status === 'aberta'
                           ? 'animate-pulse bg-emerald-500'
                           : enqueteAtiva.status === 'cadastrada'
                             ? 'bg-indigo-500'
                             : 'bg-slate-400'
                       }`}
                     />
-                    {enqueteAtiva.status === 'aberta'
+                    {!isVotacaoEncerrada && enqueteAtiva.status === 'aberta'
                       ? 'Votação Aberta'
                       : enqueteAtiva.status === 'cadastrada'
                         ? 'Jogos Cadastrados na Copa Coni'
                         : 'Votação Encerrada'}
                   </span>
                 </div>
-                <p className="mt-1 text-[11px] text-slate-600">
+                <p className="mt-1 text-[11px] font-semibold text-slate-700">
+                  Votação Encerra em:{' '}
+                  <span className="font-bold text-[#0F2A43]">
+                    {formatEnquetePrazoLimiteBR(
+                      enqueteAtiva.data_limite_votacao,
+                      enqueteAtiva.data_fim,
+                    )}
+                  </span>
+                </p>
+                <p className="mt-0.5 text-[11px] text-slate-500">
                   Período dos jogos: {formatDataBR(enqueteAtiva.data_inicio)} até{' '}
                   {formatDataBR(enqueteAtiva.data_fim)}
                 </p>
@@ -1683,7 +1752,7 @@ export default function Enquetes() {
                 <p className="mt-1 text-[11px] text-slate-600">
                   {isAdmin
                     ? 'Ajuste os checkboxes no ranking e envie para a Copa Coni.'
-                    : 'Os 4 mais votados serão cadastrados pelo Admin.'}
+                    : 'Partidas confirmadas pelo Administrador para a rodada.'}
                 </p>
               </div>
               <div className="flex h-12 w-12 items-center justify-center rounded-full bg-indigo-600 text-white shadow-xs">
@@ -1744,7 +1813,7 @@ export default function Enquetes() {
                   <Plus className="mr-1.5 h-3.5 w-3.5" />+ Adicionar Jogo Manual
                 </Button>
 
-                {enqueteAtiva.status === 'aberta' ? (
+                {!isVotacaoEncerrada && enqueteAtiva.status === 'aberta' ? (
                   <Button
                     variant="outline"
                     size="sm"
@@ -1877,7 +1946,7 @@ export default function Enquetes() {
                     votado={votado}
                     isTop4={isTop4}
                     isBlocked={isBlocked}
-                    statusEnquete={enqueteAtiva.status}
+                    statusEnquete={isVotacaoEncerrada ? 'encerrada' : enqueteAtiva.status}
                     participantName={participantName}
                     isAdmin={isAdmin}
                     onToggleVoto={handleToggleVoto}
@@ -2209,10 +2278,33 @@ export default function Enquetes() {
                   id="data-fim"
                   type="date"
                   value={dataFim}
-                  onChange={(e) => setDataFim(e.target.value)}
+                  onChange={(e) => {
+                    const novoFim = e.target.value
+                    setDataFim(novoFim)
+                    if (novoFim && (!dataLimiteVotacao || dataLimiteVotacao.startsWith(dataFim))) {
+                      setDataLimiteVotacao(`${novoFim}T12:00`)
+                    }
+                  }}
                   className="h-9 text-xs"
                 />
               </div>
+            </div>
+
+            {/* Campo de Prazo Limite de Votação */}
+            <div className="space-y-1.5">
+              <Label htmlFor="data-limite-votacao" className="text-xs font-bold text-slate-700">
+                Data e Hora Limite de Votação *:
+              </Label>
+              <Input
+                id="data-limite-votacao"
+                type="datetime-local"
+                value={dataLimiteVotacao}
+                onChange={(e) => setDataLimiteVotacao(e.target.value)}
+                className="h-9 text-xs"
+              />
+              <p className="text-[11px] text-slate-500">
+                A votação será encerrada automaticamente assim que este horário for atingido.
+              </p>
             </div>
 
             {/* Botão Buscar Jogos */}
@@ -2642,6 +2734,64 @@ export default function Enquetes() {
                 <Send className="mr-1.5 h-3.5 w-3.5" />
               )}
               Publicar Enquete ({jogosPreSelecionados.size} jogos)
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* DIALOG ADMIN: Reabrir Votação com Nova Data Limite */}
+      <Dialog open={dialogReabrirOpen} onOpenChange={setDialogReabrirOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-base font-bold text-[#0F172A]">
+              <Vote className="h-5 w-5 text-emerald-600" />
+              Reabrir Votação da Enquete
+            </DialogTitle>
+            <DialogDescription className="text-xs text-slate-600">
+              Defina ou atualize a nova data e horário limite para os participantes enviarem votos.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-3 py-2">
+            <div className="space-y-1.5">
+              <Label htmlFor="reabrir-data-limite" className="text-xs font-bold text-slate-700">
+                Nova Data e Hora Limite de Votação *:
+              </Label>
+              <Input
+                id="reabrir-data-limite"
+                type="datetime-local"
+                value={reabrirNovaDataLimite}
+                onChange={(e) => setReabrirNovaDataLimite(e.target.value)}
+                className="h-9 text-xs"
+              />
+              <p className="text-[11px] text-slate-500">
+                A votação ficará aberta até este novo instante configurado.
+              </p>
+            </div>
+          </div>
+
+          <DialogFooter className="flex items-center justify-between border-t border-slate-100 pt-3">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => setDialogReabrirOpen(false)}
+              disabled={reabrindoVotacao}
+            >
+              Cancelar
+            </Button>
+            <Button
+              type="button"
+              onClick={handleConfirmarReabrirVotacao}
+              disabled={reabrindoVotacao}
+              className="bg-emerald-600 font-bold text-white hover:bg-emerald-700"
+            >
+              {reabrindoVotacao ? (
+                <RefreshCw className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <CheckCircle2 className="mr-1.5 h-3.5 w-3.5" />
+              )}
+              Confirmar Reabertura
             </Button>
           </DialogFooter>
         </DialogContent>
