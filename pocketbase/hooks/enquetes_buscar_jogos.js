@@ -267,11 +267,9 @@ routerAdd(
         return str
       }
 
-      // Ligas prioritárias para Copa Coni:
-      // 1. Série A do Brasileirão
-      // 2. Champions League
-      // 3. Grandes da Europa (Premier League, La Liga, Serie A Itália, Bundesliga, Ligue 1)
-      // 4. Copas e torneios sul-americanos (Libertadores, Copa do Brasil, Sul-Americana, Europa League)
+      // Classificador de ligas para atribuição de categoria e prioridade
+      // Quando semCorte for true (ex: Jogos do Dia), toda partida é válida (valid: true global)
+      // Para enquetes padrão com lista restrita, mantém prioridades e permite todos os jogos se semCorte
       var isTargetCompetition = function (leagueId, leagueName, compCode) {
         var name = normalizeLeagueName(leagueName)
         var code = (compCode || '').toUpperCase()
@@ -381,9 +379,14 @@ routerAdd(
           return { valid: true, categoria: 'Copa Sul-Americana', prioridade: 11 }
         }
 
+        // Se semCorte for true (Jogos do Dia / busca global sem restrição), aceita qualquer competição
+        if (semCorte) {
+          var catName = leagueName || 'Outras Ligas'
+          return { valid: true, categoria: catName, prioridade: 50 }
+        }
+
         return { valid: false, categoria: '', prioridade: 99 }
       }
-
       // Store global de cache de jogos do dia
       if (typeof globalThis !== 'undefined' && !globalThis.__jogosDoDiaStore) {
         globalThis.__jogosDoDiaStore = {}
@@ -577,99 +580,179 @@ routerAdd(
             }
           }
 
-          // C) TheSportsDB: se ainda assim estiver vazio, ou para complementar ligas secundárias / sul-americanas
+          // C) TheSportsDB: se ainda assim estiver vazio, ou para complementar ligas
+          // Se semCorte=true ou busca global, consulta primeiro eventsday.php?d={targetDate} sem filtro de liga
+          // para trazer todos os eventos disponíveis do dia mundo afora
           try {
             var tsdbKeyToUse = theSportsDbKey || '3'
-            var tsdbConmebolLeagues = [
-              { id: 4501, name: 'Copa Libertadores', cat: 'Copa Libertadores', prio: 8 },
-              { id: 4724, name: 'Copa Sudamericana', cat: 'Copa Sul-Americana', prio: 11 },
-              {
-                id: 4328,
-                name: 'English Premier League',
-                cat: 'Premier League (Inglaterra)',
-                prio: 3,
-              },
-              { id: 4335, name: 'Spanish La Liga', cat: 'La Liga (Espanha)', prio: 4 },
-              { id: 4332, name: 'Italian Serie A', cat: 'Serie A (Itália)', prio: 5 },
-              { id: 4331, name: 'German Bundesliga', cat: 'Bundesliga (Alemanha)', prio: 6 },
-              { id: 4334, name: 'French Ligue 1', cat: 'Ligue 1 (França)', prio: 7 },
-              { id: 4481, name: 'UEFA Europa League', cat: 'UEFA Europa League', prio: 10 },
-              { id: 4480, name: 'UEFA Champions League', cat: 'Champions League', prio: 2 },
-            ]
+            var tsdbDayEvents = []
 
-            for (var tli = 0; tli < tsdbConmebolLeagues.length; tli++) {
-              var tLeague = tsdbConmebolLeagues[tli]
-              // Se já temos muitas partidas e a liga já está coberta, pode evitar chamadas excessivas
-              var resTsdb = $http.send({
-                url:
-                  'https://www.thesportsdb.com/api/v1/json/' +
-                  encodeURIComponent(tsdbKeyToUse) +
-                  '/eventsday.php?d=' +
-                  encodeURIComponent(targetDate) +
-                  '&l=' +
-                  encodeURIComponent(tLeague.id),
-                method: 'GET',
-                timeout: 8,
-              })
+            // 1. Chamada global eventsday.php sem parâmetro de liga se semCorte
+            if (semCorte) {
+              try {
+                var resTsdbAll = $http.send({
+                  url:
+                    'https://www.thesportsdb.com/api/v1/json/' +
+                    encodeURIComponent(tsdbKeyToUse) +
+                    '/eventsday.php?d=' +
+                    encodeURIComponent(targetDate),
+                  method: 'GET',
+                  timeout: 8,
+                })
+                if (
+                  resTsdbAll &&
+                  resTsdbAll.statusCode === 200 &&
+                  resTsdbAll.json &&
+                  Array.isArray(resTsdbAll.json.events)
+                ) {
+                  tsdbDayEvents = resTsdbAll.json.events
+                }
+              } catch (errTsdbGlobal) {
+                console.log('[TheSportsDB Global Enquetes] Erro:', errTsdbGlobal)
+              }
+            }
 
-              if (
-                resTsdb &&
-                resTsdb.statusCode === 200 &&
-                resTsdb.json &&
-                Array.isArray(resTsdb.json.events)
-              ) {
-                for (var tei = 0; tei < resTsdb.json.events.length; tei++) {
-                  var ev = resTsdb.json.events[tei]
-                  var hName = (ev.strHomeTeam || '').trim()
-                  var aName = (ev.strAwayTeam || '').trim()
-                  if (!hName || !aName) continue
+            if (tsdbDayEvents.length > 0) {
+              for (var teiGlobal = 0; teiGlobal < tsdbDayEvents.length; teiGlobal++) {
+                var evGlobal = tsdbDayEvents[teiGlobal]
+                var hNameG = (evGlobal.strHomeTeam || '').trim()
+                var aNameG = (evGlobal.strAwayTeam || '').trim()
+                if (!hNameG || !aNameG) continue
 
-                  // TheSportsDB: strTimestamp é UTC ISO "2026-06-15T19:00:00". Se ausente, usa dateEvent + strTime + Z (UTC)
-                  var tsdbRawUtc = ev.strTimestamp
-                    ? ev.strTimestamp.indexOf('Z') === -1
-                      ? ev.strTimestamp + 'Z'
-                      : ev.strTimestamp
-                    : ev.dateEvent
-                      ? ev.dateEvent + 'T' + (ev.strTime || '20:00:00') + 'Z'
-                      : targetDate + 'T20:00:00Z'
+                var tsdbRawUtcG = evGlobal.strTimestamp
+                  ? evGlobal.strTimestamp.indexOf('Z') === -1
+                    ? evGlobal.strTimestamp + 'Z'
+                    : evGlobal.strTimestamp
+                  : evGlobal.dateEvent
+                    ? evGlobal.dateEvent + 'T' + (evGlobal.strTime || '20:00:00') + 'Z'
+                    : targetDate + 'T20:00:00Z'
 
-                  var tsdbDateSP = toDateStringSaoPaulo(tsdbRawUtc) || ev.dateEvent || targetDate
-                  var tsdbTimeSP = toTimeStringSaoPaulo(tsdbRawUtc)
+                var tsdbDateSPG =
+                  toDateStringSaoPaulo(tsdbRawUtcG) || evGlobal.dateEvent || targetDate
+                var tsdbTimeSPG = toTimeStringSaoPaulo(tsdbRawUtcG)
+                var leagueNameG = evGlobal.strLeague || 'Futebol'
 
-                  dayFixturesForDate.push({
-                    fixture: {
-                      id: 'tsdb_' + (ev.idEvent || tLeague.id + '_' + tei),
-                      date: tsdbRawUtc,
-                      status: { short: 'NS' },
+                dayFixturesForDate.push({
+                  fixture: {
+                    id: 'tsdb_' + (evGlobal.idEvent || 'ev_' + teiGlobal),
+                    date: tsdbRawUtcG,
+                    status: { short: 'NS' },
+                  },
+                  league: {
+                    id: parseInt(evGlobal.idLeague, 10) || 0,
+                    name: leagueNameG,
+                    categoria: leagueNameG,
+                    prioridade: 30,
+                    logo: evGlobal.strLeagueBadge || evGlobal.strBadge || '',
+                    region: 'Futebol',
+                  },
+                  teams: {
+                    home: {
+                      id: parseInt(evGlobal.idHomeTeam, 10) || 0,
+                      name: hNameG,
+                      logo: evGlobal.strHomeTeamBadge || '',
                     },
-                    league: {
-                      id: tLeague.id,
-                      name: tLeague.cat,
-                      categoria: tLeague.cat,
-                      prioridade: tLeague.prio,
-                      logo: ev.strLeagueBadge || ev.strBadge || '',
-                      region:
-                        tLeague.cat.indexOf('Brasileir') !== -1 ||
-                        tLeague.cat.indexOf('Copa') !== -1
-                          ? 'Brasileirão & Copas'
-                          : 'Futebol Europeu',
+                    away: {
+                      id: parseInt(evGlobal.idAwayTeam, 10) || 0,
+                      name: aNameG,
+                      logo: evGlobal.strAwayTeamBadge || '',
                     },
-                    teams: {
-                      home: {
-                        id: parseInt(ev.idHomeTeam, 10) || 0,
-                        name: hName,
-                        logo: ev.strHomeTeamBadge || '',
+                  },
+                  dateSP: tsdbDateSPG,
+                  timeSP: tsdbTimeSPG,
+                  provider: 'thesportsdb',
+                })
+              }
+            } else {
+              var tsdbConmebolLeagues = [
+                { id: 4501, name: 'Copa Libertadores', cat: 'Copa Libertadores', prio: 8 },
+                { id: 4724, name: 'Copa Sudamericana', cat: 'Copa Sul-Americana', prio: 11 },
+                {
+                  id: 4328,
+                  name: 'English Premier League',
+                  cat: 'Premier League (Inglaterra)',
+                  prio: 3,
+                },
+                { id: 4335, name: 'Spanish La Liga', cat: 'La Liga (Espanha)', prio: 4 },
+                { id: 4332, name: 'Italian Serie A', cat: 'Serie A (Itália)', prio: 5 },
+                { id: 4331, name: 'German Bundesliga', cat: 'Bundesliga (Alemanha)', prio: 6 },
+                { id: 4334, name: 'French Ligue 1', cat: 'Ligue 1 (França)', prio: 7 },
+                { id: 4481, name: 'UEFA Europa League', cat: 'UEFA Europa League', prio: 10 },
+                { id: 4480, name: 'UEFA Champions League', cat: 'Champions League', prio: 2 },
+              ]
+
+              for (var tli = 0; tli < tsdbConmebolLeagues.length; tli++) {
+                var tLeague = tsdbConmebolLeagues[tli]
+                var resTsdb = $http.send({
+                  url:
+                    'https://www.thesportsdb.com/api/v1/json/' +
+                    encodeURIComponent(tsdbKeyToUse) +
+                    '/eventsday.php?d=' +
+                    encodeURIComponent(targetDate) +
+                    '&l=' +
+                    encodeURIComponent(tLeague.id),
+                  method: 'GET',
+                  timeout: 8,
+                })
+                if (
+                  resTsdb &&
+                  resTsdb.statusCode === 200 &&
+                  resTsdb.json &&
+                  Array.isArray(resTsdb.json.events)
+                ) {
+                  for (var tei = 0; tei < resTsdb.json.events.length; tei++) {
+                    var ev = resTsdb.json.events[tei]
+                    var hName = (ev.strHomeTeam || '').trim()
+                    var aName = (ev.strAwayTeam || '').trim()
+                    if (!hName || !aName) continue
+
+                    // TheSportsDB: strTimestamp é UTC ISO "2026-06-15T19:00:00". Se ausente, usa dateEvent + strTime + Z (UTC)
+                    var tsdbRawUtc = ev.strTimestamp
+                      ? ev.strTimestamp.indexOf('Z') === -1
+                        ? ev.strTimestamp + 'Z'
+                        : ev.strTimestamp
+                      : ev.dateEvent
+                        ? ev.dateEvent + 'T' + (ev.strTime || '20:00:00') + 'Z'
+                        : targetDate + 'T20:00:00Z'
+
+                    var tsdbDateSP = toDateStringSaoPaulo(tsdbRawUtc) || ev.dateEvent || targetDate
+                    var tsdbTimeSP = toTimeStringSaoPaulo(tsdbRawUtc)
+
+                    dayFixturesForDate.push({
+                      fixture: {
+                        id: 'tsdb_' + (ev.idEvent || tLeague.id + '_' + tei),
+                        date: tsdbRawUtc,
+                        status: { short: 'NS' },
                       },
-                      away: {
-                        id: parseInt(ev.idAwayTeam, 10) || 0,
-                        name: aName,
-                        logo: ev.strAwayTeamBadge || '',
+                      league: {
+                        id: tLeague.id,
+                        name: tLeague.cat,
+                        categoria: tLeague.cat,
+                        prioridade: tLeague.prio,
+                        logo: ev.strLeagueBadge || ev.strBadge || '',
+                        region:
+                          tLeague.cat.indexOf('Brasileir') !== -1 ||
+                          tLeague.cat.indexOf('Copa') !== -1
+                            ? 'Brasileirão & Copas'
+                            : 'Futebol Europeu',
                       },
-                    },
-                    dateSP: tsdbDateSP,
-                    timeSP: tsdbTimeSP,
-                    provider: 'thesportsdb',
-                  })
+                      teams: {
+                        home: {
+                          id: parseInt(ev.idHomeTeam, 10) || 0,
+                          name: hName,
+                          logo: ev.strHomeTeamBadge || '',
+                        },
+                        away: {
+                          id: parseInt(ev.idAwayTeam, 10) || 0,
+                          name: aName,
+                          logo: ev.strAwayTeamBadge || '',
+                        },
+                      },
+                      dateSP: tsdbDateSP,
+                      timeSP: tsdbTimeSP,
+                      provider: 'thesportsdb',
+                    })
+                  }
                 }
               }
             }
@@ -699,8 +782,7 @@ routerAdd(
           var lIdCheck = f.league ? f.league.id : 0
           var lNameCheck = f.league ? f.league.name : ''
           var tEval = isTargetCompetition(lIdCheck, lNameCheck, '')
-          if (!tEval.valid) continue
-
+          if (!tEval.valid && !semCorte) continue
           var rawDateSource = f.fixture && f.fixture.date ? String(f.fixture.date) : ''
           var gameDate = f.dateSP || toDateStringSaoPaulo(rawDateSource) || targetDate
           var gameTime = f.timeSP || toTimeStringSaoPaulo(rawDateSource) || '16:00'

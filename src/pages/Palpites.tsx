@@ -37,6 +37,7 @@ import {
   formatHoraBR,
   isPalpiteEncerrado,
   formatHoraEncerramento,
+  normalizeDataISO,
   sortJogosCrescente,
   sortJogosDecrescente,
 } from '@/lib/dateUtils'
@@ -992,12 +993,35 @@ export default function Palpites() {
     })
   }, [jogos, selectedCompeticao, bolaoMap])
 
+  // Helper canônico para cálculo de timestamp em milissegundos
+  const getGameTimestampMs = (jogo: Jogo): number => {
+    const dataISO = normalizeDataISO(jogo.data)
+    if (!dataISO) return 0
+    const hora = (jogo.hora || '12:00').trim().substring(0, 5)
+    const ts = new Date(`${dataISO}T${hora}:00`).getTime()
+    return isNaN(ts) ? 0 : ts
+  }
+
+  const sortOrder: 'asc' | 'desc' =
+    manualSort !== null ? manualSort : filterPendentes ? 'asc' : 'desc'
+
   const displayedJogos = useMemo(() => {
-    const effectiveSort = manualSort !== null ? manualSort : filterPendentes ? 'asc' : 'desc'
-    return effectiveSort === 'asc'
-      ? sortJogosCrescente(filteredJogos)
-      : sortJogosDecrescente(filteredJogos)
-  }, [filteredJogos, manualSort, filterPendentes])
+    const copy = [...filteredJogos]
+    copy.sort((a, b) => {
+      // 1. Mantém jogos pendentes no topo quando na visualização geral
+      const finA = Boolean(a.resultado_finalizado)
+      const finB = Boolean(b.resultado_finalizado)
+      if (finA !== finB) {
+        return finA ? 1 : -1
+      }
+
+      // 2. Ordenação por timestamp milissegundo conforme o seletor Crescente/Decrescente
+      const tsA = getGameTimestampMs(a)
+      const tsB = getGameTimestampMs(b)
+      return sortOrder === 'asc' ? tsA - tsB : tsB - tsA
+    })
+    return copy
+  }, [filteredJogos, sortOrder])
   const hasMore = currentPage < totalPages
 
   // Subcomponente de Card de Palpite individual memoizado com React.memo

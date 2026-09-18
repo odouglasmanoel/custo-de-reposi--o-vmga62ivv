@@ -2648,9 +2648,11 @@ routerAdd('GET', '/backend/v1/jogos-do-dia', (e) => {
       return { fixtures: convertedFixtures, hasLive: hasLiveMatchFD }
     }
 
-    // Função utilitária para buscar partidas no TheSportsDB (CONMEBOL + UEFA secundárias)
+    // Função utilitária para buscar partidas no TheSportsDB globalmente (sem filtro de ligas)
     // Disponível no escopo da rota /backend/v1/jogos-do-dia
     // Cobre targetDate e também targetDate + 1 dia (para compensar fuso UTC vs Brasília UTC-3)
+    // Tenta primeiro o endpoint global /eventsday.php?d={currDate} mantendo TODOS os eventos mundo afora.
+    // Se vier vazio, faz fallback iterando por ligas conhecidas.
     var fetchConmebolFromTheSportsDb = function (targetDate, apiKeyTsdb) {
       if (!targetDate) return []
       var key = apiKeyTsdb || '3'
@@ -2719,6 +2721,13 @@ routerAdd('GET', '/backend/v1/jogos-do-dia', (e) => {
           region: 'Futebol Europeu',
           country: 'France',
         },
+        {
+          id: 4351,
+          name: 'Brasileirao Serie A',
+          shortId: 71,
+          region: 'Brasileirão & Copas',
+          country: 'Brazil',
+        },
       ]
 
       var targetDatesList = [targetDate]
@@ -2745,337 +2754,530 @@ routerAdd('GET', '/backend/v1/jogos-do-dia', (e) => {
 
       for (var tdi = 0; tdi < targetDatesList.length; tdi++) {
         var currDate = targetDatesList[tdi]
-        for (var cli = 0; cli < conmebolLeagues.length; cli++) {
-          var cl = conmebolLeagues[cli]
-          try {
-            var tsdbUrl =
-              'https://www.thesportsdb.com/api/v1/json/' +
-              encodeURIComponent(key) +
-              '/eventsday.php?d=' +
-              encodeURIComponent(currDate) +
-              '&l=' +
-              encodeURIComponent(cl.id)
 
-            var resTsdb = $http.send({
-              url: tsdbUrl,
-              method: 'GET',
-              timeout: 8,
-            })
+        // 1. TENTA PRIMEIRO A BUSCA GLOBAL COMPLETA DO DIA NO THESPORTSDB SEM RESTRINGIR LIGA
+        var globalEventsFound = false
+        try {
+          var tsdbGlobalUrl =
+            'https://www.thesportsdb.com/api/v1/json/' +
+            encodeURIComponent(key) +
+            '/eventsday.php?d=' +
+            encodeURIComponent(currDate)
+          var resTsdbGlobal = $http.send({
+            url: tsdbGlobalUrl,
+            method: 'GET',
+            timeout: 8,
+          })
 
-            if (!resTsdb || resTsdb.statusCode !== 200) {
-              console.log(
-                '[TheSportsDB Fallback] HTTP ' +
-                  (resTsdb ? resTsdb.statusCode : 0) +
-                  ' ao buscar liga ' +
-                  cl.name +
-                  ' (ignorado silenciosamente)',
-              )
-              continue
-            }
+          if (
+            resTsdbGlobal &&
+            resTsdbGlobal.statusCode === 200 &&
+            resTsdbGlobal.json &&
+            Array.isArray(resTsdbGlobal.json.events) &&
+            resTsdbGlobal.json.events.length > 0
+          ) {
+            globalEventsFound = true
+            var gEvents = resTsdbGlobal.json.events
+            for (var gei = 0; gei < gEvents.length; gei++) {
+              var evG = gEvents[gei]
+              var eventKeyG = evG.idEvent
+                ? String(evG.idEvent)
+                : evG.strHomeTeam + '_' + evG.strAwayTeam + '_' + (evG.dateEvent || currDate)
+              if (seenEventIds[eventKeyG]) continue
+              seenEventIds[eventKeyG] = true
 
-            if (resTsdb.json && Array.isArray(resTsdb.json.events)) {
-              var events = resTsdb.json.events
-              for (var ei = 0; ei < events.length; ei++) {
-                var ev = events[ei]
-                var eventKey = ev.idEvent
-                  ? String(ev.idEvent)
-                  : ev.strHomeTeam + '_' + ev.strAwayTeam + '_' + (ev.dateEvent || currDate)
-                if (seenEventIds[eventKey]) continue
-                seenEventIds[eventKey] = true
+              var homeTeamG = (evG.strHomeTeam || '').trim()
+              var awayTeamG = (evG.strAwayTeam || '').trim()
+              if (!homeTeamG || !awayTeamG) continue
 
-                var homeTeam = (ev.strHomeTeam || '').trim()
-                var awayTeam = (ev.strAwayTeam || '').trim()
-                if (!homeTeam || !awayTeam) continue
+              var evDateG = evG.dateEvent || targetDate
+              var evTimeG = evG.strTime || '20:00:00'
+              var isoDateStrG =
+                evDateG + 'T' + (evTimeG.indexOf(':') !== -1 ? evTimeG : '20:00:00') + 'Z'
 
-                var evDate = ev.dateEvent || targetDate
-                var evTime = ev.strTime || '20:00:00'
-                // Monta ISO string aproximada (UTC)
-                var isoDateStr =
-                  evDate + 'T' + (evTime.indexOf(':') !== -1 ? evTime : '20:00:00') + 'Z'
+              var hScoreG =
+                evG.intHomeScore !== null &&
+                evG.intHomeScore !== undefined &&
+                evG.intHomeScore !== ''
+                  ? parseInt(evG.intHomeScore, 10)
+                  : null
+              var aScoreG =
+                evG.intAwayScore !== null &&
+                evG.intAwayScore !== undefined &&
+                evG.intAwayScore !== ''
+                  ? parseInt(evG.intAwayScore, 10)
+                  : null
 
-                var hScore =
-                  ev.intHomeScore !== null &&
-                  ev.intHomeScore !== undefined &&
-                  ev.intHomeScore !== ''
-                    ? parseInt(ev.intHomeScore, 10)
-                    : null
-                var aScore =
-                  ev.intAwayScore !== null &&
-                  ev.intAwayScore !== undefined &&
-                  ev.intAwayScore !== ''
-                    ? parseInt(ev.intAwayScore, 10)
-                    : null
+              var rawStatusG = (evG.strStatus || '').trim().toUpperCase()
+              var shortStatusG = 'NS'
+              if (
+                rawStatusG === 'FT' ||
+                rawStatusG === 'AOT' ||
+                rawStatusG === 'FINISHED' ||
+                rawStatusG === 'MATCH FINISHED'
+              ) {
+                shortStatusG = 'FT'
+              } else if (
+                rawStatusG === '1H' ||
+                rawStatusG === '2H' ||
+                rawStatusG === 'HT' ||
+                rawStatusG === 'LIVE' ||
+                rawStatusG === 'IN PROGRESS'
+              ) {
+                shortStatusG = rawStatusG === 'HT' ? 'HT' : '1H'
+              } else if (rawStatusG === 'POSTPONED' || rawStatusG === 'PST') {
+                shortStatusG = 'PST'
+              } else if (rawStatusG === 'CANCELLED' || rawStatusG === 'CANC') {
+                shortStatusG = 'CANC'
+              }
 
-                var rawStatus = (ev.strStatus || '').trim().toUpperCase()
-                var shortStatus = 'NS'
-                if (
-                  rawStatus === 'FT' ||
-                  rawStatus === 'AOT' ||
-                  rawStatus === 'FINISHED' ||
-                  rawStatus === 'MATCH FINISHED'
-                ) {
-                  shortStatus = 'FT'
-                } else if (
-                  rawStatus === '1H' ||
-                  rawStatus === '2H' ||
-                  rawStatus === 'HT' ||
-                  rawStatus === 'LIVE' ||
-                  rawStatus === 'IN PROGRESS'
-                ) {
-                  shortStatus = rawStatus === 'HT' ? 'HT' : '1H'
-                } else if (rawStatus === 'POSTPONED' || rawStatus === 'PST') {
-                  shortStatus = 'PST'
-                } else if (rawStatus === 'CANCELLED' || rawStatus === 'CANC') {
-                  shortStatus = 'CANC'
-                }
-
-                var tsdbScorers = []
-                var tsdbEvents = []
-                var parseTsdbGoalStr = function (detailStr, teamSide, teamId, teamName) {
-                  if (typeof detailStr !== 'string' || !detailStr.trim()) return
-                  var parts = detailStr.split(';')
-                  for (var pi = 0; pi < parts.length; pi++) {
-                    var rawPart = parts[pi].trim()
-                    if (!rawPart) continue
-                    var plusMatch = rawPart.match(/(\d+)\s*\+\s*(\d+)/)
-                    var extractedMin = null
-                    var extractedExtra = null
-                    if (plusMatch) {
-                      extractedMin = parseInt(plusMatch[1], 10)
-                      extractedExtra = parseInt(plusMatch[2], 10)
-                    } else {
-                      var minMatch = rawPart.match(/(\d+)'?/)
-                      extractedMin = minMatch ? parseInt(minMatch[1], 10) : null
-                    }
-                    var nameClean = rawPart
-                      .replace(/^\d+(\+\d+)?'?:?/, '')
-                      .replace(/\s*\d+(\+\d+)?'?$/, '')
-                      .replace(/\s*\(pen\.?\)/i, '')
-                      .trim()
-                    var isOwnGoal = /contra|own\s*goal|o\.?g\.?/i.test(rawPart)
-                    if (isOwnGoal && nameClean.toLowerCase().indexOf('contra') === -1) {
-                      nameClean += ' (contra)'
-                    }
-                    if (nameClean) {
-                      tsdbScorers.push({
-                        name: nameClean,
-                        minute: extractedMin,
-                        extraMinute: extractedExtra,
-                        teamId: teamId || null,
-                        teamName: teamName || null,
-                        teamSide: teamSide,
-                      })
-                      tsdbEvents.push({
-                        type: 'Goal',
-                        detail: isOwnGoal ? 'Own Goal' : 'Normal Goal',
-                        time: { elapsed: extractedMin, extra: extractedExtra },
-                        team: { id: teamId || null, name: teamName || '' },
-                        player: { id: null, name: nameClean },
-                      })
-                    }
+              var tsdbScorersG = []
+              var tsdbEventsG = []
+              var parseTsdbGoalStrG = function (detailStr, teamSide, teamId, teamName) {
+                if (typeof detailStr !== 'string' || !detailStr.trim()) return
+                var parts = detailStr.split(';')
+                for (var pi = 0; pi < parts.length; pi++) {
+                  var rawPart = parts[pi].trim()
+                  if (!rawPart) continue
+                  var plusMatch = rawPart.match(/(\d+)\s*\+\s*(\d+)/)
+                  var extractedMin = null
+                  var extractedExtra = null
+                  if (plusMatch) {
+                    extractedMin = parseInt(plusMatch[1], 10)
+                    extractedExtra = parseInt(plusMatch[2], 10)
+                  } else {
+                    var minMatch = rawPart.match(/(\d+)'?/)
+                    extractedMin = minMatch ? parseInt(minMatch[1], 10) : null
+                  }
+                  var nameClean = rawPart
+                    .replace(/^\d+(\+\d+)?'?:?/, '')
+                    .replace(/\s*\d+(\+\d+)?'?$/, '')
+                    .replace(/\s*\(pen\.?\)/i, '')
+                    .trim()
+                  var isOwnGoal = /contra|own\s*goal|o\.?g\.?/i.test(rawPart)
+                  if (isOwnGoal && nameClean.toLowerCase().indexOf('contra') === -1) {
+                    nameClean += ' (contra)'
+                  }
+                  if (nameClean) {
+                    tsdbScorersG.push({
+                      name: nameClean,
+                      minute: extractedMin,
+                      extraMinute: extractedExtra,
+                      teamId: teamId || null,
+                      teamName: teamName || null,
+                      teamSide: teamSide,
+                    })
+                    tsdbEventsG.push({
+                      type: 'Goal',
+                      detail: isOwnGoal ? 'Own Goal' : 'Normal Goal',
+                      time: { elapsed: extractedMin, extra: extractedExtra },
+                      team: { id: teamId || null, name: teamName || '' },
+                      player: { id: null, name: nameClean },
+                    })
                   }
                 }
+              }
 
-                var hTeamId = parseInt(ev.idHomeTeam, 10) || null
-                var aTeamId = parseInt(ev.idAwayTeam, 10) || null
-                parseTsdbGoalStr(ev.strHomeGoalDetails, 'home', hTeamId, homeTeam)
-                parseTsdbGoalStr(ev.strAwayGoalDetails, 'away', aTeamId, awayTeam)
+              var hTeamIdG = parseInt(evG.idHomeTeam, 10) || null
+              var aTeamIdG = parseInt(evG.idAwayTeam, 10) || null
+              parseTsdbGoalStrG(evG.strHomeGoalDetails, 'home', hTeamIdG, homeTeamG)
+              parseTsdbGoalStrG(evG.strAwayGoalDetails, 'away', aTeamIdG, awayTeamG)
 
-                // FIX 1: Se houver gols marcados no placar mas nenhum marcador veio em strHomeGoalDetails/strAwayGoalDetails
-                var needsTimelineLookup =
-                  ((hScore !== null && hScore > 0) || (aScore !== null && aScore > 0)) &&
-                  tsdbScorers.length === 0 &&
-                  ev.idEvent
+              var leagueNameStr = evG.strLeague || 'Futebol'
+              conmebolFixtures.push({
+                fixture: {
+                  id: 'tsdb_' + (evG.idEvent || gei),
+                  date: isoDateStrG,
+                  timestamp: Math.floor(new Date(isoDateStrG).getTime() / 1000) || 0,
+                  status: {
+                    short: shortStatusG,
+                    long: evG.strStatus || 'Not Started',
+                    elapsed: null,
+                  },
+                },
+                league: {
+                  id: parseInt(evG.idLeague, 10) || 0,
+                  name: leagueNameStr,
+                  country: evG.strCountry || 'Mundo',
+                  logo: evG.strLeagueBadge || evG.strBadge || '',
+                  flag: '',
+                  round: evG.strRound || '',
+                  region: 'Futebol',
+                },
+                teams: {
+                  home: {
+                    id: hTeamIdG || 0,
+                    name: homeTeamG,
+                    logo: evG.strHomeTeamBadge || '',
+                    country: evG.strCountry || 'Mundo',
+                  },
+                  away: {
+                    id: aTeamIdG || 0,
+                    name: awayTeamG,
+                    logo: evG.strAwayTeamBadge || '',
+                    country: evG.strCountry || 'Mundo',
+                  },
+                },
+                goals: {
+                  home: !isNaN(hScoreG) ? hScoreG : null,
+                  away: !isNaN(aScoreG) ? aScoreG : null,
+                },
+                score: {
+                  halftime: { home: null, away: null },
+                  fulltime: {
+                    home: !isNaN(hScoreG) ? hScoreG : null,
+                    away: !isNaN(aScoreG) ? aScoreG : null,
+                  },
+                },
+                events: tsdbEventsG,
+                scorers: tsdbScorersG,
+                isLive: ['1H', 'HT', '2H', 'LIVE'].indexOf(shortStatusG) !== -1,
+                provider: 'thesportsdb',
+              })
+            }
+          }
+        } catch (errGlobalTsdb) {
+          console.log(
+            '[TheSportsDB Global] Erro ao buscar dia global ' + currDate + ':',
+            errGlobalTsdb,
+          )
+        }
 
-                if (needsTimelineLookup) {
-                  try {
-                    // Tenta lookuptimeline.php?id={idEvent}
-                    var tlUrl =
-                      'https://www.thesportsdb.com/api/v1/json/' +
-                      encodeURIComponent(key) +
-                      '/lookuptimeline.php?id=' +
-                      encodeURIComponent(ev.idEvent)
-                    var tlRes = $http.send({
-                      url: tlUrl,
-                      method: 'GET',
-                      timeout: 4,
-                    })
+        // 2. Se a busca global do TheSportsDB não retornou eventos (ex: limitação da chave grátis '3' em queries globais),
+        // consulta as ligas prioritárias individualmente
+        if (!globalEventsFound) {
+          for (var cli = 0; cli < conmebolLeagues.length; cli++) {
+            var cl = conmebolLeagues[cli]
+            try {
+              var tsdbUrl =
+                'https://www.thesportsdb.com/api/v1/json/' +
+                encodeURIComponent(key) +
+                '/eventsday.php?d=' +
+                encodeURIComponent(currDate) +
+                '&l=' +
+                encodeURIComponent(cl.id)
 
-                    var tlItems = null
-                    if (
-                      tlRes &&
-                      tlRes.statusCode === 200 &&
-                      tlRes.json &&
-                      Array.isArray(tlRes.json.timeline)
-                    ) {
-                      tlItems = tlRes.json.timeline
-                    } else if (tlRes && tlRes.statusCode !== 200) {
-                      console.log(
-                        '[TheSportsDB Timeline] HTTP ' +
-                          tlRes.statusCode +
-                          ' no evento ' +
-                          ev.idEvent +
-                          ' (ignorado silenciosamente)',
-                      )
+              var resTsdb = $http.send({
+                url: tsdbUrl,
+                method: 'GET',
+                timeout: 8,
+              })
+
+              if (!resTsdb || resTsdb.statusCode !== 200) {
+                console.log(
+                  '[TheSportsDB Fallback] HTTP ' +
+                    (resTsdb ? resTsdb.statusCode : 0) +
+                    ' ao buscar liga ' +
+                    cl.name +
+                    ' (ignorado silenciosamente)',
+                )
+                continue
+              }
+
+              if (resTsdb.json && Array.isArray(resTsdb.json.events)) {
+                var events = resTsdb.json.events
+                for (var ei = 0; ei < events.length; ei++) {
+                  var ev = events[ei]
+                  var eventKey = ev.idEvent
+                    ? String(ev.idEvent)
+                    : ev.strHomeTeam + '_' + ev.strAwayTeam + '_' + (ev.dateEvent || currDate)
+                  if (seenEventIds[eventKey]) continue
+                  seenEventIds[eventKey] = true
+
+                  var homeTeam = (ev.strHomeTeam || '').trim()
+                  var awayTeam = (ev.strAwayTeam || '').trim()
+                  if (!homeTeam || !awayTeam) continue
+
+                  var evDate = ev.dateEvent || targetDate
+                  var evTime = ev.strTime || '20:00:00'
+                  // Monta ISO string aproximada (UTC)
+                  var isoDateStr =
+                    evDate + 'T' + (evTime.indexOf(':') !== -1 ? evTime : '20:00:00') + 'Z'
+
+                  var hScore =
+                    ev.intHomeScore !== null &&
+                    ev.intHomeScore !== undefined &&
+                    ev.intHomeScore !== ''
+                      ? parseInt(ev.intHomeScore, 10)
+                      : null
+                  var aScore =
+                    ev.intAwayScore !== null &&
+                    ev.intAwayScore !== undefined &&
+                    ev.intAwayScore !== ''
+                      ? parseInt(ev.intAwayScore, 10)
+                      : null
+
+                  var rawStatus = (ev.strStatus || '').trim().toUpperCase()
+                  var shortStatus = 'NS'
+                  if (
+                    rawStatus === 'FT' ||
+                    rawStatus === 'AOT' ||
+                    rawStatus === 'FINISHED' ||
+                    rawStatus === 'MATCH FINISHED'
+                  ) {
+                    shortStatus = 'FT'
+                  } else if (
+                    rawStatus === '1H' ||
+                    rawStatus === '2H' ||
+                    rawStatus === 'HT' ||
+                    rawStatus === 'LIVE' ||
+                    rawStatus === 'IN PROGRESS'
+                  ) {
+                    shortStatus = rawStatus === 'HT' ? 'HT' : '1H'
+                  } else if (rawStatus === 'POSTPONED' || rawStatus === 'PST') {
+                    shortStatus = 'PST'
+                  } else if (rawStatus === 'CANCELLED' || rawStatus === 'CANC') {
+                    shortStatus = 'CANC'
+                  }
+
+                  var tsdbScorers = []
+                  var tsdbEvents = []
+                  var parseTsdbGoalStr = function (detailStr, teamSide, teamId, teamName) {
+                    if (typeof detailStr !== 'string' || !detailStr.trim()) return
+                    var parts = detailStr.split(';')
+                    for (var pi = 0; pi < parts.length; pi++) {
+                      var rawPart = parts[pi].trim()
+                      if (!rawPart) continue
+                      var plusMatch = rawPart.match(/(\d+)\s*\+\s*(\d+)/)
+                      var extractedMin = null
+                      var extractedExtra = null
+                      if (plusMatch) {
+                        extractedMin = parseInt(plusMatch[1], 10)
+                        extractedExtra = parseInt(plusMatch[2], 10)
+                      } else {
+                        var minMatch = rawPart.match(/(\d+)'?/)
+                        extractedMin = minMatch ? parseInt(minMatch[1], 10) : null
+                      }
+                      var nameClean = rawPart
+                        .replace(/^\d+(\+\d+)?'?:?/, '')
+                        .replace(/\s*\d+(\+\d+)?'?$/, '')
+                        .replace(/\s*\(pen\.?\)/i, '')
+                        .trim()
+                      var isOwnGoal = /contra|own\s*goal|o\.?g\.?/i.test(rawPart)
+                      if (isOwnGoal && nameClean.toLowerCase().indexOf('contra') === -1) {
+                        nameClean += ' (contra)'
+                      }
+                      if (nameClean) {
+                        tsdbScorers.push({
+                          name: nameClean,
+                          minute: extractedMin,
+                          extraMinute: extractedExtra,
+                          teamId: teamId || null,
+                          teamName: teamName || null,
+                          teamSide: teamSide,
+                        })
+                        tsdbEvents.push({
+                          type: 'Goal',
+                          detail: isOwnGoal ? 'Own Goal' : 'Normal Goal',
+                          time: { elapsed: extractedMin, extra: extractedExtra },
+                          team: { id: teamId || null, name: teamName || '' },
+                          player: { id: null, name: nameClean },
+                        })
+                      }
                     }
+                  }
 
-                    // Fallback para lookupevent.php?id={idEvent} se lookuptimeline não retornar timeline
-                    if (!tlItems || tlItems.length === 0) {
-                      var lkUrl =
+                  var hTeamId = parseInt(ev.idHomeTeam, 10) || null
+                  var aTeamId = parseInt(ev.idAwayTeam, 10) || null
+                  parseTsdbGoalStr(ev.strHomeGoalDetails, 'home', hTeamId, homeTeam)
+                  parseTsdbGoalStr(ev.strAwayGoalDetails, 'away', aTeamId, awayTeam)
+
+                  // FIX 1: Se houver gols marcados no placar mas nenhum marcador veio em strHomeGoalDetails/strAwayGoalDetails
+                  var needsTimelineLookup =
+                    ((hScore !== null && hScore > 0) || (aScore !== null && aScore > 0)) &&
+                    tsdbScorers.length === 0 &&
+                    ev.idEvent
+
+                  if (needsTimelineLookup) {
+                    try {
+                      // Tenta lookuptimeline.php?id={idEvent}
+                      var tlUrl =
                         'https://www.thesportsdb.com/api/v1/json/' +
                         encodeURIComponent(key) +
-                        '/lookupevent.php?id=' +
+                        '/lookuptimeline.php?id=' +
                         encodeURIComponent(ev.idEvent)
-                      var lkRes = $http.send({
-                        url: lkUrl,
+                      var tlRes = $http.send({
+                        url: tlUrl,
                         method: 'GET',
                         timeout: 4,
                       })
+
+                      var tlItems = null
                       if (
-                        lkRes &&
-                        lkRes.statusCode === 200 &&
-                        lkRes.json &&
-                        Array.isArray(lkRes.json.events) &&
-                        lkRes.json.events[0]
+                        tlRes &&
+                        tlRes.statusCode === 200 &&
+                        tlRes.json &&
+                        Array.isArray(tlRes.json.timeline)
                       ) {
-                        var singleEv = lkRes.json.events[0]
-                        parseTsdbGoalStr(singleEv.strHomeGoalDetails, 'home', hTeamId, homeTeam)
-                        parseTsdbGoalStr(singleEv.strAwayGoalDetails, 'away', aTeamId, awayTeam)
-                      } else if (lkRes && lkRes.statusCode !== 200) {
+                        tlItems = tlRes.json.timeline
+                      } else if (tlRes && tlRes.statusCode !== 200) {
                         console.log(
-                          '[TheSportsDB LookupEvent] HTTP ' +
-                            lkRes.statusCode +
+                          '[TheSportsDB Timeline] HTTP ' +
+                            tlRes.statusCode +
                             ' no evento ' +
                             ev.idEvent +
                             ' (ignorado silenciosamente)',
                         )
                       }
-                    } else {
-                      for (var tli = 0; tli < tlItems.length; tli++) {
-                        var itemTl = tlItems[tli]
-                        var tlType = String(itemTl.strTimeline || itemTl.strType || '')
-                          .trim()
-                          .toLowerCase()
+
+                      // Fallback para lookupevent.php?id={idEvent} se lookuptimeline não retornar timeline
+                      if (!tlItems || tlItems.length === 0) {
+                        var lkUrl =
+                          'https://www.thesportsdb.com/api/v1/json/' +
+                          encodeURIComponent(key) +
+                          '/lookupevent.php?id=' +
+                          encodeURIComponent(ev.idEvent)
+                        var lkRes = $http.send({
+                          url: lkUrl,
+                          method: 'GET',
+                          timeout: 4,
+                        })
                         if (
-                          tlType === 'goal' ||
-                          tlType === 'gol' ||
-                          tlType.indexOf('goal') !== -1
+                          lkRes &&
+                          lkRes.statusCode === 200 &&
+                          lkRes.json &&
+                          Array.isArray(lkRes.json.events) &&
+                          lkRes.json.events[0]
                         ) {
-                          var pName = (itemTl.strPlayer || itemTl.strPlayerName || '').trim()
-                          if (!pName) continue
-                          var tlTime =
-                            itemTl.intTime !== null && itemTl.intTime !== undefined
-                              ? parseInt(itemTl.intTime, 10)
-                              : itemTl.intMinute !== null && itemTl.intMinute !== undefined
-                                ? parseInt(itemTl.intMinute, 10)
-                                : null
-                          var tlTeamId = parseInt(itemTl.idTeam, 10) || null
-                          var tlSide = null
-                          if (tlTeamId && hTeamId && tlTeamId === hTeamId) {
-                            tlSide = 'home'
-                          } else if (tlTeamId && aTeamId && tlTeamId === aTeamId) {
-                            tlSide = 'away'
-                          } else {
-                            var tlSideStr = String(
-                              itemTl.strTimelineDetail || itemTl.strSide || '',
-                            ).toLowerCase()
-                            if (tlSideStr.indexOf('home') !== -1) tlSide = 'home'
-                            else if (tlSideStr.indexOf('away') !== -1) tlSide = 'away'
+                          var singleEv = lkRes.json.events[0]
+                          parseTsdbGoalStr(singleEv.strHomeGoalDetails, 'home', hTeamId, homeTeam)
+                          parseTsdbGoalStr(singleEv.strAwayGoalDetails, 'away', aTeamId, awayTeam)
+                        } else if (lkRes && lkRes.statusCode !== 200) {
+                          console.log(
+                            '[TheSportsDB LookupEvent] HTTP ' +
+                              lkRes.statusCode +
+                              ' no evento ' +
+                              ev.idEvent +
+                              ' (ignorado silenciosamente)',
+                          )
+                        }
+                      } else {
+                        for (var tli = 0; tli < tlItems.length; tli++) {
+                          var itemTl = tlItems[tli]
+                          var tlType = String(itemTl.strTimeline || itemTl.strType || '')
+                            .trim()
+                            .toLowerCase()
+                          if (
+                            tlType === 'goal' ||
+                            tlType === 'gol' ||
+                            tlType.indexOf('goal') !== -1
+                          ) {
+                            var pName = (itemTl.strPlayer || itemTl.strPlayerName || '').trim()
+                            if (!pName) continue
+                            var tlTime =
+                              itemTl.intTime !== null && itemTl.intTime !== undefined
+                                ? parseInt(itemTl.intTime, 10)
+                                : itemTl.intMinute !== null && itemTl.intMinute !== undefined
+                                  ? parseInt(itemTl.intMinute, 10)
+                                  : null
+                            var tlTeamId = parseInt(itemTl.idTeam, 10) || null
+                            var tlSide = null
+                            if (tlTeamId && hTeamId && tlTeamId === hTeamId) {
+                              tlSide = 'home'
+                            } else if (tlTeamId && aTeamId && tlTeamId === aTeamId) {
+                              tlSide = 'away'
+                            } else {
+                              var tlSideStr = String(
+                                itemTl.strTimelineDetail || itemTl.strSide || '',
+                              ).toLowerCase()
+                              if (tlSideStr.indexOf('home') !== -1) tlSide = 'home'
+                              else if (tlSideStr.indexOf('away') !== -1) tlSide = 'away'
+                            }
+                            var tlIsOwn = /contra|own/i.test(itemTl.strTimelineDetail || '')
+                            var pureScorerName = pName
+                            if (tlIsOwn && pureScorerName.toLowerCase().indexOf('contra') === -1) {
+                              pureScorerName += ' (contra)'
+                            }
+                            tsdbScorers.push({
+                              name: pureScorerName,
+                              rawName: pName,
+                              minute: tlTime,
+                              extraMinute: null,
+                              teamId: tlTeamId || (tlSide === 'home' ? hTeamId : aTeamId),
+                              teamName: tlSide === 'home' ? homeTeam : awayTeam,
+                              teamSide: tlSide || 'home',
+                            })
+                            tsdbEvents.push({
+                              type: 'Goal',
+                              detail: tlIsOwn ? 'Own Goal' : 'Normal Goal',
+                              time: { elapsed: tlTime, extra: null },
+                              team: {
+                                id: tlTeamId || (tlSide === 'home' ? hTeamId : aTeamId),
+                                name: tlSide === 'home' ? homeTeam : awayTeam,
+                              },
+                              player: { id: null, name: pName },
+                            })
                           }
-                          var tlIsOwn = /contra|own/i.test(itemTl.strTimelineDetail || '')
-                          var pureScorerName = pName
-                          if (tlIsOwn && pureScorerName.toLowerCase().indexOf('contra') === -1) {
-                            pureScorerName += ' (contra)'
-                          }
-                          tsdbScorers.push({
-                            name: pureScorerName,
-                            rawName: pName,
-                            minute: tlTime,
-                            extraMinute: null,
-                            teamId: tlTeamId || (tlSide === 'home' ? hTeamId : aTeamId),
-                            teamName: tlSide === 'home' ? homeTeam : awayTeam,
-                            teamSide: tlSide || 'home',
-                          })
-                          tsdbEvents.push({
-                            type: 'Goal',
-                            detail: tlIsOwn ? 'Own Goal' : 'Normal Goal',
-                            time: { elapsed: tlTime, extra: null },
-                            team: {
-                              id: tlTeamId || (tlSide === 'home' ? hTeamId : aTeamId),
-                              name: tlSide === 'home' ? homeTeam : awayTeam,
-                            },
-                            player: { id: null, name: pName },
-                          })
                         }
                       }
+                    } catch (errTimeline) {
+                      console.log(
+                        '[TheSportsDB Timeline] Erro ignorado ao consultar timeline do evento ' +
+                          ev.idEvent +
+                          ':',
+                        errTimeline,
+                      )
                     }
-                  } catch (errTimeline) {
-                    console.log(
-                      '[TheSportsDB Timeline] Erro ignorado ao consultar timeline do evento ' +
-                        ev.idEvent +
-                        ':',
-                      errTimeline,
-                    )
                   }
-                }
 
-                conmebolFixtures.push({
-                  fixture: {
-                    id: 'tsdb_' + (ev.idEvent || cli + '_' + ei),
-                    date: isoDateStr,
-                    timestamp: Math.floor(new Date(isoDateStr).getTime() / 1000) || 0,
-                    status: {
-                      short: shortStatus,
-                      long: ev.strStatus || 'Not Started',
-                      elapsed: null,
+                  conmebolFixtures.push({
+                    fixture: {
+                      id: 'tsdb_' + (ev.idEvent || cli + '_' + ei),
+                      date: isoDateStr,
+                      timestamp: Math.floor(new Date(isoDateStr).getTime() / 1000) || 0,
+                      status: {
+                        short: shortStatus,
+                        long: ev.strStatus || 'Not Started',
+                        elapsed: null,
+                      },
                     },
-                  },
-                  league: {
-                    id: cl.shortId,
-                    name: ev.strLeague || cl.name,
-                    country: cl.country || 'Europe',
-                    logo: ev.strLeagueBadge || ev.strBadge || '',
-                    flag: '',
-                    round: ev.strRound || '',
-                    region: cl.region || 'Sul-Americana',
-                  },
-                  teams: {
-                    home: {
-                      id: hTeamId || 0,
-                      name: homeTeam,
-                      logo: ev.strHomeTeamBadge || '',
+                    league: {
+                      id: cl.shortId,
+                      name: ev.strLeague || cl.name,
                       country: cl.country || 'Europe',
+                      logo: ev.strLeagueBadge || ev.strBadge || '',
+                      flag: '',
+                      round: ev.strRound || '',
+                      region: cl.region || 'Sul-Americana',
                     },
-                    away: {
-                      id: aTeamId || 0,
-                      name: awayTeam,
-                      logo: ev.strAwayTeamBadge || '',
-                      country: cl.country || 'Europe',
+                    teams: {
+                      home: {
+                        id: hTeamId || 0,
+                        name: homeTeam,
+                        logo: ev.strHomeTeamBadge || '',
+                        country: cl.country || 'Europe',
+                      },
+                      away: {
+                        id: aTeamId || 0,
+                        name: awayTeam,
+                        logo: ev.strAwayTeamBadge || '',
+                        country: cl.country || 'Europe',
+                      },
                     },
-                  },
-                  goals: {
-                    home: !isNaN(hScore) ? hScore : null,
-                    away: !isNaN(aScore) ? aScore : null,
-                  },
-                  score: {
-                    halftime: { home: null, away: null },
-                    fulltime: {
+                    goals: {
                       home: !isNaN(hScore) ? hScore : null,
                       away: !isNaN(aScore) ? aScore : null,
                     },
-                  },
-                  events: tsdbEvents,
-                  scorers: tsdbScorers,
-                  isLive: ['1H', 'HT', '2H', 'LIVE'].indexOf(shortStatus) !== -1,
-                  provider: 'thesportsdb',
-                })
+                    score: {
+                      halftime: { home: null, away: null },
+                      fulltime: {
+                        home: !isNaN(hScore) ? hScore : null,
+                        away: !isNaN(aScore) ? aScore : null,
+                      },
+                    },
+                    events: tsdbEvents,
+                    scorers: tsdbScorers,
+                    isLive: ['1H', 'HT', '2H', 'LIVE'].indexOf(shortStatus) !== -1,
+                    provider: 'thesportsdb',
+                  })
+                }
               }
+            } catch (errTsdbLeague) {
+              console.log(
+                '[TheSportsDB Fallback] Erro ao buscar liga ' + cl.name + ':',
+                errTsdbLeague,
+              )
             }
-          } catch (errTsdbLeague) {
-            console.log(
-              '[TheSportsDB Fallback] Erro ao buscar liga ' + cl.name + ':',
-              errTsdbLeague,
-            )
           }
         }
       }

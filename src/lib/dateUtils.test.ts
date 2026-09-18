@@ -240,5 +240,40 @@ describe('dateUtils - Jogos de Hoje e Fuso de Brasília', () => {
       expect(sorted[1].id).toBe('jogo_16_02')
       expect(sorted[2].id).toBe('jogo_16_01')
     })
+
+    it('reordena jogos corretamente alternando entre asc (crescente) e desc (decrescente)', () => {
+      const getGameTimestampMs = (jogo: { data: string; hora: string }): number => {
+        const dataISO = normalizeDataISO(jogo.data)
+        const hora = (jogo.hora || '12:00').trim().substring(0, 5)
+        const ts = new Date(`${dataISO}T${hora}:00`).getTime()
+        return isNaN(ts) ? 0 : ts
+      }
+
+      const sortJogosByOrder = (
+        lista: Array<{ id: string; data: string; hora: string; resultado_finalizado?: boolean }>,
+        order: 'asc' | 'desc',
+      ) => {
+        return [...lista].sort((a, b) => {
+          const finA = Boolean(a.resultado_finalizado)
+          const finB = Boolean(b.resultado_finalizado)
+          if (finA !== finB) return finA ? 1 : -1
+          const tsA = getGameTimestampMs(a)
+          const tsB = getGameTimestampMs(b)
+          return order === 'asc' ? tsA - tsB : tsB - tsA
+        })
+      }
+
+      const lista = [
+        { id: 'jogo_10_06', data: '2026-06-10', hora: '16:00', resultado_finalizado: false },
+        { id: 'jogo_15_06', data: '2026-06-15', hora: '20:00', resultado_finalizado: false },
+        { id: 'jogo_12_06', data: '2026-06-12', hora: '18:00', resultado_finalizado: false },
+      ]
+
+      const asc = sortJogosByOrder(lista, 'asc')
+      expect(asc.map((j) => j.id)).toEqual(['jogo_10_06', 'jogo_12_06', 'jogo_15_06'])
+
+      const desc = sortJogosByOrder(lista, 'desc')
+      expect(desc.map((j) => j.id)).toEqual(['jogo_15_06', 'jogo_12_06', 'jogo_10_06'])
+    })
   })
 })

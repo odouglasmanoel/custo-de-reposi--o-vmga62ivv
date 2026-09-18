@@ -10,6 +10,7 @@ import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Loader2, AlertCircle, RefreshCw, Shield } from 'lucide-react'
 import pb from '@/lib/pocketbase/client'
+import { isFixtureLive } from '@/lib/apiFootballMatcher'
 import type { DayFixture } from '@/pages/JogosDoDia'
 
 export interface MatchEventItem {
@@ -47,16 +48,20 @@ export function MatchDetailsModal({ isOpen, onClose, match }: MatchDetailsModalP
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
   const [loadedFixtureId, setLoadedFixtureId] = useState<string | number | null>(null)
 
-  const fetchDetails = useCallback(async (currentMatch: DayFixture, force = false) => {
+  const fetchDetails = useCallback(async (currentMatch: DayFixture, silent = false) => {
     if (!currentMatch) return
     const fixtureId = currentMatch.fixture?.id
     const timeA = currentMatch.teams?.home?.name || ''
     const timeB = currentMatch.teams?.away?.name || ''
     const rawDate = currentMatch.fixture?.date || ''
     const datePart = rawDate.split('T')[0] || ''
+    const st = (currentMatch.fixture?.status?.short || '').toUpperCase().trim()
+    const live = Boolean(currentMatch.isLive || isFixtureLive(st))
 
-    setLoading(true)
-    setErrorMessage(null)
+    if (!silent) {
+      setLoading(true)
+      setErrorMessage(null)
+    }
 
     try {
       const headers: Record<string, string> = {}
@@ -69,7 +74,9 @@ export function MatchDetailsModal({ isOpen, onClose, match }: MatchDetailsModalP
       if (timeA) queryParams.set('time_a', timeA)
       if (timeB) queryParams.set('time_b', timeB)
       if (datePart) queryParams.set('data', datePart)
-      if (force) queryParams.set('refresh', '1')
+      if (st) queryParams.set('status', st)
+      if (live) queryParams.set('isLive', 'true')
+      if (silent) queryParams.set('refresh', '1')
 
       const url = `${import.meta.env.VITE_POCKETBASE_URL}/backend/v1/detalhes-partida?${queryParams.toString()}`
       const res = await fetch(url, { headers })
@@ -136,10 +143,28 @@ export function MatchDetailsModal({ isOpen, onClose, match }: MatchDetailsModalP
   useEffect(() => {
     if (isOpen && match) {
       if (loadedFixtureId !== match.fixture?.id) {
-        fetchDetails(match)
+        fetchDetails(match, false)
       }
     }
   }, [isOpen, match, loadedFixtureId, fetchDetails])
+
+  // Revalidação periódica de 35s enquanto o modal estiver aberto E o jogo for ao vivo
+  useEffect(() => {
+    if (!isOpen || !match) return
+
+    const st = (match.fixture?.status?.short || '').toUpperCase().trim()
+    const isLiveGame = Boolean(match.isLive || isFixtureLive(st))
+
+    if (!isLiveGame) return
+
+    const intervalId = setInterval(() => {
+      fetchDetails(match, true)
+    }, 35000)
+
+    return () => {
+      clearInterval(intervalId)
+    }
+  }, [isOpen, match, fetchDetails])
 
   if (!match) return null
 
@@ -378,7 +403,7 @@ export function MatchDetailsModal({ isOpen, onClose, match }: MatchDetailsModalP
               <Button
                 size="sm"
                 variant="outline"
-                onClick={() => fetchDetails(match, true)}
+                onClick={() => fetchDetails(match, false)}
                 className="text-xs h-8 gap-1.5"
               >
                 <RefreshCw className="h-3 w-3" /> Tentar novamente
@@ -392,7 +417,7 @@ export function MatchDetailsModal({ isOpen, onClose, match }: MatchDetailsModalP
               <Button
                 size="sm"
                 variant="ghost"
-                onClick={() => fetchDetails(match, true)}
+                onClick={() => fetchDetails(match, false)}
                 className="text-xs text-slate-600 mt-2 gap-1"
               >
                 <RefreshCw className="h-3 w-3" /> Atualizar
@@ -441,7 +466,7 @@ export function MatchDetailsModal({ isOpen, onClose, match }: MatchDetailsModalP
                 <span>Total de {events.length} evento(s) registrado(s)</span>
                 <button
                   type="button"
-                  onClick={() => fetchDetails(match, true)}
+                  onClick={() => fetchDetails(match, false)}
                   className="hover:text-slate-600 flex items-center gap-1 underline font-medium cursor-pointer"
                 >
                   <RefreshCw className="h-2.5 w-2.5" /> Reconsultar

@@ -31,11 +31,36 @@ routerAdd(
       var timeA = (e.request.url.query().get('time_a') || '').trim()
       var timeB = (e.request.url.query().get('time_b') || '').trim()
       var dataParam = (e.request.url.query().get('data') || '').trim()
+      var statusParam = (e.request.url.query().get('status') || '').trim().toUpperCase()
+      var isLiveParam =
+        ['1H', '2H', 'HT', 'LIVE', 'ET', 'P', 'BT'].indexOf(statusParam) !== -1 ||
+        e.request.url.query().get('isLive') === 'true' ||
+        e.request.url.query().get('live') === '1'
 
       if (!fixtureIdParam && (!timeA || !timeB)) {
         return e.json(400, {
           error: 'Informe fixture_id ou time_a e time_b',
         })
+      }
+
+      var cacheKey = 'match_details_' + (fixtureIdParam || timeA + '_' + timeB + '_' + dataParam)
+      var cached = $app.store().get(cacheKey)
+      if (cached && typeof cached === 'string') {
+        try {
+          var parsed = JSON.parse(cached)
+          if (parsed && Array.isArray(parsed.events)) {
+            var cachedAt = parsed.cachedAtMs || 0
+            var nowMs = new Date().getTime()
+            var cacheAgeSec = Math.floor((nowMs - cachedAt) / 1000)
+
+            // Para partidas ao vivo, TTL estrito de 15 segundos
+            // Para partidas finalizadas ou agendadas, aceita cache persistente
+            var maxAgeSec = isLiveParam ? 15 : 3600
+            if (cacheAgeSec < maxAgeSec) {
+              return e.json(200, parsed)
+            }
+          }
+        } catch (_) {}
       }
 
       // 1. Recupera chaves de integração
@@ -368,13 +393,22 @@ routerAdd(
         return minA - minB
       })
 
-      return e.json(200, {
+      var payloadResult = {
         fixtureId: fixtureIdParam,
         provider: providerUsed,
         events: resultEvents,
         total: resultEvents.length,
+        isLive: isLiveParam,
+        cachedAtMs: new Date().getTime(),
         updatedAt: new Date().toISOString(),
-      })
+      }
+
+      // Salva no cache com TTL: 15s para partidas ao vivo, 1h para outras
+      try {
+        $app.store().set(cacheKey, JSON.stringify(payloadResult))
+      } catch (_) {}
+
+      return e.json(200, payloadResult)
     } catch (generalErr) {
       console.log('[DetalhesPartida] Erro geral:', generalErr)
       return e.json(500, {
