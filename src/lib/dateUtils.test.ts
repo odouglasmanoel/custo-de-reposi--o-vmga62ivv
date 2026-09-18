@@ -254,9 +254,6 @@ describe('dateUtils - Jogos de Hoje e Fuso de Brasília', () => {
         order: 'asc' | 'desc',
       ) => {
         return [...lista].sort((a, b) => {
-          const finA = Boolean(a.resultado_finalizado)
-          const finB = Boolean(b.resultado_finalizado)
-          if (finA !== finB) return finA ? 1 : -1
           const tsA = getGameTimestampMs(a)
           const tsB = getGameTimestampMs(b)
           return order === 'asc' ? tsA - tsB : tsB - tsA
@@ -274,6 +271,77 @@ describe('dateUtils - Jogos de Hoje e Fuso de Brasília', () => {
 
       const desc = sortJogosByOrder(lista, 'desc')
       expect(desc.map((j) => j.id)).toEqual(['jogo_15_06', 'jogo_12_06', 'jogo_10_06'])
+    })
+
+    it('ordena jogos da visualização "Exibindo todos os jogos" e "Apenas Pendentes" com a regra canônica de timestamp', () => {
+      const getMatchSortTimestamp = (jogo: { data: string; hora: string }): number => {
+        let isoDate = jogo.data
+        if (isoDate.includes('/')) {
+          const [d, m, y] = isoDate.split('/')
+          isoDate = `${y}-${m.padStart(2, '0')}-${d.padStart(2, '0')}`
+        } else {
+          const normalized = normalizeDataISO(isoDate)
+          if (normalized) isoDate = normalized
+        }
+        const hora = (jogo.hora || '00:00').slice(0, 5)
+        const ts = new Date(`${isoDate}T${hora}:00`).getTime()
+        return isNaN(ts) ? 0 : ts
+      }
+
+      const ordenarJogos = (
+        listaJogos: Array<{
+          id: string
+          data: string
+          hora: string
+          resultado_finalizado?: boolean
+        }>,
+        ordem: 'crescente' | 'decrescente',
+      ) => {
+        return [...listaJogos].sort((a, b) => {
+          const tsA = getMatchSortTimestamp(a)
+          const tsB = getMatchSortTimestamp(b)
+          if (ordem === 'decrescente') {
+            return tsB - tsA
+          } else {
+            return tsA - tsB
+          }
+        })
+      }
+
+      // Caso 1: Decrescente em "Exibindo todos os jogos" (21/09/2026 -> 19/09/2026 -> 17/09/2026 -> 16/09/2026)
+      const listaTodos = [
+        { id: 'j_16', data: '16/09/2026', hora: '19:00', resultado_finalizado: true },
+        { id: 'j_21', data: '21/09/2026', hora: '21:30', resultado_finalizado: false },
+        { id: 'j_17', data: '17/09/2026', hora: '20:00', resultado_finalizado: true },
+        { id: 'j_19', data: '19/09/2026', hora: '16:00', resultado_finalizado: false },
+      ]
+
+      const descTodos = ordenarJogos(listaTodos, 'decrescente')
+      expect(descTodos.map((j) => j.id)).toEqual(['j_21', 'j_19', 'j_17', 'j_16'])
+
+      // Caso 2: Crescente em "Exibindo todos os jogos" (16/09/2026 -> 17/09/2026 -> 19/09/2026 -> 21/09/2026)
+      const ascTodos = ordenarJogos(listaTodos, 'crescente')
+      expect(ascTodos.map((j) => j.id)).toEqual(['j_16', 'j_17', 'j_19', 'j_21'])
+
+      // Caso 3: Pendentes no modo decrescente (21/09/2026 21h30 vem antes de 19/09/2026 16h00)
+      const listaPendentes = [
+        { id: 'pend_19_16h', data: '2026-09-19', hora: '16:00', resultado_finalizado: false },
+        { id: 'pend_21_21h30', data: '2026-09-21', hora: '21:30', resultado_finalizado: false },
+      ]
+      const descPendentes = ordenarJogos(listaPendentes, 'decrescente')
+      expect(descPendentes.map((j) => j.id)).toEqual(['pend_21_21h30', 'pend_19_16h'])
+
+      // Caso 4: Mesmo dia com horários diferentes
+      const listaMesmoDia = [
+        { id: 'jogo_tarde', data: '2026-09-20', hora: '16:00', resultado_finalizado: false },
+        { id: 'jogo_noite', data: '2026-09-20', hora: '21:30', resultado_finalizado: false },
+        { id: 'jogo_manha', data: '2026-09-20', hora: '11:00', resultado_finalizado: false },
+      ]
+      const descMesmoDia = ordenarJogos(listaMesmoDia, 'decrescente')
+      expect(descMesmoDia.map((j) => j.id)).toEqual(['jogo_noite', 'jogo_tarde', 'jogo_manha'])
+
+      const ascMesmoDia = ordenarJogos(listaMesmoDia, 'crescente')
+      expect(ascMesmoDia.map((j) => j.id)).toEqual(['jogo_manha', 'jogo_tarde', 'jogo_noite'])
     })
   })
 })

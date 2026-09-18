@@ -990,7 +990,7 @@ export default function Palpites() {
     })
   }, [jogos, selectedCompeticao, bolaoMap])
 
-  // Helper canônico para cálculo de timestamp em milissegundos
+  // Helper canônico para cálculo de timestamp em milissegundos combinando data e hora
   const getMatchSortTimestamp = (jogo: Jogo): number => {
     if (!jogo.data) return 0
     let isoDate = jogo.data
@@ -1006,23 +1006,18 @@ export default function Palpites() {
     return isNaN(ts) ? 0 : ts
   }
 
-  const sortOrder: 'asc' | 'desc' =
-    manualSort !== null ? manualSort : filterPendentes ? 'asc' : 'desc'
+  const sortOrder: 'asc' | 'desc' = manualSort !== null ? manualSort : 'desc'
 
   const displayedJogos = useMemo(() => {
     const copy = [...filteredJogos]
     return copy.sort((a, b) => {
-      // 1. Mantém jogos pendentes no topo quando na visualização geral
-      const finA = Boolean(a.resultado_finalizado)
-      const finB = Boolean(b.resultado_finalizado)
-      if (finA !== finB) {
-        return finA ? 1 : -1
-      }
-
-      // 2. Ordenação por timestamp milissegundo conforme o seletor Crescente/Decrescente
       const tsA = getMatchSortTimestamp(a)
       const tsB = getMatchSortTimestamp(b)
-      return sortOrder === 'asc' ? tsA - tsB : tsB - tsA
+      if (sortOrder === 'desc') {
+        return tsB - tsA // Do mais recente/distante/futuro para o mais antigo
+      } else {
+        return tsA - tsB // Do mais antigo/próximo para o mais distante
+      }
     })
   }, [filteredJogos, sortOrder])
   const hasMore = currentPage < totalPages
@@ -1261,7 +1256,7 @@ export default function Palpites() {
                         encerramento.
                       </p>
                     ) : (
-                      <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2 lg:grid-cols-4">
+                      <div className="flex flex-col space-y-2.5">
                         {betsForGame.map((bet) => {
                           const part = participanteMap.get(bet.participante)
                           const nomeParticipante = part?.nome || 'Participante'
@@ -1269,6 +1264,9 @@ export default function Palpites() {
                             participantName &&
                             nomeParticipante.trim().toLowerCase() ===
                               participantName.trim().toLowerCase()
+
+                          const splitPalpite = getPalpiteMarcadoresPorTime(bet)
+                          const is0x0 = splitPalpite.placarA === 0 && splitPalpite.placarB === 0
 
                           return (
                             <div
@@ -1279,16 +1277,22 @@ export default function Palpites() {
                                   : 'border-slate-200 bg-white'
                               }`}
                             >
-                              <div className="flex items-center justify-between gap-1">
-                                <span className="font-bold text-[#0F172A] truncate">
-                                  {nomeParticipante}
-                                </span>
-                                <div className="flex items-center gap-1 shrink-0">
+                              {/* Linha superior: Nome do Participante + Ações / Badges */}
+                              <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-2">
+                                <div className="flex items-center gap-2 min-w-0">
+                                  <span
+                                    className="font-bold text-sm text-[#0F172A] break-words"
+                                    title={nomeParticipante}
+                                  >
+                                    {nomeParticipante}
+                                  </span>
                                   {isCurrentUser && (
-                                    <Badge className="bg-[#10B981] px-1 py-0 text-[9px] font-bold text-white hover:bg-[#10B981]">
+                                    <Badge className="bg-[#10B981] px-1.5 py-0 text-[10px] font-bold text-white hover:bg-[#10B981] shrink-0">
                                       Você
                                     </Badge>
                                   )}
+                                </div>
+                                <div className="flex items-center gap-1.5 shrink-0">
                                   {isAdmin && (
                                     <button
                                       type="button"
@@ -1300,77 +1304,72 @@ export default function Palpites() {
                                           timeB: jogo.time_b,
                                         })
                                       }
-                                      className="inline-flex items-center gap-0.5 rounded px-1.5 py-0.5 text-[9px] font-semibold text-amber-700 bg-amber-50 hover:bg-amber-100 border border-amber-200 transition"
+                                      className="inline-flex items-center gap-1 rounded px-2 py-0.5 text-[10px] font-semibold text-amber-700 bg-amber-50 hover:bg-amber-100 border border-amber-200 transition"
                                       title="Editar marcadores deste palpite (Admin)"
                                     >
-                                      <Edit3 className="h-2.5 w-2.5" />
+                                      <Edit3 className="h-3 w-3" />
                                       <span>Editar</span>
                                     </button>
                                   )}
+                                  {finalizado && (
+                                    <span
+                                      className={`rounded-md px-2 py-0.5 font-bold text-xs ${
+                                        bet.pontuacao_jogo > 0
+                                          ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
+                                          : 'bg-slate-100 text-slate-600 border border-slate-200'
+                                      }`}
+                                    >
+                                      +{bet.pontuacao_jogo} pts
+                                    </span>
+                                  )}
                                 </div>
                               </div>
-                              <div className="mt-1 text-xs font-semibold text-slate-800">
-                                Palpite:{' '}
-                                <strong className="text-sm font-black text-[#0F2A43]">
-                                  {bet.placar_a} x {bet.placar_b}
-                                </strong>
+
+                              {/* Linha intermediária: Palpite do Placar com destaque */}
+                              <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
+                                <div className="text-xs text-slate-700">
+                                  <span className="font-medium text-slate-500">Palpite:</span>{' '}
+                                  <strong className="text-sm font-black text-[#0F2A43]">
+                                    {bet.placar_a} x {bet.placar_b}
+                                  </strong>
+                                </div>
                               </div>
-                              {(() => {
-                                const splitPalpite = getPalpiteMarcadoresPorTime(bet)
-                                const is0x0 =
-                                  splitPalpite.placarA === 0 && splitPalpite.placarB === 0
 
-                                if (is0x0) {
-                                  return (
-                                    <div className="mt-1 text-[10px] text-slate-400 italic">
-                                      Sem marcadores (0x0)
-                                    </div>
-                                  )
-                                }
-
-                                return (
-                                  <div className="mt-1.5 space-y-0.5 border-t border-slate-200/60 pt-1 text-[11px] leading-snug">
-                                    <div className="truncate text-slate-700">
-                                      <span className="font-semibold text-slate-800">
-                                        Gols Mandante:
-                                      </span>{' '}
-                                      <span
-                                        className={
-                                          splitPalpite.labelA === '-'
-                                            ? 'text-slate-400'
-                                            : 'text-slate-900 font-medium'
-                                        }
-                                      >
-                                        {splitPalpite.labelA}
-                                      </span>
-                                    </div>
-                                    <div className="truncate text-slate-700">
-                                      <span className="font-semibold text-slate-800">
-                                        Gols Visitante:
-                                      </span>{' '}
-                                      <span
-                                        className={
-                                          splitPalpite.labelB === '-'
-                                            ? 'text-slate-400'
-                                            : 'text-slate-900 font-medium'
-                                        }
-                                      >
-                                        {splitPalpite.labelB}
-                                      </span>
-                                    </div>
+                              {/* Linha de Marcadores / Goleadores indicados */}
+                              {is0x0 ? (
+                                <div className="mt-1 text-[11px] text-slate-400 italic">
+                                  Sem marcadores (0x0)
+                                </div>
+                              ) : (
+                                <div className="mt-2 space-y-1 bg-slate-50/70 rounded p-2 border border-slate-100 text-[11px] leading-snug">
+                                  <div className="text-slate-700">
+                                    <span className="font-semibold text-slate-800">
+                                      Gols Mandante ({jogo.time_a}):
+                                    </span>{' '}
+                                    <span
+                                      className={
+                                        splitPalpite.labelA === '-'
+                                          ? 'text-slate-400'
+                                          : 'text-slate-900 font-medium'
+                                      }
+                                    >
+                                      {splitPalpite.labelA}
+                                    </span>
                                   </div>
-                                )
-                              })()}
-                              {finalizado && (
-                                <div className="mt-1.5 pt-1.5 border-t border-slate-100 flex items-center justify-between text-[11px]">
-                                  <span className="text-slate-500 font-medium">Pontos:</span>
-                                  <span
-                                    className={`font-bold ${
-                                      bet.pontuacao_jogo > 0 ? 'text-emerald-700' : 'text-slate-500'
-                                    }`}
-                                  >
-                                    +{bet.pontuacao_jogo} pts
-                                  </span>
+                                  <div className="text-slate-700">
+                                    <span className="font-semibold text-slate-800">
+                                      Gols Visitante ({jogo.time_b}):
+                                    </span>{' '}
+                                    <span
+                                      className={
+                                        splitPalpite.labelB === '-'
+                                          ? 'text-slate-400'
+                                          : 'text-slate-900 font-medium'
+                                      }
+                                    >
+                                      {splitPalpite.labelB}
+                                    </span>
+                                  </div>
                                 </div>
                               )}
                             </div>
@@ -2040,9 +2039,9 @@ export default function Palpites() {
             <button
               type="button"
               onClick={() => setManualSort('asc')}
-              title="Ordenar por data/hora crescente (próximos jogos primeiro)"
+              title="Ordenar por data/hora crescente (jogos mais antigos primeiro)"
               className={`inline-flex items-center gap-1 rounded-md px-2.5 py-1 text-xs font-medium transition ${
-                (manualSort !== null ? manualSort === 'asc' : filterPendentes)
+                sortOrder === 'asc'
                   ? 'bg-[#0F2A43] text-white shadow-2xs font-semibold'
                   : 'text-slate-600 hover:text-slate-900'
               }`}
@@ -2052,9 +2051,9 @@ export default function Palpites() {
             <button
               type="button"
               onClick={() => setManualSort('desc')}
-              title="Ordenar por data/hora decrescente (jogos mais recentes no topo)"
+              title="Ordenar por data/hora decrescente (jogos mais futuros/recentes primeiro)"
               className={`inline-flex items-center gap-1 rounded-md px-2.5 py-1 text-xs font-medium transition ${
-                (manualSort !== null ? manualSort === 'desc' : !filterPendentes)
+                sortOrder === 'desc'
                   ? 'bg-[#0F2A43] text-white shadow-2xs font-semibold'
                   : 'text-slate-600 hover:text-slate-900'
               }`}
