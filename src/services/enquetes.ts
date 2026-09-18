@@ -9,6 +9,7 @@ export interface EnqueteModel extends RecordModel {
   status: 'aberta' | 'encerrada' | 'cadastrada'
   criado_por?: string
   limite_votos: number
+  data_limite_votacao?: string
 }
 
 export interface EnqueteJogoModel extends RecordModel {
@@ -172,10 +173,11 @@ export async function criarEnquete(params: {
   dataFim: string
   jogos: JogoBuscado[]
   limiteVotos?: number
+  dataLimiteVotacao?: string
 }): Promise<EnqueteModel> {
   const userId = pb.authStore.record?.id || ''
 
-  const enquete = await pb.collection('enquetes').create<EnqueteModel>({
+  const payload: Record<string, any> = {
     titulo: params.titulo.trim(),
     descricao: params.descricao?.trim() || '',
     data_inicio: params.dataInicio,
@@ -183,7 +185,13 @@ export async function criarEnquete(params: {
     status: 'aberta',
     criado_por: userId || null,
     limite_votos: params.limiteVotos || 10,
-  })
+  }
+
+  if (params.dataLimiteVotacao) {
+    payload.data_limite_votacao = params.dataLimiteVotacao.trim()
+  }
+
+  const enquete = await pb.collection('enquetes').create<EnqueteModel>(payload)
 
   // Insere os jogos associados à enquete
   for (const j of params.jogos) {
@@ -671,8 +679,13 @@ export async function toggleAdminSelecaoJogo(jogoId: string, selecionado: boolea
 export async function atualizarStatusEnquete(
   enqueteId: string,
   status: 'aberta' | 'encerrada' | 'cadastrada',
+  dataLimiteVotacao?: string,
 ): Promise<void> {
-  await pb.collection('enquetes').update(enqueteId, { status })
+  const payload: Record<string, any> = { status }
+  if (dataLimiteVotacao !== undefined) {
+    payload.data_limite_votacao = dataLimiteVotacao.trim()
+  }
+  await pb.collection('enquetes').update(enqueteId, payload)
   invalidateEnqueteCache(enqueteId)
   writeListaEnquetesCache([]) // Força revalidação da lista
 }

@@ -484,3 +484,130 @@ export function compareJogosDecrescente<T extends JogoSortable>(a: T, b: T): num
 export function sortJogosDecrescente<T extends JogoSortable>(jogos: T[]): T[] {
   return [...jogos].sort(compareJogosDecrescente)
 }
+
+/**
+ * Converte data_limite_votacao (que pode ser ISO "YYYY-MM-DDTHH:mm", "YYYY-MM-DD HH:mm", ou data simples "YYYY-MM-DD")
+ * para timestamp UTC em milissegundos, considerando o fuso de Brasília (UTC-3).
+ *
+ * Se apenas a data "YYYY-MM-DD" for fornecida (sem horário explícito), considera o final do dia (23:59:59 em Brasília).
+ */
+export function getEnqueteDeadlineTimestamp(
+  limiteStr?: string | null,
+  fallbackDataFim?: string | null,
+): number | null {
+  const target = (limiteStr || '').trim() || (fallbackDataFim || '').trim()
+  if (!target) return null
+
+  // Trata formato datetime com data e hora: "YYYY-MM-DDTHH:mm", "YYYY-MM-DD HH:mm", "YYYY-MM-DDTHH:mm:ss"
+  const dtMatch = target.match(/^(\d{4})-(\d{2})-(\d{2})[T ](\d{1,2}):(\d{2})(?::(\d{2}))?/)
+  if (dtMatch) {
+    const year = parseInt(dtMatch[1], 10)
+    const month = parseInt(dtMatch[2], 10)
+    const day = parseInt(dtMatch[3], 10)
+    const hours = parseInt(dtMatch[4], 10)
+    const minutes = parseInt(dtMatch[5], 10)
+    const seconds = dtMatch[6] ? parseInt(dtMatch[6], 10) : 0
+    // Horário local de Brasília (UTC-3) convertido para UTC (horas + 3)
+    return Date.UTC(year, month - 1, day, hours + 3, minutes, seconds, 0)
+  }
+
+  // Trata formato DD/MM/YYYY HH:mm
+  const brDtMatch = target.match(/^(\d{2})\/(\d{2})\/(\d{4})[T ](\d{1,2}):(\d{2})(?::(\d{2}))?/)
+  if (brDtMatch) {
+    const day = parseInt(brDtMatch[1], 10)
+    const month = parseInt(brDtMatch[2], 10)
+    const year = parseInt(brDtMatch[3], 10)
+    const hours = parseInt(brDtMatch[4], 10)
+    const minutes = parseInt(brDtMatch[5], 10)
+    const seconds = brDtMatch[6] ? parseInt(brDtMatch[6], 10) : 0
+    return Date.UTC(year, month - 1, day, hours + 3, minutes, seconds, 0)
+  }
+
+  // Se for apenas data YYYY-MM-DD (ex: enquetes antigas usando data_fim), encerra às 23:59:59 de Brasília
+  const dateOnlyMatch = target.match(/^(\d{4})-(\d{2})-(\d{2})$/)
+  if (dateOnlyMatch) {
+    const year = parseInt(dateOnlyMatch[1], 10)
+    const month = parseInt(dateOnlyMatch[2], 10)
+    const day = parseInt(dateOnlyMatch[3], 10)
+    return Date.UTC(year, month - 1, day, 23 + 3, 59, 59, 999)
+  }
+
+  // Se for apenas data DD/MM/YYYY
+  const brDateMatch = target.match(/^(\d{2})\/(\d{2})\/(\d{4})$/)
+  if (brDateMatch) {
+    const day = parseInt(brDateMatch[1], 10)
+    const month = parseInt(brDateMatch[2], 10)
+    const year = parseInt(brDateMatch[3], 10)
+    return Date.UTC(year, month - 1, day, 23 + 3, 59, 59, 999)
+  }
+
+  // Fallback via Date parsing
+  try {
+    const parsed = new Date(target)
+    if (!isNaN(parsed.getTime())) {
+      return parsed.getTime()
+    }
+  } catch {
+    /* ignore */
+  }
+
+  return null
+}
+
+/**
+ * Verifica se a enquete ultrapassou o prazo limite de votação configurado.
+ */
+export function isEnqueteExpirada(
+  limiteStr?: string | null,
+  fallbackDataFim?: string | null,
+  nowMs: number = Date.now(),
+): boolean {
+  const deadlineMs = getEnqueteDeadlineTimestamp(limiteStr, fallbackDataFim)
+  if (!deadlineMs) return false
+  return nowMs >= deadlineMs
+}
+
+/**
+ * Formata o prazo limite da enquete para exibição amigável em português:
+ * Exemplo: "20/09/2026 às 12:00"
+ */
+export function formatEnquetePrazoLimiteBR(
+  limiteStr?: string | null,
+  fallbackDataFim?: string | null,
+): string {
+  const target = (limiteStr || '').trim() || (fallbackDataFim || '').trim()
+  if (!target) return '—'
+
+  // Match YYYY-MM-DDTHH:mm
+  const dtMatch = target.match(/^(\d{4})-(\d{2})-(\d{2})[T ](\d{1,2}):(\d{2})/)
+  if (dtMatch) {
+    const day = dtMatch[3].padStart(2, '0')
+    const month = dtMatch[2].padStart(2, '0')
+    const year = dtMatch[1]
+    const hours = dtMatch[4].padStart(2, '0')
+    const minutes = dtMatch[5].padStart(2, '0')
+    return `${day}/${month}/${year} às ${hours}:${minutes}`
+  }
+
+  // Match DD/MM/YYYY HH:mm
+  const brDtMatch = target.match(/^(\d{2})\/(\d{2})\/(\d{4})[T ](\d{1,2}):(\d{2})/)
+  if (brDtMatch) {
+    const day = brDtMatch[1].padStart(2, '0')
+    const month = brDtMatch[2].padStart(2, '0')
+    const year = brDtMatch[3]
+    const hours = brDtMatch[4].padStart(2, '0')
+    const minutes = brDtMatch[5].padStart(2, '0')
+    return `${day}/${month}/${year} às ${hours}:${minutes}`
+  }
+
+  // Match apenas data YYYY-MM-DD -> exibe 23:59 ou apenas data
+  const dateOnlyMatch = target.match(/^(\d{4})-(\d{2})-(\d{2})$/)
+  if (dateOnlyMatch) {
+    const day = dateOnlyMatch[3].padStart(2, '0')
+    const month = dateOnlyMatch[2].padStart(2, '0')
+    const year = dateOnlyMatch[1]
+    return `${day}/${month}/${year} às 23:59`
+  }
+
+  return formatDataBR(target)
+}
