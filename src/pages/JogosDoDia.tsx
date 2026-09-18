@@ -14,7 +14,9 @@ import {
   Shield,
   ChevronDown,
   ChevronUp,
+  FileText,
 } from 'lucide-react'
+import { MatchDetailsModal } from '@/components/MatchDetailsModal'
 import pb from '@/lib/pocketbase/client'
 import { useAuth } from '@/context/AuthContext'
 import { Card } from '@/components/ui/card'
@@ -175,10 +177,16 @@ interface MatchRowItemProps {
   match: DayFixture
   renderStatusBadge: (fixture: DayFixture) => React.ReactNode
   getMatchScorers: (fixture: DayFixture) => { homeScorers: string[]; awayScorers: string[] }
+  onOpenDetails: (fixture: DayFixture) => void
 }
 
 const MatchRowItem = React.memo(
-  function MatchRowItem({ match, renderStatusBadge, getMatchScorers }: MatchRowItemProps) {
+  function MatchRowItem({
+    match,
+    renderStatusBadge,
+    getMatchScorers,
+    onOpenDetails,
+  }: MatchRowItemProps) {
     const { homeScorers, awayScorers } = getMatchScorers(match)
     const stMatch = (match.fixture?.status?.short || '').toUpperCase().trim()
     const longMatch = (match.fixture?.status?.long || '').toUpperCase().trim()
@@ -373,11 +381,19 @@ const MatchRowItem = React.memo(
             })()}
           </div>
 
-          {/* Espaço lateral para ID e alinhamento uniforme */}
-          <div className="shrink-0 text-right sm:w-28 flex items-center justify-end gap-1">
-            <span className="text-[10px] text-slate-400 block truncate max-w-[70px]">
-              {match.fixture.id}
-            </span>
+          {/* Espaço lateral com botão Exibir Detalhes */}
+          <div className="shrink-0 flex items-center justify-end gap-2 sm:w-36">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => onOpenDetails(match)}
+              className="h-7 px-2.5 text-[11px] font-semibold text-slate-700 hover:text-slate-900 hover:bg-slate-100 border-slate-200 gap-1 rounded-md cursor-pointer transition shadow-2xs"
+              title="Exibir Ficha e Detalhes da Partida"
+            >
+              <FileText className="h-3 w-3 text-slate-500" />
+              <span>Exibir Detalhes</span>
+            </Button>
           </div>
         </div>
       </div>
@@ -435,6 +451,20 @@ export default function JogosDoDia() {
   const [selectedRound, setSelectedRound] = useState<string>('todos')
   const [selectedStatus, setSelectedStatus] = useState<string>('todos') // todos, ao-vivo, em-breve, finalizado
   const [searchTerm, setSearchTerm] = useState<string>('')
+
+  // Modal de Detalhes da Partida sob demanda
+  const [selectedDetailsMatch, setSelectedDetailsMatch] = useState<DayFixture | null>(null)
+  const [isDetailsModalOpen, setIsDetailsModalOpen] = useState(false)
+
+  const handleOpenDetails = useCallback((match: DayFixture) => {
+    setSelectedDetailsMatch(match)
+    setIsDetailsModalOpen(true)
+  }, [])
+
+  const handleCloseDetails = useCallback(() => {
+    setIsDetailsModalOpen(false)
+    setSelectedDetailsMatch(null)
+  }, [])
 
   const fetchJogos = useCallback(
     async (dateStr: string, force = false) => {
@@ -1853,6 +1883,7 @@ export default function JogosDoDia() {
                       match={match}
                       renderStatusBadge={renderStatusBadge}
                       getMatchScorers={getMatchScorers}
+                      onOpenDetails={handleOpenDetails}
                     />
                   ))}
                 </div>{' '}
@@ -1861,6 +1892,13 @@ export default function JogosDoDia() {
           })}
         </div>
       )}
+
+      {/* Modal de Detalhes da Partida (Sob Demanda) */}
+      <MatchDetailsModal
+        isOpen={isDetailsModalOpen}
+        onClose={handleCloseDetails}
+        match={selectedDetailsMatch}
+      />
     </div>
   )
 }

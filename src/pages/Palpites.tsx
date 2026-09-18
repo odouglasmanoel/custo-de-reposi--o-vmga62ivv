@@ -961,25 +961,36 @@ export default function Palpites() {
     return map
   }, [participantesList])
 
-  // Lista dinâmica das competições presentes nos jogos carregados
-  const availableCompeticoes = useMemo(() => {
-    const set = new Set<string>()
-    for (const j of jogos) {
-      const comp = (j.competicao || '').trim()
-      if (comp) {
-        set.add(comp)
-      }
-    }
-    return Array.from(set).sort((a, b) => a.localeCompare(b))
-  }, [jogos])
+  // Opções fixas de filtragem por Copa interna do sistema
+  const FIXED_COPAS = useMemo(
+    () => ['Copa Coni', 'Copa Genilton', 'Copa Sormani', 'Copa do Mundo'],
+    [],
+  )
 
-  // Lista filtrada por competição antes da ordenação
+  // Lista filtrada por Copa interna (tag/categoria vinculada ao bolão do jogo) antes da ordenação
   const filteredJogos = useMemo(() => {
     if (!selectedCompeticao || selectedCompeticao === 'todas') {
       return jogos
     }
-    return jogos.filter((j) => (j.competicao || '').trim() === selectedCompeticao)
-  }, [jogos, selectedCompeticao])
+
+    const targetCopaNormalized = selectedCompeticao.trim().toLowerCase()
+    return jogos.filter((j) => {
+      // 1. Verifica se o bolão vinculado ao jogo tem o nome da copa
+      const bolao = bolaoMap.get(j.bolao)
+      const nomeBolao = (bolao?.nome || '').trim().toLowerCase()
+      if (nomeBolao === targetCopaNormalized) {
+        return true
+      }
+
+      // 2. Fallback caso a tag da copa interna esteja preenchida no campo competicao do jogo
+      const compJogo = (j.competicao || '').trim().toLowerCase()
+      if (compJogo.startsWith(targetCopaNormalized) || compJogo.includes(targetCopaNormalized)) {
+        return true
+      }
+
+      return false
+    })
+  }, [jogos, selectedCompeticao, bolaoMap])
 
   const displayedJogos = useMemo(() => {
     const effectiveSort = manualSort !== null ? manualSort : filterPendentes ? 'asc' : 'desc'
@@ -1989,9 +2000,9 @@ export default function Palpites() {
               className="h-8 rounded-lg border border-slate-300 bg-white px-2.5 text-xs font-medium text-slate-700 hover:bg-slate-50 focus:border-[#0F2A43] focus:outline-hidden"
             >
               <option value="todas">Todas as Copas</option>
-              {availableCompeticoes.map((comp) => (
-                <option key={comp} value={comp}>
-                  {comp}
+              {FIXED_COPAS.map((copa) => (
+                <option key={copa} value={copa}>
+                  {copa}
                 </option>
               ))}
             </select>
