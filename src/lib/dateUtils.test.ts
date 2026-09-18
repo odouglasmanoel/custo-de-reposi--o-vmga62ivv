@@ -170,7 +170,7 @@ describe('dateUtils - Jogos de Hoje e Fuso de Brasília', () => {
   })
 
   describe('compareJogosCrescente / sortJogosCrescente', () => {
-    it('ordena jogos pendentes primeiro, com datas e horários em ordem crescente (mais próximos de acontecer no topo)', () => {
+    it('ordena todos os jogos de forma unificada (finalizados e pendentes juntos) em ordem crescente', () => {
       const jogosTeste = [
         { id: '1', data: '2026-06-15', hora: '18:00', resultado_finalizado: false },
         { id: '2', data: '2026-06-12', hora: '20:00', resultado_finalizado: false },
@@ -182,26 +182,65 @@ describe('dateUtils - Jogos de Hoje e Fuso de Brasília', () => {
 
       const sorted = sortJogosCrescente(jogosTeste)
 
-      // 1. Jogos pendentes vêm primeiro, em ordem crescente de data e horário:
-      // Mais próximo: 2026-06-12 às 16:00 (id 3)
-      expect(sorted[0].id).toBe('3')
-      // Segundo mais próximo: 2026-06-12 às 20:00 (id 2)
-      expect(sorted[1].id).toBe('2')
-      // Terceiro: 2026-06-15 às 18:00 (id 1)
-      expect(sorted[2].id).toBe('1')
+      // Ordem cronológica estrita crescente:
+      // 1. 2026-06-10 16:00 (id 6)
+      expect(sorted[0].id).toBe('6')
+      // 2. 2026-06-10 21:30 (id 4)
+      expect(sorted[1].id).toBe('4')
+      // 3. 2026-06-11 16:00 (id 5)
+      expect(sorted[2].id).toBe('5')
+      // 4. 2026-06-12 16:00 (id 3)
+      expect(sorted[3].id).toBe('3')
+      // 5. 2026-06-12 20:00 (id 2)
+      expect(sorted[4].id).toBe('2')
+      // 6. 2026-06-15 18:00 (id 1)
+      expect(sorted[5].id).toBe('1')
+    })
 
-      // 2. Jogos finalizados vêm depois, também em ordem crescente:
-      // 2026-06-10 às 16:00 (id 6)
-      expect(sorted[3].id).toBe('6')
-      // 2026-06-10 às 21:30 (id 4)
-      expect(sorted[4].id).toBe('4')
-      // 2026-06-11 às 16:00 (id 5)
-      expect(sorted[5].id).toBe('5')
+    it('ordena jogos finalizados com horários "19h00" e "21h30" (formato com h) corretamente na ordem crescente', () => {
+      const jogosComH = [
+        {
+          id: 'flamengo_delvalle',
+          time: 'Flamengo x Del Valle',
+          data: '2026-09-17',
+          hora: '21h30',
+          resultado_finalizado: true,
+        },
+        {
+          id: 'corinthians_estudiantes',
+          time: 'Corinthians x Estudiantes',
+          data: '2026-09-16',
+          hora: '21h30',
+          resultado_finalizado: true,
+        },
+        {
+          id: 'ldu_palmeiras',
+          time: 'LDU x Palmeiras',
+          data: '2026-09-16',
+          hora: '19h00',
+          resultado_finalizado: true,
+        },
+        {
+          id: 'atletico_santos',
+          time: 'Atlético-MG x Santos',
+          data: '2026-09-17',
+          hora: '19h00',
+          resultado_finalizado: true,
+        },
+      ]
+
+      const sorted = sortJogosCrescente(jogosComH)
+      expect(sorted.map((j) => j.id)).toEqual([
+        'ldu_palmeiras', // 16/09 às 19h00
+        'corinthians_estudiantes', // 16/09 às 21h30
+        'atletico_santos', // 17/09 às 19h00
+        'flamengo_delvalle', // 17/09 às 21h30
+      ])
     })
   })
 
   describe('compareJogosDecrescente / sortJogosDecrescente', () => {
-    it('ordena jogos pendentes primeiro, com datas e horários em ordem decrescente (mais recentes/distantes no topo)', () => {
+    it('ordena todos os jogos de forma unificada (finalizados e pendentes juntos) em ordem decrescente', () => {
       const jogosTeste = [
         { id: '1', data: '2026-06-12', hora: '16:00', resultado_finalizado: false },
         { id: '2', data: '2026-06-15', hora: '18:00', resultado_finalizado: false },
@@ -213,19 +252,60 @@ describe('dateUtils - Jogos de Hoje e Fuso de Brasília', () => {
 
       const sorted = sortJogosDecrescente(jogosTeste)
 
-      // 1. Jogos pendentes vêm primeiro, em ordem decrescente de data e horário:
-      // Mais distante/futuro: 2026-06-15 às 18:00 (id 2)
+      // Ordem cronológica estrita decrescente:
+      // 1. 2026-06-15 18:00 (id 2)
       expect(sorted[0].id).toBe('2')
-      // Na data 2026-06-12: mais tarde primeiro (20:00 -> id 3) antes de (16:00 -> id 1)
+      // 2. 2026-06-12 20:00 (id 3)
       expect(sorted[1].id).toBe('3')
+      // 3. 2026-06-12 16:00 (id 1)
       expect(sorted[2].id).toBe('1')
-
-      // 2. Jogos finalizados vêm depois, também em ordem decrescente:
-      // Mais recente: 2026-06-11 às 16:00 (id 5)
+      // 4. 2026-06-11 16:00 (id 5)
       expect(sorted[3].id).toBe('5')
-      // Na data 2026-06-10: mais tarde primeiro (21:30 -> id 6) antes de (16:00 -> id 4)
+      // 5. 2026-06-10 21:30 (id 6)
       expect(sorted[4].id).toBe('6')
+      // 6. 2026-06-10 16:00 (id 4)
       expect(sorted[5].id).toBe('4')
+    })
+
+    it('ordena jogos finalizados com horários "19h00" e "21h30" (formato com h) corretamente na ordem decrescente', () => {
+      const jogosComH = [
+        {
+          id: 'ldu_palmeiras',
+          time: 'LDU x Palmeiras',
+          data: '2026-09-16',
+          hora: '19h00',
+          resultado_finalizado: true,
+        },
+        {
+          id: 'corinthians_estudiantes',
+          time: 'Corinthians x Estudiantes',
+          data: '2026-09-16',
+          hora: '21h30',
+          resultado_finalizado: true,
+        },
+        {
+          id: 'atletico_santos',
+          time: 'Atlético-MG x Santos',
+          data: '2026-09-17',
+          hora: '19h00',
+          resultado_finalizado: true,
+        },
+        {
+          id: 'flamengo_delvalle',
+          time: 'Flamengo x Del Valle',
+          data: '2026-09-17',
+          hora: '21h30',
+          resultado_finalizado: true,
+        },
+      ]
+
+      const sorted = sortJogosDecrescente(jogosComH)
+      expect(sorted.map((j) => j.id)).toEqual([
+        'flamengo_delvalle', // 17/09 às 21h30
+        'atletico_santos', // 17/09 às 19h00
+        'corinthians_estudiantes', // 16/09 às 21h30
+        'ldu_palmeiras', // 16/09 às 19h00
+      ])
     })
 
     it('posiciona corretamente jogos futuros no modo decrescente (ex: 17/09/2026 antes de 16/09/2026)', () => {

@@ -443,15 +443,7 @@ export function sortJogosCadastrados<T extends JogoSortable>(jogos: T[]): T[] {
  * 3. Horário crescente na mesma data: mais cedo primeiro (ex: 16:00 antes de 20:00).
  */
 export function compareJogosCrescente<T extends JogoSortable>(a: T, b: T): number {
-  const finalizadoA = Boolean(a.resultado_finalizado)
-  const finalizadoB = Boolean(b.resultado_finalizado)
-
-  // 1. Status/Pendência: pendentes (false) primeiro, encerrados (true) depois
-  if (finalizadoA !== finalizadoB) {
-    return finalizadoA ? 1 : -1
-  }
-
-  // 2. Timestamp UTC combinado no fuso de Brasília: ordem crescente (mais cedo / mais próximo primeiro)
+  // Timestamp UTC combinado no fuso de Brasília: ordem crescente unificada (mais cedo / mais próximo primeiro)
   const tsA = getJogoSortTimestamp(a.data, a.hora)
   const tsB = getJogoSortTimestamp(b.data, b.hora)
   if (tsA !== tsB) {
@@ -476,11 +468,7 @@ export function sortJogosCrescente<T extends JogoSortable>(jogos: T[]): T[] {
  * 3. Horário decrescente na mesma data: jogos mais tarde primeiro.
  */
 export function compareJogosDecrescente<T extends JogoSortable>(a: T, b: T): number {
-  const finalizadoA = Boolean(a.resultado_finalizado)
-  const finalizadoB = Boolean(b.resultado_finalizado)
-  if (finalizadoA !== finalizadoB) return finalizadoA ? 1 : -1
-
-  // Timestamp UTC combinado no fuso de Brasília: mais futuro/recente primeiro (tsB - tsA)
+  // Timestamp UTC combinado no fuso de Brasília: ordem decrescente unificada (mais futuro/recente primeiro)
   const tsA = getJogoSortTimestamp(a.data, a.hora)
   const tsB = getJogoSortTimestamp(b.data, b.hora)
   if (tsA !== tsB) {

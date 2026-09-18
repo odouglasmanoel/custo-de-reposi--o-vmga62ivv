@@ -38,9 +38,11 @@ import {
   isPalpiteEncerrado,
   formatHoraEncerramento,
   normalizeDataISO,
+  getJogoSortTimestamp,
   sortJogosCrescente,
   sortJogosDecrescente,
 } from '@/lib/dateUtils'
+import { getScoreBreakdownBadges } from '@/lib/scoreBadgeUtils'
 import { formatPalpiteMarcadoresSummary, getPalpiteMarcadoresPorTime } from '@/lib/scorerUtils'
 import { buscarEscudoTime, readEscudoCache } from '@/services/enquetes'
 import { GameLineupAccordion } from '@/components/GameLineupAccordion'
@@ -187,6 +189,8 @@ export default function Palpites() {
   const [manualSort, setManualSort] = useState<'asc' | 'desc' | null>(null)
   const [loadingGroupBets, setLoadingGroupBets] = useState(false)
   const [loadedGroupBets, setLoadedGroupBets] = useState(false)
+  const [expandedGroupBets, setExpandedGroupBets] = useState<Record<string, boolean>>({})
+  const [selectedBetByGame, setSelectedBetByGame] = useState<Record<string, string>>({})
   // Se houver cache inicial para este escopo, a tela NÃO bloqueia em spinner, entra revalidando em background
   const [loading, setLoading] = useState(() => !initialCache || initialCache.jogos.length === 0)
   const [isBackgroundRevalidating, setIsBackgroundRevalidating] = useState(
@@ -281,6 +285,8 @@ export default function Palpites() {
       prevScopeRef.current = scopeKey
       setCurrentPage(1)
       setLoadedGroupBets(false)
+      setExpandedGroupBets({})
+      setSelectedBetByGame({})
       setAllGroupPalpites([])
 
       const uid = (user?.id as string) || (user?.email as string) || ''
@@ -324,7 +330,7 @@ export default function Palpites() {
             }),
             pb.collection('palpites').getFullList<Palpite>({
               fields:
-                'id,bolao,jogo,participante,placar_a,placar_b,goleadores_a,goleadores_b,pontuacao_jogo,vencedor_penaltis',
+                'id,bolao,jogo,participante,placar_a,placar_b,goleadores_a,goleadores_b,pontuacao_jogo,vencedor_penaltis,detalhamento',
             }),
           ])
           setParticipantesList(allParts)
@@ -344,7 +350,7 @@ export default function Palpites() {
               pb.collection('palpites').getFullList<Palpite>({
                 filter: `bolao = '${currentTargetBolaoId}'`,
                 fields:
-                  'id,bolao,jogo,participante,placar_a,placar_b,goleadores_a,goleadores_b,pontuacao_jogo,vencedor_penaltis',
+                  'id,bolao,jogo,participante,placar_a,placar_b,goleadores_a,goleadores_b,pontuacao_jogo,vencedor_penaltis,detalhamento',
               }),
             ])
             setParticipantesList(parts)
@@ -364,6 +370,20 @@ export default function Palpites() {
     activeGroupBetsPromiseRef.current = promise
     return promise
   }, [loadedGroupBets, isGeralParam, activeBolaoId, boloes])
+
+  const handleToggleGroupBets = useCallback(
+    async (jogoId: string) => {
+      const willBeExpanded = !expandedGroupBets[jogoId]
+      setExpandedGroupBets((prev) => ({
+        ...prev,
+        [jogoId]: willBeExpanded,
+      }))
+      if (willBeExpanded && !loadedGroupBets) {
+        await loadGroupBetsOnDemand()
+      }
+    },
+    [expandedGroupBets, loadedGroupBets, loadGroupBetsOnDemand],
+  )
 
   // Carregamento principal dos jogos e palpites do usuário logado
   // Com LIMIT 20 real na query (getList(page, 20)), filtro de pendentes no backend
@@ -990,29 +1010,13 @@ export default function Palpites() {
     })
   }, [jogos, selectedCompeticao, bolaoMap])
 
-  // Helper canônico para cálculo de timestamp em milissegundos combinando data e hora
-  const getMatchSortTimestamp = (jogo: Jogo): number => {
-    if (!jogo.data) return 0
-    let isoDate = jogo.data
-    if (isoDate.includes('/')) {
-      const [d, m, y] = isoDate.split('/')
-      isoDate = `${y}-${m.padStart(2, '0')}-${d.padStart(2, '0')}`
-    } else {
-      const normalized = normalizeDataISO(isoDate)
-      if (normalized) isoDate = normalized
-    }
-    const hora = (jogo.hora || (jogo as any).horario || '00:00').slice(0, 5)
-    const ts = new Date(`${isoDate}T${hora}:00`).getTime()
-    return isNaN(ts) ? 0 : ts
-  }
-
   const sortOrder: 'asc' | 'desc' = manualSort !== null ? manualSort : 'desc'
 
   const displayedJogos = useMemo(() => {
     const copy = [...filteredJogos]
     return copy.sort((a, b) => {
-      const tsA = getMatchSortTimestamp(a)
-      const tsB = getMatchSortTimestamp(b)
+      const tsA = getJogoSortTimestamp(a.data, a.hora)
+      const tsB = getJogoSortTimestamp(b.data, b.hora)
       if (sortOrder === 'desc') {
         return tsB - tsA // Do mais recente/distante/futuro para o mais antigo
       } else {
@@ -1045,6 +1049,9 @@ export default function Palpites() {
         savingGameId,
         loadedGroupBets,
         loadingGroupBets,
+        isGroupBetsExpanded,
+        selectedBetId,
+        onSelectBet,
         betsForGame,
         participanteMap,
         participantName,
@@ -1053,7 +1060,7 @@ export default function Palpites() {
         currentLineup,
         onLineupLoaded,
         onToggleDetails,
-        onLoadGroupBets,
+        onToggleGroupBets,
         onSetEditing,
         onCancelEditing,
         onScoreChange,
@@ -1081,6 +1088,9 @@ export default function Palpites() {
         savingGameId: string | null
         loadedGroupBets: boolean
         loadingGroupBets: boolean
+        isGroupBetsExpanded: boolean
+        selectedBetId: string | undefined
+        onSelectBet: (betId: string) => void
         betsForGame: Palpite[]
         participanteMap: Map<string, Participante>
         participantName: string
@@ -1089,7 +1099,7 @@ export default function Palpites() {
         currentLineup: LineupResponse | undefined
         onLineupLoaded: (lineup: LineupResponse) => void
         onToggleDetails: (id: string) => void
-        onLoadGroupBets: () => void
+        onToggleGroupBets: () => void
         onSetEditing: (id: string, editing: boolean) => void
         onCancelEditing: (id: string, palpite: Palpite | undefined) => void
         onScoreChange: (jogoId: string, side: 'a' | 'b', val: string) => void
@@ -1203,178 +1213,188 @@ export default function Palpites() {
                   finalizado || isPalpiteEncerrado(jogo.data, jogo.hora, nowMs)
                 if (!isExpiredOrFinalized) return null
 
-                if (!loadedGroupBets) {
-                  return (
-                    <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50/80 p-3 text-center">
-                      <p className="text-xs text-slate-600 mb-2">
-                        Palpites do grupo disponíveis para esta partida encerrada ou iniciada.
-                      </p>
+                return (
+                  <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50/80 p-3">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-1.5">
+                        <Users className="h-4 w-4 text-[#0F2A43]" />
+                        <span className="text-xs font-bold text-[#0F172A]">Palpites do Grupo</span>
+                        {loadedGroupBets && (
+                          <Badge
+                            variant="outline"
+                            className="border-slate-300 bg-white text-[10px] font-semibold text-slate-700 ml-1"
+                          >
+                            {betsForGame.length}
+                          </Badge>
+                        )}
+                      </div>
+
                       <Button
                         type="button"
                         variant="outline"
                         size="sm"
                         disabled={loadingGroupBets}
-                        onClick={onLoadGroupBets}
+                        onClick={onToggleGroupBets}
                         className="h-7 text-xs font-semibold border-slate-300 text-[#0F2A43] hover:bg-white"
                       >
                         {loadingGroupBets ? (
                           <>
                             <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
-                            Carregando palpites do grupo...
+                            Carregando...
+                          </>
+                        ) : isGroupBetsExpanded ? (
+                          <>
+                            <ChevronUp className="mr-1.5 h-3.5 w-3.5" />
+                            Recolher palpites do grupo
                           </>
                         ) : (
                           <>
-                            <Users className="mr-1.5 h-3.5 w-3.5" />
-                            Carregar palpites do grupo
+                            <ChevronDown className="mr-1.5 h-3.5 w-3.5" />
+                            Exibir palpites do grupo
                           </>
                         )}
                       </Button>
                     </div>
-                  )
-                }
 
-                return (
-                  <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50/80 p-4">
-                    <div className="flex items-center justify-between pb-2 mb-3 border-b border-slate-200">
-                      <div className="flex items-center gap-1.5">
-                        <Users className="h-4 w-4 text-[#0F2A43]" />
-                        <span className="text-xs font-bold text-[#0F172A]">
-                          Palpites do Grupo Liberados
-                        </span>
-                      </div>
-                      <Badge
-                        variant="outline"
-                        className="border-slate-300 bg-white text-[10px] font-semibold text-slate-700"
-                      >
-                        {betsForGame.length} palpite(s)
-                      </Badge>
-                    </div>
+                    {isGroupBetsExpanded && loadedGroupBets && (
+                      <div className="mt-3 pt-3 border-t border-slate-200">
+                        {betsForGame.length === 0 ? (
+                          <p className="text-center py-2 text-xs italic text-slate-400">
+                            Nenhum participante registrou palpite para esta partida antes do
+                            encerramento.
+                          </p>
+                        ) : (
+                          <div className="flex flex-col space-y-2.5">
+                            {betsForGame.map((bet) => {
+                              const part = participanteMap.get(bet.participante)
+                              const nomeParticipante = part?.nome || 'Participante'
+                              const isCurrentUser =
+                                participantName &&
+                                nomeParticipante.trim().toLowerCase() ===
+                                  participantName.trim().toLowerCase()
+                              const isSelected = selectedBetId === bet.id
 
-                    {betsForGame.length === 0 ? (
-                      <p className="text-center py-2 text-xs italic text-slate-400">
-                        Nenhum participante registrou palpite para esta partida antes do
-                        encerramento.
-                      </p>
-                    ) : (
-                      <div className="flex flex-col space-y-2.5">
-                        {betsForGame.map((bet) => {
-                          const part = participanteMap.get(bet.participante)
-                          const nomeParticipante = part?.nome || 'Participante'
-                          const isCurrentUser =
-                            participantName &&
-                            nomeParticipante.trim().toLowerCase() ===
-                              participantName.trim().toLowerCase()
+                              const splitPalpite = getPalpiteMarcadoresPorTime(bet)
+                              const is0x0 = splitPalpite.placarA === 0 && splitPalpite.placarB === 0
 
-                          const splitPalpite = getPalpiteMarcadoresPorTime(bet)
-                          const is0x0 = splitPalpite.placarA === 0 && splitPalpite.placarB === 0
-
-                          return (
-                            <div
-                              key={bet.id}
-                              className={`rounded-lg border p-3 text-xs transition duration-150 shadow-2xs ${
-                                isCurrentUser
-                                  ? 'border-emerald-300 bg-emerald-50/80 ring-1 ring-emerald-300'
-                                  : 'border-slate-200 bg-white'
-                              }`}
-                            >
-                              {/* Linha superior: Nome do Participante + Ações / Badges */}
-                              <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-2">
-                                <div className="flex items-center gap-2 min-w-0">
-                                  <span
-                                    className="font-bold text-sm text-[#0F172A] break-words"
-                                    title={nomeParticipante}
-                                  >
-                                    {nomeParticipante}
-                                  </span>
-                                  {isCurrentUser && (
-                                    <Badge className="bg-[#10B981] px-1.5 py-0 text-[10px] font-bold text-white hover:bg-[#10B981] shrink-0">
-                                      Você
-                                    </Badge>
-                                  )}
-                                </div>
-                                <div className="flex items-center gap-1.5 shrink-0">
-                                  {isAdmin && (
-                                    <button
-                                      type="button"
-                                      onClick={() =>
-                                        onAdminEdit({
-                                          palpite: bet,
-                                          participanteNome: nomeParticipante,
-                                          timeA: jogo.time_a,
-                                          timeB: jogo.time_b,
-                                        })
-                                      }
-                                      className="inline-flex items-center gap-1 rounded px-2 py-0.5 text-[10px] font-semibold text-amber-700 bg-amber-50 hover:bg-amber-100 border border-amber-200 transition"
-                                      title="Editar marcadores deste palpite (Admin)"
-                                    >
-                                      <Edit3 className="h-3 w-3" />
-                                      <span>Editar</span>
-                                    </button>
-                                  )}
-                                  {finalizado && (
-                                    <span
-                                      className={`rounded-md px-2 py-0.5 font-bold text-xs ${
-                                        bet.pontuacao_jogo > 0
-                                          ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
-                                          : 'bg-slate-100 text-slate-600 border border-slate-200'
-                                      }`}
-                                    >
-                                      +{bet.pontuacao_jogo} pts
-                                    </span>
-                                  )}
-                                </div>
-                              </div>
-
-                              {/* Linha intermediária: Palpite do Placar com destaque */}
-                              <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
-                                <div className="text-xs text-slate-700">
-                                  <span className="font-medium text-slate-500">Palpite:</span>{' '}
-                                  <strong className="text-sm font-black text-[#0F2A43]">
-                                    {bet.placar_a} x {bet.placar_b}
-                                  </strong>
-                                </div>
-                              </div>
-
-                              {/* Linha de Marcadores / Goleadores indicados */}
-                              {is0x0 ? (
-                                <div className="mt-1 text-[11px] text-slate-400 italic">
-                                  Sem marcadores (0x0)
-                                </div>
-                              ) : (
-                                <div className="mt-2 space-y-1 bg-slate-50/70 rounded p-2 border border-slate-100 text-[11px] leading-snug">
-                                  <div className="text-slate-700">
-                                    <span className="font-semibold text-slate-800">
-                                      Gols Mandante ({jogo.time_a}):
-                                    </span>{' '}
-                                    <span
-                                      className={
-                                        splitPalpite.labelA === '-'
-                                          ? 'text-slate-400'
-                                          : 'text-slate-900 font-medium'
-                                      }
-                                    >
-                                      {splitPalpite.labelA}
-                                    </span>
+                              return (
+                                <div
+                                  key={bet.id}
+                                  onClick={() => onSelectBet(bet.id)}
+                                  className={`rounded-lg border p-3 text-xs transition duration-150 shadow-2xs cursor-pointer ${
+                                    isSelected
+                                      ? 'ring-2 ring-[#0F2A43] border-[#0F2A43] bg-slate-50'
+                                      : isCurrentUser
+                                        ? 'border-emerald-300 bg-emerald-50/80 ring-1 ring-emerald-300 hover:border-emerald-400'
+                                        : 'border-slate-200 bg-white hover:border-slate-300'
+                                  }`}
+                                >
+                                  {/* Linha superior: Nome do Participante + Ações / Badges */}
+                                  <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-2">
+                                    <div className="flex items-center gap-2 min-w-0">
+                                      <span
+                                        className="font-bold text-sm text-[#0F172A] break-words"
+                                        title={nomeParticipante}
+                                      >
+                                        {nomeParticipante}
+                                      </span>
+                                      {isCurrentUser && (
+                                        <Badge className="bg-[#10B981] px-1.5 py-0 text-[10px] font-bold text-white hover:bg-[#10B981] shrink-0">
+                                          Você
+                                        </Badge>
+                                      )}
+                                      {isSelected && (
+                                        <Badge className="bg-[#0F2A43] px-1.5 py-0 text-[10px] font-bold text-white hover:bg-[#0F2A43] shrink-0">
+                                          Selecionado
+                                        </Badge>
+                                      )}
+                                    </div>
+                                    <div className="flex items-center gap-1.5 shrink-0">
+                                      {isAdmin && (
+                                        <button
+                                          type="button"
+                                          onClick={(e) => {
+                                            e.stopPropagation()
+                                            onAdminEdit({
+                                              palpite: bet,
+                                              participanteNome: nomeParticipante,
+                                              timeA: jogo.time_a,
+                                              timeB: jogo.time_b,
+                                            })
+                                          }}
+                                          className="inline-flex items-center gap-1 rounded px-2 py-0.5 text-[10px] font-semibold text-amber-700 bg-amber-50 hover:bg-amber-100 border border-amber-200 transition"
+                                          title="Editar marcadores deste palpite (Admin)"
+                                        >
+                                          <Edit3 className="h-3 w-3" />
+                                          <span>Editar</span>
+                                        </button>
+                                      )}
+                                      {finalizado && (
+                                        <span
+                                          className={`rounded-md px-2 py-0.5 font-bold text-xs ${
+                                            bet.pontuacao_jogo > 0
+                                              ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
+                                              : 'bg-slate-100 text-slate-600 border border-slate-200'
+                                          }`}
+                                        >
+                                          +{bet.pontuacao_jogo} pts
+                                        </span>
+                                      )}
+                                    </div>
                                   </div>
-                                  <div className="text-slate-700">
-                                    <span className="font-semibold text-slate-800">
-                                      Gols Visitante ({jogo.time_b}):
-                                    </span>{' '}
-                                    <span
-                                      className={
-                                        splitPalpite.labelB === '-'
-                                          ? 'text-slate-400'
-                                          : 'text-slate-900 font-medium'
-                                      }
-                                    >
-                                      {splitPalpite.labelB}
-                                    </span>
+
+                                  {/* Linha intermediária: Palpite do Placar com destaque */}
+                                  <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
+                                    <div className="text-xs text-slate-700">
+                                      <span className="font-medium text-slate-500">Palpite:</span>{' '}
+                                      <strong className="text-sm font-black text-[#0F2A43]">
+                                        {bet.placar_a} x {bet.placar_b}
+                                      </strong>
+                                    </div>
                                   </div>
+
+                                  {/* Linha de Marcadores / Goleadores indicados */}
+                                  {is0x0 ? (
+                                    <div className="mt-1 text-[11px] text-slate-400 italic">
+                                      Sem marcadores (0x0)
+                                    </div>
+                                  ) : (
+                                    <div className="mt-2 space-y-1 bg-slate-50/70 rounded p-2 border border-slate-100 text-[11px] leading-snug">
+                                      <div className="text-slate-700">
+                                        <span className="font-semibold text-slate-800">
+                                          Gols Mandante ({jogo.time_a}):
+                                        </span>{' '}
+                                        <span
+                                          className={
+                                            splitPalpite.labelA === '-'
+                                              ? 'text-slate-400'
+                                              : 'text-slate-900 font-medium'
+                                          }
+                                        >
+                                          {splitPalpite.labelA}
+                                        </span>
+                                      </div>
+                                      <div className="text-slate-700">
+                                        <span className="font-semibold text-slate-800">
+                                          Gols Visitante ({jogo.time_b}):
+                                        </span>{' '}
+                                        <span
+                                          className={
+                                            splitPalpite.labelB === '-'
+                                              ? 'text-slate-400'
+                                              : 'text-slate-900 font-medium'
+                                          }
+                                        >
+                                          {splitPalpite.labelB}
+                                        </span>
+                                      </div>
+                                    </div>
+                                  )}
                                 </div>
-                              )}
-                            </div>
-                          )
-                        })}
+                              )
+                            })}
+                          </div>
+                        )}
                       </div>
                     )}
                   </div>
@@ -1383,77 +1403,101 @@ export default function Palpites() {
 
               {/* Form or Read-only view */}
               {finalizado ? (
-                <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-4">
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <div className="text-xs text-slate-700">
-                      <span className="font-semibold text-slate-900">Seu palpite de placar:</span>{' '}
-                      {palpite ? (
-                        <strong className="text-sm font-black text-[#0F2A43]">
-                          {palpite.placar_a} x {palpite.placar_b}
-                        </strong>
-                      ) : (
-                        <span className="text-slate-400 italic">Nenhum palpite enviado</span>
+                (() => {
+                  // Resolve o palpite do participante selecionado ou padrão do usuário logado
+                  const activeSelectedBet =
+                    (selectedBetId && betsForGame.find((b) => b.id === selectedBetId)) ||
+                    palpite ||
+                    betsForGame[0]
+                  const selectedPart = activeSelectedBet
+                    ? participanteMap.get(activeSelectedBet.participante)
+                    : null
+                  const activeParticipantLabel = selectedPart
+                    ? selectedPart.nome
+                    : activeSelectedBet === palpite
+                      ? 'Seu palpite'
+                      : 'Participante'
+
+                  const activeDetalhamento = activeSelectedBet
+                    ? getScoreBreakdownBadges(activeSelectedBet, jogo).map((b) =>
+                        b.pointsText ? `${b.label} (${b.pointsText} pts)` : b.label,
+                      )
+                    : detalhamento
+
+                  return (
+                    <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-4">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <div className="text-xs text-slate-700">
+                          {activeSelectedBet && (
+                            <span className="font-semibold text-slate-700">
+                              Exibindo:{' '}
+                              <strong className="text-slate-900">{activeParticipantLabel}</strong>
+                            </span>
+                          )}
+                        </div>
+
+                        {activeSelectedBet && activeDetalhamento.length > 0 && (
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => onToggleDetails(jogo.id)}
+                            className="h-7 text-xs font-semibold text-[#0F2A43] hover:bg-slate-200"
+                          >
+                            <span>Detalhar pontuação</span>
+                            {expandedDetails ? (
+                              <ChevronUp className="ml-1 h-3.5 w-3.5" />
+                            ) : (
+                              <ChevronDown className="ml-1 h-3.5 w-3.5" />
+                            )}
+                          </Button>
+                        )}
+                      </div>
+
+                      {activeSelectedBet && (
+                        <div className="mt-2 grid grid-cols-1 gap-2 text-xs sm:grid-cols-2">
+                          <div className="rounded bg-white p-2 border border-slate-200">
+                            <span className="text-[11px] font-medium text-slate-500">
+                              Goleadores indicados ({jogo.time_a}):
+                            </span>
+                            <p className="font-medium text-slate-800">
+                              {Array.isArray(activeSelectedBet.goleadores_a) &&
+                              activeSelectedBet.goleadores_a.length > 0
+                                ? activeSelectedBet.goleadores_a.join(', ')
+                                : 'Nenhum'}
+                            </p>
+                          </div>
+                          <div className="rounded bg-white p-2 border border-slate-200">
+                            <span className="text-[11px] font-medium text-slate-500">
+                              Goleadores indicados ({jogo.time_b}):
+                            </span>
+                            <p className="font-medium text-slate-800">
+                              {Array.isArray(activeSelectedBet.goleadores_b) &&
+                              activeSelectedBet.goleadores_b.length > 0
+                                ? activeSelectedBet.goleadores_b.join(', ')
+                                : 'Nenhum'}
+                            </p>
+                          </div>
+                        </div>
+                      )}
+
+                      {expandedDetails && activeDetalhamento.length > 0 && (
+                        <div className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50/60 p-3 text-xs text-emerald-900 animate-in fade-in duration-200">
+                          <p className="font-bold text-emerald-950 mb-1">
+                            Critérios de pontuação atendidos ({activeParticipantLabel}):
+                          </p>
+                          <ul className="list-inside list-disc space-y-1">
+                            {activeDetalhamento.map((item, idx) => (
+                              <li key={idx} className="font-medium">
+                                {item}
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
                       )}
                     </div>
-
-                    {palpite && detalhamento.length > 0 && (
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => onToggleDetails(jogo.id)}
-                        className="h-7 text-xs font-semibold text-[#0F2A43] hover:bg-slate-200"
-                      >
-                        <span>Detalhar pontuação</span>
-                        {expandedDetails ? (
-                          <ChevronUp className="ml-1 h-3.5 w-3.5" />
-                        ) : (
-                          <ChevronDown className="ml-1 h-3.5 w-3.5" />
-                        )}
-                      </Button>
-                    )}
-                  </div>
-
-                  {palpite && (
-                    <div className="mt-2 grid grid-cols-1 gap-2 text-xs sm:grid-cols-2">
-                      <div className="rounded bg-white p-2 border border-slate-200">
-                        <span className="text-[11px] font-medium text-slate-500">
-                          Goleadores indicados ({jogo.time_a}):
-                        </span>
-                        <p className="font-medium text-slate-800">
-                          {Array.isArray(palpite.goleadores_a) && palpite.goleadores_a.length > 0
-                            ? palpite.goleadores_a.join(', ')
-                            : 'Nenhum'}
-                        </p>
-                      </div>
-                      <div className="rounded bg-white p-2 border border-slate-200">
-                        <span className="text-[11px] font-medium text-slate-500">
-                          Goleadores indicados ({jogo.time_b}):
-                        </span>
-                        <p className="font-medium text-slate-800">
-                          {Array.isArray(palpite.goleadores_b) && palpite.goleadores_b.length > 0
-                            ? palpite.goleadores_b.join(', ')
-                            : 'Nenhum'}
-                        </p>
-                      </div>
-                    </div>
-                  )}
-
-                  {expandedDetails && detalhamento.length > 0 && (
-                    <div className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50/60 p-3 text-xs text-emerald-900 animate-in fade-in duration-200">
-                      <p className="font-bold text-emerald-950 mb-1">
-                        Critérios de pontuação atendidos:
-                      </p>
-                      <ul className="list-inside list-disc space-y-1">
-                        {detalhamento.map((item, idx) => (
-                          <li key={idx} className="font-medium">
-                            {item}
-                          </li>
-                        ))}
-                      </ul>
-                    </div>
-                  )}
-                </div>
+                  )
+                })()
               ) : (
                 <div className="mt-4 space-y-4">
                   {isExpired && (
@@ -2185,6 +2229,8 @@ export default function Palpites() {
             const isLocked = (isSaved && !isEditing) || isExpired
             const betsForGame = allGroupPalpites.filter((p) => p.jogo === jogo.id)
             const currentLineup = loadedLineups[jogo.id]
+            const isGroupBetsExpanded = Boolean(expandedGroupBets[jogo.id])
+            const selectedBetId = selectedBetByGame[jogo.id] || palpite?.id
 
             return (
               <PalpiteItemCard
@@ -2208,6 +2254,14 @@ export default function Palpites() {
                 savingGameId={savingGameId}
                 loadedGroupBets={loadedGroupBets}
                 loadingGroupBets={loadingGroupBets}
+                isGroupBetsExpanded={isGroupBetsExpanded}
+                selectedBetId={selectedBetId}
+                onSelectBet={(betId) => {
+                  setSelectedBetByGame((prev) => ({
+                    ...prev,
+                    [jogo.id]: betId,
+                  }))
+                }}
                 betsForGame={betsForGame}
                 participanteMap={participanteMap}
                 participantName={participantName}
@@ -2221,7 +2275,7 @@ export default function Palpites() {
                   }))
                 }}
                 onToggleDetails={toggleDetails}
-                onLoadGroupBets={loadGroupBetsOnDemand}
+                onToggleGroupBets={() => handleToggleGroupBets(jogo.id)}
                 onSetEditing={(id, editing) =>
                   setEditingGames((prev) => ({
                     ...prev,
