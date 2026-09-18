@@ -282,7 +282,7 @@ routerAdd('GET', '/backend/v1/placar-ao-vivo', (e) => {
               encodeURIComponent(key) +
               '/eventsday.php?d=' +
               encodeURIComponent(currDate) +
-              '&l=' +
+              '&s=Soccer&l=' +
               encodeURIComponent(cl.id)
 
             var resTsdb = $http.send({
@@ -2194,18 +2194,33 @@ routerAdd('GET', '/backend/v1/jogos-do-dia', (e) => {
       dayEntry && dayEntry.lastLiveTimestamp && nowMs - dayEntry.lastLiveTimestamp < 10 * 60 * 1000,
     )
 
-    // TTL: 1-2 min (90.000 ms) se houver jogo ao vivo ou transição recente; 30 min sem jogo ao vivo
-    var maxAgeMs = entryHasLive || dayHadRecentLive ? 90 * 1000 : 30 * 60 * 1000
+    // TTL:
+    // - Se a entrada foi gravada por contingência/degradada (is_contingency/fallback_active), TTL é curto (60s)
+    //   para revalidar automaticamente e restaurar os 400+ jogos assim que a cota da API-Football renovar.
+    // - 1-2 min (90.000 ms) se houver jogo ao vivo ou transição recente; 30 min sem jogo ao vivo
+    var isContingencyEntry = Boolean(
+      dayEntry &&
+      dayEntry.payload &&
+      (dayEntry.payload.fallback_active === true ||
+        dayEntry.payload.is_contingency === true ||
+        dayEntry.payload.contingency === true),
+    )
+    var maxAgeMs = isContingencyEntry
+      ? 60 * 1000
+      : entryHasLive || dayHadRecentLive
+        ? 90 * 1000
+        : 30 * 60 * 1000
 
     // REGRA DE ON-DEMAND FETCHING E CARREGAMENTO PASSIVO:
     // Se há cache válido para a API externa, concatenamos SEMPRE os jogos manuais do banco no TOPO
     // garantindo bypass absoluto para qualquer jogo manual cadastrado ou alterado recentemente.
+    // Se forceRefresh for solicitado (ex: botão Atualizar do usuário), BYPASS no cache para tentar API principal.
     if (dayEntry && dayEntry.payload) {
       var cachedFixturesCount = Array.isArray(dayEntry.payload.fixtures)
         ? dayEntry.payload.fixtures.length
         : 0
       if (cachedFixturesCount > 0) {
-        if (!forceRefresh || cacheAgeMs < maxAgeMs) {
+        if (!forceRefresh && cacheAgeMs < maxAgeMs) {
           var combinedCachedList = mergeManualFixturesOnTop(
             liveManualFixtures,
             dayEntry.payload.fixtures,
@@ -2224,6 +2239,10 @@ routerAdd('GET', '/backend/v1/jogos-do-dia', (e) => {
             ttlRemainingSeconds: Math.max(0, Math.round((maxAgeMs - cacheAgeMs) / 1000)),
           })
           return e.json(200, cachedResp)
+        } else if (forceRefresh) {
+          console.log(
+            '[Cache Jogos-do-Dia] forceRefresh solicitado pelo cliente. Ignorando cache e revalidando com API externa.',
+          )
         }
       } else {
         console.log(
@@ -2762,7 +2781,8 @@ routerAdd('GET', '/backend/v1/jogos-do-dia', (e) => {
             'https://www.thesportsdb.com/api/v1/json/' +
             encodeURIComponent(key) +
             '/eventsday.php?d=' +
-            encodeURIComponent(currDate)
+            encodeURIComponent(currDate) +
+            '&s=Soccer'
           var resTsdbGlobal = $http.send({
             url: tsdbGlobalUrl,
             method: 'GET',
@@ -2954,7 +2974,7 @@ routerAdd('GET', '/backend/v1/jogos-do-dia', (e) => {
                 encodeURIComponent(key) +
                 '/eventsday.php?d=' +
                 encodeURIComponent(currDate) +
-                '&l=' +
+                '&s=Soccer&l=' +
                 encodeURIComponent(cl.id)
 
               var resTsdb = $http.send({
@@ -3690,11 +3710,13 @@ routerAdd('GET', '/backend/v1/jogos-do-dia', (e) => {
         configured: true,
         provider: contingencyProvider,
         fallback_active: true,
+        is_contingency: true,
+        contingency: true,
         original_provider: provedor,
         message:
           contingencyProvider === 'football_data'
-            ? 'Contingência ativada: jogos providos via Football-Data.org e TheSportsDB (mesclados com ligas existentes).'
-            : 'Contingência ativada: jogos providos via TheSportsDB (mesclados com ligas existentes).',
+            ? 'Contingência temporária ativada: jogos providos via Football-Data.org e TheSportsDB. Revalidação frequente ativa para restauração global automática.'
+            : 'Contingência temporária ativada: jogos providos via TheSportsDB. Revalidação frequente ativa para restauração global automática.',
         date: dateQuery,
         total: finalContingencyFixtures.length,
         hasLive:
@@ -3706,7 +3728,9 @@ routerAdd('GET', '/backend/v1/jogos-do-dia', (e) => {
         updatedAt: new Date().toISOString(),
       }
 
-      // REGRA: Só grava no cache se houver pelo menos 1 partida!
+      // REGRA: Payload de contingência tem cobertura restrita (ex: cota esgotada na primária).
+      // Grava no cache com flag degradada e TTL curto (60s) para revalidar com a API-Football
+      // logo que a cota seja renovada, sem prender o usuário em um snapshot reduzido.
       if (dayStore && finalContingencyFixtures.length > 0) {
         dayStore[dateQuery] = {
           timestamp: Date.now(),
@@ -3719,7 +3743,7 @@ routerAdd('GET', '/backend/v1/jogos-do-dia', (e) => {
         200,
         Object.assign({}, contingencyPayload, {
           cached: false,
-          ttlSeconds: Math.round((contingencyPayload.hasLive ? 90 * 1000 : 30 * 60 * 1000) / 1000),
+          ttlSeconds: 60,
         }),
       )
     }

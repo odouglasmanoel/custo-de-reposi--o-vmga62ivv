@@ -595,7 +595,8 @@ routerAdd(
                     'https://www.thesportsdb.com/api/v1/json/' +
                     encodeURIComponent(tsdbKeyToUse) +
                     '/eventsday.php?d=' +
-                    encodeURIComponent(targetDate),
+                    encodeURIComponent(targetDate) +
+                    '&s=Soccer',
                   method: 'GET',
                   timeout: 8,
                 })
@@ -689,7 +690,7 @@ routerAdd(
                     encodeURIComponent(tsdbKeyToUse) +
                     '/eventsday.php?d=' +
                     encodeURIComponent(targetDate) +
-                    '&l=' +
+                    '&s=Soccer&l=' +
                     encodeURIComponent(tLeague.id),
                   method: 'GET',
                   timeout: 8,

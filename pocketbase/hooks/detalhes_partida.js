@@ -274,7 +274,8 @@ routerAdd(
             'https://www.thesportsdb.com/api/v1/json/' +
             encodeURIComponent(theSportsDbKey) +
             '/eventsday.php?d=' +
-            encodeURIComponent(dataParam)
+            encodeURIComponent(dataParam) +
+            '&s=Soccer'
 
           var resDay = $http.send({
             url: dateQueryUrl,
