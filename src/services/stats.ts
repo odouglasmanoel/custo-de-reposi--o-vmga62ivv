@@ -10,7 +10,7 @@ export interface StatsCachePayload {
   timestamp: number
 }
 
-const CACHE_STATS_PREFIX = 'cr_estatisticas_cache_v1'
+const CACHE_STATS_PREFIX = 'cr_estatisticas_cache_v2'
 const statsMemoryCache = new Map<string, StatsCachePayload>()
 
 /**

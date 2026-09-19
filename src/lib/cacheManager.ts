@@ -11,7 +11,7 @@ export const CURRENT_CACHE_PREFIXES = {
   escudo: 'cr_escudo_cache_v1',
   enquetesLista: 'cr_enquetes_lista_v1',
   enqueteDetalhe: 'cr_enquete_detalhe_v1',
-  estatisticas: 'cr_estatisticas_cache_v1',
+  estatisticas: 'cr_estatisticas_cache_v2',
   historico: 'cr_historico_cache_v1',
 } as const
 

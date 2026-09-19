@@ -495,94 +495,209 @@ export function countMarcadoresDefensoresAcertados(palpite: Palpite, jogo: Jogo)
  * - Jogos com disputa de pênaltis registrada
  * - Clássicos tradicionais e dérbis do futebol
  */
-export function isGrandeJogo(jogo: Jogo, bolao?: Bolao): boolean {
-  // 1. Se tem disputa por pênaltis, é eliminatório / mata-mata
+export interface IsGrandeJogoOptions {
+  todosJogosDoBolao?: Jogo[]
+}
+
+/**
+ * Normaliza strings para matching case/acentos
+ */
+function normalizeMatchText(str: string): string {
+  return (str || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .trim()
+}
+
+/**
+ * Lista de confrontos clássicos entre seleções mundiais de grande tradição
+ */
+const CLASSICOS_SELECOES: Array<[string, string]> = [
+  ['brasil', 'argentina'],
+  ['brasil', 'alemanha'],
+  ['brasil', 'italia'],
+  ['brasil', 'franca'],
+  ['brasil', 'uruguai'],
+  ['brasil', 'inglaterra'],
+  ['brasil', 'espanha'],
+  ['brasil', 'holanda'],
+  ['brasil', 'portugal'],
+  ['argentina', 'inglaterra'],
+  ['argentina', 'alemanha'],
+  ['argentina', 'uruguai'],
+  ['argentina', 'holanda'],
+  ['argentina', 'franca'],
+  ['argentina', 'espanha'],
+  ['argentina', 'italia'],
+  ['franca', 'inglaterra'],
+  ['franca', 'alemanha'],
+  ['franca', 'italia'],
+  ['franca', 'espanha'],
+  ['alemanha', 'inglaterra'],
+  ['alemanha', 'italia'],
+  ['alemanha', 'holanda'],
+  ['alemanha', 'espanha'],
+  ['italia', 'espanha'],
+  ['espanha', 'portugal'],
+  ['holanda', 'espanha'],
+  ['portugal', 'franca'],
+  ['portugal', 'inglaterra'],
+]
+
+/**
+ * Lista de clássicos tradicionais de clubes do futebol brasileiro e internacional
+ */
+const CLASSICOS_CLUBES: Array<[string, string]> = [
+  // SP
+  ['corinthians', 'palmeiras'],
+  ['sao paulo', 'corinthians'],
+  ['palmeiras', 'sao paulo'],
+  ['santos', 'palmeiras'],
+  ['santos', 'corinthians'],
+  ['santos', 'sao paulo'],
+  // RJ
+  ['flamengo', 'fluminense'],
+  ['flamengo', 'vasco'],
+  ['flamengo', 'botafogo'],
+  ['vasco', 'fluminense'],
+  ['botafogo', 'fluminense'],
+  ['vasco', 'botafogo'],
+  // RS
+  ['gremio', 'internacional'],
+  // MG
+  ['cruzeiro', 'atletico'],
+  // BA
+  ['bahia', 'vitoria'],
+  // PR
+  ['coritiba', 'athletico'],
+  // Internacionais de Clubes
+  ['real madrid', 'barcelona'],
+  ['real madrid', 'atletico madrid'],
+  ['inter', 'milan'],
+  ['roma', 'lazio'],
+  ['juventus', 'inter'],
+  ['liverpool', 'manchester united'],
+  ['liverpool', 'manchester city'],
+  ['arsenal', 'tottenham'],
+  ['chelsea', 'arsenal'],
+  ['manchester united', 'manchester city'],
+  ['marseille', 'paris saint-germain'],
+  ['marseille', 'psg'],
+  ['boca', 'river'],
+]
+
+/**
+ * Verifica se uma string de texto descreve explicitamente uma fase eliminatória ou decisiva
+ */
+function hasEliminatoryKeywords(text: string): boolean {
+  if (!text) return false
+  const norm = normalizeMatchText(text)
+  return (
+    norm.includes('final') ||
+    norm.includes('semi') ||
+    norm.includes('quarta') ||
+    norm.includes('oitava') ||
+    norm.includes('3 lugar') ||
+    norm.includes('3º lugar') ||
+    norm.includes('terceiro') ||
+    norm.includes('mata-mata') ||
+    norm.includes('mata mata') ||
+    norm.includes('playoff') ||
+    norm.includes('supercopa') ||
+    norm.includes('eliminat') ||
+    norm.includes('penalti') ||
+    norm.includes('classico') ||
+    norm.includes('derbi') ||
+    norm.includes('derby')
+  )
+}
+
+/**
+ * Identifica se uma partida é considerada um "Grande Jogo":
+ * Heurísticas em ordem de prioridade:
+ * 1. Tem disputa de pênaltis registrada (jogos eliminatórios)
+ * 2. Fase explícita no registro (campo `competicao` com keywords decisivas: oitavas, quartas, semi, final, 3º lugar, supercopa, etc.)
+ * 3. Indicação de jogos de ida/volta em torneios e copas
+ * 4. Clássicos tradicionais e confrontos históricos entre grandes seleções / clubes
+ * 5. Fallback por Torneio (Copa do Mundo / copas eliminatórias): quando nenhum jogo da competição
+ *    tiver flag explícita de fase, as partidas das fases decisivas (últimos 16 jogos da planilha por ordem de inserção/data)
+ *    são automaticamente qualificadas como Grandes Jogos (oitavas, quartas, semis, 3º lugar e final).
+ */
+export function isGrandeJogo(jogo: Jogo, bolao?: Bolao, options?: IsGrandeJogoOptions): boolean {
+  // 1. Se tem disputa por pênaltis, é eliminatório / mata-mata decisivo
   if (jogo.tem_penaltis) return true
 
-  // 2. Verificar string do campo competicao
-  const comp = (jogo.competicao || '').toLowerCase()
-  if (
-    comp.includes('final') ||
-    comp.includes('semi') ||
-    comp.includes('quartas') ||
-    comp.includes('oitavas') ||
-    comp.includes('mata-mata') ||
-    comp.includes('playoff') ||
-    comp.includes('supercopa') ||
-    comp.includes('eliminat') ||
-    comp.includes('classico') ||
-    comp.includes('clássico') ||
-    comp.includes('derbi') ||
-    comp.includes('derby')
-  ) {
+  // 2. Verificar string do campo competicao (fase explícita)
+  const comp = jogo.competicao || ''
+  if (hasEliminatoryKeywords(comp)) {
     return true
   }
 
-  // 3. Foco do Bolão contendo indicação de copas eliminatórias (ex: "Copa do Brasil", "Libertadores")
-  // Se o bolão for eliminatório por natureza e houver indicação
-  const bFoco = (bolao?.foco || '').toLowerCase()
-  const bNome = (bolao?.nome || '').toLowerCase()
+  // 3. Foco ou Nome do Bolão contendo indicação de copas eliminatórias (ex: "Copa do Brasil", "Libertadores")
+  const bFoco = normalizeMatchText(bolao?.foco || '')
+  const bNome = normalizeMatchText(bolao?.nome || '')
+  const compNorm = normalizeMatchText(comp)
   if (
     (bFoco.includes('copa') || bNome.includes('copa')) &&
-    (comp.includes('volta') || comp.includes('ida'))
+    (compNorm.includes('volta') || compNorm.includes('ida'))
   ) {
     return true
   }
 
-  // 4. Clássicos tradicionais pelo confronto dos times
-  const timeA = (jogo.time_a || '').toLowerCase().trim()
-  const timeB = (jogo.time_b || '').toLowerCase().trim()
-  const matchTeamPair = (t1: string, t2: string) =>
+  // 4. Clássicos tradicionais e confrontos entre grandes equipes
+  const timeA = normalizeMatchText(jogo.time_a || '')
+  const timeB = normalizeMatchText(jogo.time_b || '')
+  const matchPair = (t1: string, t2: string) =>
     (timeA.includes(t1) && timeB.includes(t2)) || (timeA.includes(t2) && timeB.includes(t1))
 
-  const classicos = [
-    // SP
-    ['corinthians', 'palmeiras'],
-    ['sao paulo', 'corinthians'],
-    ['são paulo', 'corinthians'],
-    ['palmeiras', 'sao paulo'],
-    ['palmeiras', 'são paulo'],
-    ['santos', 'palmeiras'],
-    ['santos', 'corinthians'],
-    ['santos', 'sao paulo'],
-    ['santos', 'são paulo'],
-    // RJ
-    ['flamengo', 'fluminense'],
-    ['flamengo', 'vasco'],
-    ['flamengo', 'botafogo'],
-    ['vasco', 'fluminense'],
-    ['botafogo', 'fluminense'],
-    ['vasco', 'botafogo'],
-    // RS
-    ['gremio', 'internacional'],
-    ['grêmio', 'internacional'],
-    // MG
-    ['cruzeiro', 'atletico'],
-    ['cruzeiro', 'atlético'],
-    // BA
-    ['bahia', 'vitoria'],
-    ['bahia', 'vitória'],
-    // PR
-    ['coritiba', 'athletico'],
-    // Internacionais
-    ['real madrid', 'barcelona'],
-    ['real madrid', 'atletico madrid'],
-    ['real madrid', 'atlético madrid'],
-    ['inter', 'milan'],
-    ['roma', 'lazio'],
-    ['juventus', 'inter'],
-    ['liverpool', 'manchester united'],
-    ['liverpool', 'manchester city'],
-    ['arsenal', 'tottenham'],
-    ['chelsea', 'arsenal'],
-    ['manchester united', 'manchester city'],
-    ['marseille', 'paris saint-germain'],
-    ['marseille', 'psg'],
-    ['boca', 'river'],
-  ]
+  // Clássicos de seleções
+  for (const [t1, t2] of CLASSICOS_SELECOES) {
+    if (matchPair(t1, t2)) return true
+  }
 
-  for (const [t1, t2] of classicos) {
-    if (matchTeamPair(t1, t2)) return true
+  // Clássicos de clubes
+  for (const [t1, t2] of CLASSICOS_CLUBES) {
+    if (matchPair(t1, t2)) return true
+  }
+
+  // 5. Fallback por Torneio: Copas do Mundo / Torneios de Seleções / Copas onde nenhum jogo possui fase explicitada
+  // Se o bolão for do tipo "Copa do Mundo" (ou foco indicar torneio eliminatório de seleções/copa)
+  const isCopaDoMundo =
+    bNome.includes('copa do mundo') ||
+    bNome.includes('world cup') ||
+    bFoco.includes('copa do mundo') ||
+    bFoco.includes('world cup')
+
+  if (isCopaDoMundo && options?.todosJogosDoBolao && options.todosJogosDoBolao.length > 0) {
+    const jogosDoBolao = options.todosJogosDoBolao
+    // Verificar se NENHUM jogo deste bolão tem indicação explícita de fase
+    const temAlgumComFaseExplicita = jogosDoBolao.some((j) =>
+      hasEliminatoryKeywords(j.competicao || ''),
+    )
+
+    if (!temAlgumComFaseExplicita) {
+      // Ordenar os jogos pela ordem cronológica/inserção da planilha:
+      // data, depois hora, depois id (ou created se disponível)
+      const jogosOrdenados = [...jogosDoBolao].sort((a, b) => {
+        const da = `${a.data || ''}T${a.hora || '00:00'}`
+        const db = `${b.data || ''}T${b.hora || '00:00'}`
+        if (da !== db) return da.localeCompare(db)
+        const ca = a.created || ''
+        const cb = b.created || ''
+        if (ca && cb && ca !== cb) return ca.localeCompare(cb)
+        return (a.id || '').localeCompare(b.id || '')
+      })
+
+      // Numa Copa do Mundo tradicional (formato clássico):
+      // Fases eliminatórias = 8 oitavas + 4 quartas + 2 semis + 1 disputa 3º + 1 final = 16 partidas
+      // Se a competição tiver menos de 16 jogos, pegamos as últimas partidas (ou metade final)
+      const numFaseEliminatoria = Math.min(16, Math.max(1, Math.floor(jogosOrdenados.length / 2)))
+      const ultimosJogosDecisivos = jogosOrdenados.slice(-numFaseEliminatoria)
+      if (ultimosJogosDecisivos.some((uj) => uj.id === jogo.id)) {
+        return true
+      }
+    }
   }
 
   return false
@@ -724,6 +839,14 @@ export function calculateStatistics(params: {
     bolaoMap.set(b.id, b)
   }
 
+  // Agrupar jogos finalizados por bolão para suporte a fallback ordenado por torneio
+  const jogosPorBolaoMap = new Map<string, Jogo[]>()
+  for (const j of jogosFinalizados) {
+    const arr = jogosPorBolaoMap.get(j.bolao) || []
+    arr.push(j)
+    jogosPorBolaoMap.set(j.bolao, arr)
+  }
+
   // Inicializar acumuladores por membro oficial
   const statsMap = new Map<
     string,
@@ -832,7 +955,10 @@ export function calculateStatistics(params: {
 
     // 4. Mito dos Grandes Jogos: soma de pontos em partidas decisivas/clássicos
     const bolaoDoJogo = bolaoMap.get(jogo.bolao)
-    const grande = isGrandeJogo(jogo, bolaoDoJogo)
+    const todosJogosDesteBolao = jogosPorBolaoMap.get(jogo.bolao)
+    const grande = isGrandeJogo(jogo, bolaoDoJogo, {
+      todosJogosDoBolao: todosJogosDesteBolao,
+    })
     if (grande) {
       stat.pontosGrandesJogos += ptsJogo
     }
@@ -991,7 +1117,9 @@ export function calculateStatistics(params: {
   // 4. Mito dos Grandes Jogos (maior pontuador exclusivamente em jogos eliminatórios/clássicos)
   // Contar quantos jogos do recorte foram considerados grandes jogos
   const countGrandesJogos = jogosFinalizados.filter((j) =>
-    isGrandeJogo(j, bolaoMap.get(j.bolao)),
+    isGrandeJogo(j, bolaoMap.get(j.bolao), {
+      todosJogosDoBolao: jogosPorBolaoMap.get(j.bolao),
+    }),
   ).length
   let topGrandesJogos = -1
   const topGrandesJogosList: string[] = []

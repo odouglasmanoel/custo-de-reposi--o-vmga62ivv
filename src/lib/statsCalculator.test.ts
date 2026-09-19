@@ -529,6 +529,211 @@ describe('statsCalculator', () => {
     expect(isGrandeJogo(jogoComum)).toBe(false)
   })
 
+  it('identifies big matches in World Cup via international derbies and tournament fallback', () => {
+    const bolaoCopa: Bolao = {
+      id: 'b_copa',
+      nome: 'Copa do Mundo',
+      ativo: false,
+      created: '',
+      updated: '',
+      collectionId: '',
+      collectionName: '',
+    }
+
+    // Caso 1: Clássico de seleções sem flag de competicao
+    const jogoSelecoes: Jogo = {
+      id: 'j_bra_arg',
+      bolao: 'b_copa',
+      time_a: 'Brasil',
+      time_b: 'Argentina',
+      data: '2026-06-25',
+      hora: '16:00',
+      competicao: '',
+      resultado_finalizado: true,
+      tem_penaltis: false,
+      created: '2026-06-25 16:00:00',
+      updated: '',
+      collectionId: '',
+      collectionName: '',
+    }
+    expect(isGrandeJogo(jogoSelecoes, bolaoCopa)).toBe(true)
+
+    // Caso 2: Fase explícita nas oitavas/quartas/semi/3º lugar/final
+    const jogoOitavas: Jogo = {
+      id: 'j_oitavas',
+      bolao: 'b_copa',
+      time_a: 'Turquia',
+      time_b: 'Paraguai',
+      data: '2026-06-28',
+      hora: '16:00',
+      competicao: 'Oitavas de Final',
+      resultado_finalizado: true,
+      tem_penaltis: false,
+      created: '',
+      updated: '',
+      collectionId: '',
+      collectionName: '',
+    }
+    expect(isGrandeJogo(jogoOitavas, bolaoCopa)).toBe(true)
+
+    // Caso 3: Fallback de torneio quando NENHUM jogo da Copa do Mundo tem flag de fase
+    // Montamos uma lista de 20 jogos da Copa do Mundo sem campo competicao
+    const jogosCopaSemFase: Jogo[] = []
+    for (let i = 1; i <= 20; i++) {
+      jogosCopaSemFase.push({
+        id: `j_wc_${i}`,
+        bolao: 'b_copa',
+        time_a: `Selecao A${i}`,
+        time_b: `Selecao B${i}`,
+        data: `2026-06-${String(i).padStart(2, '0')}`,
+        hora: '16:00',
+        competicao: '',
+        resultado_finalizado: true,
+        tem_penaltis: false,
+        created: `2026-06-${String(i).padStart(2, '0')} 16:00:00`,
+        updated: '',
+        collectionId: '',
+        collectionName: '',
+      })
+    }
+
+    // Jogos da fase inicial (ex: jogo 1) não devem ser grandes jogos se não são clássicos
+    expect(
+      isGrandeJogo(jogosCopaSemFase[0], bolaoCopa, {
+        todosJogosDoBolao: jogosCopaSemFase,
+      }),
+    ).toBe(false)
+
+    // Os últimos jogos (fases decisivas: oitavas, quartas, semi, final = últimos 16) devem ser grandes jogos
+    const jogoFinalCopa = jogosCopaSemFase[19]
+    expect(
+      isGrandeJogo(jogoFinalCopa, bolaoCopa, {
+        todosJogosDoBolao: jogosCopaSemFase,
+      }),
+    ).toBe(true)
+
+    const jogoSemiCopa = jogosCopaSemFase[17]
+    expect(
+      isGrandeJogo(jogoSemiCopa, bolaoCopa, {
+        todosJogosDoBolao: jogosCopaSemFase,
+      }),
+    ).toBe(true)
+  })
+
+  it('calculates Mito dos Grandes Jogos correctly in World Cup pool', () => {
+    const bolaoCopa: Bolao = {
+      id: 'copa_mundo',
+      nome: 'Copa do Mundo',
+      ativo: false,
+      created: '',
+      updated: '',
+      collectionId: '',
+      collectionName: '',
+    }
+
+    const participantes: Participante[] = [
+      {
+        id: 'p_douglas',
+        bolao: 'copa_mundo',
+        nome: 'Douglas',
+        pontuacao_total: 10,
+        pontos_importados: 0,
+        created: '',
+        updated: '',
+        collectionId: '',
+        collectionName: '',
+      },
+      {
+        id: 'p_bruno',
+        bolao: 'copa_mundo',
+        nome: 'Bruno',
+        pontuacao_total: 2,
+        pontos_importados: 0,
+        created: '',
+        updated: '',
+        collectionId: '',
+        collectionName: '',
+      },
+    ]
+
+    // 20 jogos importados da planilha sem competicao preenchida
+    const jogos: Jogo[] = []
+    for (let i = 1; i <= 20; i++) {
+      jogos.push({
+        id: `j_wc_${i}`,
+        bolao: 'copa_mundo',
+        time_a: i === 1 ? 'Haiti' : i === 20 ? 'Espanha' : `Pais ${i}`,
+        time_b: i === 1 ? 'Curaçao' : i === 20 ? 'Argentina' : `Pais ${i + 100}`,
+        data: `2026-06-${String(i).padStart(2, '0')}`,
+        hora: '16:00',
+        placar_a: 1,
+        placar_b: 0,
+        resultado_finalizado: true,
+        tem_penaltis: false,
+        competicao: '', // Importado sem flag de fase
+        created: `2026-06-${String(i).padStart(2, '0')} 16:00:00`,
+        updated: '',
+        collectionId: '',
+        collectionName: '',
+      })
+    }
+
+    // Douglas pontua no jogo final (jogo 20: Espanha x Argentina) -> 8 pontos (cravada)
+    // Bruno pontua no jogo inicial (jogo 1: Haiti x Curaçao) -> 2 pontos (vencedor)
+    const palpites: Palpite[] = [
+      {
+        id: 'palp_doug_final',
+        bolao: 'copa_mundo',
+        jogo: 'j_wc_20',
+        participante: 'p_douglas',
+        placar_a: 1,
+        placar_b: 0,
+        pontuacao_jogo: 8,
+        detalhamento: ['Placar Exato (+8 pts)'],
+        created: '',
+        updated: '',
+        collectionId: '',
+        collectionName: '',
+      },
+      {
+        id: 'palp_bruno_grupos',
+        bolao: 'copa_mundo',
+        jogo: 'j_wc_1',
+        participante: 'p_bruno',
+        placar_a: 1,
+        placar_b: 0,
+        pontuacao_jogo: 2,
+        detalhamento: ['Vencedor (+2 pts)'],
+        created: '',
+        updated: '',
+        collectionId: '',
+        collectionName: '',
+      },
+    ]
+
+    const stats = calculateStatistics({
+      boloes: [bolaoCopa],
+      participantes,
+      jogos,
+      palpites,
+      filtroBolaoId: 'copa_mundo',
+    })
+
+    // Douglas deve ter 8 pontos em Grandes Jogos
+    const douglasStats = stats.tabela.find((t) => t.nome === 'Douglas')
+    expect(douglasStats?.pontosGrandesJogos).toBe(8)
+
+    // Bruno deve ter 0 pontos em Grandes Jogos (jogo 1 é da fase de grupos e não é clássico)
+    const brunoStats = stats.tabela.find((t) => t.nome === 'Bruno')
+    expect(brunoStats?.pontosGrandesJogos).toBe(0)
+
+    // O troféu Mito dos Grandes Jogos deve ter Douglas como vencedor com 8 pontos
+    expect(stats.recordes.mitoDosGrandesJogos.temDados).toBe(true)
+    expect(stats.recordes.mitoDosGrandesJogos.participante).toBe('Douglas')
+    expect(stats.recordes.mitoDosGrandesJogos.pontos).toBe(8)
+    expect(stats.recordes.mitoDosGrandesJogos.jogosConsiderados).toBeGreaterThan(0)
+  })
+
   it('aggregates multiple competitions properly when filtroBolaoId is "geral"', () => {
     const boloes: Bolao[] = [
       {
