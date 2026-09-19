@@ -164,6 +164,109 @@ export interface MatchScorersByTeam {
   hasAnyScorers: boolean
 }
 
+/**
+ * Normaliza o nome do jogador para chave de agrupamento no Map.
+ */
+function cleanPlayerGroupKey(raw: string): string {
+  return String(raw || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, '')
+    .trim()
+}
+
+/**
+ * Agrupa marcadores por jogador (Map) com minutos extraídos via regex e concatena:
+ * Ex: ["Raphinha 22'", "Raphinha 52'", "Raphinha 69'"] -> "Raphinha 22', 52', 69'"
+ * Um gol = "Youssouf Fofana 19'"
+ * Sem minuto único = "Nome"
+ * Sem minuto múltiplo = "Nome (2x)"
+ */
+export function formatScorersGroupedByPlayer(scorers: string[]): string {
+  if (!Array.isArray(scorers) || scorers.length === 0) return '-'
+
+  interface PlayerGroup {
+    displayName: string
+    isContra: boolean
+    minutes: string[]
+    count: number
+  }
+
+  const groups = new Map<string, PlayerGroup>()
+  const order: string[] = []
+
+  for (const rawItem of scorers) {
+    if (!rawItem || !String(rawItem).trim()) continue
+    const rawStr = String(rawItem).trim()
+
+    // Detecta se é gol contra
+    const isContra = /\(gol contra\)|\(contra\)/i.test(rawStr)
+    const semContra = rawStr.replace(/\(gol contra\)|\(contra\)/gi, '').trim()
+
+    // Extrai minutagem se houver: ex "22'", "52'", "90+3'"
+    const minutesFound: string[] = []
+    const minMatches = semContra.matchAll(/(\d+(?:\+\d+)?)\s*['’]/g)
+    for (const mm of minMatches) {
+      if (mm[1]) {
+        minutesFound.push(`${mm[1]}'`)
+      }
+    }
+
+    // Nome limpo removendo minutos e parênteses de posição/contra
+    let cleanName = semContra
+      .replace(/\s*\d+(?:\+\d+)?\s*['’]/g, '')
+      .replace(/\s*\([^)]+\)$/, '')
+      .trim()
+
+    if (!cleanName) {
+      cleanName = rawStr
+    }
+
+    const key = `${cleanPlayerGroupKey(cleanName)}_${isContra ? 'contra' : 'normal'}`
+
+    const existing = groups.get(key)
+    if (existing) {
+      existing.count += 1
+      existing.minutes.push(...minutesFound)
+    } else {
+      groups.set(key, {
+        displayName: cleanName,
+        isContra,
+        minutes: [...minutesFound],
+        count: 1,
+      })
+      order.push(key)
+    }
+  }
+
+  if (order.length === 0) return '-'
+
+  const formattedTokens: string[] = []
+  for (const key of order) {
+    const group = groups.get(key)
+    if (!group) continue
+
+    const suffixContra = group.isContra ? ' (contra)' : ''
+
+    if (group.minutes.length > 0) {
+      // Ordenar minutos por ordem numérica preservando acréscimos se possível
+      const sortedMins = [...group.minutes].sort((a, b) => {
+        const numA = parseInt(a.replace(/\D/g, ''), 10) || 0
+        const numB = parseInt(b.replace(/\D/g, ''), 10) || 0
+        return numA - numB
+      })
+      formattedTokens.push(`${group.displayName}${suffixContra} ${sortedMins.join(', ')}`)
+    } else if (group.count > 1) {
+      formattedTokens.push(`${group.displayName}${suffixContra} (${group.count}x)`)
+    } else {
+      formattedTokens.push(`${group.displayName}${suffixContra}`)
+    }
+  }
+
+  return formattedTokens.join(', ')
+}
+
 export interface SplitMatchScorersOptions {
   teamAName: string
   teamBName: string
@@ -319,8 +422,16 @@ export function splitMatchScorersByTeam(options: SplitMatchScorersOptions): Matc
   const isZeroPlacarA = parsedPlacarA === 0
   const isZeroPlacarB = parsedPlacarB === 0
 
-  const labelA = isZeroPlacarA ? '-' : scorersA.length > 0 ? scorersA.join(', ') : '-'
-  const labelB = isZeroPlacarB ? '-' : scorersB.length > 0 ? scorersB.join(', ') : '-'
+  const labelA = isZeroPlacarA
+    ? '-'
+    : scorersA.length > 0
+      ? formatScorersGroupedByPlayer(scorersA)
+      : '-'
+  const labelB = isZeroPlacarB
+    ? '-'
+    : scorersB.length > 0
+      ? formatScorersGroupedByPlayer(scorersB)
+      : '-'
 
   const hasAnyScorers = scorersA.length > 0 || scorersB.length > 0
 

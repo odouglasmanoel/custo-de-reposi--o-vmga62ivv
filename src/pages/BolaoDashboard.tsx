@@ -280,8 +280,8 @@ export default function BolaoDashboard() {
     jogo: Jogo
     placarA: number | string
     placarB: number | string
-    marcadoresTextA: string
-    marcadoresTextB: string
+    golsA: Array<{ nome: string; minuto: string }>
+    golsB: Array<{ nome: string; minuto: string }>
     isSaving?: boolean
   } | null>(null)
 
@@ -446,20 +446,31 @@ export default function BolaoDashboard() {
 
   const handleSalvarSobrescritaAdmin = async () => {
     if (!adminSobrescritaJogo) return
-    const { jogo, placarA, placarB, marcadoresTextA, marcadoresTextB } = adminSobrescritaJogo
+    const { jogo, placarA, placarB, golsA, golsB } = adminSobrescritaJogo
     setAdminSobrescritaJogo((prev) => (prev ? { ...prev, isSaving: true } : null))
 
     try {
       const parsedA = placarA === '' ? 0 : Number(placarA)
       const parsedB = placarB === '' ? 0 : Number(placarB)
-      const marcListA = (marcadoresTextA || '')
-        .split(',')
-        .map((m) => m.trim())
+
+      const marcListA = (golsA || [])
+        .map((item) => {
+          const nome = (item.nome || '').trim()
+          const min = (item.minuto || '').trim()
+          if (!nome) return ''
+          return min ? `${nome} ${min}` : nome
+        })
         .filter(Boolean)
-      const marcListB = (marcadoresTextB || '')
-        .split(',')
-        .map((m) => m.trim())
+
+      const marcListB = (golsB || [])
+        .map((item) => {
+          const nome = (item.nome || '').trim()
+          const min = (item.minuto || '').trim()
+          if (!nome) return ''
+          return min ? `${nome} ${min}` : nome
+        })
         .filter(Boolean)
+
       const combinedMarcadores = [...marcListA, ...marcListB]
 
       // Atualiza estado local de imediato
@@ -2264,66 +2275,102 @@ export default function BolaoDashboard() {
                                 size="sm"
                                 variant="outline"
                                 onClick={() => {
-                                  // Pré-preenche os marcadores divididos de cada lado
-                                  let initialA = ''
-                                  let initialB = ''
+                                  const initPlacarA =
+                                    sobrescritaJogo != null
+                                      ? sobrescritaJogo.placar_a
+                                      : (matchedLive?.placarA ??
+                                        (jogo.placar_a != null ? Number(jogo.placar_a) : ''))
+                                  const initPlacarB =
+                                    sobrescritaJogo != null
+                                      ? sobrescritaJogo.placar_b
+                                      : (matchedLive?.placarB ??
+                                        (jogo.placar_b != null ? Number(jogo.placar_b) : ''))
+
+                                  const countA =
+                                    initPlacarA === '' ? 0 : Math.max(0, Number(initPlacarA) || 0)
+                                  const countB =
+                                    initPlacarB === '' ? 0 : Math.max(0, Number(initPlacarB) || 0)
+
+                                  const parseScorerString = (
+                                    token: string,
+                                  ): { nome: string; minuto: string } => {
+                                    const raw = String(token || '').trim()
+                                    const minMatch = raw.match(/(\d+(?:\+\d+)?)\s*['’]?$/)
+                                    if (minMatch) {
+                                      const minVal = minMatch[1]
+                                      const nameVal = raw
+                                        .replace(/\s*\d+(?:\+\d+)?\s*['’]?$/, '')
+                                        .trim()
+                                      return { nome: nameVal, minuto: `${minVal}'` }
+                                    }
+                                    return { nome: raw, minuto: '' }
+                                  }
+
+                                  let rawTokensA: string[] = []
+                                  let rawTokensB: string[] = []
 
                                   if (sobrescritaJogo != null) {
                                     if (
                                       Array.isArray(sobrescritaJogo.marcadores_a) ||
                                       Array.isArray(sobrescritaJogo.marcadores_b)
                                     ) {
-                                      initialA = (sobrescritaJogo.marcadores_a || []).join(', ')
-                                      initialB = (sobrescritaJogo.marcadores_b || []).join(', ')
+                                      rawTokensA = (sobrescritaJogo.marcadores_a || []).map(String)
+                                      rawTokensB = (sobrescritaJogo.marcadores_b || []).map(String)
                                     } else if (Array.isArray(sobrescritaJogo.marcadores)) {
                                       // Degrade gracioso para sobrescrita legada: divide de acordo com o placar
                                       const pA = Number(sobrescritaJogo.placar_a) || 0
                                       const pB = Number(sobrescritaJogo.placar_b) || 0
                                       if (pA > 0 && pB === 0) {
-                                        initialA = sobrescritaJogo.marcadores.join(', ')
+                                        rawTokensA = sobrescritaJogo.marcadores.map(String)
                                       } else if (pB > 0 && pA === 0) {
-                                        initialB = sobrescritaJogo.marcadores.join(', ')
+                                        rawTokensB = sobrescritaJogo.marcadores.map(String)
                                       } else {
-                                        initialA = sobrescritaJogo.marcadores
+                                        rawTokensA = sobrescritaJogo.marcadores
                                           .slice(0, pA)
-                                          .join(', ')
-                                        initialB = sobrescritaJogo.marcadores
+                                          .map(String)
+                                        rawTokensB = sobrescritaJogo.marcadores
                                           .slice(pA, pA + pB)
-                                          .join(', ')
+                                          .map(String)
                                       }
                                     }
                                   } else if (
                                     matchedLive?.scorers &&
                                     matchedLive.scorers.length > 0
                                   ) {
-                                    const listA: string[] = []
-                                    const listB: string[] = []
                                     for (const sc of matchedLive.scorers) {
                                       const token = sc.minute ? `${sc.name} ${sc.minute}'` : sc.name
                                       if (sc.teamSide === 'away') {
-                                        listB.push(token)
+                                        rawTokensB.push(token)
                                       } else {
-                                        listA.push(token)
+                                        rawTokensA.push(token)
                                       }
                                     }
-                                    initialA = listA.join(', ')
-                                    initialB = listB.join(', ')
+                                  }
+
+                                  const initialGolsA: Array<{ nome: string; minuto: string }> = []
+                                  for (let i = 0; i < countA; i++) {
+                                    if (rawTokensA[i]) {
+                                      initialGolsA.push(parseScorerString(rawTokensA[i]))
+                                    } else {
+                                      initialGolsA.push({ nome: '', minuto: '' })
+                                    }
+                                  }
+
+                                  const initialGolsB: Array<{ nome: string; minuto: string }> = []
+                                  for (let i = 0; i < countB; i++) {
+                                    if (rawTokensB[i]) {
+                                      initialGolsB.push(parseScorerString(rawTokensB[i]))
+                                    } else {
+                                      initialGolsB.push({ nome: '', minuto: '' })
+                                    }
                                   }
 
                                   setAdminSobrescritaJogo({
                                     jogo,
-                                    placarA:
-                                      sobrescritaJogo != null
-                                        ? sobrescritaJogo.placar_a
-                                        : (matchedLive?.placarA ??
-                                          (jogo.placar_a != null ? Number(jogo.placar_a) : '')),
-                                    placarB:
-                                      sobrescritaJogo != null
-                                        ? sobrescritaJogo.placar_b
-                                        : (matchedLive?.placarB ??
-                                          (jogo.placar_b != null ? Number(jogo.placar_b) : '')),
-                                    marcadoresTextA: initialA,
-                                    marcadoresTextB: initialB,
+                                    placarA: initPlacarA,
+                                    placarB: initPlacarB,
+                                    golsA: initialGolsA,
+                                    golsB: initialGolsB,
                                   })
                                 }}
                                 className="h-6 px-2 text-[10px] font-bold border-amber-300 bg-amber-50 text-amber-900 hover:bg-amber-100 flex items-center gap-1"
@@ -2412,7 +2459,7 @@ export default function BolaoDashboard() {
                                     {splitScorers.labelA}
                                   </span>
                                 </div>
-                                <span className="text-emerald-300 hidden sm:inline">•</span>
+                                <span className="text-emerald-300">•</span>
                                 <div className="flex items-center gap-1">
                                   <span className="font-semibold text-emerald-950">
                                     Gols {jogo.time_b}:
@@ -2803,11 +2850,23 @@ export default function BolaoDashboard() {
                     type="number"
                     min="0"
                     value={adminSobrescritaJogo.placarA}
-                    onChange={(e) =>
-                      setAdminSobrescritaJogo((prev) =>
-                        prev ? { ...prev, placarA: e.target.value } : null,
-                      )
-                    }
+                    onChange={(e) => {
+                      const val = e.target.value
+                      const count = val === '' ? 0 : Math.max(0, parseInt(val, 10) || 0)
+                      setAdminSobrescritaJogo((prev) => {
+                        if (!prev) return null
+                        const oldList = prev.golsA || []
+                        const nextList: Array<{ nome: string; minuto: string }> = []
+                        for (let i = 0; i < count; i++) {
+                          nextList.push(oldList[i] || { nome: '', minuto: '' })
+                        }
+                        return {
+                          ...prev,
+                          placarA: val,
+                          golsA: nextList,
+                        }
+                      })
+                    }}
                     className="w-full rounded-md border border-slate-300 px-3 py-2 text-center text-base font-bold text-[#0F2A43] focus:border-amber-500 focus:outline-none"
                     placeholder="0"
                   />
@@ -2820,59 +2879,173 @@ export default function BolaoDashboard() {
                     type="number"
                     min="0"
                     value={adminSobrescritaJogo.placarB}
-                    onChange={(e) =>
-                      setAdminSobrescritaJogo((prev) =>
-                        prev ? { ...prev, placarB: e.target.value } : null,
-                      )
-                    }
+                    onChange={(e) => {
+                      const val = e.target.value
+                      const count = val === '' ? 0 : Math.max(0, parseInt(val, 10) || 0)
+                      setAdminSobrescritaJogo((prev) => {
+                        if (!prev) return null
+                        const oldList = prev.golsB || []
+                        const nextList: Array<{ nome: string; minuto: string }> = []
+                        for (let i = 0; i < count; i++) {
+                          nextList.push(oldList[i] || { nome: '', minuto: '' })
+                        }
+                        return {
+                          ...prev,
+                          placarB: val,
+                          golsB: nextList,
+                        }
+                      })
+                    }}
                     className="w-full rounded-md border border-slate-300 px-3 py-2 text-center text-base font-bold text-[#0F2A43] focus:border-amber-500 focus:outline-none"
                     placeholder="0"
                   />
                 </div>
               </div>
 
-              {/* Autores dos Gols separados por equipe (Mandante e Visitante) */}
-              <div className="space-y-3">
-                {/* Campo 1: Autores dos Gols [Mandante] */}
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-1">
-                    Autores dos Gols [{adminSobrescritaJogo.jogo.time_a}]
-                  </label>
-                  <input
-                    type="text"
-                    value={adminSobrescritaJogo.marcadoresTextA}
-                    onChange={(e) =>
-                      setAdminSobrescritaJogo((prev) =>
-                        prev ? { ...prev, marcadoresTextA: e.target.value } : null,
-                      )
-                    }
-                    placeholder={`Autores ${adminSobrescritaJogo.jogo.time_a} (ex: Luis Segovia 30')`}
-                    className="w-full rounded-md border border-slate-300 px-3 py-2 text-xs text-slate-800 focus:border-amber-500 focus:outline-none"
-                  />
-                  <p className="mt-1 text-[10px] text-slate-400">
-                    Nomes digitados separados por vírgula para {adminSobrescritaJogo.jogo.time_a}.
-                  </p>
+              {/* Autores dos Gols individuais por gol (Mandante e Visitante) - Estrutura idêntica à de Meus Palpites */}
+              <div className="space-y-4 max-h-[50vh] overflow-y-auto pr-1">
+                {/* Time A */}
+                <div className="rounded-lg border border-slate-200 bg-slate-50/50 p-3">
+                  <div className="flex items-center justify-between pb-1.5 border-b border-slate-200/60 mb-2">
+                    <span className="text-xs font-bold text-slate-800">
+                      Marcadores — {adminSobrescritaJogo.jogo.time_a}
+                    </span>
+                    <span className="text-[10px] font-semibold text-emerald-800 bg-emerald-50 border border-emerald-300 rounded px-1.5 py-0.5">
+                      {adminSobrescritaJogo.golsA.length} gol
+                      {adminSobrescritaJogo.golsA.length !== 1 ? 's' : ''}
+                    </span>
+                  </div>
+
+                  {adminSobrescritaJogo.golsA.length === 0 ? (
+                    <p className="py-2 text-center text-xs italic text-slate-400">
+                      0 gols para este time (campos bloqueados)
+                    </p>
+                  ) : (
+                    <div className="space-y-2">
+                      {adminSobrescritaJogo.golsA.map((gol, idx) => (
+                        <div key={idx} className="flex items-center gap-2">
+                          <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-slate-200 text-[10px] font-bold text-slate-700">
+                            {idx + 1}º
+                          </span>
+                          <input
+                            type="text"
+                            value={gol.nome}
+                            onChange={(e) => {
+                              const val = e.target.value
+                              setAdminSobrescritaJogo((prev) => {
+                                if (!prev) return null
+                                const nextList = [...prev.golsA]
+                                nextList[idx] = { ...nextList[idx], nome: val }
+                                return { ...prev, golsA: nextList }
+                              })
+                            }}
+                            placeholder={`Jogador autor do ${idx + 1}º gol (ex: Raphinha)`}
+                            className="flex-1 h-8 rounded-md border border-slate-300 bg-white px-2.5 text-xs text-slate-800 focus:border-amber-500 focus:outline-none"
+                          />
+                          <input
+                            type="text"
+                            value={gol.minuto}
+                            onChange={(e) => {
+                              const val = e.target.value
+                              setAdminSobrescritaJogo((prev) => {
+                                if (!prev) return null
+                                const nextList = [...prev.golsA]
+                                nextList[idx] = { ...nextList[idx], minuto: val }
+                                return { ...prev, golsA: nextList }
+                              })
+                            }}
+                            onBlur={(e) => {
+                              const raw = e.target.value.trim()
+                              if (!raw) return
+                              const cleanDigits = raw.replace(/\D/g, '')
+                              const formatted = cleanDigits ? `${cleanDigits}'` : raw
+                              setAdminSobrescritaJogo((prev) => {
+                                if (!prev) return null
+                                const nextList = [...prev.golsA]
+                                nextList[idx] = { ...nextList[idx], minuto: formatted }
+                                return { ...prev, golsA: nextList }
+                              })
+                            }}
+                            placeholder="Min (ex: 69)"
+                            className="w-20 h-8 rounded-md border border-slate-300 bg-white px-2 text-center text-xs text-slate-800 focus:border-amber-500 focus:outline-none"
+                            title="Minutagem do gol (ex: 69 ou 69')"
+                          />
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
 
-                {/* Campo 2: Autores dos Gols [Visitante] */}
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-1">
-                    Autores dos Gols [{adminSobrescritaJogo.jogo.time_b}]
-                  </label>
-                  <input
-                    type="text"
-                    value={adminSobrescritaJogo.marcadoresTextB}
-                    onChange={(e) =>
-                      setAdminSobrescritaJogo((prev) =>
-                        prev ? { ...prev, marcadoresTextB: e.target.value } : null,
-                      )
-                    }
-                    placeholder={`Autores ${adminSobrescritaJogo.jogo.time_b} (ex: Marlon Freitas 55')`}
-                    className="w-full rounded-md border border-slate-300 px-3 py-2 text-xs text-slate-800 focus:border-amber-500 focus:outline-none"
-                  />
-                  <p className="mt-1 text-[10px] text-slate-400">
-                    Nomes digitados separados por vírgula para {adminSobrescritaJogo.jogo.time_b}.
-                  </p>
+                {/* Time B */}
+                <div className="rounded-lg border border-slate-200 bg-slate-50/50 p-3">
+                  <div className="flex items-center justify-between pb-1.5 border-b border-slate-200/60 mb-2">
+                    <span className="text-xs font-bold text-slate-800">
+                      Marcadores — {adminSobrescritaJogo.jogo.time_b}
+                    </span>
+                    <span className="text-[10px] font-semibold text-emerald-800 bg-emerald-50 border border-emerald-300 rounded px-1.5 py-0.5">
+                      {adminSobrescritaJogo.golsB.length} gol
+                      {adminSobrescritaJogo.golsB.length !== 1 ? 's' : ''}
+                    </span>
+                  </div>
+
+                  {adminSobrescritaJogo.golsB.length === 0 ? (
+                    <p className="py-2 text-center text-xs italic text-slate-400">
+                      0 gols para este time (campos bloqueados)
+                    </p>
+                  ) : (
+                    <div className="space-y-2">
+                      {adminSobrescritaJogo.golsB.map((gol, idx) => (
+                        <div key={idx} className="flex items-center gap-2">
+                          <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-slate-200 text-[10px] font-bold text-slate-700">
+                            {idx + 1}º
+                          </span>
+                          <input
+                            type="text"
+                            value={gol.nome}
+                            onChange={(e) => {
+                              const val = e.target.value
+                              setAdminSobrescritaJogo((prev) => {
+                                if (!prev) return null
+                                const nextList = [...prev.golsB]
+                                nextList[idx] = { ...nextList[idx], nome: val }
+                                return { ...prev, golsB: nextList }
+                              })
+                            }}
+                            placeholder={`Jogador autor do ${idx + 1}º gol (ex: Youssouf Fofana)`}
+                            className="flex-1 h-8 rounded-md border border-slate-300 bg-white px-2.5 text-xs text-slate-800 focus:border-amber-500 focus:outline-none"
+                          />
+                          <input
+                            type="text"
+                            value={gol.minuto}
+                            onChange={(e) => {
+                              const val = e.target.value
+                              setAdminSobrescritaJogo((prev) => {
+                                if (!prev) return null
+                                const nextList = [...prev.golsB]
+                                nextList[idx] = { ...nextList[idx], minuto: val }
+                                return { ...prev, golsB: nextList }
+                              })
+                            }}
+                            onBlur={(e) => {
+                              const raw = e.target.value.trim()
+                              if (!raw) return
+                              const cleanDigits = raw.replace(/\D/g, '')
+                              const formatted = cleanDigits ? `${cleanDigits}'` : raw
+                              setAdminSobrescritaJogo((prev) => {
+                                if (!prev) return null
+                                const nextList = [...prev.golsB]
+                                nextList[idx] = { ...nextList[idx], minuto: formatted }
+                                return { ...prev, golsB: nextList }
+                              })
+                            }}
+                            placeholder="Min (ex: 19)"
+                            className="w-20 h-8 rounded-md border border-slate-300 bg-white px-2 text-center text-xs text-slate-800 focus:border-amber-500 focus:outline-none"
+                            title="Minutagem do gol (ex: 19 ou 19')"
+                          />
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
               </div>
 

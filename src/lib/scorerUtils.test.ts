@@ -2,9 +2,11 @@ import { describe, it, expect } from 'vitest'
 import {
   extractScorerNames,
   formatPalpiteMarcadoresSummary,
+  formatScorersGroupedByPlayer,
   getPalpiteMarcadoresPorTime,
   splitMatchScorersByTeam,
 } from './scorerUtils'
+import { calculateLiveMatchScoreBreakdown } from './scoreBadgeUtils'
 
 describe('scorerUtils', () => {
   describe('extractScorerNames', () => {
@@ -339,6 +341,115 @@ describe('scorerUtils', () => {
       expect(res.labelA).toBe('-')
       expect(res.labelB).toBe('-')
       expect(res.hasAnyScorers).toBe(false)
+    })
+  })
+
+  describe('formatScorersGroupedByPlayer', () => {
+    it("agrupa múltiplos gols do mesmo jogador com minutos em lista concatenada (ex: Raphinha 22', 52', 69')", () => {
+      const input = ["Raphinha 22'", "Raphinha 52'", "Raphinha 69'"]
+      const result = formatScorersGroupedByPlayer(input)
+      expect(result).toBe("Raphinha 22', 52', 69'")
+    })
+
+    it("formata um gol com minuto corretamente (ex: Youssouf Fofana 19')", () => {
+      const input = ["Youssouf Fofana 19'"]
+      const result = formatScorersGroupedByPlayer(input)
+      expect(result).toBe("Youssouf Fofana 19'")
+    })
+
+    it('formata sem minuto único como apenas o Nome', () => {
+      const input = ['Raphinha']
+      const result = formatScorersGroupedByPlayer(input)
+      expect(result).toBe('Raphinha')
+    })
+
+    it('formata sem minuto múltiplo com indicador de repetição Nome (2x)', () => {
+      const input = ['Raphinha', 'Raphinha']
+      const result = formatScorersGroupedByPlayer(input)
+      expect(result).toBe('Raphinha (2x)')
+    })
+
+    it('mistura jogadores com e sem múltiplos gols mantendo a ordem de ocorrência', () => {
+      const input = ["Youssouf Fofana 19'", "Raphinha 22'", "Raphinha 52'", "Raphinha 69'"]
+      const result = formatScorersGroupedByPlayer(input)
+      expect(result).toBe("Youssouf Fofana 19', Raphinha 22', 52', 69'")
+    })
+
+    it('retorna "-" para listas vazias ou nulas', () => {
+      expect(formatScorersGroupedByPlayer([])).toBe('-')
+      expect(formatScorersGroupedByPlayer(null as any)).toBe('-')
+    })
+  })
+
+  describe('Pontuação parcial por quantidade de gols N=3 com min(N, M)', () => {
+    it('garante que 3 entradas individuais alimentam liveScorers e quem palpitou 2x recebe min(3,2)=2 pts', () => {
+      const liveScorers = [
+        { nome: "Raphinha 22'", posicao: 'Atacante' },
+        { nome: "Raphinha 52'", posicao: 'Atacante' },
+        { nome: "Raphinha 69'", posicao: 'Atacante' },
+      ]
+
+      // Palpite com Raphinha 2 vezes (M=2), placar errou (0x2 vs 0x3)
+      const bet2x: any = {
+        id: 'bet1',
+        placar_a: 0,
+        placar_b: 2,
+        goleadores_b: [
+          { nome: 'Raphinha', posicao: 'Atacante' },
+          { nome: 'Raphinha', posicao: 'Atacante' },
+        ],
+      }
+
+      const breakdown2x = calculateLiveMatchScoreBreakdown(
+        bet2x,
+        0, // real placar A
+        3, // real placar B
+        liveScorers,
+      )
+
+      // Vencedor correto (2 pts) + Metade do placar Mandante 0=0 (1 pt) + 2 gols do Raphinha (+2 pts) = 5 pts
+      // Badge específica do marcador: "Raphinha 22', 52' [Atacante] (+2 pts)"
+      expect(breakdown2x.pontos).toBeGreaterThanOrEqual(2)
+      expect(
+        breakdown2x.resumoItens.some(
+          (item) => item.includes("Raphinha 22', 52'") && item.includes('+2 pts'),
+        ),
+      ).toBe(true)
+    })
+
+    it('garante que quem palpitou 3x recebe min(3,3)=3 pts', () => {
+      const liveScorers = [
+        { nome: "Raphinha 22'", posicao: 'Atacante' },
+        { nome: "Raphinha 52'", posicao: 'Atacante' },
+        { nome: "Raphinha 69'", posicao: 'Atacante' },
+      ]
+
+      // Palpite com Raphinha 3 vezes (M=3) e placar exato 0x3
+      const bet3x: any = {
+        id: 'bet2',
+        placar_a: 0,
+        placar_b: 3,
+        goleadores_b: [
+          { nome: 'Raphinha', posicao: 'Atacante' },
+          { nome: 'Raphinha', posicao: 'Atacante' },
+          { nome: 'Raphinha', posicao: 'Atacante' },
+        ],
+      }
+
+      const breakdown3x = calculateLiveMatchScoreBreakdown(
+        bet3x,
+        0, // real placar A
+        3, // real placar B
+        liveScorers,
+      )
+
+      // Placar exato (8 pts) + 3 gols Raphinha (3 pts) = 11 pts
+      expect(breakdown3x.pontos).toBe(11)
+      expect(
+        breakdown3x.resumoItens.some(
+          (item) => item.includes("Raphinha 22', 52', 69'") && item.includes('+3 pts'),
+        ),
+      ).toBe(true)
     })
   })
 })
