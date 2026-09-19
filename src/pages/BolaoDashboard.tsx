@@ -57,6 +57,7 @@ import {
   type MatchedLiveScore,
 } from '@/lib/apiFootballMatcher'
 import { AdminEditMarcadoresModal } from '@/components/AdminEditMarcadoresModal'
+import { ParticipantScorersView } from '@/components/ParticipantScorersView'
 import { Users } from 'lucide-react'
 import { buscarEscudoTime, readEscudoCache } from '@/services/enquetes'
 
@@ -2455,7 +2456,7 @@ export default function BolaoDashboard() {
                           Nenhum participante palpitou para este confronto.
                         </p>
                       ) : (
-                        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                        <div className="grid grid-cols-1 items-start gap-3 sm:grid-cols-2 lg:grid-cols-4">
                           {gameBets.map((bet) => {
                             const part = participantesMap.get(bet.participante)
                             const nomeParticipante = part?.nome || 'Participante'
@@ -2513,48 +2514,20 @@ export default function BolaoDashboard() {
                                 </div>
                                 {(() => {
                                   const splitPalpite = getPalpiteMarcadoresPorTime(bet)
-                                  const is0x0 =
-                                    splitPalpite.placarA === 0 && splitPalpite.placarB === 0
-
-                                  if (is0x0) {
-                                    return (
-                                      <div className="mt-1 text-[10px] text-slate-400 italic">
-                                        Sem marcadores (0x0)
-                                      </div>
-                                    )
-                                  }
-
                                   return (
-                                    <div className="mt-1.5 space-y-0.5 border-t border-slate-200/60 pt-1 text-[11px] leading-snug">
-                                      <div className="truncate text-slate-700">
-                                        <span className="font-semibold text-slate-800">
-                                          Gols Mandante:
-                                        </span>{' '}
-                                        <span
-                                          className={
-                                            splitPalpite.labelA === '-'
-                                              ? 'text-slate-400'
-                                              : 'text-slate-900 font-medium'
-                                          }
-                                        >
-                                          {splitPalpite.labelA}
-                                        </span>
-                                      </div>
-                                      <div className="truncate text-slate-700">
-                                        <span className="font-semibold text-slate-800">
-                                          Gols Visitante:
-                                        </span>{' '}
-                                        <span
-                                          className={
-                                            splitPalpite.labelB === '-'
-                                              ? 'text-slate-400'
-                                              : 'text-slate-900 font-medium'
-                                          }
-                                        >
-                                          {splitPalpite.labelB}
-                                        </span>
-                                      </div>
-                                    </div>
+                                    <ParticipantScorersView
+                                      participanteNome={nomeParticipante}
+                                      timeA={jogo.time_a}
+                                      timeB={jogo.time_b}
+                                      placarA={splitPalpite.placarA}
+                                      placarB={splitPalpite.placarB}
+                                      scorersA={splitPalpite.timeA}
+                                      scorersB={splitPalpite.timeB}
+                                      rawGolsA={bet.goleadores_a}
+                                      rawGolsB={bet.goleadores_b}
+                                      jogoGolsA={(jogo as any).gols_time_a}
+                                      jogoGolsB={(jogo as any).gols_time_b}
+                                    />
                                   )
                                 })()}
                                 {/* Detalhamento da pontuação parcial / ao vivo */}
