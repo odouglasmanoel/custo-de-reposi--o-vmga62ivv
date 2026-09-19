@@ -649,6 +649,27 @@ export default function BolaoDashboard() {
               const newStats = { registrados: reg, pendentes: pend }
               setLastValidStats(newStats)
 
+              // Atualiza em background os jogos passados com placar preenchido que ainda não estavam finalizados
+              const nowForSync = Date.now()
+              allGames.forEach((j) => {
+                if (
+                  !j.resultado_finalizado &&
+                  j.placar_a !== null &&
+                  j.placar_a !== undefined &&
+                  j.placar_b !== null &&
+                  j.placar_b !== undefined
+                ) {
+                  const kick = getJogoKickoffTimestamp(j.data, j.hora)
+                  if (kick !== null && nowForSync >= kick) {
+                    pb.collection('jogos')
+                      .update(j.id, { resultado_finalizado: true })
+                      .catch(() => {
+                        /* silencioso */
+                      })
+                  }
+                }
+              })
+
               // Grava em cache de 2 níveis para renderização instantânea nas próximas visitas
               writeDashboardCache(GERAL_BOLAO_ID, {
                 participantes: allParts,
@@ -710,6 +731,27 @@ export default function BolaoDashboard() {
               const pend = jogosList.filter((j) => !j.resultado_finalizado).length
               const newStats = { registrados: reg, pendentes: pend }
               setLastValidStats(newStats)
+
+              // Atualiza em background os jogos passados com placar preenchido que ainda não estavam finalizados
+              const nowForSync = Date.now()
+              globalGames.forEach((j) => {
+                if (
+                  !j.resultado_finalizado &&
+                  j.placar_a !== null &&
+                  j.placar_a !== undefined &&
+                  j.placar_b !== null &&
+                  j.placar_b !== undefined
+                ) {
+                  const kick = getJogoKickoffTimestamp(j.data, j.hora)
+                  if (kick !== null && nowForSync >= kick) {
+                    pb.collection('jogos')
+                      .update(j.id, { resultado_finalizado: true })
+                      .catch(() => {
+                        /* silencioso */
+                      })
+                  }
+                }
+              })
 
               // Grava no cache de 2 níveis
               writeDashboardCache(activeBolaoId, {
@@ -941,19 +983,76 @@ export default function BolaoDashboard() {
     return map
   }, [allParticipantes])
 
+  // Função unificada que determina se o jogo já foi concluído/finalizado
+  // (via banco de dados, API ao vivo matchedLive ou status textual do jogo, placar preenchido no passado,
+  // sobrescrita manual de admin passada ou partida iniciada há mais de 24h sem status ao vivo)
+  const isJogoConcluido = useCallback(
+    (j: Jogo, matchedLive?: MatchedLiveScore | null): boolean => {
+      if (j.resultado_finalizado) return true
+      if (matchedLive && matchedLive.isFinished) return true
+      if (
+        j.status &&
+        ['ft', 'finished', 'encerrado', 'finalizado'].includes(j.status.toLowerCase().trim())
+      ) {
+        return true
+      }
+
+      const kickoffMs = getJogoKickoffTimestamp(j.data, j.hora)
+
+      // Condição 1: placar_a != null && placar_b != null e data/hora do jogo já passou
+      if (
+        j.placar_a !== null &&
+        j.placar_a !== undefined &&
+        j.placar_b !== null &&
+        j.placar_b !== undefined &&
+        kickoffMs !== null &&
+        nowMs >= kickoffMs
+      ) {
+        return true
+      }
+
+      // Condição 2: existir sobrescrita do admin com data passada
+      if (Boolean(sobrescritasAdmin[j.id]) && kickoffMs !== null && nowMs >= kickoffMs) {
+        return true
+      }
+
+      // Condição 3: partida iniciada há mais de 24h sem status ao vivo
+      const isLive = Boolean(matchedLive && isFixtureLive(matchedLive.statusShort))
+      if (kickoffMs !== null && nowMs - kickoffMs > 24 * 60 * 60 * 1000 && !isLive) {
+        return true
+      }
+
+      return false
+    },
+    [nowMs, sobrescritasAdmin],
+  )
+
   // Jogos cujos palpites foram liberados:
-  // SOMENTE jogos pendentes (não finalizados) cujo horário de início já passou (dataHoraAtual >= dataHoraJogo)
+  // SOMENTE jogos pendentes (não concluídos) cujo horário de início já passou (dataHoraAtual >= dataHoraJogo)
+  // E que pertençam ao dia de hoje ou tenham kickoff há menos de 24 horas (kickoffMs >= nowMs - 24*60*60*1000)
+  // Exclui qualquer jogo concluído (no banco, no status ou já encerrado na API de futebol)
   const jogosLiberados = useMemo(() => {
     const targetGames = isGeral ? allJogos : jogos
     return targetGames
-      .filter((j) => !j.resultado_finalizado && isPalpiteEncerrado(j.data, j.hora, nowMs))
+      .filter((j) => {
+        const jogoDataISO = normalizeDataISO(j.data)
+        const matchedLive = resolveLiveScoreForGame(j, apiFixtures, 0.55, jogoDataISO)
+        const concluido = isJogoConcluido(j, matchedLive)
+        if (concluido) return false
+        if (!isPalpiteEncerrado(j.data, j.hora, nowMs)) return false
+
+        const kickoffMs = getJogoKickoffTimestamp(j.data, j.hora)
+        const isHoje = isJogoHoje(j.data, nowMs)
+        const recentKickoff = kickoffMs !== null && kickoffMs >= nowMs - 24 * 60 * 60 * 1000
+        return isHoje || recentKickoff
+      })
       .sort((a, b) => {
         // Ordenar por horário de kickoff decrescente (mais recentes primeiro)
         const kickA = getJogoKickoffTimestamp(a.data, a.hora) ?? new Date(a.data).getTime()
         const kickB = getJogoKickoffTimestamp(b.data, b.hora) ?? new Date(b.data).getTime()
         return kickB - kickA
       })
-  }, [isGeral, allJogos, jogos, nowMs])
+  }, [isGeral, allJogos, jogos, nowMs, apiFixtures, isJogoConcluido])
 
   // Jogos de Hoje (fuso America/Sao_Paulo)
   // Regra dinâmica: APENAS jogos do dia atual que ainda NÃO iniciaram (dataHoraJogo > dataHoraAtual)
@@ -1089,15 +1188,23 @@ export default function BolaoDashboard() {
 
   // Quick stats com fallback para o último valor válido conhecido
   // NUNCA zera as estatísticas por falta de tempo de resposta ou carregamento
+  // Jogos com isJogoConcluido=true são contabilizados como Jogos Encerrados (registrados)
   const stats: { registrados: number; pendentes: number } | null = useMemo(() => {
     const gamesToUse = isGeral ? allJogos : jogos
     if (gamesToUse.length > 0) {
-      const registrados = gamesToUse.filter((j) => j.resultado_finalizado).length
+      const registrados = gamesToUse.filter((j) => {
+        const jogoDataISO = normalizeDataISO(j.data)
+        const matchedLive = resolveLiveScoreForGame(j, apiFixtures, 0.55, jogoDataISO)
+        return isJogoConcluido(j, matchedLive)
+      }).length
 
-      // 1. Jogo aberto: não finalizado e com horário de encerramento ainda não atingido
-      const jogosAbertos = gamesToUse.filter(
-        (j) => !j.resultado_finalizado && !isPalpiteEncerrado(j.data, j.hora, nowMs),
-      )
+      // 1. Jogo aberto: não concluído e com horário de encerramento ainda não atingido
+      const jogosAbertos = gamesToUse.filter((j) => {
+        const jogoDataISO = normalizeDataISO(j.data)
+        const matchedLive = resolveLiveScoreForGame(j, apiFixtures, 0.55, jogoDataISO)
+        const concluido = isJogoConcluido(j, matchedLive)
+        return !concluido && !isPalpiteEncerrado(j.data, j.hora, nowMs)
+      })
 
       // Identificar os IDs dos participantes que pertencem ao usuário logado
       const targetParts = isGeral ? allParticipantes : participantes
@@ -1151,6 +1258,8 @@ export default function BolaoDashboard() {
     participantes,
     participantName,
     palpites,
+    apiFixtures,
+    isJogoConcluido,
   ])
 
   const handleCardPendentesClick = () => {

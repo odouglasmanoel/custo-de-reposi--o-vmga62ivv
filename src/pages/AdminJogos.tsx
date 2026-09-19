@@ -48,8 +48,25 @@ export default function AdminJogos() {
   const { toast } = useToast()
 
   const fileInputRef = useRef<HTMLInputElement>(null)
-  const [jogos, setJogos] = useState<Jogo[]>([])
-  const [loading, setLoading] = useState(true)
+  const [jogos, setJogos] = useState<Jogo[]>(() => {
+    try {
+      const targetId = activeBolaoId || 'geral'
+      const raw =
+        sessionStorage.getItem(`bolao_cache_jogos_${targetId}`) ||
+        sessionStorage.getItem('bolao_cache_all_jogos')
+      if (raw) {
+        const parsed = JSON.parse(raw)
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          return parsed
+        }
+      }
+    } catch {
+      /* ignore */
+    }
+    return []
+  })
+  const [loading, setLoading] = useState(() => jogos.length === 0)
+  const [isRevalidating, setIsRevalidating] = useState(() => jogos.length > 0)
   const [submitting, setSubmitting] = useState(false)
 
   // Modal Novo Bolão
@@ -88,11 +105,13 @@ export default function AdminJogos() {
     loadJogos()
   })
 
-  const loadJogos = async () => {
-    if (!activeBolaoId) return
+  const loadJogos = async (overrideBolaoId?: string) => {
+    const targetBolaoId = overrideBolaoId !== undefined ? overrideBolaoId : activeBolaoId
+    if (!targetBolaoId) return
     try {
+      const isGeral = targetBolaoId === 'geral'
       const records = await pb.collection('jogos').getFullList<Jogo>({
-        filter: `bolao = '${activeBolaoId}'`,
+        filter: isGeral ? '' : `bolao = '${targetBolaoId}'`,
         sort: 'data,hora',
       })
       setJogos(records)
@@ -102,6 +121,24 @@ export default function AdminJogos() {
       setLoading(false)
     }
   }
+
+  // Validação e auto-seleção de bolão
+  useEffect(() => {
+    if (boloes.length > 0) {
+      if (
+        !activeBolaoId ||
+        (activeBolaoId !== 'geral' && !boloes.some((b) => b.id === activeBolaoId))
+      ) {
+        const firstBolaoId = boloes[0]?.id
+        if (firstBolaoId) {
+          setActiveBolaoId(firstBolaoId)
+          setLoading(true)
+          loadJogos(firstBolaoId)
+          return
+        }
+      }
+    }
+  }, [boloes, activeBolaoId, setActiveBolaoId])
 
   useEffect(() => {
     if (activeBolaoId) {
@@ -400,9 +437,15 @@ export default function AdminJogos() {
             <select
               id="admin-pool-select"
               value={activeBolaoId || ''}
-              onChange={(e) => setActiveBolaoId(e.target.value)}
+              onChange={(e) => {
+                const newId = e.target.value
+                setActiveBolaoId(newId)
+                setLoading(true)
+                loadJogos(newId)
+              }}
               className="rounded-lg border border-[#CBD5E1] bg-white px-3 py-1.5 text-xs font-medium text-[#0F2A43] shadow-xs focus:border-[#10B981] focus:outline-none"
             >
+              <option value="geral">Geral (Todas as Copas)</option>
               {boloes.map((b) => (
                 <option key={b.id} value={b.id}>
                   {formatBolaoLabel(b)}

@@ -42,11 +42,10 @@ function readPoolCache(bolaoId: string): HistoricoPoolCache | null {
       return parsed
     }
   } catch {
-    // localStorage indisponível ou erro no parse
+    return null
   }
   return null
 }
-
 function writePoolCache(
   bolaoId: string,
   data: {
@@ -72,11 +71,28 @@ export default function Historico() {
   const { isAdmin } = useAuth()
   const { refreshBoloes: refreshGlobalBoloes } = useActivePool()
   const [boloes, setBoloes] = useState<Bolao[]>([])
-  const [selectedBolao, setSelectedBolao] = useState<Bolao | null>(null)
+  const [selectedBolao, setSelectedBolao] = useState<Bolao | null>(() => {
+    try {
+      const cachedBoloes = sessionStorage.getItem('bolao_cache_boloes')
+      if (cachedBoloes) {
+        const parsed = JSON.parse(cachedBoloes)
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          return parsed[0]
+        }
+      }
+    } catch {
+      /* ignore */
+    }
+    return null
+  })
 
-  const [participantes, setParticipantes] = useState<Participante[]>([])
-  const [jogos, setJogos] = useState<Jogo[]>([])
-  const [palpites, setPalpites] = useState<Palpite[]>([])
+  const initialPoolCache = selectedBolao ? readPoolCache(selectedBolao.id) : null
+
+  const [participantes, setParticipantes] = useState<Participante[]>(
+    () => initialPoolCache?.participantes || [],
+  )
+  const [jogos, setJogos] = useState<Jogo[]>(() => initialPoolCache?.jogos || [])
+  const [palpites, setPalpites] = useState<Palpite[]>(() => initialPoolCache?.palpites || [])
 
   const [editingPalpite, setEditingPalpite] = useState<{
     palpite: Palpite
@@ -86,9 +102,9 @@ export default function Historico() {
   } | null>(null)
 
   const [loadingBoloes, setLoadingBoloes] = useState(true)
-  const [loadingDetails, setLoadingDetails] = useState(false)
-  const [isRevalidating, setIsRevalidating] = useState(false)
-  const [hasLoadedCurrentPool, setHasLoadedCurrentPool] = useState(false)
+  const [loadingDetails, setLoadingDetails] = useState(() => !initialPoolCache)
+  const [isRevalidating, setIsRevalidating] = useState(() => Boolean(initialPoolCache))
+  const [hasLoadedCurrentPool, setHasLoadedCurrentPool] = useState(() => Boolean(initialPoolCache))
   const [updatingStatusId, setUpdatingStatusId] = useState<string | null>(null)
 
   const activeFetchPromiseRef = useRef<Promise<void> | null>(null)
@@ -104,7 +120,12 @@ export default function Historico() {
         })
         setBoloes(records)
         if (records.length > 0) {
-          setSelectedBolao(records[0])
+          setSelectedBolao((prev) => {
+            if (prev && records.some((b) => b.id === prev.id)) {
+              return prev
+            }
+            return records[0]
+          })
         }
       } catch (err) {
         console.error('Erro ao listar bolões do histórico:', err)
