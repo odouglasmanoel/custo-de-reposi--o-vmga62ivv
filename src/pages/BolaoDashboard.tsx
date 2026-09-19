@@ -210,7 +210,7 @@ export default function BolaoDashboard() {
   const [loading, setLoading] = useState(!hasInitialCache)
   const [isRefreshing, setIsRefreshing] = useState(false)
   const [isRevalidating, setIsRevalidating] = useState(hasInitialCache)
-  const [loadError, setLoadError] = useState<string | null>(null)
+
   const [nowMs, setNowMs] = useState<number>(Date.now())
 
   // Refs para dados de jogos e requisição em voo de live scores (evita loops e re-render infinito)
@@ -618,7 +618,6 @@ export default function BolaoDashboard() {
       // Promise com timeout de 10s para que NUNCA trave o dashboard infinitamente
       const fetchWithTimeout = async () => {
         lastFetchTimeRef.current = Date.now()
-        setLoadError(null)
 
         const timeoutPromise = new Promise<never>((_, reject) =>
           setTimeout(() => reject(new Error('Tempo de resposta excedido (timeout)')), 10000),
@@ -748,7 +747,7 @@ export default function BolaoDashboard() {
           }
         } catch (err: any) {
           console.warn('Alerta no carregamento do dashboard (mantendo último cache válido):', err)
-          setLoadError('Tempo de resposta lento. Exibindo dados preservados em cache.')
+          // Transição cache->dados novos silenciosa (sem setLoadError para tempo de resposta lento)
           // NUNCA esvazia os arrays nem zera lastValidStats! Preserva o que já está na tela
         } finally {
           setLoading(false)
@@ -1294,22 +1293,6 @@ export default function BolaoDashboard() {
           </select>
         </div>
       </div>
-
-      {loadError && (
-        <div className="flex items-center justify-between rounded-lg border border-amber-200 bg-amber-50 px-4 py-2.5 text-xs text-amber-900">
-          <div className="flex items-center gap-2">
-            <Clock className="h-4 w-4 text-amber-700 shrink-0" />
-            <span>{loadError}</span>
-          </div>
-          <button
-            type="button"
-            onClick={() => loadData(true)}
-            className="text-xs font-bold text-amber-900 underline hover:text-amber-950"
-          >
-            Tentar novamente
-          </button>
-        </div>
-      )}
 
       {/* Banner de Rate Limit no Dashboard com mensagem exata solicitada */}
       {isRateLimited && (

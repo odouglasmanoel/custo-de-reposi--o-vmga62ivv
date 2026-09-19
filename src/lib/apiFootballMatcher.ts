@@ -529,7 +529,19 @@ export function getFixtureDateSaoPaulo(dateInput?: string | Date | null): string
 /**
  * Status finalizados oficiais reconhecidos por Football-Data.org, TheSportsDB e API-Football.
  */
-const FINISHED_STATUSES = new Set(['FT', 'AET', 'PEN', 'FINISHED', 'AOT', 'POST', 'MATCH FINISHED'])
+const FINISHED_STATUSES = new Set([
+  'FT',
+  'AET',
+  'PEN',
+  'FINISHED',
+  'AOT',
+  'POST',
+  'MATCH FINISHED',
+  'ENCERRADO',
+  'FINALIZADO',
+  'FULL TIME',
+  'ENDED',
+])
 
 export function isFixtureFinished(statusShort?: string, statusLong?: string): boolean {
   if (statusShort && FINISHED_STATUSES.has(statusShort.toUpperCase().trim())) return true
