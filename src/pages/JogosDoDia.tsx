@@ -25,7 +25,13 @@ import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { getHojeDataSaoPaulo, getJogoKickoffTimestamp, parseHoraJogo } from '@/lib/dateUtils'
+import {
+  getHojeDataSaoPaulo,
+  getJogoKickoffTimestamp,
+  parseHoraJogo,
+  normalizeDataISO,
+} from '@/lib/dateUtils'
+import type { Jogo } from '@/types/bolao'
 import {
   cleanTeamName,
   stringSimilarity,
@@ -510,11 +516,17 @@ export default function JogosDoDia() {
 
         let resLive: Response | null = null
         let enquetesMatches: JogoBuscado[] = []
+        let localJogosMatches: Jogo[] = []
 
         try {
-          const [livePromise, enquetesPromise] = await Promise.allSettled([
+          const [livePromise, enquetesPromise, localJogosPromise] = await Promise.allSettled([
             fetch(urlJogosDoDia, { headers, signal: controller.signal }),
             buscarJogosIntervalo(dateStr, dateStr, true),
+            pb.collection('jogos').getFullList<Jogo>({
+              sort: 'data,hora',
+              fields:
+                'id,bolao,time_a,time_b,data,hora,placar_a,placar_b,resultado_finalizado,gols_time_a,gols_time_b,tem_penaltis,vencedor_penaltis,competicao,fixture_id',
+            }),
           ])
 
           if (livePromise.status === 'fulfilled') {
@@ -522,6 +534,12 @@ export default function JogosDoDia() {
           }
           if (enquetesPromise.status === 'fulfilled' && Array.isArray(enquetesPromise.value)) {
             enquetesMatches = enquetesPromise.value
+          }
+          if (localJogosPromise.status === 'fulfilled' && Array.isArray(localJogosPromise.value)) {
+            localJogosMatches = localJogosPromise.value.filter((j) => {
+              const norm = normalizeDataISO(j.data)
+              return norm === dateStr || (j.data && j.data.startsWith(dateStr))
+            })
           }
         } finally {
           clearTimeout(timeoutId)
@@ -685,7 +703,81 @@ export default function JogosDoDia() {
           }
         }
 
-        const finalFixturesList = mergedFixtures.length > 0 ? mergedFixtures : rawLiveFixtures
+        // 3. Fallback de jogos cadastrados na collection local 'jogos' para a data
+        if (localJogosMatches.length > 0) {
+          for (const lj of localJogosMatches) {
+            const hName = lj.time_a || ''
+            const aName = lj.time_b || ''
+            const alreadyExists = mergedFixtures.some((mf) =>
+              areTeamsSameConfrontation(
+                hName,
+                aName,
+                mf.teams?.home?.name || '',
+                mf.teams?.away?.name || '',
+              ),
+            )
+            if (!alreadyExists) {
+              const jDate = normalizeDataISO(lj.data) || dateStr
+              const jTime = lj.hora || '16:00'
+              const isoD = `${jDate}T${jTime.length === 5 ? jTime + ':00' : jTime}-03:00`
+              const isFin = Boolean(lj.resultado_finalizado)
+              const localFixture: DayFixture = {
+                fixture: {
+                  id: lj.fixture_id || lj.id,
+                  date: isoD,
+                  status: {
+                    short: isFin ? 'FT' : 'NS',
+                    long: isFin ? 'Finalizado' : 'Agendado',
+                    elapsed: isFin ? 90 : null,
+                  },
+                },
+                league: {
+                  id: 9998,
+                  name: lj.competicao || 'Bolão',
+                  country: 'Brasil',
+                  logo: '',
+                  region: 'Brasileirão & Copas',
+                },
+                teams: {
+                  home: {
+                    id: 0,
+                    name: hName,
+                    logo: '',
+                  },
+                  away: {
+                    id: 0,
+                    name: aName,
+                    logo: '',
+                  },
+                },
+                goals: {
+                  home: lj.placar_a != null ? Number(lj.placar_a) : null,
+                  away: lj.placar_b != null ? Number(lj.placar_b) : null,
+                },
+                score: {
+                  fulltime: {
+                    home: lj.placar_a != null ? Number(lj.placar_a) : null,
+                    away: lj.placar_b != null ? Number(lj.placar_b) : null,
+                  },
+                },
+                scorers: [],
+                isLive: false,
+              }
+              mergedFixtures.push(localFixture)
+            }
+          }
+        }
+
+        // Se ainda assim mergedFixtures estiver vazio, lê o cache antes de zerar o estado
+        let resolvedFixtures = mergedFixtures.length > 0 ? mergedFixtures : rawLiveFixtures
+        if (resolvedFixtures.length === 0) {
+          const cachedFallback = readJogosDiaCache(dateStr)
+          if (cachedFallback && cachedFallback.fixtures.length > 0) {
+            resolvedFixtures = cachedFallback.fixtures
+          }
+        }
+
+        const finalFixturesList = resolvedFixtures
         setFixtures(finalFixturesList)
 
         // Se obtivemos dados com sucesso (seja via placar ao vivo, fallback ou cache),
@@ -726,11 +818,20 @@ export default function JogosDoDia() {
           return
         }
         console.error('Erro ao buscar jogos do dia:', err)
-        setErrorMessage(
-          err instanceof Error
-            ? err.message
-            : 'Não foi possível carregar os jogos do dia. Verifique sua conexão.',
-        )
+        // Fallback defensivo com cache local caso ocorra exceção não tratada
+        const cachedFallback = readJogosDiaCache(dateStr)
+        if (cachedFallback && cachedFallback.fixtures.length > 0) {
+          setFixtures(cachedFallback.fixtures)
+          setIsConfigured(cachedFallback.configured)
+          setLastUpdated(cachedFallback.updatedAt)
+          setErrorMessage(null)
+        } else {
+          setErrorMessage(
+            err instanceof Error
+              ? err.message
+              : 'Não foi possível carregar os jogos do dia. Verifique sua conexão.',
+          )
+        }
       } finally {
         setLoading(false)
         setRefreshing(false)

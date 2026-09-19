@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { History, Loader2, Lock, Power, RotateCcw, ShieldAlert, Edit3 } from 'lucide-react'
 import pb from '@/lib/pocketbase/client'
 import { normalizeMemberName } from '@/lib/statsCalculator'
@@ -70,12 +70,67 @@ function writePoolCache(
 export default function Historico() {
   const { isAdmin } = useAuth()
   const { refreshBoloes: refreshGlobalBoloes } = useActivePool()
-  const [boloes, setBoloes] = useState<Bolao[]>([])
+
+  // Bolões conhecidos para fallback instantâneo
+  const fallbackBoloesPadrao: Bolao[] = useMemo(
+    () => [
+      {
+        id: 'copa-coni-fallback',
+        nome: 'Copa Coni',
+        ativo: true,
+        foco: 'Jogos Aleatórios',
+        collectionId: 'boloes',
+        collectionName: 'boloes',
+        created: '',
+        updated: '',
+      } as Bolao,
+      {
+        id: 'copa-genilton-fallback',
+        nome: 'Copa Genilton',
+        ativo: false,
+        foco: 'Paulistão',
+        collectionId: 'boloes',
+        collectionName: 'boloes',
+        created: '',
+        updated: '',
+      } as Bolao,
+      {
+        id: 'copa-sormani-fallback',
+        nome: 'Copa Sormani',
+        ativo: false,
+        foco: 'Santos',
+        collectionId: 'boloes',
+        collectionName: 'boloes',
+        created: '',
+        updated: '',
+      } as Bolao,
+    ],
+    [],
+  )
+
+  // Hidratar o estado boloes imediatamente a partir de localStorage com fallback nos conhecidos
+  const [boloes, setBoloes] = useState<Bolao[]>(() => {
+    try {
+      const raw =
+        localStorage.getItem('bolao_cache_boloes') || sessionStorage.getItem('bolao_cache_boloes')
+      if (raw) {
+        const parsed = JSON.parse(raw)
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          return parsed
+        }
+      }
+    } catch {
+      /* ignore */
+    }
+    return fallbackBoloesPadrao
+  })
+
   const [selectedBolao, setSelectedBolao] = useState<Bolao | null>(() => {
     try {
-      const cachedBoloes = sessionStorage.getItem('bolao_cache_boloes')
-      if (cachedBoloes) {
-        const parsed = JSON.parse(cachedBoloes)
+      const raw =
+        localStorage.getItem('bolao_cache_boloes') || sessionStorage.getItem('bolao_cache_boloes')
+      if (raw) {
+        const parsed = JSON.parse(raw)
         if (Array.isArray(parsed) && parsed.length > 0) {
           return parsed[0]
         }
@@ -83,7 +138,7 @@ export default function Historico() {
     } catch {
       /* ignore */
     }
-    return null
+    return fallbackBoloesPadrao[0] || null
   })
 
   const initialPoolCache = selectedBolao ? readPoolCache(selectedBolao.id) : null
@@ -118,8 +173,13 @@ export default function Historico() {
           sort: 'nome',
           fields: 'id,nome,ativo,ultima_atualizacao,foco',
         })
-        setBoloes(records)
-        if (records.length > 0) {
+        if (records && records.length > 0) {
+          setBoloes(records)
+          try {
+            localStorage.setItem('bolao_cache_boloes', JSON.stringify(records))
+          } catch {
+            /* ignore */
+          }
           setSelectedBolao((prev) => {
             if (prev && records.some((b) => b.id === prev.id)) {
               return prev
@@ -129,12 +189,26 @@ export default function Historico() {
         }
       } catch (err) {
         console.error('Erro ao listar bolões do histórico:', err)
+        // Rejeição da consulta: fallback em localStorage ou nos bolões conhecidos já hidratados
+        try {
+          const raw = localStorage.getItem('bolao_cache_boloes')
+          if (raw) {
+            const parsed = JSON.parse(raw)
+            if (Array.isArray(parsed) && parsed.length > 0) {
+              setBoloes(parsed)
+            }
+          } else {
+            setBoloes((prev) => (prev.length > 0 ? prev : fallbackBoloesPadrao))
+          }
+        } catch {
+          setBoloes((prev) => (prev.length > 0 ? prev : fallbackBoloesPadrao))
+        }
       } finally {
         setLoadingBoloes(false)
       }
     }
     fetchBoloes()
-  }, [])
+  }, [fallbackBoloesPadrao])
 
   // Função pura para computar o ranking consolidado mantendo a regra idêntica
   const computeRanking = useCallback((parts: Participante[], games: Jogo[], bets: Palpite[]) => {
@@ -261,6 +335,13 @@ export default function Historico() {
       } catch (err) {
         if (currentBolaoIdRef.current === targetBolaoId) {
           console.error('Erro ao carregar detalhes do bolão selecionado:', err)
+          // Em falha do Promise.all, preservar o estado atual em vez de setar [], mantendo readPoolCache(targetBolaoId)
+          const fallbackCached = readPoolCache(targetBolaoId)
+          if (fallbackCached) {
+            setJogos(fallbackCached.jogos)
+            setParticipantes(fallbackCached.participantes)
+            setPalpites(fallbackCached.palpites)
+          }
         }
       } finally {
         if (currentBolaoIdRef.current === targetBolaoId) {

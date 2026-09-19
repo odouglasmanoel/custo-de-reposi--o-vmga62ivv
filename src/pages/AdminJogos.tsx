@@ -105,7 +105,7 @@ export default function AdminJogos() {
     loadJogos()
   })
 
-  // PATCH 1: Carregamento autônomo dos bolões na montagem
+  // PATCH 1: Carregamento autônomo dos bolões na montagem com fallback em localStorage
   useEffect(() => {
     const fetchBoloesLocais = async () => {
       try {
@@ -114,10 +114,28 @@ export default function AdminJogos() {
         })
         if (records && records.length > 0) {
           setBoloesLocais(records)
+          try {
+            localStorage.setItem('bolao_cache_boloes', JSON.stringify(records))
+          } catch {
+            /* ignore */
+          }
         }
       } catch (err) {
-        // try/catch silencioso para não interromper a interface
         console.warn('Carregamento autônomo de bolões (AdminJogos):', err)
+        // Em caso de erro de rede, ler bolao_cache_boloes do localStorage para o dropdown não ficar só com "Geral"
+        try {
+          const raw =
+            localStorage.getItem('bolao_cache_boloes') ||
+            sessionStorage.getItem('bolao_cache_boloes')
+          if (raw) {
+            const parsed = JSON.parse(raw)
+            if (Array.isArray(parsed) && parsed.length > 0) {
+              setBoloesLocais(parsed)
+            }
+          }
+        } catch {
+          /* ignore */
+        }
       }
     }
     fetchBoloesLocais()
@@ -147,8 +165,30 @@ export default function AdminJogos() {
         sort: 'data,hora',
       })
       setJogos(records)
+      try {
+        if (isGeral) {
+          sessionStorage.setItem('bolao_cache_all_jogos', JSON.stringify(records))
+        }
+        sessionStorage.setItem(`bolao_cache_jogos_${targetBolaoId}`, JSON.stringify(records))
+      } catch {
+        /* ignore */
+      }
     } catch (err) {
       console.error('Erro ao carregar jogos:', err)
+      // Quando a consulta falhar, ler sessionStorage.getItem('bolao_cache_all_jogos') para não renderizar "Total 0"
+      try {
+        const cachedRaw =
+          sessionStorage.getItem(`bolao_cache_jogos_${targetBolaoId}`) ||
+          sessionStorage.getItem('bolao_cache_all_jogos')
+        if (cachedRaw) {
+          const parsed = JSON.parse(cachedRaw)
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            setJogos(parsed)
+          }
+        }
+      } catch {
+        /* ignore */
+      }
     } finally {
       setLoading(false)
     }

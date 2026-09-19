@@ -693,9 +693,7 @@ export default function Palpites() {
           }
         } catch (err) {
           console.warn('Alerta ao carregar palpites (preservando estado atual):', err)
-          setLoadError(
-            'A resposta demorou mais que o normal. Seus palpites atuais foram preservados.',
-          )
+          // Servido instantaneamente e silenciosamente — sem banner de lentidão
         } finally {
           setLoading(false)
           setIsRefreshing(false)
@@ -2249,22 +2247,6 @@ export default function Palpites() {
           </Badge>
         </div>
       </div>
-
-      {loadError && (
-        <div className="flex items-center justify-between rounded-lg border border-amber-200 bg-amber-50 px-4 py-2.5 text-xs text-amber-900">
-          <div className="flex items-center gap-2">
-            <Clock className="h-4 w-4 text-amber-700 shrink-0" />
-            <span>{loadError}</span>
-          </div>
-          <button
-            type="button"
-            onClick={() => loadData(1, true, false)}
-            className="text-xs font-bold text-amber-900 underline hover:text-amber-950"
-          >
-            Tentar novamente
-          </button>
-        </div>
-      )}
 
       {filterPendentes ? (
         <div className="flex items-center justify-between rounded-lg border border-amber-200 bg-amber-50 px-4 py-2.5 text-xs text-amber-900">
