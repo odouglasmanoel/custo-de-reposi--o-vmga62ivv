@@ -147,7 +147,25 @@ export function parseDetalhamentoStrings(detList: string[]): ScoreRuleBadge[] {
       for (let i = 0; i < parts.length; i++) {
         const p = parts[i].trim()
         if (!p) continue
-        // Formato típico: "Nome (+1 pt - Atacante/Meia)"
+        // Formatos suportados:
+        // 1. "Raphinha 22', 52' [Atacante] (+2 pts)" ou "Raphinha ×2 [Atacante] (+2 pts)" ou "Raphinha [Atacante] (+1 pt)"
+        // 2. Formato legado: "Nome (+1 pt - Atacante/Meia)"
+        const bracketMatch = p.match(/^([^[]+)\[([^\]]+)\](?:\s*\(\+?(\d+)\s*pts?\))?/)
+        if (bracketMatch) {
+          const rawName = bracketMatch[1].trim()
+          const pos = bracketMatch[2].trim()
+          const ptsMatch = p.match(/\+(\d+)\s*pt/)
+          const pts = ptsMatch ? ptsMatch[1] : bracketMatch[3] || ''
+          addBadge({
+            id: `marcador_${cleanPlayerName(rawName)}_${i}`,
+            label: `${rawName} [${pos}]`,
+            pointsText: pts ? `+${pts}` : undefined,
+            variant: 'scorer',
+          })
+          continue
+        }
+
+        // Formato típico legado: "Nome (+1 pt - Atacante/Meia)"
         const nameMatch = p.match(/^([^(]+)/)
         const ptsMatch = p.match(/\+(\d+)\s*pt/)
         const posMatch = p.match(/-\s*([^)]+)\)/)
@@ -158,7 +176,7 @@ export function parseDetalhamentoStrings(detList: string[]): ScoreRuleBadge[] {
 
         addBadge({
           id: `marcador_${cleanPlayerName(playerName)}_${i}`,
-          label: `Marcador: ${playerName}${pos ? ` (${pos})` : ''}`,
+          label: `${playerName}${pos ? ` [${pos}]` : ''}`,
           pointsText: pts ? `+${pts}` : undefined,
           variant: 'scorer',
         })
@@ -300,14 +318,16 @@ export function deriveBadgesFromMatch(bet: BetLike, match: MatchLike): ScoreRule
     }
   }
 
-  // Marcadores de gol reais
-  const realScorers: Array<{
-    nome: string
+  // Marcadores de gol reais — agrupamento por frequência min(N, M)
+  interface RealScorerGroup {
+    displayName: string
     norm: string
     posicao: string
-    points: number
-    used: boolean
-  }> = []
+    ptsUnitario: number
+    countReal: number
+    minutes: number[]
+  }
+  const realGroupMap = new Map<string, RealScorerGroup>()
 
   const addReal = (
     list?: Array<{ nome: string; posicao?: string; quantidade?: number }> | null,
@@ -315,20 +335,47 @@ export function deriveBadgesFromMatch(bet: BetLike, match: MatchLike): ScoreRule
     if (!Array.isArray(list)) return
     for (const item of list) {
       if (!item || !item.nome) continue
+      const rawNome = String(item.nome).trim()
+      const cleanNome = rawNome
+        .replace(/\s*\d+\s*['’]/g, '')
+        .replace(/\(gol contra\)|\(contra\)/gi, '')
+        .trim()
+      const norm = cleanPlayerName(cleanNome)
+      if (!norm) continue
+
       const pos = (item.posicao || 'Atacante/Meia').toLowerCase()
       let pts = 1
-      if (pos.includes('zagueiro') || pos.includes('lateral')) pts = 3
+      if (pos.includes('zagueiro') || pos.includes('lateral') || pos.includes('defensor')) pts = 3
       else if (pos.includes('goleiro')) pts = 10
       else if (pos.includes('contra')) pts = 5
 
+      const posLabel =
+        item.posicao ||
+        (pts === 3 ? 'Defensor' : pts === 10 ? 'Goleiro' : pts === 5 ? 'Gol Contra' : 'Atacante')
+
+      // Extrai minutos se presentes no nome
+      const extractedMins: number[] = []
+      const minMatches = rawNome.matchAll(/(\d+)\s*['’]/g)
+      for (const mm of minMatches) {
+        const mNum = parseInt(mm[1], 10)
+        if (!isNaN(mNum)) extractedMins.push(mNum)
+      }
+
       const qtd = Number(item.quantidade) || 1
-      for (let i = 0; i < qtd; i++) {
-        realScorers.push({
-          nome: item.nome,
-          norm: cleanPlayerName(item.nome),
-          posicao: item.posicao || 'Atacante/Meia',
-          points: pts,
-          used: false,
+      const existing = realGroupMap.get(norm)
+      if (existing) {
+        existing.countReal += qtd
+        if (extractedMins.length > 0) {
+          existing.minutes.push(...extractedMins)
+        }
+      } else {
+        realGroupMap.set(norm, {
+          displayName: cleanNome,
+          norm,
+          posicao: posLabel,
+          ptsUnitario: pts,
+          countReal: qtd,
+          minutes: extractedMins,
         })
       }
     }
@@ -337,38 +384,56 @@ export function deriveBadgesFromMatch(bet: BetLike, match: MatchLike): ScoreRule
   addReal(match.gols_time_a)
   addReal(match.gols_time_b)
 
+  // Agrupa palpites por jogador normalizado (frequência M)
+  const predCountMap = new Map<string, number>()
   const predList = [...(bet.goleadores_a || []), ...(bet.goleadores_b || [])]
-  let matchIndex = 0
-
   for (const p of predList) {
     if (!p) continue
-    // Se o marcador no palpite indicar "(gol contra)" ou similar, limpa para bater com o nome
     const pStr = typeof p === 'string' ? p : String((p as any)?.nome || '')
-    const isGolContraBet =
-      (typeof p === 'object' && p !== null && (p as any).gol_contra === true) ||
-      /\(gol contra\)|\(contra\)/i.test(pStr)
-    const cleanP = pStr.replace(/\(gol contra\)|\(contra\)/gi, '').trim()
+    const cleanP = pStr
+      .replace(/\s*\d+\s*['’]/g, '')
+      .replace(/\(gol contra\)|\(contra\)/gi, '')
+      .trim()
     const normP = cleanPlayerName(cleanP)
     if (!normP) continue
+    predCountMap.set(normP, (predCountMap.get(normP) || 0) + 1)
+  }
 
-    const found = realScorers.find((rs) => {
-      if (rs.used) return false
-      if (rs.norm !== normP) return false
-      if (isGolContraBet) {
-        // Se apostou especificamente gol contra, prioriza gol contra do atleta
-        return rs.posicao.toLowerCase().includes('contra') || true
+  // Para cada jogador presente em ambos: G = min(countReal, countPalpite)
+  let matchIndex = 0
+  for (const [normPred, countPred] of predCountMap.entries()) {
+    let matchedReal: RealScorerGroup | undefined = realGroupMap.get(normPred)
+    if (!matchedReal) {
+      for (const [realNorm, group] of realGroupMap.entries()) {
+        if (realNorm.includes(normPred) || normPred.includes(realNorm)) {
+          matchedReal = group
+          break
+        }
       }
-      return true
-    })
+    }
 
-    if (found) {
-      found.used = true
-      addBadge({
-        id: `marcador_${found.norm}_${matchIndex++}`,
-        label: `Marcador: ${found.nome} (${found.posicao})`,
-        pointsText: `+${found.points}`,
-        variant: 'scorer',
-      })
+    if (matchedReal && matchedReal.countReal > 0) {
+      const g = Math.min(matchedReal.countReal, countPred)
+      if (g > 0) {
+        const ptsTotal = g * matchedReal.ptsUnitario
+        let labelText = ''
+        const minsToUse = matchedReal.minutes.slice(0, g)
+        if (minsToUse.length > 0) {
+          const minsStr = minsToUse.map((m) => `${m}'`).join(', ')
+          labelText = `${matchedReal.displayName} ${minsStr} [${matchedReal.posicao}]`
+        } else if (g > 1) {
+          labelText = `${matchedReal.displayName} ×${g} [${matchedReal.posicao}]`
+        } else {
+          labelText = `${matchedReal.displayName} [${matchedReal.posicao}]`
+        }
+
+        addBadge({
+          id: `marcador_${matchedReal.norm}_${matchIndex++}`,
+          label: labelText,
+          pointsText: `+${ptsTotal}`,
+          variant: 'scorer',
+        })
+      }
     }
   }
 
@@ -506,18 +571,29 @@ export function calculateLiveMatchScoreBreakdown(
     }
   }
 
-  // Marcadores
-  const realScorers: Array<{
-    nome: string
+  // Marcadores de gols — cálculo por frequência min(N, M)
+  // Agrupa gols reais do jogo por jogador normalizado
+  interface RealPlayerGroup {
+    displayName: string
     norm: string
     posicao: string
-    points: number
-    used: boolean
-  }> = []
+    ptsUnitario: number
+    countReal: number
+    minutes: number[]
+  }
+  const realGroupMap = new Map<string, RealPlayerGroup>()
 
   if (Array.isArray(liveScorers)) {
     for (const item of liveScorers) {
       if (!item || !item.nome) continue
+      const rawNome = String(item.nome).trim()
+      const cleanNome = rawNome
+        .replace(/\s*\d+\s*['’]/g, '')
+        .replace(/\(gol contra\)|\(contra\)/gi, '')
+        .trim()
+      const norm = cleanPlayerName(cleanNome)
+      if (!norm) continue
+
       const pos = (item.posicao || 'Atacante/Meia').toLowerCase()
       let pts = item.points ?? 1
       if (item.points === undefined) {
@@ -526,49 +602,95 @@ export function calculateLiveMatchScoreBreakdown(
         else if (pos.includes('contra') || item.isOwnGoal) pts = 5
       }
 
+      const posLabel =
+        item.posicao ||
+        (pts === 3 ? 'Defensor' : pts === 10 ? 'Goleiro' : pts === 5 ? 'Gol Contra' : 'Atacante')
+
+      // Extrai minuto(s) se presente no nome (ex: "Raphinha 22'", "Raphinha 22', 52'")
+      const extractedMins: number[] = []
+      const minMatches = rawNome.matchAll(/(\d+)\s*['’]/g)
+      for (const mm of minMatches) {
+        const mNum = parseInt(mm[1], 10)
+        if (!isNaN(mNum)) extractedMins.push(mNum)
+      }
+
       const qtd = Number(item.quantidade) || 1
-      for (let i = 0; i < qtd; i++) {
-        realScorers.push({
-          nome: item.nome,
-          norm: cleanPlayerName(item.nome),
-          posicao:
-            item.posicao ||
-            (pts === 3
-              ? 'Defensor'
-              : pts === 10
-                ? 'Goleiro'
-                : pts === 5
-                  ? 'Gol Contra'
-                  : 'Atacante/Meia'),
-          points: pts,
-          used: false,
+      const existing = realGroupMap.get(norm)
+      if (existing) {
+        existing.countReal += qtd
+        if (extractedMins.length > 0) {
+          existing.minutes.push(...extractedMins)
+        }
+      } else {
+        realGroupMap.set(norm, {
+          displayName: cleanNome,
+          norm,
+          posicao: posLabel,
+          ptsUnitario: pts,
+          countReal: qtd,
+          minutes: extractedMins,
         })
       }
     }
   }
 
+  // Agrupa palpites por jogador normalizado (frequência M)
+  const predCountMap = new Map<string, number>()
   const predList = [...(bet.goleadores_a || []), ...(bet.goleadores_b || [])]
-  let matchIndex = 0
-
   for (const p of predList) {
     if (!p) continue
     const pStr = typeof p === 'string' ? p : String((p as any)?.nome || '')
-    const cleanP = pStr.replace(/\(gol contra\)|\(contra\)/gi, '').trim()
+    const cleanP = pStr
+      .replace(/\s*\d+\s*['’]/g, '')
+      .replace(/\(gol contra\)|\(contra\)/gi, '')
+      .trim()
     const normP = cleanPlayerName(cleanP)
     if (!normP) continue
+    predCountMap.set(normP, (predCountMap.get(normP) || 0) + 1)
+  }
 
-    const found = realScorers.find(
-      (rs) => !rs.used && (rs.norm === normP || rs.norm.includes(normP) || normP.includes(rs.norm)),
-    )
-    if (found) {
-      found.used = true
-      totalPontos += found.points
-      addBadge({
-        id: `marcador_${found.norm}_${matchIndex++}`,
-        label: `${found.nome} (${found.posicao})`,
-        pointsText: `+${found.points}`,
-        variant: 'scorer',
-      })
+  // Para cada jogador presente em ambos: G = min(countReal, countPalpite)
+  let scorerBadgeIdx = 0
+  for (const [normPred, countPred] of predCountMap.entries()) {
+    // Busca no realGroupMap por chave exata ou contenção flexível
+    let matchedReal: RealPlayerGroup | undefined = realGroupMap.get(normPred)
+    if (!matchedReal) {
+      for (const [realNorm, group] of realGroupMap.entries()) {
+        if (realNorm.includes(normPred) || normPred.includes(realNorm)) {
+          matchedReal = group
+          break
+        }
+      }
+    }
+
+    if (matchedReal && matchedReal.countReal > 0) {
+      const g = Math.min(matchedReal.countReal, countPred)
+      if (g > 0) {
+        const ptsTotal = g * matchedReal.ptsUnitario
+        totalPontos += ptsTotal
+
+        // Formatação consolidada:
+        // com minutos: "Raphinha 22', 52' [Atacante] (+2 pts)"
+        // sem minutos (N>1): "Raphinha ×2 [Atacante] (+2 pts)"
+        // gol único sem minuto: "Raphinha [Atacante] (+1 pt)"
+        let labelText = ''
+        const minsToUse = matchedReal.minutes.slice(0, g)
+        if (minsToUse.length > 0) {
+          const minsStr = minsToUse.map((m) => `${m}'`).join(', ')
+          labelText = `${matchedReal.displayName} ${minsStr} [${matchedReal.posicao}]`
+        } else if (g > 1) {
+          labelText = `${matchedReal.displayName} ×${g} [${matchedReal.posicao}]`
+        } else {
+          labelText = `${matchedReal.displayName} [${matchedReal.posicao}]`
+        }
+
+        addBadge({
+          id: `marcador_${matchedReal.norm}_${scorerBadgeIdx++}`,
+          label: labelText,
+          pointsText: `+${ptsTotal}`,
+          variant: 'scorer',
+        })
+      }
     }
   }
 

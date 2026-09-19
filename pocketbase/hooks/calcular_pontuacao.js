@@ -115,16 +115,28 @@ routerAdd('POST', '/backend/v1/calcular-pontuacao', (e) => {
     const realWinner = getWinner(placarRealA, placarRealB)
     const realDiff = Math.abs(placarRealA - placarRealB)
 
-    // Build real scorers flat pool with their points weight
-    // Position options: "Atacante/Meia" (+1), "Zagueiro/Lateral" (+3), "Goleiro" (+10), "Gol Contra" (+5)
-    // Structure of goal item: { nome, posicao, quantidade }
-    const allRealScorers = []
+    // Agrupamento de gols reais por jogador
+    // Estrutura do item de gol: { nome, posicao, quantidade }
+    // Suporta nomes com minutos embutidos (ex: "Raphinha 22'", "Raphinha 22', 52'")
+    const realScorersMap = {}
     const processScorer = (item) => {
       if (!item || !item.nome) return
+      const rawNome = String(item.nome).trim()
+      const cleanNome = rawNome
+        .replace(/\s*\d+\s*['’]/g, '')
+        .replace(/\(gol contra\)|\(contra\)/gi, '')
+        .trim()
+      const norm = normalizePlayerName(cleanNome)
+      if (!norm) return
+
       const count = parseInt(item.quantidade, 10) || 1
       const pos = (item.posicao || 'Atacante/Meia').toLowerCase().trim()
       let pts = 1
-      if (pos.indexOf('zagueiro') >= 0 || pos.indexOf('lateral') >= 0) {
+      if (
+        pos.indexOf('zagueiro') >= 0 ||
+        pos.indexOf('lateral') >= 0 ||
+        pos.indexOf('defensor') >= 0
+      ) {
         pts = 3
       } else if (pos.indexOf('goleiro') >= 0) {
         pts = 10
@@ -132,13 +144,33 @@ routerAdd('POST', '/backend/v1/calcular-pontuacao', (e) => {
         pts = 5
       }
 
-      for (let i = 0; i < count; i++) {
-        allRealScorers.push({
-          displayName: item.nome,
-          normalizedName: normalizePlayerName(item.nome),
+      const posLabel =
+        item.posicao ||
+        (pts === 3 ? 'Defensor' : pts === 10 ? 'Goleiro' : pts === 5 ? 'Gol Contra' : 'Atacante')
+
+      // Extrair minutos do nome se existirem
+      const mins = []
+      const minRegex = /(\d+)\s*['’]/g
+      let mMatch
+      while ((mMatch = minRegex.exec(rawNome)) !== null) {
+        const num = parseInt(mMatch[1], 10)
+        if (!isNaN(num)) mins.push(num)
+      }
+
+      if (realScorersMap[norm]) {
+        realScorersMap[norm].countReal += count
+        if (mins.length > 0) {
+          realScorersMap[norm].minutes = realScorersMap[norm].minutes.concat(mins)
+        }
+      } else {
+        realScorersMap[norm] = {
+          displayName: cleanNome,
+          norm: norm,
           points: pts,
-          position: item.posicao || 'Atacante/Meia',
-        })
+          position: posLabel,
+          countReal: count,
+          minutes: mins,
+        }
       }
     }
 
@@ -194,47 +226,62 @@ routerAdd('POST', '/backend/v1/calcular-pontuacao', (e) => {
         }
       }
 
-      // Check predicted goal scorers
+      // Check predicted goal scorers - Agrupamento por frequência min(N, M)
       const predScorersA = parseJsonField(palpite, 'goleadores_a')
       const predScorersB = parseJsonField(palpite, 'goleadores_b')
 
-      const allPredNames = []
-      for (const p of predScorersA) {
-        if (typeof p === 'string' && p.trim()) allPredNames.push(p.trim())
-      }
-      for (const p of predScorersB) {
-        if (typeof p === 'string' && p.trim()) allPredNames.push(p.trim())
+      const predCounts = {}
+      const addPredScorer = (p) => {
+        if (!p) return
+        const pStr = typeof p === 'string' ? p : String(p.nome || '')
+        const cleanP = pStr
+          .replace(/\s*\d+\s*['’]/g, '')
+          .replace(/\(gol contra\)|\(contra\)/gi, '')
+          .trim()
+        const normP = normalizePlayerName(cleanP)
+        if (!normP) return
+        predCounts[normP] = (predCounts[normP] || 0) + 1
       }
 
-      // Multiset (1-to-1) matching between predicted names and real scorer goals:
-      // Each predicted goal can match at most one available real goal by that player.
-      const availableRealScorers = allRealScorers.map((rs) => {
-        return {
-          displayName: rs.displayName,
-          normalizedName: rs.normalizedName,
-          points: rs.points,
-          position: rs.position,
-          used: false,
-        }
-      })
+      for (const p of predScorersA) addPredScorer(p)
+      for (const p of predScorersB) addPredScorer(p)
+
       const matchedScorers = []
+      for (const normPred in predCounts) {
+        const countPalpite = predCounts[normPred]
+        // Busca jogador real por chave exata ou contenção flexível
+        let matchedReal = realScorersMap[normPred]
+        if (!matchedReal) {
+          for (const rNorm in realScorersMap) {
+            if (rNorm.indexOf(normPred) >= 0 || normPred.indexOf(rNorm) >= 0) {
+              matchedReal = realScorersMap[rNorm]
+              break
+            }
+          }
+        }
 
-      for (const predName of allPredNames) {
-        const normPred = normalizePlayerName(predName)
-        if (!normPred) continue
+        if (matchedReal && matchedReal.countReal > 0) {
+          const g = Math.min(matchedReal.countReal, countPalpite)
+          if (g > 0) {
+            const ptsTotal = g * matchedReal.points
+            pontos += ptsTotal
 
-        // Find first unused real scorer matching this predicted player
-        const matchIndex = availableRealScorers.findIndex(
-          (rs) => !rs.used && rs.normalizedName === normPred,
-        )
-
-        if (matchIndex >= 0) {
-          const matchedRealScorer = availableRealScorers[matchIndex]
-          matchedRealScorer.used = true
-          pontos += matchedRealScorer.points
-          matchedScorers.push(
-            `${matchedRealScorer.displayName} (+${matchedRealScorer.points} pt${matchedRealScorer.points > 1 ? 's' : ''} - ${matchedRealScorer.position})`,
-          )
+            // Formatação do detalhamento consolidado:
+            // Com minutos: "Raphinha 22', 52' [Atacante] (+2 pts)"
+            // Sem minutos (>1): "Raphinha ×2 [Atacante] (+2 pts)"
+            // Único sem minutos: "Raphinha [Atacante] (+1 pt)"
+            const minsToUse = (matchedReal.minutes || []).slice(0, g)
+            let txt = ''
+            if (minsToUse.length > 0) {
+              const minsStr = minsToUse.map((m) => m + "'").join(', ')
+              txt = `${matchedReal.displayName} ${minsStr} [${matchedReal.position}] (+${ptsTotal} pt${ptsTotal > 1 ? 's' : ''})`
+            } else if (g > 1) {
+              txt = `${matchedReal.displayName} ×${g} [${matchedReal.position}] (+${ptsTotal} pt${ptsTotal > 1 ? 's' : ''})`
+            } else {
+              txt = `${matchedReal.displayName} [${matchedReal.position}] (+${ptsTotal} pt${ptsTotal > 1 ? 's' : ''})`
+            }
+            matchedScorers.push(txt)
+          }
         }
       }
 

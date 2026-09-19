@@ -349,24 +349,30 @@ export function countMarcadoresDefensoresAcertados(palpite: Palpite, jogo: Jogo)
     }
   }
 
-  // 2. Se detalhamento não encontrou posições, cruzar os dados de gols do jogo com o palpite
+  // 2. Se detalhamento não encontrou posições, cruzar os dados de gols do jogo com o palpite via min(N, M)
   if (count === 0) {
-    const defenderScorers: Array<{ nome: string; norm: string; used: boolean }> = []
+    const defenderGroups = new Map<string, { nome: string; countReal: number }>()
     const collectDefenders = (gols?: any[]) => {
       if (!Array.isArray(gols)) return
       for (const g of gols) {
         if (!g || !g.nome) continue
+        const rawNome = String(g.nome).trim()
+        const cleanNome = rawNome
+          .replace(/\s*\d+\s*['’]/g, '')
+          .replace(/\(gol contra\)|\(contra\)/gi, '')
+          .trim()
         const pos = (g.posicao || '').toLowerCase()
         const isDefender =
           pos.includes('zagueiro') || pos.includes('lateral') || pos.includes('defensor')
         if (isDefender) {
+          const norm = cleanScorerKey(cleanNome)
+          if (!norm) continue
           const qty = parseInt(g.quantidade, 10) || 1
-          for (let i = 0; i < qty; i++) {
-            defenderScorers.push({
-              nome: String(g.nome).trim(),
-              norm: cleanScorerKey(String(g.nome)),
-              used: false,
-            })
+          const existing = defenderGroups.get(norm)
+          if (existing) {
+            existing.countReal += qty
+          } else {
+            defenderGroups.set(norm, { nome: cleanNome, countReal: qty })
           }
         }
       }
@@ -375,29 +381,37 @@ export function countMarcadoresDefensoresAcertados(palpite: Palpite, jogo: Jogo)
     collectDefenders(jogo.gols_time_a)
     collectDefenders(jogo.gols_time_b)
 
-    if (defenderScorers.length > 0) {
-      const predScorers: Array<{ original: string; norm: string }> = []
+    if (defenderGroups.size > 0) {
+      const predCountMap = new Map<string, number>()
       const addPreds = (arr?: any[]) => {
         if (!Array.isArray(arr)) return
         for (const s of arr) {
-          if (typeof s === 'string' && s.trim()) {
-            predScorers.push({ original: s.trim(), norm: cleanScorerKey(s) })
+          const sStr = typeof s === 'string' ? s : String((s as any)?.nome || '')
+          const cleanP = sStr
+            .replace(/\s*\d+\s*['’]/g, '')
+            .replace(/\(gol contra\)|\(contra\)/gi, '')
+            .trim()
+          const normP = cleanScorerKey(cleanP)
+          if (normP) {
+            predCountMap.set(normP, (predCountMap.get(normP) || 0) + 1)
           }
         }
       }
       addPreds(palpite.goleadores_a)
       addPreds(palpite.goleadores_b)
 
-      for (const pred of predScorers) {
-        if (!pred.norm) continue
-        const found = defenderScorers.find(
-          (ds) =>
-            !ds.used &&
-            (ds.norm === pred.norm || ds.norm.includes(pred.norm) || pred.norm.includes(ds.norm)),
-        )
-        if (found) {
-          found.used = true
-          count++
+      for (const [normPred, countPred] of predCountMap.entries()) {
+        let matchedGroup = defenderGroups.get(normPred)
+        if (!matchedGroup) {
+          for (const [realNorm, group] of defenderGroups.entries()) {
+            if (realNorm.includes(normPred) || normPred.includes(realNorm)) {
+              matchedGroup = group
+              break
+            }
+          }
+        }
+        if (matchedGroup && matchedGroup.countReal > 0) {
+          count += Math.min(matchedGroup.countReal, countPred)
         }
       }
     }

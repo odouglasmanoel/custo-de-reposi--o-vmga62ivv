@@ -198,7 +198,7 @@ describe('scoreBadgeUtils', () => {
       expect(res.badges.some((b) => b.id === 'metade_placar')).toBe(true)
       expect(res.resumoTexto).toContain('Vencedor (+2 pts)')
       expect(res.resumoTexto).toContain('Metade do Placar (+1 pt)')
-      expect(res.resumoTexto).toContain('Raphinha (Atacante) (+1 pt)')
+      expect(res.resumoTexto).toContain('Raphinha [Atacante] (+1 pt)')
     })
 
     it('aplica pontuações de zagueiro (+3), goleiro (+10) e gol contra (+5)', () => {
@@ -224,9 +224,99 @@ describe('scoreBadgeUtils', () => {
       // Total: 8 + 3 + 10 + 5 = 26
       expect(res.pontos).toBe(26)
       expect(res.badges.some((b) => b.id === 'placar_exato')).toBe(true)
-      expect(res.resumoTexto).toContain('Gómez (Defensor) (+3 pts)')
-      expect(res.resumoTexto).toContain('Cássio (Goleiro) (+10 pts)')
-      expect(res.resumoTexto).toContain('Lyanco (Gol Contra) (+5 pts)')
+      expect(res.resumoTexto).toContain('Gómez [Defensor] (+3 pts)')
+      expect(res.resumoTexto).toContain('Cássio [Goleiro] (+10 pts)')
+      expect(res.resumoTexto).toContain('Lyanco [Gol Contra] (+5 pts)')
+    })
+
+    describe('cálculo por frequência min(N, M)', () => {
+      it('N=2, M=2 com minutos -> +2 pts (Atacante) e texto consolidado com minutos', () => {
+        const res = calculateLiveMatchScoreBreakdown(
+          {
+            placar_a: 2,
+            placar_b: 0,
+            pontuacao_jogo: 0,
+            goleadores_a: ['Raphinha', 'Raphinha'],
+          },
+          2,
+          0,
+          [
+            { nome: "Raphinha 22'", posicao: 'Atacante', quantidade: 1 },
+            { nome: "Raphinha 52'", posicao: 'Atacante', quantidade: 1 },
+          ],
+        )
+        // Placar exato (+8) + Raphinha (+2: 2 acertos de atacante) = 10 pts
+        expect(res.pontos).toBe(10)
+        expect(res.resumoTexto).toContain("Raphinha 22', 52' [Atacante] (+2 pts)")
+      })
+
+      it('N=2, M=1 -> +1 pt (Atacante)', () => {
+        const res = calculateLiveMatchScoreBreakdown(
+          {
+            placar_a: 2,
+            placar_b: 0,
+            pontuacao_jogo: 0,
+            goleadores_a: ['Raphinha'],
+          },
+          2,
+          0,
+          [
+            { nome: "Raphinha 22'", posicao: 'Atacante', quantidade: 1 },
+            { nome: "Raphinha 52'", posicao: 'Atacante', quantidade: 1 },
+          ],
+        )
+        expect(res.pontos).toBe(9) // 8 exato + 1 gol
+        expect(res.resumoTexto).toContain("Raphinha 22' [Atacante] (+1 pt)")
+      })
+
+      it('N=1, M=2 -> +1 pt (Atacante)', () => {
+        const res = calculateLiveMatchScoreBreakdown(
+          {
+            placar_a: 2,
+            placar_b: 0,
+            pontuacao_jogo: 0,
+            goleadores_a: ['Raphinha', 'Raphinha'],
+          },
+          2,
+          0,
+          [{ nome: "Raphinha 22'", posicao: 'Atacante', quantidade: 1 }],
+        )
+        expect(res.pontos).toBe(9) // 8 exato + 1 gol
+        expect(res.resumoTexto).toContain("Raphinha 22' [Atacante] (+1 pt)")
+      })
+
+      it('Defensor N=2, M=2 -> +6 pts', () => {
+        const res = calculateLiveMatchScoreBreakdown(
+          {
+            placar_a: 2,
+            placar_b: 0,
+            pontuacao_jogo: 0,
+            goleadores_a: ['Gabriel Magalhães', 'Gabriel Magalhães'],
+          },
+          2,
+          0,
+          [{ nome: 'Gabriel Magalhães', posicao: 'Defensor', quantidade: 2 }],
+        )
+        // 8 exato + min(2,2)*3 = 8 + 6 = 14 pts
+        expect(res.pontos).toBe(14)
+        expect(res.resumoTexto).toContain('Gabriel Magalhães ×2 [Defensor] (+6 pts)')
+      })
+
+      it('Fallback sem minutos: Raphinha ×2 [Atacante] (+2 pts)', () => {
+        const res = calculateLiveMatchScoreBreakdown(
+          {
+            placar_a: 2,
+            placar_b: 0,
+            pontuacao_jogo: 0,
+            goleadores_a: ['Raphinha', 'Raphinha'],
+          },
+          2,
+          0,
+          [{ nome: 'Raphinha', posicao: 'Atacante', quantidade: 2 }],
+        )
+        expect(res.pontos).toBe(10)
+        expect(res.resumoTexto).toContain('Raphinha ×2 [Atacante] (+2 pts)')
+      })
     })
   })
 })

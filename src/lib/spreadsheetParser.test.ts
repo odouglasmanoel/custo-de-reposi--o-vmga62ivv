@@ -624,4 +624,72 @@ describe('parseSpreadsheet with Copa Genilton structure', () => {
     expect(mexicoAfrica?.placar_a).toBe(2)
     expect(mexicoAfrica?.placar_b).toBe(0)
   })
+
+  describe('calculateMatchScore com cálculo por frequência min(N, M)', () => {
+    it('N=2, M=2 -> +2 pts (Atacante)', () => {
+      const res = calculateMatchScore(
+        2,
+        0,
+        2,
+        0,
+        ['Raphinha', 'Raphinha'],
+        [],
+        [{ nome: 'Raphinha', posicao: 'Atacante', quantidade: 2 }],
+        [],
+      )
+      // Placar exato (8) + 2 marcadores (2) = 10 pts
+      expect(res.pontos).toBe(10)
+      expect(res.detalhamento).toContain('Placar Exato (+8 pts)')
+      expect(res.detalhamento.some((d) => d.includes('Raphinha ×2 [Atacante] (+2 pts)'))).toBe(true)
+    })
+
+    it('N=2, M=1 -> +1 pt (Atacante)', () => {
+      const res = calculateMatchScore(
+        2,
+        0,
+        2,
+        0,
+        ['Raphinha'],
+        [],
+        [{ nome: 'Raphinha', posicao: 'Atacante', quantidade: 2 }],
+        [],
+      )
+      // Placar exato (8) + 1 marcador (1) = 9 pts
+      expect(res.pontos).toBe(9)
+      expect(res.detalhamento.some((d) => d.includes('Raphinha [Atacante] (+1 pt)'))).toBe(true)
+    })
+
+    it('N=1, M=2 -> +1 pt (Atacante)', () => {
+      const res = calculateMatchScore(
+        2,
+        0,
+        2,
+        0,
+        ['Raphinha', 'Raphinha'],
+        [],
+        [{ nome: 'Raphinha', posicao: 'Atacante', quantidade: 1 }],
+        [],
+      )
+      expect(res.pontos).toBe(9)
+      expect(res.detalhamento.some((d) => d.includes('Raphinha [Atacante] (+1 pt)'))).toBe(true)
+    })
+
+    it('Defensor N=2, M=2 -> +6 pts', () => {
+      const res = calculateMatchScore(
+        2,
+        0,
+        2,
+        0,
+        ['Gabriel Magalhães', 'Gabriel Magalhães'],
+        [],
+        [{ nome: 'Gabriel Magalhães', posicao: 'Defensor', quantidade: 2 }],
+        [],
+      )
+      // 8 + min(2,2)*3 = 14
+      expect(res.pontos).toBe(14)
+      expect(
+        res.detalhamento.some((d) => d.includes('Gabriel Magalhães ×2 [Defensor] (+6 pts)')),
+      ).toBe(true)
+    })
+  })
 })

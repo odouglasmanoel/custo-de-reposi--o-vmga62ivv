@@ -474,6 +474,60 @@ describe('statsCalculator', () => {
       collectionName: '',
     }
     expect(countMarcadoresDefensoresAcertados(palpiteAtacante, jogoCorinthians)).toBe(0)
+
+    // Palpite 4: Defensor N=2, M=2 cruzando gols_time_a com goleadores_a sem detalhamento prévio
+    const jogoDoisGolsDefensor: Jogo = {
+      id: 'j_def2',
+      bolao: 'b1',
+      time_a: 'Arsenal',
+      time_b: 'Chelsea',
+      data: '2026-09-16',
+      hora: '16:00',
+      placar_a: 2,
+      placar_b: 0,
+      resultado_finalizado: true,
+      tem_penaltis: false,
+      gols_time_a: [{ nome: 'Gabriel Magalhães', posicao: 'Defensor', quantidade: 2 }],
+      gols_time_b: [],
+      created: '',
+      updated: '',
+      collectionId: '',
+      collectionName: '',
+    }
+    const palpiteDefensorDuplo: Palpite = {
+      id: 'p_def2',
+      bolao: 'b1',
+      jogo: 'j_def2',
+      participante: 'p_davi',
+      placar_a: 2,
+      placar_b: 0,
+      goleadores_a: ['Gabriel Magalhães', 'Gabriel Magalhães'],
+      pontuacao_jogo: 14,
+      detalhamento: [],
+      created: '',
+      updated: '',
+      collectionId: '',
+      collectionName: '',
+    }
+    expect(countMarcadoresDefensoresAcertados(palpiteDefensorDuplo, jogoDoisGolsDefensor)).toBe(2)
+
+    // N=2, M=1 -> 1 defensor
+    const palpiteDefensorSimples: Palpite = {
+      id: 'p_def1',
+      bolao: 'b1',
+      jogo: 'j_def2',
+      participante: 'p_davi',
+      placar_a: 2,
+      placar_b: 0,
+      goleadores_a: ['Gabriel Magalhães'],
+      pontuacao_jogo: 11,
+      detalhamento: [],
+      created: '',
+      updated: '',
+      collectionId: '',
+      collectionName: '',
+    }
+    expect(countMarcadoresDefensoresAcertados(palpiteDefensorSimples, jogoDoisGolsDefensor)).toBe(1)
   })
 
   it('identifies big matches (isGrandeJogo) for playoffs, finals and derbies', () => {

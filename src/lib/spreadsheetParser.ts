@@ -244,30 +244,58 @@ export function calculateMatchScore(
     }
   }
 
-  // Scorers scoring
-  const allRealScorers: Array<{
+  // Scorers scoring — agrupamento por frequência min(N, M)
+  interface RealScorerGroup {
     nome: string
     norm: string
     posicao: string
     points: number
-    used: boolean
-  }> = []
+    countReal: number
+    minutes: number[]
+  }
+  const realGroupMap = new Map<string, RealScorerGroup>()
 
   const addReal = (list: Array<{ nome: string; posicao: string; quantidade: number }>) => {
     for (const item of list) {
+      if (!item || !item.nome) continue
+      const rawNome = String(item.nome).trim()
+      const cleanNome = rawNome
+        .replace(/\s*\d+\s*['’]/g, '')
+        .replace(/\(gol contra\)|\(contra\)/gi, '')
+        .trim()
+      const norm = cleanKey(cleanNome)
+      if (!norm) continue
+
       const pos = (item.posicao || 'Atacante/Meia').toLowerCase()
       let pts = 1
-      if (pos.includes('zagueiro') || pos.includes('lateral')) pts = 3
+      if (pos.includes('zagueiro') || pos.includes('lateral') || pos.includes('defensor')) pts = 3
       else if (pos.includes('goleiro')) pts = 10
       else if (pos.includes('contra')) pts = 5
 
-      for (let i = 0; i < (item.quantidade || 1); i++) {
-        allRealScorers.push({
-          nome: item.nome,
-          norm: cleanKey(item.nome),
-          posicao: item.posicao,
+      const posLabel =
+        item.posicao ||
+        (pts === 3 ? 'Defensor' : pts === 10 ? 'Goleiro' : pts === 5 ? 'Gol Contra' : 'Atacante')
+
+      const mins: number[] = []
+      const minMatches = rawNome.matchAll(/(\d+)\s*['’]/g)
+      for (const mm of minMatches) {
+        const mNum = parseInt(mm[1], 10)
+        if (!isNaN(mNum)) mins.push(mNum)
+      }
+
+      const qtd = Number(item.quantidade) || 1
+      const existing = realGroupMap.get(norm)
+      if (existing) {
+        existing.countReal += qtd
+        if (mins.length > 0) existing.minutes.push(...mins)
+      } else {
+        realGroupMap.set(norm, {
+          nome: cleanNome,
+          norm,
+          posicao: posLabel,
           points: pts,
-          used: false,
+          countReal: qtd,
+          minutes: mins,
         })
       }
     }
@@ -276,19 +304,50 @@ export function calculateMatchScore(
   addReal(realScorersA)
   addReal(realScorersB)
 
+  // Agrupa palpites por frequência M
+  const predCountMap = new Map<string, number>()
   const allPred = [...predScorersA, ...predScorersB]
-  const matchedScorers: string[] = []
-
   for (const p of allPred) {
-    const normP = cleanKey(p)
+    if (!p) continue
+    const cleanP = String(p)
+      .replace(/\s*\d+\s*['’]/g, '')
+      .replace(/\(gol contra\)|\(contra\)/gi, '')
+      .trim()
+    const normP = cleanKey(cleanP)
     if (!normP) continue
-    const found = allRealScorers.find((rs) => !rs.used && rs.norm === normP)
-    if (found) {
-      found.used = true
-      pontos += found.points
-      matchedScorers.push(
-        `${found.nome} (+${found.points} pt${found.points > 1 ? 's' : ''} - ${found.posicao})`,
-      )
+    predCountMap.set(normP, (predCountMap.get(normP) || 0) + 1)
+  }
+
+  const matchedScorers: string[] = []
+  for (const [normPred, countPred] of predCountMap.entries()) {
+    let matchedReal: RealScorerGroup | undefined = realGroupMap.get(normPred)
+    if (!matchedReal) {
+      for (const [realNorm, group] of realGroupMap.entries()) {
+        if (realNorm.includes(normPred) || normPred.includes(realNorm)) {
+          matchedReal = group
+          break
+        }
+      }
+    }
+
+    if (matchedReal && matchedReal.countReal > 0) {
+      const g = Math.min(matchedReal.countReal, countPred)
+      if (g > 0) {
+        const ptsTotal = g * matchedReal.points
+        pontos += ptsTotal
+
+        const minsToUse = matchedReal.minutes.slice(0, g)
+        let txt = ''
+        if (minsToUse.length > 0) {
+          const minsStr = minsToUse.map((m) => `${m}'`).join(', ')
+          txt = `${matchedReal.nome} ${minsStr} [${matchedReal.posicao}] (+${ptsTotal} pt${ptsTotal > 1 ? 's' : ''})`
+        } else if (g > 1) {
+          txt = `${matchedReal.nome} ×${g} [${matchedReal.posicao}] (+${ptsTotal} pt${ptsTotal > 1 ? 's' : ''})`
+        } else {
+          txt = `${matchedReal.nome} [${matchedReal.posicao}] (+${ptsTotal} pt${ptsTotal > 1 ? 's' : ''})`
+        }
+        matchedScorers.push(txt)
+      }
     }
   }
 
