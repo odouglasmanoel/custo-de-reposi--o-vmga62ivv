@@ -7,10 +7,105 @@
  * - Grandes da Europa (Premier League, La Liga, Serie A Itália, Bundesliga, Ligue 1)
  */
 
+// -------------------------------------------------------------
+// CIRCUIT BREAKER GLOBAL EM MEMÓRIA PARA API-FOOTBALL
+// Evita requisições 429 em loop quando a cota diária estiver esgotada.
+// Backoff padrão: 20 minutos. Permite 1 probe (half-open) após a janela.
+// -------------------------------------------------------------
+if (typeof globalThis !== 'undefined' && !globalThis.__apiFootballCircuitBreaker) {
+  globalThis.__apiFootballCircuitBreaker = {
+    isBlocked: false,
+    blockedUntil: 0,
+    probing: false,
+    reason: '',
+  }
+}
+
 routerAdd(
   'GET',
   '/backend/v1/enquetes/buscar-jogos',
   (e) => {
+    var API_FOOTBALL_BACKOFF_DURATION_MS = 20 * 60 * 1000
+
+    var checkApiFootballCircuitBreaker = function () {
+      if (typeof globalThis === 'undefined' || !globalThis.__apiFootballCircuitBreaker) {
+        return { shouldSkip: false, isProbe: false }
+      }
+      var cb = globalThis.__apiFootballCircuitBreaker
+      if (!cb.isBlocked) {
+        return { shouldSkip: false, isProbe: false }
+      }
+      var now = Date.now()
+      if (now < cb.blockedUntil) {
+        return {
+          shouldSkip: true,
+          reason: cb.reason || 'Cota da API-Football esgotada (Circuit Breaker ativo)',
+        }
+      }
+      if (!cb.probing) {
+        cb.probing = true
+        return { shouldSkip: false, isProbe: true }
+      }
+      return { shouldSkip: true, reason: 'Circuit Breaker em sondagem por outra requisição' }
+    }
+
+    var tripApiFootballCircuitBreaker = function (reason) {
+      if (typeof globalThis === 'undefined') return
+      if (!globalThis.__apiFootballCircuitBreaker) {
+        globalThis.__apiFootballCircuitBreaker = {
+          isBlocked: false,
+          blockedUntil: 0,
+          probing: false,
+          reason: '',
+        }
+      }
+      var cb = globalThis.__apiFootballCircuitBreaker
+      cb.isBlocked = true
+      cb.blockedUntil = Date.now() + API_FOOTBALL_BACKOFF_DURATION_MS
+      cb.probing = false
+      cb.reason = reason || 'Rate limit / quota exceeded (429)'
+      console.log(
+        '[CircuitBreaker API-Football] TRIP ATIVADO por 20 minutos até ' +
+          new Date(cb.blockedUntil).toISOString() +
+          '. Motivo: ' +
+          cb.reason,
+      )
+    }
+
+    var resetApiFootballCircuitBreaker = function () {
+      if (typeof globalThis === 'undefined' || !globalThis.__apiFootballCircuitBreaker) return
+      var cb = globalThis.__apiFootballCircuitBreaker
+      if (cb.isBlocked || cb.probing) {
+        console.log('[CircuitBreaker API-Football] RESET: Conexão normalizada com resposta 200.')
+      }
+      cb.isBlocked = false
+      cb.probing = false
+      cb.blockedUntil = 0
+      cb.reason = ''
+    }
+
+    var isRateLimitErrorHelper = function (statusCode, responseBody) {
+      if (statusCode === 429) return true
+      if (!responseBody) return false
+      var strBody = ''
+      try {
+        strBody = typeof responseBody === 'string' ? responseBody : JSON.stringify(responseBody)
+      } catch (_) {
+        strBody = String(responseBody)
+      }
+      strBody = strBody.toLowerCase()
+      return (
+        strBody.indexOf('requests limit reached') !== -1 ||
+        strBody.indexOf('request limit reached') !== -1 ||
+        strBody.indexOf('rate limit') !== -1 ||
+        strBody.indexOf('plan reached') !== -1 ||
+        strBody.indexOf('too many requests') !== -1 ||
+        strBody.indexOf('quota exceeded') !== -1 ||
+        strBody.indexOf('exceeded the maximum') !== -1 ||
+        strBody.indexOf('free-tier limit') !== -1
+      )
+    }
+
     try {
       const authRecord = e.auth
       if (!authRecord) {
@@ -433,8 +528,13 @@ routerAdd(
           var fdCollected = []
           var tsdbCollected = []
 
-          // A) API-Football: consulta a data quando chave disponível
-          if (apiKey && apiKey !== fallbackApiKey) {
+          // A) API-Football: consulta a data quando chave disponível e circuit breaker não bloqueado
+          var cbCheckEnq = checkApiFootballCircuitBreaker()
+          if (cbCheckEnq.shouldSkip) {
+            console.log(
+              '[Enquetes] Circuit breaker ativo — pulando API-Football para data ' + targetDate,
+            )
+          } else if (apiKey && apiKey !== fallbackApiKey) {
             var baseUrl = isRapidApi
               ? 'https://api-football-v1.p.rapidapi.com/v3/fixtures'
               : 'https://v3.football.api-sports.io/fixtures'
@@ -454,63 +554,65 @@ routerAdd(
                 timeout: 8,
               })
 
-              if (
-                resAF &&
-                resAF.statusCode === 200 &&
-                resAF.json &&
-                Array.isArray(resAF.json.response)
-              ) {
-                for (var afi = 0; afi < resAF.json.response.length; afi++) {
-                  var item = resAF.json.response[afi]
-                  var lId = item.league ? item.league.id : 0
-                  var lName = item.league ? item.league.name : ''
-                  var tCheck = isTargetCompetition(lId, lName, '')
-                  if (!tCheck.valid) continue
+              if (isRateLimitErrorHelper(resAF.statusCode, resAF.json || resAF.raw)) {
+                tripApiFootballCircuitBreaker(
+                  'Rate limit 429 em enquetes_buscar_jogos para data ' + targetDate,
+                )
+              } else if (resAF && resAF.statusCode === 200) {
+                resetApiFootballCircuitBreaker()
+                if (resAF.json && Array.isArray(resAF.json.response)) {
+                  for (var afi = 0; afi < resAF.json.response.length; afi++) {
+                    var item = resAF.json.response[afi]
+                    var lId = item.league ? item.league.id : 0
+                    var lName = item.league ? item.league.name : ''
+                    var tCheck = isTargetCompetition(lId, lName, '')
+                    if (!tCheck.valid) continue
 
-                  var fixDate = item.fixture && item.fixture.date ? String(item.fixture.date) : ''
-                  var dateSP = toDateStringSaoPaulo(fixDate) || targetDate
-                  var timeSP = toTimeStringSaoPaulo(fixDate)
-                  var authenticAFName =
-                    (item.league && item.league.name) || tCheck.categoria || 'Futebol'
+                    var fixDate = item.fixture && item.fixture.date ? String(item.fixture.date) : ''
+                    var dateSP = toDateStringSaoPaulo(fixDate) || targetDate
+                    var timeSP = toTimeStringSaoPaulo(fixDate)
+                    var authenticAFName =
+                      (item.league && item.league.name) || tCheck.categoria || 'Futebol'
 
-                  afCollected.push({
-                    fixture: {
-                      id: item.fixture ? String(item.fixture.id) : '',
-                      date: fixDate,
-                      status: {
-                        short:
-                          (item.fixture && item.fixture.status && item.fixture.status.short) ||
-                          'NS',
+                    afCollected.push({
+                      fixture: {
+                        id: item.fixture ? String(item.fixture.id) : '',
+                        date: fixDate,
+                        status: {
+                          short:
+                            (item.fixture && item.fixture.status && item.fixture.status.short) ||
+                            'NS',
+                        },
                       },
-                    },
-                    league: {
-                      id: lId,
-                      name: authenticAFName,
-                      categoria: tCheck.categoria,
-                      prioridade: tCheck.prioridade,
-                      logo: item.league ? item.league.logo : '',
-                      region:
-                        tCheck.categoria.indexOf('Brasileir') !== -1
-                          ? 'Brasileirão & Copas'
-                          : 'Futebol Europeu',
-                    },
-                    teams: {
-                      home: {
-                        id: item.teams && item.teams.home ? item.teams.home.id : 0,
-                        name: (item.teams && item.teams.home && item.teams.home.name) || '',
-                        logo: (item.teams && item.teams.home && item.teams.home.logo) || '',
+                      league: {
+                        id: lId,
+                        name: authenticAFName,
+                        categoria: tCheck.categoria,
+                        prioridade: tCheck.prioridade,
+                        logo: item.league ? item.league.logo : '',
+                        region:
+                          tCheck.categoria.indexOf('Brasileir') !== -1
+                            ? 'Brasileirão & Copas'
+                            : 'Futebol Europeu',
                       },
-                      away: {
-                        id: item.teams && item.teams.away ? item.teams.away.id : 0,
-                        name: (item.teams && item.teams.away && item.teams.away.name) || '',
-                        logo: (item.teams && item.teams.away && item.teams.away.logo) || '',
+                      teams: {
+                        home: {
+                          id: item.teams && item.teams.home ? item.teams.home.id : 0,
+                          name: (item.teams && item.teams.home && item.teams.home.name) || '',
+                          logo: (item.teams && item.teams.home && item.teams.home.logo) || '',
+                        },
+                        away: {
+                          id: item.teams && item.teams.away ? item.teams.away.id : 0,
+                          name: (item.teams && item.teams.away && item.teams.away.name) || '',
+                          logo: (item.teams && item.teams.away && item.teams.away.logo) || '',
+                        },
                       },
-                    },
-                    dateSP: dateSP,
-                    timeSP: timeSP,
-                    provider: 'api_football',
-                    sourcePriority: 1,
-                  })
+                      dateSP: dateSP,
+                      timeSP: timeSP,
+                      provider: 'api_football',
+                      sourcePriority: 1,
+                    })
+                  }
                 }
               }
             } catch (errAF) {
@@ -1005,6 +1107,87 @@ routerAdd(
   'GET',
   '/backend/v1/enquetes/buscar-escudo',
   (e) => {
+    var API_FOOTBALL_BACKOFF_DURATION_MS = 20 * 60 * 1000
+
+    var checkApiFootballCircuitBreaker = function () {
+      if (typeof globalThis === 'undefined' || !globalThis.__apiFootballCircuitBreaker) {
+        return { shouldSkip: false, isProbe: false }
+      }
+      var cb = globalThis.__apiFootballCircuitBreaker
+      if (!cb.isBlocked) {
+        return { shouldSkip: false, isProbe: false }
+      }
+      var now = Date.now()
+      if (now < cb.blockedUntil) {
+        return {
+          shouldSkip: true,
+          reason: cb.reason || 'Cota da API-Football esgotada (Circuit Breaker ativo)',
+        }
+      }
+      if (!cb.probing) {
+        cb.probing = true
+        return { shouldSkip: false, isProbe: true }
+      }
+      return { shouldSkip: true, reason: 'Circuit Breaker em sondagem por outra requisição' }
+    }
+
+    var tripApiFootballCircuitBreaker = function (reason) {
+      if (typeof globalThis === 'undefined') return
+      if (!globalThis.__apiFootballCircuitBreaker) {
+        globalThis.__apiFootballCircuitBreaker = {
+          isBlocked: false,
+          blockedUntil: 0,
+          probing: false,
+          reason: '',
+        }
+      }
+      var cb = globalThis.__apiFootballCircuitBreaker
+      cb.isBlocked = true
+      cb.blockedUntil = Date.now() + API_FOOTBALL_BACKOFF_DURATION_MS
+      cb.probing = false
+      cb.reason = reason || 'Rate limit / quota exceeded (429)'
+      console.log(
+        '[CircuitBreaker API-Football] TRIP ATIVADO por 20 minutos até ' +
+          new Date(cb.blockedUntil).toISOString() +
+          '. Motivo: ' +
+          cb.reason,
+      )
+    }
+
+    var resetApiFootballCircuitBreaker = function () {
+      if (typeof globalThis === 'undefined' || !globalThis.__apiFootballCircuitBreaker) return
+      var cb = globalThis.__apiFootballCircuitBreaker
+      if (cb.isBlocked || cb.probing) {
+        console.log('[CircuitBreaker API-Football] RESET: Conexão normalizada com resposta 200.')
+      }
+      cb.isBlocked = false
+      cb.probing = false
+      cb.blockedUntil = 0
+      cb.reason = ''
+    }
+
+    var isRateLimitErrorHelper = function (statusCode, responseBody) {
+      if (statusCode === 429) return true
+      if (!responseBody) return false
+      var strBody = ''
+      try {
+        strBody = typeof responseBody === 'string' ? responseBody : JSON.stringify(responseBody)
+      } catch (_) {
+        strBody = String(responseBody)
+      }
+      strBody = strBody.toLowerCase()
+      return (
+        strBody.indexOf('requests limit reached') !== -1 ||
+        strBody.indexOf('request limit reached') !== -1 ||
+        strBody.indexOf('rate limit') !== -1 ||
+        strBody.indexOf('plan reached') !== -1 ||
+        strBody.indexOf('too many requests') !== -1 ||
+        strBody.indexOf('quota exceeded') !== -1 ||
+        strBody.indexOf('exceeded the maximum') !== -1 ||
+        strBody.indexOf('free-tier limit') !== -1
+      )
+    }
+
     try {
       const authRecord = e.auth
       if (!authRecord) {
@@ -1114,7 +1297,8 @@ routerAdd(
         }
         if (afKey.length > 40) isRapid = true
 
-        if (afKey) {
+        var cbCheckBadge = checkApiFootballCircuitBreaker()
+        if (afKey && !cbCheckBadge.shouldSkip) {
           try {
             var urlAF = isRapid
               ? 'https://api-football-v1.p.rapidapi.com/v3/teams?search=' +
@@ -1131,12 +1315,15 @@ routerAdd(
               timeout: 4,
             })
 
-            if (
+            if (isRateLimitErrorHelper(resAF.statusCode, resAF.json || resAF.raw)) {
+              tripApiFootballCircuitBreaker('Rate limit 429 ao buscar escudo de time ' + teamName)
+            } else if (
               resAF.statusCode === 200 &&
               resAF.json &&
               Array.isArray(resAF.json.response) &&
               resAF.json.response.length > 0
             ) {
+              resetApiFootballCircuitBreaker()
               var tAfObj = resAF.json.response[0]
               if (tAfObj && tAfObj.team && tAfObj.team.logo) {
                 badgeFound = String(tAfObj.team.logo).trim()

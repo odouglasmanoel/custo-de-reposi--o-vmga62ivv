@@ -552,6 +552,8 @@ export default function JogosDoDia() {
           } catch {
             /* ignore */
           }
+        } else if (resLive && resLive.status === 429) {
+          setIsRateLimited(true)
         }
 
         const rawLiveFixtures: DayFixture[] =
@@ -561,7 +563,8 @@ export default function JogosDoDia() {
         setIsCached(Boolean(liveData?.cached))
         setCacheAge(liveData?.cacheAgeSeconds || 0)
         setTtlRemaining(liveData?.ttlRemainingSeconds ?? 0)
-        setIsRateLimited(Boolean(liveData?.rate_limited))
+        const isRateLim = Boolean(liveData?.rate_limited || (resLive && resLive.status === 429))
+        setIsRateLimited(isRateLim)
 
         // Helper de confronto para merge
         const areTeamsSameConfrontation = (
@@ -777,8 +780,19 @@ export default function JogosDoDia() {
           }
         }
 
-        const finalFixturesList = resolvedFixtures
-        setFixtures(finalFixturesList)
+        // Se a busca falhou ou retornou vazia mas estamos com rate limit, preserva a lista que já estava na tela se ela existir
+        let finalFixturesList = resolvedFixtures
+        if (finalFixturesList.length === 0 && isRateLim) {
+          setFixtures((prev) => {
+            if (prev && prev.length > 0) {
+              finalFixturesList = prev
+              return prev
+            }
+            return prev
+          })
+        } else {
+          setFixtures(finalFixturesList)
+        }
 
         // Se obtivemos dados com sucesso (seja via placar ao vivo, fallback ou cache),
         // NÃO exibir banner de não configurado. Exibir apenas se realmente não houver dados e API não configurada.

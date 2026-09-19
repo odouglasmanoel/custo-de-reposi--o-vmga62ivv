@@ -16,9 +16,83 @@
  */
 
 // -------------------------------------------------------------
+// CIRCUIT BREAKER GLOBAL EM MEMÓRIA PARA API-FOOTBALL
+// Evita requisições 429 em loop quando a cota diária estiver esgotada.
+// Backoff padrão: 20 minutos. Permite 1 probe (half-open) após a janela.
+// -------------------------------------------------------------
+if (typeof globalThis !== 'undefined' && !globalThis.__apiFootballCircuitBreaker) {
+  globalThis.__apiFootballCircuitBreaker = {
+    isBlocked: false,
+    blockedUntil: 0,
+    probing: false,
+    reason: '',
+  }
+}
+
+// -------------------------------------------------------------
 // GET /backend/v1/placar-ao-vivo
 // -------------------------------------------------------------
 routerAdd('GET', '/backend/v1/placar-ao-vivo', (e) => {
+  var API_FOOTBALL_BACKOFF_DURATION_MS = 20 * 60 * 1000
+
+  var checkApiFootballCircuitBreaker = function () {
+    if (typeof globalThis === 'undefined' || !globalThis.__apiFootballCircuitBreaker) {
+      return { shouldSkip: false, isProbe: false }
+    }
+    var cb = globalThis.__apiFootballCircuitBreaker
+    if (!cb.isBlocked) {
+      return { shouldSkip: false, isProbe: false }
+    }
+    var now = Date.now()
+    if (now < cb.blockedUntil) {
+      return {
+        shouldSkip: true,
+        reason: cb.reason || 'Cota da API-Football esgotada (Circuit Breaker ativo)',
+      }
+    }
+    // Janela de backoff expirou: permitir UMA requisição leve de sonda (half-open)
+    if (!cb.probing) {
+      cb.probing = true
+      return { shouldSkip: false, isProbe: true }
+    }
+    return { shouldSkip: true, reason: 'Circuit Breaker em sondagem por outra requisição' }
+  }
+
+  var tripApiFootballCircuitBreaker = function (reason) {
+    if (typeof globalThis === 'undefined') return
+    if (!globalThis.__apiFootballCircuitBreaker) {
+      globalThis.__apiFootballCircuitBreaker = {
+        isBlocked: false,
+        blockedUntil: 0,
+        probing: false,
+        reason: '',
+      }
+    }
+    var cb = globalThis.__apiFootballCircuitBreaker
+    cb.isBlocked = true
+    cb.blockedUntil = Date.now() + API_FOOTBALL_BACKOFF_DURATION_MS
+    cb.probing = false
+    cb.reason = reason || 'Rate limit / quota exceeded (429)'
+    console.log(
+      '[CircuitBreaker API-Football] TRIP ATIVADO por 20 minutos até ' +
+        new Date(cb.blockedUntil).toISOString() +
+        '. Motivo: ' +
+        cb.reason,
+    )
+  }
+
+  var resetApiFootballCircuitBreaker = function () {
+    if (typeof globalThis === 'undefined' || !globalThis.__apiFootballCircuitBreaker) return
+    var cb = globalThis.__apiFootballCircuitBreaker
+    if (cb.isBlocked || cb.probing) {
+      console.log('[CircuitBreaker API-Football] RESET: Conexão normalizada com resposta 200.')
+    }
+    cb.isBlocked = false
+    cb.probing = false
+    cb.blockedUntil = 0
+    cb.reason = ''
+  }
+
   try {
     const authRecord = e.auth
     if (!authRecord) {
@@ -1594,54 +1668,71 @@ routerAdd('GET', '/backend/v1/placar-ao-vivo', (e) => {
       }
     }
 
+    // CIRCUIT BREAKER CHECK: Se bloqueado, pula integralmente chamadas HTTP à API-Football
+    var cbStatus = checkApiFootballCircuitBreaker()
+    if (cbStatus.shouldSkip) {
+      console.log(
+        '[placar-ao-vivo] Circuit breaker ativo — pulando chamadas à API-Football. Motivo:',
+        cbStatus.reason,
+      )
+      rateLimitDetected = true
+    }
+
     var directFixtures = []
     var seenDirectIds = {}
 
     // Executa busca direta de fixtures com proteção contra 429 e timeout curto (8s)
-    for (var fxi = 0; fxi < directFixtureIds.length; fxi++) {
-      var targetFixtureId = directFixtureIds[fxi]
-      if (!targetFixtureId || seenDirectIds[targetFixtureId]) continue
+    if (!rateLimitDetected) {
+      for (var fxi = 0; fxi < directFixtureIds.length; fxi++) {
+        var targetFixtureId = directFixtureIds[fxi]
+        if (!targetFixtureId || seenDirectIds[targetFixtureId]) continue
 
-      var baseDirectUrl = isRapidApi
-        ? 'https://api-football-v1.p.rapidapi.com/v3/fixtures'
-        : 'https://v3.football.api-sports.io/fixtures'
-      var urlDirect =
-        baseDirectUrl +
-        '?id=' +
-        encodeURIComponent(targetFixtureId) +
-        '&timezone=America%2FSao_Paulo'
+        var baseDirectUrl = isRapidApi
+          ? 'https://api-football-v1.p.rapidapi.com/v3/fixtures'
+          : 'https://v3.football.api-sports.io/fixtures'
+        var urlDirect =
+          baseDirectUrl +
+          '?id=' +
+          encodeURIComponent(targetFixtureId) +
+          '&timezone=America%2FSao_Paulo'
 
-      try {
-        var resDirect = $http.send({
-          url: urlDirect,
-          method: 'GET',
-          headers: headers,
-          timeout: 8,
-        })
+        try {
+          var resDirect = $http.send({
+            url: urlDirect,
+            method: 'GET',
+            headers: headers,
+            timeout: 8,
+          })
 
-        if (isRateLimitError(resDirect.statusCode, resDirect.json || resDirect.raw)) {
-          rateLimitDetected = true
-          break
-        }
-
-        if (
-          resDirect.statusCode === 200 &&
-          resDirect.json &&
-          Array.isArray(resDirect.json.response)
-        ) {
-          for (var dri = 0; dri < resDirect.json.response.length; dri++) {
-            var directItem = resDirect.json.response[dri]
-            var parsedDirect = mapApiFootballItem(directItem)
-            var actualId =
-              directItem.fixture && directItem.fixture.id
-                ? String(directItem.fixture.id)
-                : targetFixtureId
-            seenDirectIds[actualId] = true
-            directFixtures.push(parsedDirect)
+          if (isRateLimitError(resDirect.statusCode, resDirect.json || resDirect.raw)) {
+            tripApiFootballCircuitBreaker(
+              'Rate limit 429 ao consultar direct fixture ' + targetFixtureId,
+            )
+            rateLimitDetected = true
+            break
+          } else if (resDirect.statusCode === 200) {
+            resetApiFootballCircuitBreaker()
           }
+
+          if (
+            resDirect.statusCode === 200 &&
+            resDirect.json &&
+            Array.isArray(resDirect.json.response)
+          ) {
+            for (var dri = 0; dri < resDirect.json.response.length; dri++) {
+              var directItem = resDirect.json.response[dri]
+              var parsedDirect = mapApiFootballItem(directItem)
+              var actualId =
+                directItem.fixture && directItem.fixture.id
+                  ? String(directItem.fixture.id)
+                  : targetFixtureId
+              seenDirectIds[actualId] = true
+              directFixtures.push(parsedDirect)
+            }
+          }
+        } catch (errDirect) {
+          console.log('Aviso ao consultar fixture_id direto (' + targetFixtureId + '):', errDirect)
         }
-      } catch (errDirect) {
-        console.log('Aviso ao consultar fixture_id direto (' + targetFixtureId + '):', errDirect)
       }
     }
 
@@ -1656,13 +1747,13 @@ routerAdd('GET', '/backend/v1/placar-ao-vivo', (e) => {
         })
 
         if (isRateLimitError(resLive.statusCode, resLive.json || resLive.raw)) {
+          tripApiFootballCircuitBreaker('Rate limit 429 ao consultar live fixtures')
           rateLimitDetected = true
-        } else if (
-          resLive.statusCode === 200 &&
-          resLive.json &&
-          Array.isArray(resLive.json.response)
-        ) {
-          liveFixtures = resLive.json.response.map(mapApiFootballItem)
+        } else if (resLive.statusCode === 200) {
+          resetApiFootballCircuitBreaker()
+          if (resLive.json && Array.isArray(resLive.json.response)) {
+            liveFixtures = resLive.json.response.map(mapApiFootballItem)
+          }
         }
       } catch (errLive) {
         console.log('Aviso ao consultar live fixtures API-Football:', errLive)
@@ -1686,85 +1777,87 @@ routerAdd('GET', '/backend/v1/placar-ao-vivo', (e) => {
         })
 
         if (isRateLimitError(resDate.statusCode, resDate.json || resDate.raw)) {
+          tripApiFootballCircuitBreaker(
+            'Rate limit 429 ao consultar date fixtures (' + dateQuery + ')',
+          )
           rateLimitDetected = true
-        } else if (
-          resDate.statusCode === 200 &&
-          resDate.json &&
-          Array.isArray(resDate.json.response)
-        ) {
-          var dateResponseList = resDate.json.response
-          // Enriquecimento em lote com /fixtures?ids=id1-id2-... para partidas com gols ou ao vivo sem events
-          var missingEventsDateFixtures = []
-          for (var ri = 0; ri < dateResponseList.length; ri++) {
-            var candDate = dateResponseList[ri]
-            var candDateShort =
-              (candDate.fixture && candDate.fixture.status && candDate.fixture.status.short) || ''
-            var candDateIsLive =
-              ['1H', 'HT', '2H', 'ET', 'BT', 'P', 'LIVE'].indexOf(candDateShort) !== -1
-            var candDateHasGoals = Boolean(
-              (candDate.goals && (candDate.goals.home > 0 || candDate.goals.away > 0)) ||
-              (candDate.score &&
-                candDate.score.fulltime &&
-                (candDate.score.fulltime.home > 0 || candDate.score.fulltime.away > 0)),
-            )
-            var candDateHasEvents = Array.isArray(candDate.events) && candDate.events.length > 0
-            if (
-              (candDateIsLive || candDateHasGoals) &&
-              !candDateHasEvents &&
-              candDate.fixture &&
-              candDate.fixture.id
-            ) {
-              missingEventsDateFixtures.push(candDate)
-            }
-          }
-
-          if (missingEventsDateFixtures.length > 0) {
-            // Agrupa IDs em lotes de até 20 (suportado pela API-Football)
-            for (var bi = 0; bi < missingEventsDateFixtures.length; bi += 20) {
-              var chunk = missingEventsDateFixtures.slice(bi, bi + 20)
-              var chunkIds = chunk.map(function (c) {
-                return c.fixture.id
-              })
-              try {
-                var chunkUrl =
-                  baseUrlDate +
-                  '?ids=' +
-                  encodeURIComponent(chunkIds.join('-')) +
-                  '&timezone=America%2FSao_Paulo'
-                var chunkRes = $http.send({
-                  url: chunkUrl,
-                  method: 'GET',
-                  headers: headers,
-                  timeout: 7,
-                })
-                if (
-                  chunkRes &&
-                  chunkRes.statusCode === 200 &&
-                  chunkRes.json &&
-                  Array.isArray(chunkRes.json.response)
-                ) {
-                  var enrichedDateMap = {}
-                  for (var cri = 0; cri < chunkRes.json.response.length; cri++) {
-                    var enrItem = chunkRes.json.response[cri]
-                    if (enrItem.fixture && enrItem.fixture.id && Array.isArray(enrItem.events)) {
-                      enrichedDateMap[enrItem.fixture.id] = enrItem.events
-                    }
-                  }
-                  for (var ci = 0; ci < chunk.length; ci++) {
-                    var targetFix = chunk[ci]
-                    if (enrichedDateMap[targetFix.fixture.id]) {
-                      targetFix.events = enrichedDateMap[targetFix.fixture.id]
-                    }
-                  }
-                }
-              } catch (chunkErr) {
-                console.log('[Enrich Date Batch Error]:', chunkErr)
+        } else if (resDate.statusCode === 200) {
+          resetApiFootballCircuitBreaker()
+          if (resDate.json && Array.isArray(resDate.json.response)) {
+            var dateResponseList = resDate.json.response
+            // Enriquecimento em lote com /fixtures?ids=id1-id2-... para partidas com gols ou ao vivo sem events
+            var missingEventsDateFixtures = []
+            for (var ri = 0; ri < dateResponseList.length; ri++) {
+              var candDate = dateResponseList[ri]
+              var candDateShort =
+                (candDate.fixture && candDate.fixture.status && candDate.fixture.status.short) || ''
+              var candDateIsLive =
+                ['1H', 'HT', '2H', 'ET', 'BT', 'P', 'LIVE'].indexOf(candDateShort) !== -1
+              var candDateHasGoals = Boolean(
+                (candDate.goals && (candDate.goals.home > 0 || candDate.goals.away > 0)) ||
+                (candDate.score &&
+                  candDate.score.fulltime &&
+                  (candDate.score.fulltime.home > 0 || candDate.score.fulltime.away > 0)),
+              )
+              var candDateHasEvents = Array.isArray(candDate.events) && candDate.events.length > 0
+              if (
+                (candDateIsLive || candDateHasGoals) &&
+                !candDateHasEvents &&
+                candDate.fixture &&
+                candDate.fixture.id
+              ) {
+                missingEventsDateFixtures.push(candDate)
               }
             }
-          }
 
-          for (var rj = 0; rj < dateResponseList.length; rj++) {
-            dateFixtures.push(mapApiFootballItem(dateResponseList[rj]))
+            if (missingEventsDateFixtures.length > 0) {
+              // Agrupa IDs em lotes de até 20 (suportado pela API-Football)
+              for (var bi = 0; bi < missingEventsDateFixtures.length; bi += 20) {
+                var chunk = missingEventsDateFixtures.slice(bi, bi + 20)
+                var chunkIds = chunk.map(function (c) {
+                  return c.fixture.id
+                })
+                try {
+                  var chunkUrl =
+                    baseUrlDate +
+                    '?ids=' +
+                    encodeURIComponent(chunkIds.join('-')) +
+                    '&timezone=America%2FSao_Paulo'
+                  var chunkRes = $http.send({
+                    url: chunkUrl,
+                    method: 'GET',
+                    headers: headers,
+                    timeout: 7,
+                  })
+                  if (
+                    chunkRes &&
+                    chunkRes.statusCode === 200 &&
+                    chunkRes.json &&
+                    Array.isArray(chunkRes.json.response)
+                  ) {
+                    var enrichedDateMap = {}
+                    for (var cri = 0; cri < chunkRes.json.response.length; cri++) {
+                      var enrItem = chunkRes.json.response[cri]
+                      if (enrItem.fixture && enrItem.fixture.id && Array.isArray(enrItem.events)) {
+                        enrichedDateMap[enrItem.fixture.id] = enrItem.events
+                      }
+                    }
+                    for (var ci = 0; ci < chunk.length; ci++) {
+                      var targetFix = chunk[ci]
+                      if (enrichedDateMap[targetFix.fixture.id]) {
+                        targetFix.events = enrichedDateMap[targetFix.fixture.id]
+                      }
+                    }
+                  }
+                } catch (chunkErr) {
+                  console.log('[Enrich Date Batch Error]:', chunkErr)
+                }
+              }
+            }
+
+            for (var rj = 0; rj < dateResponseList.length; rj++) {
+              dateFixtures.push(mapApiFootballItem(dateResponseList[rj]))
+            }
           }
         }
       } catch (errDate) {
@@ -3516,7 +3609,76 @@ routerAdd('GET', '/backend/v1/jogos-do-dia', (e) => {
       } catch (_) {}
     }
 
-    if (apiFootballKey && apiFootballKey !== fallbackApiKey) {
+    // CIRCUIT BREAKER CHECK para jogos-do-dia:
+    var API_FOOTBALL_BACKOFF_DURATION_MS = 20 * 60 * 1000
+
+    var checkApiFootballCircuitBreaker = function () {
+      if (typeof globalThis === 'undefined' || !globalThis.__apiFootballCircuitBreaker) {
+        return { shouldSkip: false, isProbe: false }
+      }
+      var cb = globalThis.__apiFootballCircuitBreaker
+      if (!cb.isBlocked) {
+        return { shouldSkip: false, isProbe: false }
+      }
+      var now = Date.now()
+      if (now < cb.blockedUntil) {
+        return {
+          shouldSkip: true,
+          reason: cb.reason || 'Cota da API-Football esgotada (Circuit Breaker ativo)',
+        }
+      }
+      if (!cb.probing) {
+        cb.probing = true
+        return { shouldSkip: false, isProbe: true }
+      }
+      return { shouldSkip: true, reason: 'Circuit Breaker em sondagem por outra requisição' }
+    }
+
+    var tripApiFootballCircuitBreaker = function (reason) {
+      if (typeof globalThis === 'undefined') return
+      if (!globalThis.__apiFootballCircuitBreaker) {
+        globalThis.__apiFootballCircuitBreaker = {
+          isBlocked: false,
+          blockedUntil: 0,
+          probing: false,
+          reason: '',
+        }
+      }
+      var cb = globalThis.__apiFootballCircuitBreaker
+      cb.isBlocked = true
+      cb.blockedUntil = Date.now() + API_FOOTBALL_BACKOFF_DURATION_MS
+      cb.probing = false
+      cb.reason = reason || 'Rate limit / quota exceeded (429)'
+      console.log(
+        '[CircuitBreaker API-Football] TRIP ATIVADO por 20 minutos até ' +
+          new Date(cb.blockedUntil).toISOString() +
+          '. Motivo: ' +
+          cb.reason,
+      )
+    }
+
+    var resetApiFootballCircuitBreaker = function () {
+      if (typeof globalThis === 'undefined' || !globalThis.__apiFootballCircuitBreaker) return
+      var cb = globalThis.__apiFootballCircuitBreaker
+      if (cb.isBlocked || cb.probing) {
+        console.log('[CircuitBreaker API-Football] RESET: Conexão normalizada com resposta 200.')
+      }
+      cb.isBlocked = false
+      cb.probing = false
+      cb.blockedUntil = 0
+      cb.reason = ''
+    }
+
+    var cbStatusDay = checkApiFootballCircuitBreaker()
+    var skipApiFootballDay = cbStatusDay.shouldSkip
+
+    if (skipApiFootballDay) {
+      console.log(
+        '[jogos-do-dia] Circuit breaker ativo — pulando API-Football diretamente para fallback. Motivo:',
+        cbStatusDay.reason,
+      )
+      rateLimitHit = true
+    } else if (apiFootballKey && apiFootballKey !== fallbackApiKey) {
       var baseUrl = isRapidApi
         ? 'https://api-football-v1.p.rapidapi.com/v3/fixtures'
         : 'https://v3.football.api-sports.io/fixtures'
@@ -3542,6 +3704,7 @@ routerAdd('GET', '/backend/v1/jogos-do-dia', (e) => {
         })
 
         if (isRateLimitErrorDay(resp.statusCode, resp.json || resp.raw)) {
+          tripApiFootballCircuitBreaker('Rate limit 429 em jogos-do-dia para data ' + dateQuery)
           rateLimitHit = true
         } else if (
           resp &&
@@ -3549,6 +3712,7 @@ routerAdd('GET', '/backend/v1/jogos-do-dia', (e) => {
           resp.json &&
           Array.isArray(resp.json.response)
         ) {
+          resetApiFootballCircuitBreaker()
           allFixtures = resp.json.response
         }
       } catch (eH) {

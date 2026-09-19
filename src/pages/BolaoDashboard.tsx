@@ -348,6 +348,18 @@ export default function BolaoDashboard() {
         setApiConfigured(Boolean(data.configured))
         if (data.rate_limited) {
           setIsRateLimited(true)
+          // Se for rate limited e vier com fixtures vazias (ou sem dados novos), PRESERVA a lista anterior
+          // NUNCA zera apiFixtures quando receber rate_limited!
+          const hasNewData =
+            (Array.isArray(data.directFixtures) && data.directFixtures.length > 0) ||
+            (Array.isArray(data.live) && data.live.length > 0) ||
+            (Array.isArray(data.dateFixtures) && data.dateFixtures.length > 0)
+          if (!hasNewData) {
+            if (data.sobrescritas && typeof data.sobrescritas === 'object') {
+              setSobrescritasAdmin(data.sobrescritas)
+            }
+            return
+          }
         } else {
           setIsRateLimited(false)
         }
@@ -389,6 +401,8 @@ export default function BolaoDashboard() {
           }
         }
         setApiFixtures(Array.from(combinedMap.values()))
+      } else if (res.status === 429) {
+        setIsRateLimited(true)
       }
     } catch (err: any) {
       if (err?.name !== 'AbortError') {

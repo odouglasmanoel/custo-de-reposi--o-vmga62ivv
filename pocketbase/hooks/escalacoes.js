@@ -1,3 +1,17 @@
+// -------------------------------------------------------------
+// CIRCUIT BREAKER GLOBAL EM MEMÓRIA PARA API-FOOTBALL
+// Evita requisições 429 em loop quando a cota diária estiver esgotada.
+// Backoff padrão: 20 minutos. Permite 1 probe (half-open) após a janela.
+// -------------------------------------------------------------
+if (typeof globalThis !== 'undefined' && !globalThis.__apiFootballCircuitBreaker) {
+  globalThis.__apiFootballCircuitBreaker = {
+    isBlocked: false,
+    blockedUntil: 0,
+    probing: false,
+    reason: '',
+  }
+}
+
 /**
  * Hook dedicado para busca de escalações (API-Football com fallback Football-Data.org, TheSportsDB e prováveis/elenco).
  * Rota: GET /backend/v1/escalacoes
@@ -23,6 +37,87 @@ routerAdd(
   'GET',
   '/backend/v1/escalacoes',
   (e) => {
+    var API_FOOTBALL_BACKOFF_DURATION_MS = 20 * 60 * 1000
+
+    var checkApiFootballCircuitBreaker = function () {
+      if (typeof globalThis === 'undefined' || !globalThis.__apiFootballCircuitBreaker) {
+        return { shouldSkip: false, isProbe: false }
+      }
+      var cb = globalThis.__apiFootballCircuitBreaker
+      if (!cb.isBlocked) {
+        return { shouldSkip: false, isProbe: false }
+      }
+      var now = Date.now()
+      if (now < cb.blockedUntil) {
+        return {
+          shouldSkip: true,
+          reason: cb.reason || 'Cota da API-Football esgotada (Circuit Breaker ativo)',
+        }
+      }
+      if (!cb.probing) {
+        cb.probing = true
+        return { shouldSkip: false, isProbe: true }
+      }
+      return { shouldSkip: true, reason: 'Circuit Breaker em sondagem por outra requisição' }
+    }
+
+    var tripApiFootballCircuitBreaker = function (reason) {
+      if (typeof globalThis === 'undefined') return
+      if (!globalThis.__apiFootballCircuitBreaker) {
+        globalThis.__apiFootballCircuitBreaker = {
+          isBlocked: false,
+          blockedUntil: 0,
+          probing: false,
+          reason: '',
+        }
+      }
+      var cb = globalThis.__apiFootballCircuitBreaker
+      cb.isBlocked = true
+      cb.blockedUntil = Date.now() + API_FOOTBALL_BACKOFF_DURATION_MS
+      cb.probing = false
+      cb.reason = reason || 'Rate limit / quota exceeded (429)'
+      console.log(
+        '[CircuitBreaker API-Football] TRIP ATIVADO por 20 minutos até ' +
+          new Date(cb.blockedUntil).toISOString() +
+          '. Motivo: ' +
+          cb.reason,
+      )
+    }
+
+    var resetApiFootballCircuitBreaker = function () {
+      if (typeof globalThis === 'undefined' || !globalThis.__apiFootballCircuitBreaker) return
+      var cb = globalThis.__apiFootballCircuitBreaker
+      if (cb.isBlocked || cb.probing) {
+        console.log('[CircuitBreaker API-Football] RESET: Conexão normalizada com resposta 200.')
+      }
+      cb.isBlocked = false
+      cb.probing = false
+      cb.blockedUntil = 0
+      cb.reason = ''
+    }
+
+    var isRateLimitErrorHelper = function (statusCode, responseBody) {
+      if (statusCode === 429) return true
+      if (!responseBody) return false
+      var strBody = ''
+      try {
+        strBody = typeof responseBody === 'string' ? responseBody : JSON.stringify(responseBody)
+      } catch (_) {
+        strBody = String(responseBody)
+      }
+      strBody = strBody.toLowerCase()
+      return (
+        strBody.indexOf('requests limit reached') !== -1 ||
+        strBody.indexOf('request limit reached') !== -1 ||
+        strBody.indexOf('rate limit') !== -1 ||
+        strBody.indexOf('plan reached') !== -1 ||
+        strBody.indexOf('too many requests') !== -1 ||
+        strBody.indexOf('quota exceeded') !== -1 ||
+        strBody.indexOf('exceeded the maximum') !== -1 ||
+        strBody.indexOf('free-tier limit') !== -1
+      )
+    }
+
     try {
       var authRecord = e.auth
       if (!authRecord) {
@@ -141,8 +236,14 @@ routerAdd(
         fixtureIdParam.indexOf('tsdb_') === 0 || fixtureIdParam.indexOf('thesportsdb_') === 0
       var rawTsdbEventId = isTsdbId ? fixtureIdParam.replace(/^tsdb_|^thesportsdb_/, '') : ''
 
-      // 2. FONTE 1: API-Football (lineups) se tiver chave e for ID numérico direto
-      if (apiKey && isDirectNumeric) {
+      // 2. FONTE 1: API-Football (lineups) se tiver chave e for ID numérico direto e circuit breaker não estiver bloqueado
+      var cbCheckEsc = checkApiFootballCircuitBreaker()
+      if (cbCheckEsc.shouldSkip) {
+        console.log(
+          '[Escalacoes] Circuit breaker ativo — pulando API-Football para fixture ' +
+            fixtureIdParam,
+        )
+      } else if (apiKey && isDirectNumeric) {
         try {
           var isRapid = apiKey.length > 40
           var url = isRapid
@@ -161,13 +262,18 @@ routerAdd(
             timeout: 7,
           })
 
-          if (
+          if (isRateLimitErrorHelper(res.statusCode, res.json || res.raw)) {
+            tripApiFootballCircuitBreaker(
+              'Rate limit 429 em escalacoes ao consultar fixture ' + fixtureIdParam,
+            )
+          } else if (
             res &&
             res.statusCode === 200 &&
             res.json &&
             Array.isArray(res.json.response) &&
             res.json.response.length > 0
           ) {
+            resetApiFootballCircuitBreaker()
             var rawLineups = res.json.response
             var teamsData = []
             for (var i = 0; i < rawLineups.length; i++) {
