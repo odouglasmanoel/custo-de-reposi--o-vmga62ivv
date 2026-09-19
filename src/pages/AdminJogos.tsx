@@ -41,6 +41,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { useToast } from '@/hooks/use-toast'
+import { getErrorMessage } from '@/lib/pocketbase/errors'
 
 export default function AdminJogos() {
   const { boloes, activeBolao, activeBolaoId, setActiveBolaoId, refreshBoloes } = useActivePool()
@@ -233,30 +234,49 @@ export default function AdminJogos() {
       return
     }
 
-    if (!activeBolaoId) {
-      setFormError('Nenhum bolão ativo selecionado.')
-      return
+    // Se o bolão selecionado no dropdown for 'geral', tentar associar ao primeiro bolão ativo disponível
+    let targetBolao = activeBolaoId
+    if (!targetBolao || targetBolao === 'geral') {
+      const primeiroAtivo = boloesDisponiveis.find((b) => b.ativo !== false) || boloesDisponiveis[0]
+      if (primeiroAtivo) {
+        targetBolao = primeiroAtivo.id
+      } else {
+        setFormError('Selecione uma competição/bolão específica para vincular o novo jogo.')
+        return
+      }
     }
 
     setSubmitting(true)
     try {
+      // Normalização da data para ISO string completa aceita pelo PocketBase DateField
+      let dataIsoFormatada = dataJogo.trim()
+      if (!dataIsoFormatada.includes('T')) {
+        dataIsoFormatada = `${dataIsoFormatada}T00:00:00.000Z`
+      }
+
+      // ISOLAMENTO TOTAL:
+      // O cadastro manual de partidas NUNCA depende nem aguarda chamadas a APIs externas (API-Football, Football-Data ou TSDB).
+      // Salva diretamente os dados digitados com valores padrão explícitos e consistentes.
       await pb.collection('jogos').create({
-        bolao: activeBolaoId,
+        bolao: targetBolao,
         time_a: timeA.trim(),
         time_b: timeB.trim(),
         competicao: competicao.trim() || '',
         fixture_id: fixtureId.trim() || '',
-        data: `${dataJogo.trim()}T00:00:00.000Z`,
+        data: dataIsoFormatada,
         hora: horaJogo.trim(),
+        placar_a: null,
+        placar_b: null,
         resultado_finalizado: false,
-        tem_penaltis: temPenaltis,
+        tem_penaltis: Boolean(temPenaltis),
+        vencedor_penaltis: '',
         gols_time_a: [],
         gols_time_b: [],
       })
 
       toast({
-        title: 'Jogo cadastrado!',
-        description: `${timeA} x ${timeB} adicionado com sucesso.`,
+        title: 'Jogo cadastrado com sucesso!',
+        description: `${timeA.trim()} x ${timeB.trim()} adicionado à competição.`,
       })
 
       // Reset form
@@ -267,10 +287,11 @@ export default function AdminJogos() {
       setDataJogo('')
       setHoraJogo('')
       setTemPenaltis(false)
-      loadJogos()
+      setFormError(null)
+      loadJogos(targetBolao)
     } catch (err: unknown) {
-      console.error('Erro ao cadastrar jogo:', err)
-      const msg = err instanceof Error ? err.message : 'Falha ao salvar o jogo'
+      console.error('Erro detalhado ao cadastrar jogo:', err)
+      const msg = getErrorMessage(err)
       setFormError(msg)
     } finally {
       setSubmitting(false)
@@ -589,15 +610,24 @@ export default function AdminJogos() {
             Cadastro / Registro de Jogos
           </CardTitle>
           <p className="text-xs text-[#64748B]">
-            Adicione uma nova partida para a competição {activeBolao?.nome}.
+            Adicione uma nova partida para a competição{' '}
+            <strong className="text-slate-800">
+              {activeBolaoId === 'geral' || !activeBolaoId
+                ? boloesDisponiveis.find((b) => b.ativo !== false)?.nome || 'Copa Coni'
+                : activeBolao?.nome}
+            </strong>
+            . O cadastro manual é autônomo e não depende de chamadas à API externa.
           </p>
         </CardHeader>
 
         <CardContent className="p-0">
           {formError && (
-            <div className="mb-4 flex items-center gap-2 rounded-lg border border-red-200 bg-red-50 p-3 text-xs text-red-700">
-              <AlertCircle className="h-4 w-4 shrink-0 text-red-600" />
-              <span>{formError}</span>
+            <div className="mb-4 flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 p-3.5 text-xs text-red-800 shadow-xs">
+              <AlertCircle className="h-4 w-4 shrink-0 text-red-600 mt-0.5" />
+              <div className="flex-1 space-y-1">
+                <p className="font-semibold text-red-900">Não foi possível salvar a partida:</p>
+                <p className="text-red-700 leading-relaxed">{formError}</p>
+              </div>
             </div>
           )}
 
