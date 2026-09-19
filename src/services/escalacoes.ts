@@ -30,7 +30,7 @@ export interface LineupResponse {
   error?: string
 }
 
-// Cache em memória (SWR) com TTL de 5 minutos para confirmadas e 2 minutos para prováveis/vazio
+// Cache em memória (SWR) com TTL de 10 minutos para confirmadas e 2-3 minutos para prováveis/vazio
 import { setWithBoundedCapacity } from '@/lib/cacheManager'
 
 interface CacheItem {
@@ -134,10 +134,12 @@ export async function fetchGameLineup(params: {
     data = '',
     forceRefresh = false,
   } = params
-  const cacheKey = getLineupsCacheKey(jogoId, fixtureId)
+  // Chave canônica unificada que considera também times e data para evitar colisões
+  const fallbackKey = timeA && timeB ? `${timeA}_${timeB}_${data}` : ''
+  const cacheKey = getLineupsCacheKey(jogoId, fixtureId) || fallbackKey
   const now = Date.now()
 
-  if (!forceRefresh && lineupsMemoryCache.has(cacheKey)) {
+  if (!forceRefresh && cacheKey && lineupsMemoryCache.has(cacheKey)) {
     const cached = lineupsMemoryCache.get(cacheKey)!
     const ttl =
       cached.data.status === 'confirmada'

@@ -1,7 +1,22 @@
 /**
- * Hook dedicado para busca de escalações (lineups) de partidas (API-Football com fallback TheSportsDB).
- * Permite buscar por fixture_id ou por data + nomes dos times.
- * Retorna status: 'confirmada' | 'provavel' | 'indisponivel'.
+ * Hook dedicado para busca de escalações (API-Football com fallback Football-Data.org, TheSportsDB e prováveis/elenco).
+ * Rota: GET /backend/v1/escalacoes
+ * Parâmetros: fixture_id, time_a, time_b, data
+ * Retorna: {
+ *   status: 'confirmada' | 'provavel' | 'indisponivel',
+ *   provider: string,
+ *   fixtureId: string,
+ *   teams: Array<{
+ *     teamId?: string,
+ *     teamName: string,
+ *     teamLogo?: string,
+ *     formation?: string,
+ *     coach?: string,
+ *     starters: Array<{ id: string, name: string, number: number | null, pos: string, grid?: string | null }>,
+ *     substitutes: Array<{ id: string, name: string, number: number | null, pos: string }>
+ *   }>,
+ *   updatedAt: string
+ * }
  */
 
 routerAdd(
@@ -14,43 +29,53 @@ routerAdd(
         return e.json(401, { error: 'Usuário não autenticado' })
       }
 
-      var jogoId = (e.request.url.query().get('jogo_id') || '').trim()
       var fixtureIdParam = (e.request.url.query().get('fixture_id') || '').trim()
       var timeA = (e.request.url.query().get('time_a') || '').trim()
       var timeB = (e.request.url.query().get('time_b') || '').trim()
       var dataParam = (e.request.url.query().get('data') || '').trim()
-
-      var targetGame = null
-      if (jogoId) {
-        try {
-          targetGame = $app.findRecordById('jogos', jogoId)
-        } catch (_) {}
-      }
-
-      if (targetGame) {
-        if (!fixtureIdParam) fixtureIdParam = (targetGame.getString('fixture_id') || '').trim()
-        if (!timeA) timeA = (targetGame.getString('time_a') || '').trim()
-        if (!timeB) timeB = (targetGame.getString('time_b') || '').trim()
-        if (!dataParam) {
-          var rawData = targetGame.getString('data') || ''
-          dataParam = rawData.slice(0, 10)
-        }
-      }
+      var forceRefresh = e.request.url.query().get('refresh') === '1'
 
       if (!fixtureIdParam && (!timeA || !timeB)) {
         return e.json(400, {
-          error: 'Informe jogo_id, fixture_id ou time_a e time_b',
+          error: 'Informe fixture_id ou time_a e time_b',
         })
       }
 
-      // 1. Recupera chaves de integração
+      // Cache em memória do servidor PB via $app.store()
+      var cacheKey = 'lineup_' + (fixtureIdParam || timeA + '_' + timeB + '_' + dataParam)
+      if (!forceRefresh) {
+        var cached = $app.store().get(cacheKey)
+        if (cached && typeof cached === 'string') {
+          try {
+            var parsed = JSON.parse(cached)
+            if (parsed && parsed.status && Array.isArray(parsed.teams)) {
+              return e.json(200, parsed)
+            }
+          } catch (_) {}
+        }
+      }
+
+      // 1. Recupera as chaves das APIs
       var apiKey = ''
+      var footballDataKey = ''
       var theSportsDbKey = '3'
 
       try {
         var configRec = $app.findFirstRecordByData('config_integracoes', 'chave', 'placar_ao_vivo')
         if (configRec) {
           apiKey = (configRec.getString('api_key') || '').trim()
+        }
+      } catch (_) {}
+
+      try {
+        var fdRec = $app.findFirstRecordByData(
+          'config_integracoes',
+          'chave',
+          'football_data_fallback',
+        )
+        if (fdRec) {
+          var fKey = (fdRec.getString('api_key') || '').trim()
+          if (fKey) footballDataKey = fKey
         }
       } catch (_) {}
 
@@ -76,9 +101,30 @@ routerAdd(
         } catch (_) {}
       }
 
+      if (!footballDataKey) {
+        try {
+          if ($secrets && $secrets.has && $secrets.has('FOOTBALL_DATA_KEY')) {
+            footballDataKey = ($secrets.get('FOOTBALL_DATA_KEY') || '').trim()
+          } else {
+            footballDataKey = ($os.getenv('FOOTBALL_DATA_KEY') || '').trim()
+          }
+        } catch (_) {}
+      }
+
+      if (!theSportsDbKey || theSportsDbKey === '3') {
+        try {
+          if ($secrets && $secrets.has && $secrets.has('THESPORTSDB_KEY')) {
+            var tk = ($secrets.get('THESPORTSDB_KEY') || '').trim()
+            if (tk) theSportsDbKey = tk
+          } else {
+            var tkEnv = ($os.getenv('THESPORTSDB_KEY') || '').trim()
+            if (tkEnv) theSportsDbKey = tkEnv
+          }
+        } catch (_) {}
+      }
+
       var result = null
 
-      // Função auxiliar de limpeza de nome
       var normalizeStr = function (str) {
         if (!str) return ''
         return str
@@ -90,13 +136,12 @@ routerAdd(
           .trim()
       }
 
-      // 2. Se for fixture_id numérico direto da API-Football
       var isDirectNumeric = /^\d+$/.test(fixtureIdParam)
       var isTsdbId =
         fixtureIdParam.indexOf('tsdb_') === 0 || fixtureIdParam.indexOf('thesportsdb_') === 0
       var rawTsdbEventId = isTsdbId ? fixtureIdParam.replace(/^tsdb_|^thesportsdb_/, '') : ''
 
-      // Tenta buscar no API-Football se tiver chave e for ID numérico direto
+      // 2. FONTE 1: API-Football (lineups) se tiver chave e for ID numérico direto
       if (apiKey && isDirectNumeric) {
         try {
           var isRapid = apiKey.length > 40
@@ -182,8 +227,120 @@ routerAdd(
         }
       }
 
-      // 3. Fallback TheSportsDB lookuplineup.php se tiver ID de evento do TSDB ou se API-Football não retornou
-      if (!result && (rawTsdbEventId || isTsdbId)) {
+      // 3. FONTE 2: Fallback Football-Data.org (GET /v4/matches/{id} traz lineups quando disponíveis)
+      if (!result && footballDataKey) {
+        try {
+          var fdMatchId = null
+          if (isDirectNumeric) {
+            fdMatchId = fixtureIdParam
+          } else if ((timeA || timeB) && dataParam) {
+            // Busca ID da partida por data no Football-Data.org
+            try {
+              var resFdSearch = $http.send({
+                url:
+                  'https://api.football-data.org/v4/matches?dateFrom=' +
+                  encodeURIComponent(dataParam) +
+                  '&dateTo=' +
+                  encodeURIComponent(dataParam),
+                method: 'GET',
+                headers: { 'X-Auth-Token': footballDataKey },
+                timeout: 7,
+              })
+              if (
+                resFdSearch &&
+                resFdSearch.statusCode === 200 &&
+                resFdSearch.json &&
+                Array.isArray(resFdSearch.json.matches)
+              ) {
+                var matchesList = resFdSearch.json.matches
+                var nHome = normalizeStr(timeA)
+                var nAway = normalizeStr(timeB)
+                for (var mi = 0; mi < matchesList.length; mi++) {
+                  var m = matchesList[mi]
+                  var mH = normalizeStr(
+                    (m.homeTeam && (m.homeTeam.name || m.homeTeam.shortName)) || '',
+                  )
+                  var mA = normalizeStr(
+                    (m.awayTeam && (m.awayTeam.name || m.awayTeam.shortName)) || '',
+                  )
+                  var dM =
+                    (mH.indexOf(nHome) !== -1 || nHome.indexOf(mH) !== -1) &&
+                    (mA.indexOf(nAway) !== -1 || nAway.indexOf(mA) !== -1)
+                  var iM =
+                    (mH.indexOf(nAway) !== -1 || nAway.indexOf(mH) !== -1) &&
+                    (mA.indexOf(nHome) !== -1 || nHome.indexOf(mA) !== -1)
+                  if (dM || iM) {
+                    fdMatchId = m.id ? String(m.id) : null
+                    break
+                  }
+                }
+              }
+            } catch (_) {}
+          }
+
+          if (fdMatchId) {
+            var resFdMatch = $http.send({
+              url: 'https://api.football-data.org/v4/matches/' + encodeURIComponent(fdMatchId),
+              method: 'GET',
+              headers: { 'X-Auth-Token': footballDataKey },
+              timeout: 7,
+            })
+
+            if (resFdMatch && resFdMatch.statusCode === 200 && resFdMatch.json) {
+              var fdMatch = resFdMatch.json
+              var fdHome = fdMatch.homeTeam || {}
+              var fdAway = fdMatch.awayTeam || {}
+              var homeLineup = Array.isArray(fdHome.lineup) ? fdHome.lineup : []
+              var awayLineup = Array.isArray(fdAway.lineup) ? fdAway.lineup : []
+              var homeBenchFd = Array.isArray(fdHome.bench) ? fdHome.bench : []
+              var awayBenchFd = Array.isArray(fdAway.bench) ? fdAway.bench : []
+
+              var mapPlayerFd = function (p) {
+                return {
+                  id: p.id ? String(p.id) : '',
+                  name: p.name || p.shortName || '',
+                  number: p.shirtNumber || null,
+                  pos: p.position || '',
+                }
+              }
+
+              if (homeLineup.length > 0 || awayLineup.length > 0) {
+                result = {
+                  status: 'confirmada',
+                  provider: 'football_data',
+                  fixtureId: fixtureIdParam,
+                  teams: [
+                    {
+                      teamId: fdHome.id ? String(fdHome.id) : '',
+                      teamName: fdHome.name || fdHome.shortName || timeA || 'Mandante',
+                      teamLogo: fdHome.crest || '',
+                      formation: fdHome.formation || '',
+                      coach: (fdHome.coach && fdHome.coach.name) || '',
+                      starters: homeLineup.map(mapPlayerFd),
+                      substitutes: homeBenchFd.map(mapPlayerFd),
+                    },
+                    {
+                      teamId: fdAway.id ? String(fdAway.id) : '',
+                      teamName: fdAway.name || fdAway.shortName || timeB || 'Visitante',
+                      teamLogo: fdAway.crest || '',
+                      formation: fdAway.formation || '',
+                      coach: (fdAway.coach && fdAway.coach.name) || '',
+                      starters: awayLineup.map(mapPlayerFd),
+                      substitutes: awayBenchFd.map(mapPlayerFd),
+                    },
+                  ],
+                  updatedAt: new Date().toISOString(),
+                }
+              }
+            }
+          }
+        } catch (errFdLineup) {
+          console.log('[Escalacoes] Erro ao buscar Football-Data.org lineups:', errFdLineup)
+        }
+      }
+
+      // 4. FONTE 3: Fallback TheSportsDB lookuplineup.php se tiver ID de evento do TSDB ou numérico
+      if (!result && (rawTsdbEventId || isTsdbId || isDirectNumeric)) {
         try {
           var evId = rawTsdbEventId || fixtureIdParam.replace(/\D/g, '')
           if (evId) {
@@ -231,7 +388,6 @@ routerAdd(
                   pos: pPos,
                 }
 
-                // Determina lado
                 var side = (item.strHome || item.strSide || '').toLowerCase()
                 var itemTeamName = item.strTeam || ''
 
@@ -282,7 +438,7 @@ routerAdd(
         }
       }
 
-      // 4. Se ainda não há escalação confirmada e temos nomes de times, tenta buscar o elenco/jogadores disponíveis (Prováveis / Elenco)
+      // 5. FONTE 4: Se ainda não há escalação confirmada e temos nomes de times, tenta buscar o elenco/jogadores disponíveis (Prováveis / Elenco)
       // No TheSportsDB: searchplayers.php?t={teamName}
       if (!result && (timeA || timeB)) {
         try {
@@ -356,7 +512,7 @@ routerAdd(
         }
       }
 
-      // 5. Se nenhuma fonte retornou dados, retorna status indisponivel de forma elegante
+      // 6. Se nenhuma fonte possuir a escalação no momento, retorna status indisponivel de forma elegante
       if (!result) {
         result = {
           status: 'indisponivel',
@@ -369,6 +525,11 @@ routerAdd(
           updatedAt: new Date().toISOString(),
         }
       }
+
+      // Salva em cache do servidor se obteve lista válida (TTL 1 hora para confirmadas/elenco, 2 minutos para indisponível)
+      try {
+        $app.store().set(cacheKey, JSON.stringify(result))
+      } catch (_) {}
 
       return e.json(200, result)
     } catch (generalErr) {

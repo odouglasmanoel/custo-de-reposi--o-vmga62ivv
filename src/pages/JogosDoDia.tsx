@@ -860,8 +860,9 @@ export default function JogosDoDia() {
     }
   }, [relevantFixtures, selectedDate, fetchJogos])
 
-  // Polling periódico APENAS quando há jogos efetivamente com status "Ao Vivo"
-  // E nunca se tiver atingido rate limit (60-90s durante jogos ao vivo para propagar gols e encerramento rápido)
+  // Polling periódico APENAS quando há jogos efetivamente com status "Ao Vivo" (> 0)
+  // Intervalo de 2 minutos (120s) em segundo plano enquanto houver partidas em andamento.
+  // Se counts.live === 0: NENHUMA chamada periódica é executada, servindo do cache/banco local.
   useEffect(() => {
     if (counts.live === 0 || isRateLimited) {
       return
@@ -869,7 +870,7 @@ export default function JogosDoDia() {
 
     const timer = setInterval(() => {
       fetchJogos(selectedDate, false)
-    }, 75000) // 75s (intervalo entre 60-90s) durante partidas ao vivo
+    }, 120000) // 2 minutos (120.000ms) durante partidas ao vivo
     return () => clearInterval(timer)
   }, [counts.live, isRateLimited, selectedDate, fetchJogos])
 
@@ -1582,26 +1583,12 @@ export default function JogosDoDia() {
               className="bg-transparent text-xs font-semibold text-slate-800 outline-none"
             />
           </div>
-          {isRevalidating && !refreshing && (
+          {(isRevalidating || refreshing) && (
             <span className="flex items-center gap-1.5 text-[11px] font-medium text-[#64748B] bg-slate-100 px-2.5 py-1 rounded-md animate-pulse">
               <RefreshCw className="h-3 w-3 animate-spin text-[#0F2A43]" />
-              Sincronizando...
+              Sincronizando placares...
             </span>
           )}
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            disabled={loading || refreshing}
-            onClick={() => fetchJogos(selectedDate, true)}
-            className="h-8 gap-1.5 text-xs font-semibold border-slate-300 text-slate-700 hover:bg-slate-50"
-            title="Atualizar dados agora"
-          >
-            <RefreshCw
-              className={`h-3.5 w-3.5 ${refreshing ? 'animate-spin text-[#0F2A43]' : ''}`}
-            />
-            <span>{refreshing ? 'Atualizando...' : 'Atualizar'}</span>
-          </Button>{' '}
         </div>
       </div>
 
@@ -1632,9 +1619,9 @@ export default function JogosDoDia() {
               Servido do cache do servidor (atualizado há{' '}
               {cacheAge < 60 ? `${cacheAge}s` : `${Math.round(cacheAge / 60)} min`}
               ).{' '}
-              {ttlRemaining > 0
-                ? `Revalidação sob demanda liberada em ${Math.ceil(ttlRemaining / 60)} min.`
-                : 'Revalidação disponível pelo botão Atualizar.'}
+              {counts.live > 0
+                ? 'Atualização automática ativa a cada 2 minutos enquanto houver jogos ao vivo.'
+                : 'Placares sincronizados via cache local (sem consumo desnecessário da API).'}
             </span>
           </div>
           {lastUpdated && (

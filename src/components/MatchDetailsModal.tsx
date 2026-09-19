@@ -175,7 +175,7 @@ export function MatchDetailsModal({ isOpen, onClose, match }: MatchDetailsModalP
           )
         }
       } catch (err: any) {
-        // Fallback local gracioso se a partida já contiver scorers
+        // Fallback gracioso usando scorers já conhecidos da partida
         if (Array.isArray(currentMatch.scorers) && currentMatch.scorers.length > 0) {
           const fallbackGols: MatchEventItem[] = currentMatch.scorers.map((sc) => ({
             time: { elapsed: sc.minute ?? null, extra: sc.extraMinute ?? null },
@@ -193,7 +193,9 @@ export function MatchDetailsModal({ isOpen, onClose, match }: MatchDetailsModalP
           setEvents(fallbackGols)
           setLoadedFixtureId(fixtureId)
         } else {
-          setErrorMessage(err?.message || 'Não foi possível carregar os detalhes da partida.')
+          // Se não há eventos nem scorers, mantém lista vazia sem explodir banner agressivo se tiver placar
+          setEvents([])
+          setLoadedFixtureId(fixtureId)
         }
       } finally {
         setLoading(false)
@@ -625,14 +627,15 @@ export function MatchDetailsModal({ isOpen, onClose, match }: MatchDetailsModalP
               <div className="h-10 w-10 rounded-full bg-slate-100 flex items-center justify-center text-slate-400 mb-1">
                 <HelpCircle className="h-5 w-5" />
               </div>
-              <p className="text-sm font-semibold text-slate-700">
-                Escalações ainda não confirmadas pelas equipes
+              <p className="text-sm font-semibold text-slate-700 text-center">
+                Escalações ainda não disponibilizadas pelas equipes
               </p>
-              <p className="text-xs text-slate-400 max-w-xs">
+              <p className="text-xs text-slate-400 max-w-xs text-center">
                 As escalações oficiais costumam ser liberadas pelos clubes cerca de 30 a 60 minutos
                 antes do início da partida.
               </p>
               <Button
+                type="button"
                 size="sm"
                 variant="outline"
                 onClick={() => loadModalLineup(match, true)}
@@ -772,7 +775,7 @@ export function MatchDetailsModal({ isOpen, onClose, match }: MatchDetailsModalP
                           onClick={() => loadModalLineup(match, true)}
                           className="hover:text-slate-800 flex items-center gap-1 underline cursor-pointer"
                         >
-                          <RefreshCw className="h-2.5 w-2.5" /> Atualizar
+                          <RefreshCw className="h-2.5 w-2.5" /> Reconsultar
                         </button>
                       </div>
                     )}
