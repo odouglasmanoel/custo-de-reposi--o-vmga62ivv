@@ -380,7 +380,7 @@ export default function Estatisticas() {
           {recordes && (
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
               {/* Card 1: Rei da Cravada */}
-              <Card className="relative overflow-hidden rounded-[14px] border-l-4 border-l-[#F59E0B] border-t border-r border-b border-[#E2E8F0] bg-white p-5 shadow-xs transition duration-200 hover:-translate-y-1 hover:shadow-md">
+              <Card className="relative overflow-visible rounded-[14px] border-l-4 border-l-[#F59E0B] border-t border-r border-b border-[#E2E8F0] bg-white p-5 shadow-xs transition duration-200 hover:-translate-y-1 hover:shadow-md hover:z-20">
                 <div className="flex items-start justify-between">
                   <div>
                     <div className="flex items-center gap-1.5">
@@ -389,9 +389,20 @@ export default function Estatisticas() {
                       </span>
                       <Tooltip>
                         <TooltipTrigger asChild>
-                          <Info className="h-3.5 w-3.5 cursor-pointer text-slate-400 hover:text-slate-600" />
+                          <button
+                            type="button"
+                            className="inline-flex items-center justify-center rounded p-0.5 text-slate-400 hover:text-slate-600 focus:outline-none focus-visible:ring-1 focus-visible:ring-emerald-400"
+                            aria-label="Informações sobre Rei da Cravada"
+                          >
+                            <Info className="h-3.5 w-3.5 cursor-pointer" />
+                          </button>
                         </TooltipTrigger>
-                        <TooltipContent className="max-w-xs text-xs">
+                        <TooltipContent
+                          side="top"
+                          align="start"
+                          sideOffset={6}
+                          className="z-[70] max-w-xs text-xs"
+                        >
                           Participante com o maior número de placares exatos acertados (8 pontos
                           cada).
                         </TooltipContent>
@@ -419,7 +430,7 @@ export default function Estatisticas() {
               </Card>
 
               {/* Card 2: Mestre do Vencedor/Empate */}
-              <Card className="relative overflow-hidden rounded-[14px] border-l-4 border-l-[#10B981] border-t border-r border-b border-[#E2E8F0] bg-white p-5 shadow-xs transition duration-200 hover:-translate-y-1 hover:shadow-md">
+              <Card className="relative overflow-visible rounded-[14px] border-l-4 border-l-[#10B981] border-t border-r border-b border-[#E2E8F0] bg-white p-5 shadow-xs transition duration-200 hover:-translate-y-1 hover:shadow-md hover:z-20">
                 <div className="flex items-start justify-between">
                   <div>
                     <div className="flex items-center gap-1.5">
@@ -428,9 +439,20 @@ export default function Estatisticas() {
                       </span>
                       <Tooltip>
                         <TooltipTrigger asChild>
-                          <Info className="h-3.5 w-3.5 cursor-pointer text-slate-400 hover:text-slate-600" />
+                          <button
+                            type="button"
+                            className="inline-flex items-center justify-center rounded p-0.5 text-slate-400 hover:text-slate-600 focus:outline-none focus-visible:ring-1 focus-visible:ring-emerald-400"
+                            aria-label="Informações sobre Mestre do Resultado"
+                          >
+                            <Info className="h-3.5 w-3.5 cursor-pointer" />
+                          </button>
                         </TooltipTrigger>
-                        <TooltipContent className="max-w-xs text-xs">
+                        <TooltipContent
+                          side="top"
+                          align="start"
+                          sideOffset={6}
+                          className="z-[70] max-w-xs text-xs"
+                        >
                           Participante com a maior quantidade de acertos de resultado final
                           (vencedor do jogo ou empate).
                         </TooltipContent>
@@ -458,7 +480,7 @@ export default function Estatisticas() {
               </Card>
 
               {/* Card 3: Matador de Aposta (Gols) */}
-              <Card className="relative overflow-hidden rounded-[14px] border-l-4 border-l-rose-500 border-t border-r border-b border-[#E2E8F0] bg-white p-5 shadow-xs transition duration-200 hover:-translate-y-1 hover:shadow-md">
+              <Card className="relative overflow-visible rounded-[14px] border-l-4 border-l-rose-500 border-t border-r border-b border-[#E2E8F0] bg-white p-5 shadow-xs transition duration-200 hover:-translate-y-1 hover:shadow-md hover:z-20">
                 <div className="flex items-start justify-between">
                   <div>
                     <div className="flex items-center gap-1.5">
@@ -467,9 +489,20 @@ export default function Estatisticas() {
                       </span>
                       <Tooltip>
                         <TooltipTrigger asChild>
-                          <Info className="h-3.5 w-3.5 cursor-pointer text-slate-400 hover:text-slate-600" />
+                          <button
+                            type="button"
+                            className="inline-flex items-center justify-center rounded p-0.5 text-slate-400 hover:text-slate-600 focus:outline-none focus-visible:ring-1 focus-visible:ring-emerald-400"
+                            aria-label="Informações sobre Matador de Aposta (Gols)"
+                          >
+                            <Info className="h-3.5 w-3.5 cursor-pointer" />
+                          </button>
                         </TooltipTrigger>
-                        <TooltipContent className="max-w-xs text-xs">
+                        <TooltipContent
+                          side="top"
+                          align="start"
+                          sideOffset={6}
+                          className="z-[70] max-w-xs text-xs"
+                        >
                           Participante que mais somou pontos acertando os marcadores de gols das
                           partidas.
                         </TooltipContent>
@@ -497,7 +530,7 @@ export default function Estatisticas() {
               </Card>
 
               {/* Card 4: Maior Pontuador de Rodada */}
-              <Card className="relative overflow-hidden rounded-[14px] border-l-4 border-l-indigo-600 border-t border-r border-b border-[#E2E8F0] bg-white p-5 shadow-xs transition duration-200 hover:-translate-y-1 hover:shadow-md">
+              <Card className="relative overflow-visible rounded-[14px] border-l-4 border-l-indigo-600 border-t border-r border-b border-[#E2E8F0] bg-white p-5 shadow-xs transition duration-200 hover:-translate-y-1 hover:shadow-md hover:z-20">
                 <div className="flex items-start justify-between">
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-1.5">
@@ -506,9 +539,20 @@ export default function Estatisticas() {
                       </span>
                       <Tooltip>
                         <TooltipTrigger asChild>
-                          <Info className="h-3.5 w-3.5 cursor-pointer text-slate-400 hover:text-slate-600" />
+                          <button
+                            type="button"
+                            className="inline-flex items-center justify-center rounded p-0.5 text-slate-400 hover:text-slate-600 focus:outline-none focus-visible:ring-1 focus-visible:ring-emerald-400"
+                            aria-label="Informações sobre Maior em Rodada"
+                          >
+                            <Info className="h-3.5 w-3.5 cursor-pointer" />
+                          </button>
                         </TooltipTrigger>
-                        <TooltipContent className="max-w-xs text-xs">
+                        <TooltipContent
+                          side="top"
+                          align="start"
+                          sideOffset={6}
+                          className="z-[70] max-w-xs text-xs"
+                        >
                           A maior pontuação atingida por um único usuário em um único
                           confronto/rodada.
                         </TooltipContent>
@@ -538,7 +582,7 @@ export default function Estatisticas() {
               </Card>
 
               {/* Card 5: Pai dos Defensores (Mestre da Zaga) */}
-              <Card className="relative overflow-hidden rounded-[14px] border-l-4 border-l-purple-600 border-t border-r border-b border-[#E2E8F0] bg-white p-5 shadow-xs transition duration-200 hover:-translate-y-1 hover:shadow-md">
+              <Card className="relative overflow-visible rounded-[14px] border-l-4 border-l-purple-600 border-t border-r border-b border-[#E2E8F0] bg-white p-5 shadow-xs transition duration-200 hover:-translate-y-1 hover:shadow-md hover:z-20">
                 <div className="flex items-start justify-between">
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-1.5">
@@ -547,9 +591,20 @@ export default function Estatisticas() {
                       </span>
                       <Tooltip>
                         <TooltipTrigger asChild>
-                          <Info className="h-3.5 w-3.5 cursor-pointer text-slate-400 hover:text-slate-600" />
+                          <button
+                            type="button"
+                            className="inline-flex items-center justify-center rounded p-0.5 text-slate-400 hover:text-slate-600 focus:outline-none focus-visible:ring-1 focus-visible:ring-emerald-400"
+                            aria-label="Informações sobre Pai dos Defensores"
+                          >
+                            <Info className="h-3.5 w-3.5 cursor-pointer" />
+                          </button>
                         </TooltipTrigger>
-                        <TooltipContent className="max-w-xs text-xs">
+                        <TooltipContent
+                          side="top"
+                          align="start"
+                          sideOffset={6}
+                          className="z-[70] max-w-xs text-xs"
+                        >
                           Mestre da Zaga: participante que mais acertou marcadores de gol cuja
                           posição registrada é Zagueiro ou Lateral (+3 pts por gol, incluindo
                           apuração retroativa).
@@ -593,7 +648,7 @@ export default function Estatisticas() {
               </Card>
 
               {/* Card 6: Mestre do Quase (O Injustiçado) */}
-              <Card className="relative overflow-hidden rounded-[14px] border-l-4 border-l-amber-600 border-t border-r border-b border-[#E2E8F0] bg-white p-5 shadow-xs transition duration-200 hover:-translate-y-1 hover:shadow-md">
+              <Card className="relative overflow-visible rounded-[14px] border-l-4 border-l-amber-600 border-t border-r border-b border-[#E2E8F0] bg-white p-5 shadow-xs transition duration-200 hover:-translate-y-1 hover:shadow-md hover:z-20">
                 <div className="flex items-start justify-between">
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-1.5">
@@ -602,9 +657,20 @@ export default function Estatisticas() {
                       </span>
                       <Tooltip>
                         <TooltipTrigger asChild>
-                          <Info className="h-3.5 w-3.5 cursor-pointer text-slate-400 hover:text-slate-600" />
+                          <button
+                            type="button"
+                            className="inline-flex items-center justify-center rounded p-0.5 text-slate-400 hover:text-slate-600 focus:outline-none focus-visible:ring-1 focus-visible:ring-emerald-400"
+                            aria-label="Informações sobre Mestre do Quase"
+                          >
+                            <Info className="h-3.5 w-3.5 cursor-pointer" />
+                          </button>
                         </TooltipTrigger>
-                        <TooltipContent className="max-w-xs text-xs">
+                        <TooltipContent
+                          side="top"
+                          align="start"
+                          sideOffset={6}
+                          className="z-[70] max-w-xs text-xs"
+                        >
                           O Injustiçado: participante que mais errou a cravação exata do placar por
                           apenas 1 gol de diferença no confronto.
                         </TooltipContent>
@@ -647,7 +713,7 @@ export default function Estatisticas() {
               </Card>
 
               {/* Card 7: Pé Frio da Rodada */}
-              <Card className="relative overflow-hidden rounded-[14px] border-l-4 border-l-cyan-600 border-t border-r border-b border-[#E2E8F0] bg-white p-5 shadow-xs transition duration-200 hover:-translate-y-1 hover:shadow-md">
+              <Card className="relative overflow-visible rounded-[14px] border-l-4 border-l-cyan-600 border-t border-r border-b border-[#E2E8F0] bg-white p-5 shadow-xs transition duration-200 hover:-translate-y-1 hover:shadow-md hover:z-20">
                 <div className="flex items-start justify-between">
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-1.5">
@@ -656,9 +722,20 @@ export default function Estatisticas() {
                       </span>
                       <Tooltip>
                         <TooltipTrigger asChild>
-                          <Info className="h-3.5 w-3.5 cursor-pointer text-slate-400 hover:text-slate-600" />
+                          <button
+                            type="button"
+                            className="inline-flex items-center justify-center rounded p-0.5 text-slate-400 hover:text-slate-600 focus:outline-none focus-visible:ring-1 focus-visible:ring-emerald-400"
+                            aria-label="Informações sobre Pé Frio da Rodada"
+                          >
+                            <Info className="h-3.5 w-3.5 cursor-pointer" />
+                          </button>
                         </TooltipTrigger>
-                        <TooltipContent className="max-w-xs text-xs">
+                        <TooltipContent
+                          side="top"
+                          align="start"
+                          sideOffset={6}
+                          className="z-[70] max-w-xs text-xs"
+                        >
                           Participante com o menor aproveitamento percentual de pontos nas partidas
                           já finalizadas.
                         </TooltipContent>
@@ -701,7 +778,7 @@ export default function Estatisticas() {
               </Card>
 
               {/* Card 8: Mito dos Grandes Jogos */}
-              <Card className="relative overflow-hidden rounded-[14px] border-l-4 border-l-yellow-500 border-t border-r border-b border-[#E2E8F0] bg-white p-5 shadow-xs transition duration-200 hover:-translate-y-1 hover:shadow-md">
+              <Card className="relative overflow-visible rounded-[14px] border-l-4 border-l-yellow-500 border-t border-r border-b border-[#E2E8F0] bg-white p-5 shadow-xs transition duration-200 hover:-translate-y-1 hover:shadow-md hover:z-20">
                 <div className="flex items-start justify-between">
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-1.5">
@@ -710,9 +787,20 @@ export default function Estatisticas() {
                       </span>
                       <Tooltip>
                         <TooltipTrigger asChild>
-                          <Info className="h-3.5 w-3.5 cursor-pointer text-slate-400 hover:text-slate-600" />
+                          <button
+                            type="button"
+                            className="inline-flex items-center justify-center rounded p-0.5 text-slate-400 hover:text-slate-600 focus:outline-none focus-visible:ring-1 focus-visible:ring-emerald-400"
+                            aria-label="Informações sobre Mito dos Grandes Jogos"
+                          >
+                            <Info className="h-3.5 w-3.5 cursor-pointer" />
+                          </button>
                         </TooltipTrigger>
-                        <TooltipContent className="max-w-xs text-xs">
+                        <TooltipContent
+                          side="top"
+                          align="start"
+                          sideOffset={6}
+                          className="z-[70] max-w-xs text-xs"
+                        >
                           Maior pontuador considerando exclusivamente confrontos de fases de
                           mata-mata, finais, supercopas e clássicos do futebol.
                         </TooltipContent>
@@ -805,9 +893,20 @@ export default function Estatisticas() {
                           <span>Zaga/Lateral</span>
                           <Tooltip>
                             <TooltipTrigger asChild>
-                              <Info className="h-3 w-3 cursor-pointer text-slate-300 hover:text-white" />
+                              <button
+                                type="button"
+                                className="inline-flex items-center justify-center rounded p-0.5 text-slate-300 hover:text-white focus:outline-none focus-visible:ring-1 focus-visible:ring-emerald-400"
+                                aria-label="Informações sobre Zaga/Lateral"
+                              >
+                                <Info className="h-3.5 w-3.5 cursor-pointer" />
+                              </button>
                             </TooltipTrigger>
-                            <TooltipContent className="max-w-xs text-xs">
+                            <TooltipContent
+                              side="top"
+                              align="center"
+                              sideOffset={6}
+                              className="z-[70] max-w-xs text-xs"
+                            >
                               Pai dos Defensores: quantidade de marcadores de gols acertados que
                               jogam na defesa (Zagueiro ou Lateral).
                             </TooltipContent>
@@ -819,9 +918,20 @@ export default function Estatisticas() {
                           <span>Quase Cravou</span>
                           <Tooltip>
                             <TooltipTrigger asChild>
-                              <Info className="h-3 w-3 cursor-pointer text-slate-300 hover:text-white" />
+                              <button
+                                type="button"
+                                className="inline-flex items-center justify-center rounded p-0.5 text-slate-300 hover:text-white focus:outline-none focus-visible:ring-1 focus-visible:ring-emerald-400"
+                                aria-label="Informações sobre Quase Cravou"
+                              >
+                                <Info className="h-3.5 w-3.5 cursor-pointer" />
+                              </button>
                             </TooltipTrigger>
-                            <TooltipContent className="max-w-xs text-xs">
+                            <TooltipContent
+                              side="top"
+                              align="center"
+                              sideOffset={6}
+                              className="z-[70] max-w-xs text-xs"
+                            >
                               Mestre do Quase: vezes em que errou o placar exato por apenas 1 gol de
                               diferença (|diferença total| = 1).
                             </TooltipContent>
@@ -833,9 +943,20 @@ export default function Estatisticas() {
                           <span>Grandes Jogos</span>
                           <Tooltip>
                             <TooltipTrigger asChild>
-                              <Info className="h-3 w-3 cursor-pointer text-slate-300 hover:text-white" />
+                              <button
+                                type="button"
+                                className="inline-flex items-center justify-center rounded p-0.5 text-slate-300 hover:text-white focus:outline-none focus-visible:ring-1 focus-visible:ring-emerald-400"
+                                aria-label="Informações sobre Grandes Jogos"
+                              >
+                                <Info className="h-3.5 w-3.5 cursor-pointer" />
+                              </button>
                             </TooltipTrigger>
-                            <TooltipContent className="max-w-xs text-xs">
+                            <TooltipContent
+                              side="top"
+                              align="center"
+                              sideOffset={6}
+                              className="z-[70] max-w-xs text-xs"
+                            >
                               Mito dos Grandes Jogos: total de pontos conquistados em mata-matas,
                               finais e clássicos.
                             </TooltipContent>
@@ -847,9 +968,20 @@ export default function Estatisticas() {
                           <span>Aproveitamento</span>
                           <Tooltip>
                             <TooltipTrigger asChild>
-                              <Info className="h-3 w-3 cursor-pointer text-slate-300 hover:text-white" />
+                              <button
+                                type="button"
+                                className="inline-flex items-center justify-center rounded p-0.5 text-slate-300 hover:text-white focus:outline-none focus-visible:ring-1 focus-visible:ring-emerald-400"
+                                aria-label="Informações sobre Aproveitamento"
+                              >
+                                <Info className="h-3.5 w-3.5 cursor-pointer" />
+                              </button>
                             </TooltipTrigger>
-                            <TooltipContent className="max-w-xs text-xs">
+                            <TooltipContent
+                              side="top"
+                              align="end"
+                              sideOffset={6}
+                              className="z-[70] max-w-xs text-xs"
+                            >
                               Percentual conquistado dos pontos possíveis nos jogos palpitados. O
                               menor percentual evidencia o Pé Frio.
                             </TooltipContent>
