@@ -15,6 +15,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+import { Checkbox } from '@/components/ui/checkbox'
 import {
   Dialog,
   DialogContent,
@@ -35,36 +36,35 @@ interface AdminEditMarcadoresModalProps {
   onSuccess?: (updatedPalpite: Palpite) => void
 }
 
+type PersistedPosicao = 'Atacante' | 'Defensor' | 'Goleiro'
+
 interface ScorerInputState {
   nome: string
-  posicao: 'Atacante' | 'Meio-campista' | 'Defensor' | 'Goleiro'
+  posicao: PersistedPosicao
+  gol_contra: boolean
 }
 
 const POSICOES_DISPONIVEIS: Array<{
-  value: 'Atacante' | 'Meio-campista' | 'Defensor' | 'Goleiro'
+  value: PersistedPosicao
   label: string
 }> = [
-  { value: 'Atacante', label: 'Atacante (+1 pt)' },
-  { value: 'Meio-campista', label: 'Meio-campista (+1 pt)' },
+  { value: 'Atacante', label: 'Atacante / Meio-campista (+1 pt)' },
   { value: 'Defensor', label: 'Defensor / Lateral (+3 pts)' },
   { value: 'Goleiro', label: 'Goleiro (+10 pts)' },
 ]
 
-function inferPosicaoFromNameOrItem(
-  raw: any,
-): 'Atacante' | 'Meio-campista' | 'Defensor' | 'Goleiro' {
+function inferPosicaoFromNameOrItem(raw: any): PersistedPosicao {
   if (raw && typeof raw === 'object' && raw.posicao) {
     const p = String(raw.posicao).toLowerCase()
     if (p.includes('goleiro')) return 'Goleiro'
     if (p.includes('defensor') || p.includes('zagueiro') || p.includes('lateral')) return 'Defensor'
-    if (p.includes('meio') || p.includes('meia')) return 'Meio-campista'
+    // 'Meio-campista', 'Meia', 'Atacante' ou outros caem em 'Atacante'
     return 'Atacante'
   }
   const str = String(typeof raw === 'string' ? raw : raw?.nome || '').toLowerCase()
   if (str.includes('goleiro')) return 'Goleiro'
   if (str.includes('zagueiro') || str.includes('lateral') || str.includes('defensor'))
     return 'Defensor'
-  if (str.includes('meio') || str.includes('meia')) return 'Meio-campista'
   return 'Atacante'
 }
 
@@ -88,10 +88,32 @@ function parseRawScorerList(raw: any, count: number): ScorerInputState[] {
   for (let i = 0; i < slots; i++) {
     const itemRaw = rawArray[i]
     const fallbackName = extracted[i] || ''
-    const cleanName = fallbackName.replace(/\(gol contra\)|\(contra\)/gi, '').trim()
+    const rawString =
+      typeof itemRaw === 'string'
+        ? itemRaw
+        : typeof itemRaw?.nome === 'string'
+          ? itemRaw.nome
+          : fallbackName
+
+    // Detectar marcador com "(gol contra)"/"(contra)" no nome, flag gol_contra === true ou posicao === 'Gol Contra'
+    const isGolContra =
+      Boolean(itemRaw && typeof itemRaw === 'object' && itemRaw.gol_contra === true) ||
+      Boolean(
+        itemRaw &&
+        typeof itemRaw === 'object' &&
+        String(itemRaw.posicao || '')
+          .toLowerCase()
+          .includes('contra'),
+      ) ||
+      /\(gol contra\)|\(contra\)/i.test(rawString) ||
+      /\(gol contra\)|\(contra\)/i.test(fallbackName)
+
+    const cleanName = (fallbackName || rawString).replace(/\(gol contra\)|\(contra\)/gi, '').trim()
+
     result.push({
       nome: cleanName,
       posicao: inferPosicaoFromNameOrItem(itemRaw || fallbackName),
+      gol_contra: isGolContra,
     })
   }
 
@@ -144,9 +166,19 @@ export function AdminEditMarcadoresModal({
     setSaving(true)
 
     try {
+      // Formata os nomes: se marcada como gol contra, adiciona sufixo " (gol contra)", senão salva o nome limpo
+      const formatScorerValue = (s: ScorerInputState) => {
+        const clean = s.nome.replace(/\(gol contra\)|\(contra\)/gi, '').trim()
+        return s.gol_contra ? `${clean} (gol contra)` : clean
+      }
+
       // Limpa espaços e remove itens totalmente vazios além do limite de gols
-      const cleanA = scorersA.filter((s) => s.nome.trim().length > 0).map((s) => s.nome.trim())
-      const cleanB = scorersB.filter((s) => s.nome.trim().length > 0).map((s) => s.nome.trim())
+      const cleanA = scorersA
+        .filter((s) => s.nome.replace(/\(gol contra\)|\(contra\)/gi, '').trim().length > 0)
+        .map(formatScorerValue)
+      const cleanB = scorersB
+        .filter((s) => s.nome.replace(/\(gol contra\)|\(contra\)/gi, '').trim().length > 0)
+        .map(formatScorerValue)
 
       // Atualiza o palpite no banco PocketBase
       const updatedRecord = await pb.collection('palpites').update<Palpite>(palpite.id, {
@@ -166,29 +198,45 @@ export function AdminEditMarcadoresModal({
 
         // Mapeia novas posições informadas pelo Admin
         const newGolsA = existingGolsA.map((g: any) => {
-          const matchA = scorersA.find(
-            (s) =>
-              s.nome.trim().toLowerCase() ===
-              String(g.nome || '')
-                .trim()
-                .toLowerCase(),
-          )
-          return matchA
-            ? { nome: g.nome, posicao: matchA.posicao, quantidade: g.quantidade || 1 }
-            : g
+          const matchA = scorersA.find((s) => {
+            const sClean = s.nome
+              .replace(/\(gol contra\)|\(contra\)/gi, '')
+              .trim()
+              .toLowerCase()
+            const gClean = String(g.nome || '')
+              .replace(/\(gol contra\)|\(contra\)/gi, '')
+              .trim()
+              .toLowerCase()
+            return sClean === gClean
+          })
+          if (!matchA) return g
+          return {
+            nome: g.nome,
+            posicao: matchA.gol_contra ? 'Gol Contra' : matchA.posicao,
+            quantidade: g.quantidade || 1,
+            gol_contra: matchA.gol_contra,
+          }
         })
 
         const newGolsB = existingGolsB.map((g: any) => {
-          const matchB = scorersB.find(
-            (s) =>
-              s.nome.trim().toLowerCase() ===
-              String(g.nome || '')
-                .trim()
-                .toLowerCase(),
-          )
-          return matchB
-            ? { nome: g.nome, posicao: matchB.posicao, quantidade: g.quantidade || 1 }
-            : g
+          const matchB = scorersB.find((s) => {
+            const sClean = s.nome
+              .replace(/\(gol contra\)|\(contra\)/gi, '')
+              .trim()
+              .toLowerCase()
+            const gClean = String(g.nome || '')
+              .replace(/\(gol contra\)|\(contra\)/gi, '')
+              .trim()
+              .toLowerCase()
+            return sClean === gClean
+          })
+          if (!matchB) return g
+          return {
+            nome: g.nome,
+            posicao: matchB.gol_contra ? 'Gol Contra' : matchB.posicao,
+            quantidade: g.quantidade || 1,
+            gol_contra: matchB.gol_contra,
+          }
         })
 
         await pb.collection('jogos').update(game.id, {
@@ -314,22 +362,41 @@ export function AdminEditMarcadoresModal({
                       className="h-8 text-xs bg-white border-slate-300 focus-visible:border-[#10B981] focus-visible:ring-[#10B981]"
                     />
                   </div>
-                  <div className="sm:w-52 ml-8 sm:ml-0">
-                    <Select
-                      value={item.posicao}
-                      onValueChange={(val: any) => handleUpdateScorerA(idx, { posicao: val })}
-                    >
-                      <SelectTrigger className="h-8 text-[11px] bg-slate-50 border-slate-300">
-                        <SelectValue placeholder="Selecione a posição" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {POSICOES_DISPONIVEIS.map((p) => (
-                          <SelectItem key={p.value} value={p.value} className="text-xs">
-                            {p.label}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                  <div className="flex items-center gap-2 ml-8 sm:ml-0">
+                    <div className="w-48 sm:w-52">
+                      <Select
+                        value={item.posicao}
+                        onValueChange={(val: any) => handleUpdateScorerA(idx, { posicao: val })}
+                        disabled={item.gol_contra}
+                      >
+                        <SelectTrigger
+                          className={`h-8 text-[11px] bg-slate-50 border-slate-300 transition-opacity ${
+                            item.gol_contra ? 'opacity-50 cursor-not-allowed' : ''
+                          }`}
+                          title={item.gol_contra ? 'Gol contra vale regra de +5 pts' : undefined}
+                        >
+                          <SelectValue placeholder="Selecione a posição">
+                            {item.gol_contra ? 'Gol Contra (+5 pts)' : undefined}
+                          </SelectValue>
+                        </SelectTrigger>
+                        <SelectContent>
+                          {POSICOES_DISPONIVEIS.map((p) => (
+                            <SelectItem key={p.value} value={p.value} className="text-xs">
+                              {p.label}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <label className="flex items-center gap-1.5 cursor-pointer select-none whitespace-nowrap text-xs font-medium text-slate-700">
+                      <Checkbox
+                        checked={item.gol_contra}
+                        onCheckedChange={(checked) =>
+                          handleUpdateScorerA(idx, { gol_contra: Boolean(checked) })
+                        }
+                      />
+                      <span>Gol Contra</span>
+                    </label>
                   </div>
                 </div>
               ))}
@@ -366,22 +433,41 @@ export function AdminEditMarcadoresModal({
                       className="h-8 text-xs bg-white border-slate-300 focus-visible:border-[#10B981] focus-visible:ring-[#10B981]"
                     />
                   </div>
-                  <div className="sm:w-52 ml-8 sm:ml-0">
-                    <Select
-                      value={item.posicao}
-                      onValueChange={(val: any) => handleUpdateScorerB(idx, { posicao: val })}
-                    >
-                      <SelectTrigger className="h-8 text-[11px] bg-slate-50 border-slate-300">
-                        <SelectValue placeholder="Selecione a posição" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {POSICOES_DISPONIVEIS.map((p) => (
-                          <SelectItem key={p.value} value={p.value} className="text-xs">
-                            {p.label}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                  <div className="flex items-center gap-2 ml-8 sm:ml-0">
+                    <div className="w-48 sm:w-52">
+                      <Select
+                        value={item.posicao}
+                        onValueChange={(val: any) => handleUpdateScorerB(idx, { posicao: val })}
+                        disabled={item.gol_contra}
+                      >
+                        <SelectTrigger
+                          className={`h-8 text-[11px] bg-slate-50 border-slate-300 transition-opacity ${
+                            item.gol_contra ? 'opacity-50 cursor-not-allowed' : ''
+                          }`}
+                          title={item.gol_contra ? 'Gol contra vale regra de +5 pts' : undefined}
+                        >
+                          <SelectValue placeholder="Selecione a posição">
+                            {item.gol_contra ? 'Gol Contra (+5 pts)' : undefined}
+                          </SelectValue>
+                        </SelectTrigger>
+                        <SelectContent>
+                          {POSICOES_DISPONIVEIS.map((p) => (
+                            <SelectItem key={p.value} value={p.value} className="text-xs">
+                              {p.label}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <label className="flex items-center gap-1.5 cursor-pointer select-none whitespace-nowrap text-xs font-medium text-slate-700">
+                      <Checkbox
+                        checked={item.gol_contra}
+                        onCheckedChange={(checked) =>
+                          handleUpdateScorerB(idx, { gol_contra: Boolean(checked) })
+                        }
+                      />
+                      <span>Gol Contra</span>
+                    </label>
                   </div>
                 </div>
               ))}
