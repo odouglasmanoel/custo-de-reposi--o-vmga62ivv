@@ -4,6 +4,9 @@ import {
   isCravadaExata,
   isResultadoAcertado,
   getPontosGols,
+  isQuaseCravada,
+  countMarcadoresDefensoresAcertados,
+  isGrandeJogo,
   normalizeMemberName,
 } from './statsCalculator'
 import type { Bolao, Jogo, Palpite, Participante } from '@/types/bolao'
@@ -294,6 +297,162 @@ describe('statsCalculator', () => {
     expect(stats.recordes.reiDaCravada.valor).toBe(1)
     expect(stats.recordes.maiorPontuadorRodada.participante).toBe('Douglas')
     expect(stats.recordes.maiorPontuadorRodada.pontos).toBe(8)
+
+    // Gabriel chutou 2x0 quando o jogo foi 1x0 -> errou a cravada por exatamente 1 gol (|2-1| + |0-0| = 1)
+    expect(gabriel?.quaseCravadas).toBe(1)
+    expect(stats.recordes.mestreDoQuase.participante).toBe('Gabriel')
+    expect(stats.recordes.mestreDoQuase.valor).toBe(1)
+  })
+
+  it('evaluates isQuaseCravada correctly', () => {
+    const jogo: Jogo = {
+      id: 'j1',
+      bolao: 'b1',
+      time_a: 'Corinthians',
+      time_b: 'Palmeiras',
+      data: '2026-06-01',
+      hora: '16:00',
+      placar_a: 2,
+      placar_b: 1,
+      resultado_finalizado: true,
+      tem_penaltis: false,
+      created: '',
+      updated: '',
+      collectionId: '',
+      collectionName: '',
+    }
+
+    // 2x1 -> 2x2: diff = 0 + 1 = 1 (QUASE)
+    const p1 = { placar_a: 2, placar_b: 2 } as Palpite
+    expect(isQuaseCravada(p1, jogo)).toBe(true)
+
+    // 2x1 -> 3x1: diff = 1 + 0 = 1 (QUASE)
+    const p2 = { placar_a: 3, placar_b: 1 } as Palpite
+    expect(isQuaseCravada(p2, jogo)).toBe(true)
+
+    // 2x1 -> 2x1: diff = 0 + 0 = 0 (É CRAVADA EXATA, não quase)
+    const pExato = { placar_a: 2, placar_b: 1 } as Palpite
+    expect(isQuaseCravada(pExato, jogo)).toBe(false)
+
+    // 2x1 -> 0x0: diff = 2 + 1 = 3 (NÃO É QUASE)
+    const pLonge = { placar_a: 0, placar_b: 0 } as Palpite
+    expect(isQuaseCravada(pLonge, jogo)).toBe(false)
+  })
+
+  it('evaluates countMarcadoresDefensoresAcertados correctly', () => {
+    const jogo: Jogo = {
+      id: 'j1',
+      bolao: 'b1',
+      time_a: 'Tottenham',
+      time_b: 'Aston Villa',
+      data: '2026-09-19',
+      hora: '08:30',
+      placar_a: 2,
+      placar_b: 3,
+      resultado_finalizado: true,
+      tem_penaltis: false,
+      gols_time_a: [
+        { nome: 'Gallagher', posicao: 'Atacante/Meia', quantidade: 1 },
+        { nome: 'Van Hecke', posicao: 'Zagueiro/Lateral', quantidade: 1 },
+      ],
+      gols_time_b: [{ nome: 'Nicolas Jackson', posicao: 'Atacante/Meia', quantidade: 1 }],
+      created: '',
+      updated: '',
+      collectionId: '',
+      collectionName: '',
+    }
+
+    // Palpite com Van Hecke no detalhamento
+    const pComDefensor: Palpite = {
+      id: 'p1',
+      bolao: 'b1',
+      jogo: 'j1',
+      participante: 'p1',
+      placar_a: 2,
+      placar_b: 3,
+      pontuacao_jogo: 11,
+      detalhamento: [
+        'Placar Exato (+8 pts)',
+        'Gols acertados: Van Hecke (+3 pts - Zagueiro/Lateral)',
+      ],
+      created: '',
+      updated: '',
+      collectionId: '',
+      collectionName: '',
+    }
+    expect(countMarcadoresDefensoresAcertados(pComDefensor, jogo)).toBe(1)
+
+    // Palpite sem detalhamento pré-formatado, mas com arrays goleadores_a/b
+    const pSemDetalhamento: Palpite = {
+      id: 'p2',
+      bolao: 'b1',
+      jogo: 'j1',
+      participante: 'p2',
+      placar_a: 1,
+      placar_b: 2,
+      goleadores_a: ['Van Hecke'],
+      goleadores_b: ['Nicolas Jackson'],
+      pontuacao_jogo: 4,
+      detalhamento: [],
+      created: '',
+      updated: '',
+      collectionId: '',
+      collectionName: '',
+    }
+    expect(countMarcadoresDefensoresAcertados(pSemDetalhamento, jogo)).toBe(1)
+  })
+
+  it('identifies big matches (isGrandeJogo) for playoffs, finals and derbies', () => {
+    const jogoFinal: Jogo = {
+      id: 'j1',
+      bolao: 'b1',
+      time_a: 'Uberlândia',
+      time_b: 'ASA',
+      data: '2026-09-16',
+      hora: '16:00',
+      competicao: 'Brasileirão D (Final)',
+      resultado_finalizado: true,
+      tem_penaltis: false,
+      created: '',
+      updated: '',
+      collectionId: '',
+      collectionName: '',
+    }
+    expect(isGrandeJogo(jogoFinal)).toBe(true)
+
+    const jogoClassico: Jogo = {
+      id: 'j2',
+      bolao: 'b1',
+      time_a: 'Corinthians',
+      time_b: 'Palmeiras',
+      data: '2026-09-16',
+      hora: '16:00',
+      competicao: 'Brasileirão',
+      resultado_finalizado: true,
+      tem_penaltis: false,
+      created: '',
+      updated: '',
+      collectionId: '',
+      collectionName: '',
+    }
+    expect(isGrandeJogo(jogoClassico)).toBe(true)
+
+    const jogoComum: Jogo = {
+      id: 'j3',
+      bolao: 'b1',
+      time_a: 'Mirassol',
+      time_b: 'Remo',
+      data: '2026-09-16',
+      hora: '16:00',
+      competicao: 'Brasileirão (21ª rodada)',
+      resultado_finalizado: true,
+      tem_penaltis: false,
+      created: '',
+      updated: '',
+      collectionId: '',
+      collectionName: '',
+    }
+    expect(isGrandeJogo(jogoComum)).toBe(false)
   })
 
   it('aggregates multiple competitions properly when filtroBolaoId is "geral"', () => {

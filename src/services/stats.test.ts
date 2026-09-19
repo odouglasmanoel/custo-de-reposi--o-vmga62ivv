@@ -19,6 +19,9 @@ describe('stats service and caching', () => {
         cravadasExatas: 4,
         resultadosAcertados: 8,
         golsAcertados: 3,
+        marcadoresDefensores: 2,
+        quaseCravadas: 3,
+        pontosGrandesJogos: 15,
         jogosPalpitadosEncerrados: 10,
         pontosPalpites: 30,
         pontosImportados: 20,
@@ -35,6 +38,28 @@ describe('stats service and caching', () => {
         pontos: 8,
         rodadaLabel: 'Rodada 1',
         jogoLabel: 'Time A 2 x 1 Time B',
+      },
+      paiDosDefensores: {
+        participante: 'Douglas',
+        valor: 2,
+        temDados: true,
+      },
+      mestreDoQuase: {
+        participante: 'Douglas',
+        valor: 3,
+        temDados: true,
+      },
+      peFrioDaRodada: {
+        participante: 'Douglas',
+        aproveitamento: 37.5,
+        jogosPalpitados: 10,
+        temDados: true,
+      },
+      mitoDosGrandesJogos: {
+        participante: 'Douglas',
+        pontos: 15,
+        jogosConsiderados: 3,
+        temDados: true,
       },
     },
     evolucao: [

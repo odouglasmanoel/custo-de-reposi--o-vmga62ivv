@@ -12,6 +12,10 @@ import {
   Loader2,
   Sparkles,
   Globe,
+  Shield,
+  Clock,
+  Snowflake,
+  Crown,
 } from 'lucide-react'
 import {
   LineChart,
@@ -273,9 +277,9 @@ export default function Estatisticas() {
             </div>
           </div>
 
-          {/* 1. Cards de Recordes Skeleton */}
+          {/* 1. Cards de Recordes Skeleton (8 cards) */}
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-            {[1, 2, 3, 4].map((i) => (
+            {[1, 2, 3, 4, 5, 6, 7, 8].map((i) => (
               <Card
                 key={i}
                 className="rounded-[14px] border border-[#E2E8F0] bg-white p-5 shadow-xs"
@@ -532,6 +536,222 @@ export default function Estatisticas() {
                   </div>
                 </div>
               </Card>
+
+              {/* Card 5: Pai dos Defensores (Mestre da Zaga) */}
+              <Card className="relative overflow-hidden rounded-[14px] border-l-4 border-l-purple-600 border-t border-r border-b border-[#E2E8F0] bg-white p-5 shadow-xs transition duration-200 hover:-translate-y-1 hover:shadow-md">
+                <div className="flex items-start justify-between">
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-xs font-black uppercase tracking-wider text-purple-700">
+                        Pai dos Defensores
+                      </span>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Info className="h-3.5 w-3.5 cursor-pointer text-slate-400 hover:text-slate-600" />
+                        </TooltipTrigger>
+                        <TooltipContent className="max-w-xs text-xs">
+                          Mestre da Zaga: participante que mais acertou marcadores de gol cuja
+                          posição registrada é Zagueiro ou Lateral (+3 pts por gol).
+                        </TooltipContent>
+                      </Tooltip>
+                    </div>
+                    {recordes.paiDosDefensores.temDados ? (
+                      <>
+                        <h3 className="mt-2 text-xl font-black text-[#0F172A] truncate">
+                          {recordes.paiDosDefensores.participante}
+                        </h3>
+                        <p className="mt-1 flex items-baseline gap-1 text-xs text-slate-600">
+                          <span className="text-2xl font-black text-[#0F2A43]">
+                            {recordes.paiDosDefensores.valor}
+                          </span>
+                          <span className="font-semibold text-slate-500">
+                            marcador{recordes.paiDosDefensores.valor > 1 ? 'es' : ''} zaga/lateral
+                          </span>
+                        </p>
+                        {recordes.paiDosDefensores.empate && (
+                          <p className="mt-1 text-[11px] font-medium text-purple-700 truncate">
+                            Empate: {recordes.paiDosDefensores.empate.join(', ')}
+                          </p>
+                        )}
+                      </>
+                    ) : (
+                      <>
+                        <h3 className="mt-2 text-base font-bold text-slate-400">
+                          Ainda sem dados apurados
+                        </h3>
+                        <p className="mt-1 text-xs text-slate-500">
+                          Nenhum gol de defensor acertado nas partidas finalizadas deste filtro.
+                        </p>
+                      </>
+                    )}
+                  </div>
+                  <div className="ml-2 rounded-xl bg-purple-50 p-3 text-purple-600">
+                    <Shield className="h-6 w-6" />
+                  </div>
+                </div>
+              </Card>
+
+              {/* Card 6: Mestre do Quase (O Injustiçado) */}
+              <Card className="relative overflow-hidden rounded-[14px] border-l-4 border-l-amber-600 border-t border-r border-b border-[#E2E8F0] bg-white p-5 shadow-xs transition duration-200 hover:-translate-y-1 hover:shadow-md">
+                <div className="flex items-start justify-between">
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-xs font-black uppercase tracking-wider text-amber-800">
+                        Mestre do Quase
+                      </span>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Info className="h-3.5 w-3.5 cursor-pointer text-slate-400 hover:text-slate-600" />
+                        </TooltipTrigger>
+                        <TooltipContent className="max-w-xs text-xs">
+                          O Injustiçado: participante que mais errou a cravação exata do placar por
+                          apenas 1 gol de diferença no confronto.
+                        </TooltipContent>
+                      </Tooltip>
+                    </div>
+                    {recordes.mestreDoQuase.temDados ? (
+                      <>
+                        <h3 className="mt-2 text-xl font-black text-[#0F172A] truncate">
+                          {recordes.mestreDoQuase.participante}
+                        </h3>
+                        <p className="mt-1 flex items-baseline gap-1 text-xs text-slate-600">
+                          <span className="text-2xl font-black text-[#0F2A43]">
+                            {recordes.mestreDoQuase.valor}
+                          </span>
+                          <span className="font-semibold text-slate-500">
+                            palpite{recordes.mestreDoQuase.valor > 1 ? 's' : ''} a 1 gol do exato
+                          </span>
+                        </p>
+                        {recordes.mestreDoQuase.empate && (
+                          <p className="mt-1 text-[11px] font-medium text-amber-800 truncate">
+                            Empate: {recordes.mestreDoQuase.empate.join(', ')}
+                          </p>
+                        )}
+                      </>
+                    ) : (
+                      <>
+                        <h3 className="mt-2 text-base font-bold text-slate-400">
+                          Ainda sem dados apurados
+                        </h3>
+                        <p className="mt-1 text-xs text-slate-500">
+                          Nenhum palpite a exatamente 1 gol do placar real registrado.
+                        </p>
+                      </>
+                    )}
+                  </div>
+                  <div className="ml-2 rounded-xl bg-amber-50 p-3 text-amber-700">
+                    <Clock className="h-6 w-6" />
+                  </div>
+                </div>
+              </Card>
+
+              {/* Card 7: Pé Frio da Rodada */}
+              <Card className="relative overflow-hidden rounded-[14px] border-l-4 border-l-cyan-600 border-t border-r border-b border-[#E2E8F0] bg-white p-5 shadow-xs transition duration-200 hover:-translate-y-1 hover:shadow-md">
+                <div className="flex items-start justify-between">
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-xs font-black uppercase tracking-wider text-cyan-800">
+                        Pé Frio da Rodada
+                      </span>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Info className="h-3.5 w-3.5 cursor-pointer text-slate-400 hover:text-slate-600" />
+                        </TooltipTrigger>
+                        <TooltipContent className="max-w-xs text-xs">
+                          Participante com o menor aproveitamento percentual de pontos nas partidas
+                          já finalizadas.
+                        </TooltipContent>
+                      </Tooltip>
+                    </div>
+                    {recordes.peFrioDaRodada.temDados ? (
+                      <>
+                        <h3 className="mt-2 text-xl font-black text-[#0F172A] truncate">
+                          {recordes.peFrioDaRodada.participante}
+                        </h3>
+                        <p className="mt-1 flex items-baseline gap-1 text-xs text-slate-600">
+                          <span className="text-2xl font-black text-[#0F2A43]">
+                            {recordes.peFrioDaRodada.aproveitamento}%
+                          </span>
+                          <span className="font-semibold text-slate-500">
+                            de aproveitamento ({recordes.peFrioDaRodada.jogosPalpitados} jogos)
+                          </span>
+                        </p>
+                        {recordes.peFrioDaRodada.empate && (
+                          <p className="mt-1 text-[11px] font-medium text-cyan-800 truncate">
+                            Empate: {recordes.peFrioDaRodada.empate.join(', ')}
+                          </p>
+                        )}
+                      </>
+                    ) : (
+                      <>
+                        <h3 className="mt-2 text-base font-bold text-slate-400">
+                          Ainda sem dados apurados
+                        </h3>
+                        <p className="mt-1 text-xs text-slate-500">
+                          Nenhum participante palpitou em jogos encerrados nesta visão.
+                        </p>
+                      </>
+                    )}
+                  </div>
+                  <div className="ml-2 rounded-xl bg-cyan-50 p-3 text-cyan-700">
+                    <Snowflake className="h-6 w-6" />
+                  </div>
+                </div>
+              </Card>
+
+              {/* Card 8: Mito dos Grandes Jogos */}
+              <Card className="relative overflow-hidden rounded-[14px] border-l-4 border-l-yellow-500 border-t border-r border-b border-[#E2E8F0] bg-white p-5 shadow-xs transition duration-200 hover:-translate-y-1 hover:shadow-md">
+                <div className="flex items-start justify-between">
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-xs font-black uppercase tracking-wider text-yellow-800">
+                        Mito dos Grandes Jogos
+                      </span>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Info className="h-3.5 w-3.5 cursor-pointer text-slate-400 hover:text-slate-600" />
+                        </TooltipTrigger>
+                        <TooltipContent className="max-w-xs text-xs">
+                          Maior pontuador considerando exclusivamente confrontos de fases de
+                          mata-mata, finais, supercopas e clássicos do futebol.
+                        </TooltipContent>
+                      </Tooltip>
+                    </div>
+                    {recordes.mitoDosGrandesJogos.temDados ? (
+                      <>
+                        <h3 className="mt-2 text-xl font-black text-[#0F172A] truncate">
+                          {recordes.mitoDosGrandesJogos.participante}
+                        </h3>
+                        <p className="mt-1 flex items-baseline gap-1 text-xs text-slate-600">
+                          <span className="text-2xl font-black text-[#0F2A43]">
+                            {recordes.mitoDosGrandesJogos.pontos}
+                          </span>
+                          <span className="font-semibold text-slate-500">
+                            pts em decisões ({recordes.mitoDosGrandesJogos.jogosConsiderados} jogos)
+                          </span>
+                        </p>
+                        {recordes.mitoDosGrandesJogos.empate && (
+                          <p className="mt-1 text-[11px] font-medium text-yellow-800 truncate">
+                            Empate: {recordes.mitoDosGrandesJogos.empate.join(', ')}
+                          </p>
+                        )}
+                      </>
+                    ) : (
+                      <>
+                        <h3 className="mt-2 text-base font-bold text-slate-400">
+                          Ainda sem dados apurados
+                        </h3>
+                        <p className="mt-1 text-xs text-slate-500">
+                          Nenhum jogo de mata-mata, final ou clássico apurado neste filtro.
+                        </p>
+                      </>
+                    )}
+                  </div>
+                  <div className="ml-2 rounded-xl bg-yellow-50 p-3 text-yellow-700">
+                    <Crown className="h-6 w-6" />
+                  </div>
+                </div>
+              </Card>
             </div>
           )}
 
@@ -563,32 +783,74 @@ export default function Estatisticas() {
                 <table className="w-full text-left text-xs">
                   <thead className="border-b border-slate-200 bg-[#0F2A43] text-white">
                     <tr>
-                      <th className="py-3 px-4 font-bold uppercase tracking-wider text-center w-16">
+                      <th className="py-3 px-3 font-bold uppercase tracking-wider text-center w-14">
                         Posição
                       </th>
-                      <th className="py-3 px-4 font-bold uppercase tracking-wider">Participante</th>
-                      <th className="py-3 px-4 font-bold uppercase tracking-wider text-right">
+                      <th className="py-3 px-3 font-bold uppercase tracking-wider">Participante</th>
+                      <th className="py-3 px-3 font-bold uppercase tracking-wider text-right">
                         Total de Pontos
                       </th>
-                      <th className="py-3 px-4 font-bold uppercase tracking-wider text-center">
-                        Cravadas Exatas
+                      <th className="py-3 px-3 font-bold uppercase tracking-wider text-center">
+                        Cravadas
                       </th>
-                      <th className="py-3 px-4 font-bold uppercase tracking-wider text-center">
-                        Resultados Acertados
+                      <th className="py-3 px-3 font-bold uppercase tracking-wider text-center">
+                        Resultados
                       </th>
-                      <th className="py-3 px-4 font-bold uppercase tracking-wider text-center">
-                        Gols Acertados
+                      <th className="py-3 px-3 font-bold uppercase tracking-wider text-center">
+                        Gols
                       </th>
-                      <th className="py-3 px-4 font-bold uppercase tracking-wider text-right">
-                        <div className="inline-flex items-center gap-1 justify-end">
-                          <span>Aproveitamento (%)</span>
+                      <th className="py-3 px-3 font-bold uppercase tracking-wider text-center">
+                        <div className="inline-flex items-center justify-center gap-1">
+                          <span>Zaga/Lateral</span>
                           <Tooltip>
                             <TooltipTrigger asChild>
                               <Info className="h-3 w-3 cursor-pointer text-slate-300 hover:text-white" />
                             </TooltipTrigger>
                             <TooltipContent className="max-w-xs text-xs">
-                              Calculado sobre os pontos máximos possíveis dos jogos em que o
-                              participante deu palpite (referência base: 8 pontos/jogo).
+                              Pai dos Defensores: quantidade de marcadores de gols acertados que
+                              jogam na defesa (Zagueiro ou Lateral).
+                            </TooltipContent>
+                          </Tooltip>
+                        </div>
+                      </th>
+                      <th className="py-3 px-3 font-bold uppercase tracking-wider text-center">
+                        <div className="inline-flex items-center justify-center gap-1">
+                          <span>Quase Cravou</span>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <Info className="h-3 w-3 cursor-pointer text-slate-300 hover:text-white" />
+                            </TooltipTrigger>
+                            <TooltipContent className="max-w-xs text-xs">
+                              Mestre do Quase: vezes em que errou o placar exato por apenas 1 gol de
+                              diferença (|diferença total| = 1).
+                            </TooltipContent>
+                          </Tooltip>
+                        </div>
+                      </th>
+                      <th className="py-3 px-3 font-bold uppercase tracking-wider text-center">
+                        <div className="inline-flex items-center justify-center gap-1">
+                          <span>Grandes Jogos</span>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <Info className="h-3 w-3 cursor-pointer text-slate-300 hover:text-white" />
+                            </TooltipTrigger>
+                            <TooltipContent className="max-w-xs text-xs">
+                              Mito dos Grandes Jogos: total de pontos conquistados em mata-matas,
+                              finais e clássicos.
+                            </TooltipContent>
+                          </Tooltip>
+                        </div>
+                      </th>
+                      <th className="py-3 px-3 font-bold uppercase tracking-wider text-right">
+                        <div className="inline-flex items-center gap-1 justify-end">
+                          <span>Aproveitamento</span>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <Info className="h-3 w-3 cursor-pointer text-slate-300 hover:text-white" />
+                            </TooltipTrigger>
+                            <TooltipContent className="max-w-xs text-xs">
+                              Percentual conquistado dos pontos possíveis nos jogos palpitados. O
+                              menor percentual evidencia o Pé Frio.
                             </TooltipContent>
                           </Tooltip>
                         </div>
@@ -637,7 +899,7 @@ export default function Estatisticas() {
                           </td>
 
                           {/* Total de Pontos */}
-                          <td className="py-3.5 px-4 text-right">
+                          <td className="py-3.5 px-3 text-right">
                             <span className="text-base font-black text-[#0F2A43]">
                               {row.totalPontos}
                             </span>
@@ -645,7 +907,7 @@ export default function Estatisticas() {
                           </td>
 
                           {/* Cravadas Exatas */}
-                          <td className="py-3.5 px-4 text-center">
+                          <td className="py-3.5 px-3 text-center">
                             <Badge
                               variant="secondary"
                               className={`font-black ${
@@ -659,7 +921,7 @@ export default function Estatisticas() {
                           </td>
 
                           {/* Resultados Acertados */}
-                          <td className="py-3.5 px-4 text-center">
+                          <td className="py-3.5 px-3 text-center">
                             <Badge
                               variant="secondary"
                               className={`font-black ${
@@ -673,7 +935,7 @@ export default function Estatisticas() {
                           </td>
 
                           {/* Gols Acertados */}
-                          <td className="py-3.5 px-4 text-center">
+                          <td className="py-3.5 px-3 text-center">
                             <Badge
                               variant="secondary"
                               className={`font-black ${
@@ -686,15 +948,79 @@ export default function Estatisticas() {
                             </Badge>
                           </td>
 
-                          {/* Aproveitamento (%) */}
-                          <td className="py-3.5 px-4 text-right">
+                          {/* Marcadores Defensores (Pai dos Defensores) */}
+                          <td className="py-3.5 px-3 text-center">
+                            <Badge
+                              variant="secondary"
+                              className={`font-black ${
+                                (row.marcadoresDefensores || 0) > 0
+                                  ? 'bg-purple-100 text-purple-900 border border-purple-200'
+                                  : 'bg-slate-100 text-slate-600'
+                              }`}
+                            >
+                              {(row.marcadoresDefensores || 0) > 0
+                                ? `🛡️ ${row.marcadoresDefensores}`
+                                : '0'}
+                            </Badge>
+                          </td>
+
+                          {/* Quase Cravadas (Mestre do Quase) */}
+                          <td className="py-3.5 px-3 text-center">
+                            <Badge
+                              variant="secondary"
+                              className={`font-black ${
+                                (row.quaseCravadas || 0) > 0
+                                  ? 'bg-amber-50 text-amber-900 border border-amber-300'
+                                  : 'bg-slate-100 text-slate-600'
+                              }`}
+                            >
+                              {(row.quaseCravadas || 0) > 0 ? `⏱️ ${row.quaseCravadas}` : '0'}
+                            </Badge>
+                          </td>
+
+                          {/* Grandes Jogos (Mito dos Grandes Jogos) */}
+                          <td className="py-3.5 px-3 text-center">
+                            <Badge
+                              variant="secondary"
+                              className={`font-black ${
+                                (row.pontosGrandesJogos || 0) > 0
+                                  ? 'bg-yellow-100 text-yellow-950 border border-yellow-300'
+                                  : 'bg-slate-100 text-slate-600'
+                              }`}
+                            >
+                              {(row.pontosGrandesJogos || 0) > 0
+                                ? `👑 ${row.pontosGrandesJogos} pts`
+                                : '0 pts'}
+                            </Badge>
+                          </td>
+
+                          {/* Aproveitamento (%) & Pé Frio */}
+                          <td className="py-3.5 px-3 text-right">
                             <div className="flex flex-col items-end">
-                              <span className="text-sm font-black text-[#0F2A43]">
-                                {row.aproveitamento}%
-                              </span>
+                              <div className="flex items-center gap-1">
+                                <span className="text-sm font-black text-[#0F2A43]">
+                                  {row.aproveitamento}%
+                                </span>
+                                {recordes?.peFrioDaRodada.temDados &&
+                                  row.nome === recordes.peFrioDaRodada.participante &&
+                                  row.jogosPalpitadosEncerrados > 0 && (
+                                    <span
+                                      title="Pé Frio: menor aproveitamento do grupo"
+                                      className="text-xs"
+                                    >
+                                      ❄️
+                                    </span>
+                                  )}
+                              </div>
                               <div className="mt-1 h-1.5 w-20 overflow-hidden rounded-full bg-slate-200">
                                 <div
-                                  className="h-full rounded-full bg-[#10B981] transition-all duration-500"
+                                  className={`h-full rounded-full transition-all duration-500 ${
+                                    row.aproveitamento < 25
+                                      ? 'bg-cyan-500'
+                                      : row.aproveitamento < 45
+                                        ? 'bg-amber-500'
+                                        : 'bg-[#10B981]'
+                                  }`}
                                   style={{ width: `${Math.min(100, row.aproveitamento)}%` }}
                                 />
                               </div>

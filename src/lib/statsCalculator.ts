@@ -7,6 +7,9 @@ export interface ParticipantStats {
   cravadasExatas: number
   resultadosAcertados: number
   golsAcertados: number
+  marcadoresDefensores: number // Marcadores cuja posição é Zagueiro/Lateral/Defensor
+  quaseCravadas: number // Erro da cravada exata por apenas 1 gol de diferença
+  pontosGrandesJogos: number // Pontos obtidos exclusivamente em grandes jogos (mata-mata / finais / clássicos)
   jogosPalpitadosEncerrados: number
   pontosPalpites: number
   pontosImportados: number
@@ -36,6 +39,33 @@ export interface RecordHolders {
     rodadaLabel: string
     jogoLabel?: string
     competicao?: string
+  }
+  // 4 novos troféus:
+  paiDosDefensores: {
+    participante: string
+    valor: number // quantidade de marcadores defensores acertados
+    empate?: string[]
+    temDados: boolean
+  }
+  mestreDoQuase: {
+    participante: string
+    valor: number // quantidade de palpites a 1 gol do placar real
+    empate?: string[]
+    temDados: boolean
+  }
+  peFrioDaRodada: {
+    participante: string
+    aproveitamento: number // menor % de aproveitamento
+    jogosPalpitados: number
+    empate?: string[]
+    temDados: boolean
+  }
+  mitoDosGrandesJogos: {
+    participante: string
+    pontos: number // pontos somados em grandes jogos
+    jogosConsiderados: number
+    empate?: string[]
+    temDados: boolean
   }
 }
 
@@ -119,6 +149,235 @@ export function isResultadoAcertado(palpite: Palpite, jogo: Jogo): boolean {
       (d) => typeof d === 'string' && (/(?:vencedor|empate)/i.test(d) || /placar\s*exato/i.test(d)),
     )
     if (hasResultText) return true
+  }
+
+  return false
+}
+
+/**
+ * Calcula pontos obtidos através do acerto de marcadores de gols
+ */
+/**
+ * Normaliza strings para comparação flexível (remove acentos, espaços extras, minúsculas)
+ */
+function cleanScorerKey(str: string): string {
+  return (str || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, '')
+}
+
+/**
+ * Verifica se um palpite é uma "quase cravada" (Mestre do Quase / O Injustiçado):
+ * Errou a cravação exata do placar por exatamente 1 gol de diferença:
+ * soma dos desvios absolutos |predA - realA| + |predB - realB| === 1.
+ * Exemplo: chutou 2x1 e foi 2x2, ou 3x1 e foi 2x1, etc.
+ */
+export function isQuaseCravada(palpite: Palpite, jogo: Jogo): boolean {
+  if (jogo.placar_a === null || jogo.placar_a === undefined) return false
+  if (jogo.placar_b === null || jogo.placar_b === undefined) return false
+  if (palpite.placar_a === null || palpite.placar_a === undefined) return false
+  if (palpite.placar_b === null || palpite.placar_b === undefined) return false
+
+  const pA = Number(palpite.placar_a)
+  const pB = Number(palpite.placar_b)
+  const jA = Number(jogo.placar_a)
+  const jB = Number(jogo.placar_b)
+
+  if (isNaN(pA) || isNaN(pB) || isNaN(jA) || isNaN(jB)) return false
+
+  const diffA = Math.abs(pA - jA)
+  const diffB = Math.abs(pB - jB)
+
+  // Errou por exatamente 1 gol na soma das diferenças
+  return diffA + diffB === 1
+}
+
+/**
+ * Conta quantos marcadores de gol cuja posição é Defensor (Zagueiro ou Lateral) foram acertados.
+ * Analisa tanto os itens de detalhamento quanto a lista de gols_time_a/b do jogo contra os goleadores_a/b do palpite.
+ */
+export function countMarcadoresDefensoresAcertados(palpite: Palpite, jogo: Jogo): number {
+  let count = 0
+
+  // 1. Detalhamento gravado nos palpites (ex: "Gols acertados: Van Hecke (+3 pts - Zagueiro/Lateral)")
+  if (Array.isArray(palpite.detalhamento)) {
+    for (const item of palpite.detalhamento) {
+      if (typeof item !== 'string') continue
+      // Caso 1a: Detalhamento explícito com cargo/posição
+      if (/gol|marcador/i.test(item)) {
+        // Encontrar ocorrências com zagueiro, lateral ou defensor
+        const defRegex =
+          /([A-Za-zÀ-ÖØ-öø-ÿ\s'-]+)\s*\(\+\d+\s*pts?\s*-\s*[^)]*(?:zagueiro|lateral|defensor)[^)]*\)/gi
+        let match: RegExpExecArray | null
+        while ((match = defRegex.exec(item)) !== null) {
+          count++
+        }
+
+        // Caso 1b: Se tem menção direta a "+3 pts" associada a zagueiro/lateral
+        if (count === 0 && /(?:zagueiro|lateral|defensor)/i.test(item)) {
+          const simpleDefMatch = item.match(/(?:zagueiro|lateral|defensor)/gi)
+          if (simpleDefMatch) {
+            count += simpleDefMatch.length
+          }
+        }
+      }
+    }
+  }
+
+  // 2. Se detalhamento não encontrou ou não possuía posições gravadas, cruzar os dados de gols do jogo com o palpite
+  if (count === 0) {
+    const defenderScorers: Array<{ nome: string; norm: string; used: boolean }> = []
+    const collectDefenders = (gols?: any[]) => {
+      if (!Array.isArray(gols)) return
+      for (const g of gols) {
+        if (!g || !g.nome) continue
+        const pos = (g.posicao || '').toLowerCase()
+        const isDefender =
+          pos.includes('zagueiro') || pos.includes('lateral') || pos.includes('defensor')
+        if (isDefender) {
+          const qty = parseInt(g.quantidade, 10) || 1
+          for (let i = 0; i < qty; i++) {
+            defenderScorers.push({
+              nome: String(g.nome).trim(),
+              norm: cleanScorerKey(String(g.nome)),
+              used: false,
+            })
+          }
+        }
+      }
+    }
+
+    collectDefenders(jogo.gols_time_a)
+    collectDefenders(jogo.gols_time_b)
+
+    if (defenderScorers.length > 0) {
+      const predScorers: Array<{ original: string; norm: string }> = []
+      const addPreds = (arr?: any[]) => {
+        if (!Array.isArray(arr)) return
+        for (const s of arr) {
+          if (typeof s === 'string' && s.trim()) {
+            predScorers.push({ original: s.trim(), norm: cleanScorerKey(s) })
+          }
+        }
+      }
+      addPreds(palpite.goleadores_a)
+      addPreds(palpite.goleadores_b)
+
+      for (const pred of predScorers) {
+        if (!pred.norm) continue
+        const found = defenderScorers.find(
+          (ds) =>
+            !ds.used &&
+            (ds.norm === pred.norm || ds.norm.includes(pred.norm) || pred.norm.includes(ds.norm)),
+        )
+        if (found) {
+          found.used = true
+          count++
+        }
+      }
+    }
+  }
+
+  return count
+}
+
+/**
+ * Identifica se uma partida é considerada um "Grande Jogo":
+ * - Jogos de fases de mata-mata (oitavas, quartas, semifinal, final, playoff, volta, ida)
+ * - Supercopas, Finais e Semifinais
+ * - Jogos com disputa de pênaltis registrada
+ * - Clássicos tradicionais e dérbis do futebol
+ */
+export function isGrandeJogo(jogo: Jogo, bolao?: Bolao): boolean {
+  // 1. Se tem disputa por pênaltis, é eliminatório / mata-mata
+  if (jogo.tem_penaltis) return true
+
+  // 2. Verificar string do campo competicao
+  const comp = (jogo.competicao || '').toLowerCase()
+  if (
+    comp.includes('final') ||
+    comp.includes('semi') ||
+    comp.includes('quartas') ||
+    comp.includes('oitavas') ||
+    comp.includes('mata-mata') ||
+    comp.includes('playoff') ||
+    comp.includes('supercopa') ||
+    comp.includes('eliminat') ||
+    comp.includes('classico') ||
+    comp.includes('clássico') ||
+    comp.includes('derbi') ||
+    comp.includes('derby')
+  ) {
+    return true
+  }
+
+  // 3. Foco do Bolão contendo indicação de copas eliminatórias (ex: "Copa do Brasil", "Libertadores")
+  // Se o bolão for eliminatório por natureza e houver indicação
+  const bFoco = (bolao?.foco || '').toLowerCase()
+  const bNome = (bolao?.nome || '').toLowerCase()
+  if (
+    (bFoco.includes('copa') || bNome.includes('copa')) &&
+    (comp.includes('volta') || comp.includes('ida'))
+  ) {
+    return true
+  }
+
+  // 4. Clássicos tradicionais pelo confronto dos times
+  const timeA = (jogo.time_a || '').toLowerCase().trim()
+  const timeB = (jogo.time_b || '').toLowerCase().trim()
+  const matchTeamPair = (t1: string, t2: string) =>
+    (timeA.includes(t1) && timeB.includes(t2)) || (timeA.includes(t2) && timeB.includes(t1))
+
+  const classicos = [
+    // SP
+    ['corinthians', 'palmeiras'],
+    ['sao paulo', 'corinthians'],
+    ['são paulo', 'corinthians'],
+    ['palmeiras', 'sao paulo'],
+    ['palmeiras', 'são paulo'],
+    ['santos', 'palmeiras'],
+    ['santos', 'corinthians'],
+    ['santos', 'sao paulo'],
+    ['santos', 'são paulo'],
+    // RJ
+    ['flamengo', 'fluminense'],
+    ['flamengo', 'vasco'],
+    ['flamengo', 'botafogo'],
+    ['vasco', 'fluminense'],
+    ['botafogo', 'fluminense'],
+    ['vasco', 'botafogo'],
+    // RS
+    ['gremio', 'internacional'],
+    ['grêmio', 'internacional'],
+    // MG
+    ['cruzeiro', 'atletico'],
+    ['cruzeiro', 'atlético'],
+    // BA
+    ['bahia', 'vitoria'],
+    ['bahia', 'vitória'],
+    // PR
+    ['coritiba', 'athletico'],
+    // Internacionais
+    ['real madrid', 'barcelona'],
+    ['real madrid', 'atletico madrid'],
+    ['real madrid', 'atlético madrid'],
+    ['inter', 'milan'],
+    ['roma', 'lazio'],
+    ['juventus', 'inter'],
+    ['liverpool', 'manchester united'],
+    ['liverpool', 'manchester city'],
+    ['arsenal', 'tottenham'],
+    ['chelsea', 'arsenal'],
+    ['manchester united', 'manchester city'],
+    ['marseille', 'paris saint-germain'],
+    ['marseille', 'psg'],
+    ['boca', 'river'],
+  ]
+
+  for (const [t1, t2] of classicos) {
+    if (matchTeamPair(t1, t2)) return true
   }
 
   return false
@@ -258,6 +517,9 @@ export function calculateStatistics(params: {
       cravadasExatas: number
       resultadosAcertados: number
       golsAcertados: number
+      marcadoresDefensores: number
+      quaseCravadas: number
+      pontosGrandesJogos: number
       jogosPalpitadosEncerrados: number
       pontosPalpites: number
       pontosImportados: number
@@ -271,6 +533,9 @@ export function calculateStatistics(params: {
       cravadasExatas: 0,
       resultadosAcertados: 0,
       golsAcertados: 0,
+      marcadoresDefensores: 0,
+      quaseCravadas: 0,
+      pontosGrandesJogos: 0,
       jogosPalpitadosEncerrados: 0,
       pontosPalpites: 0,
       pontosImportados: 0,
@@ -339,6 +604,23 @@ export function calculateStatistics(params: {
     const ptsGols = getPontosGols(palpite, jogo)
     stat.golsAcertados += ptsGols
 
+    // 1. Pai dos Defensores: contagem de marcadores defensores acertados
+    const defCount = countMarcadoresDefensoresAcertados(palpite, jogo)
+    stat.marcadoresDefensores += defCount
+
+    // 2. Mestre do Quase: palpite a 1 gol do placar real
+    const quase = isQuaseCravada(palpite, jogo)
+    if (quase) {
+      stat.quaseCravadas++
+    }
+
+    // 4. Mito dos Grandes Jogos: soma de pontos em partidas decisivas/clássicos
+    const bolaoDoJogo = bolaoMap.get(jogo.bolao)
+    const grande = isGrandeJogo(jogo, bolaoDoJogo)
+    if (grande) {
+      stat.pontosGrandesJogos += ptsJogo
+    }
+
     // Rastrear maior pontuação em um único jogo/confronto
     if (ptsJogo > maxRodada.pontos) {
       const bObj = bolaoMap.get(jogo.bolao)
@@ -372,6 +654,9 @@ export function calculateStatistics(params: {
       cravadasExatas: s.cravadasExatas,
       resultadosAcertados: s.resultadosAcertados,
       golsAcertados: s.golsAcertados,
+      marcadoresDefensores: s.marcadoresDefensores,
+      quaseCravadas: s.quaseCravadas,
+      pontosGrandesJogos: s.pontosGrandesJogos,
       jogosPalpitadosEncerrados: s.jogosPalpitadosEncerrados,
       pontosPalpites: s.pontosPalpites,
       pontosImportados: s.pontosImportados,
@@ -439,6 +724,73 @@ export function calculateStatistics(params: {
     }
   }
 
+  // 1. Pai dos Defensores (Mestre da Zaga)
+  let topDefensores = -1
+  const topDefensoresList: string[] = []
+  for (const t of tabela) {
+    if (t.marcadoresDefensores > topDefensores) {
+      topDefensores = t.marcadoresDefensores
+      topDefensoresList.length = 0
+      if (topDefensores > 0) {
+        topDefensoresList.push(t.nome)
+      }
+    } else if (t.marcadoresDefensores === topDefensores && topDefensores > 0) {
+      topDefensoresList.push(t.nome)
+    }
+  }
+
+  // 2. Mestre do Quase (O Injustiçado)
+  let topQuases = -1
+  const topQuasesList: string[] = []
+  for (const t of tabela) {
+    if (t.quaseCravadas > topQuases) {
+      topQuases = t.quaseCravadas
+      topQuasesList.length = 0
+      if (topQuases > 0) {
+        topQuasesList.push(t.nome)
+      }
+    } else if (t.quaseCravadas === topQuases && topQuases > 0) {
+      topQuasesList.push(t.nome)
+    }
+  }
+
+  // 3. Pé Frio da Rodada (menor aproveitamento entre quem já palpitou em jogos encerrados)
+  // Consideramos apenas participantes que tenham palpitado em ao menos 1 jogo encerrado
+  const participantesComJogos = tabela.filter((t) => t.jogosPalpitadosEncerrados > 0)
+  let piorAproveitamento = 101
+  const piorAproveitamentoList: ParticipantStats[] = []
+
+  if (participantesComJogos.length > 0) {
+    for (const t of participantesComJogos) {
+      if (t.aproveitamento < piorAproveitamento) {
+        piorAproveitamento = t.aproveitamento
+        piorAproveitamentoList.length = 0
+        piorAproveitamentoList.push(t)
+      } else if (t.aproveitamento === piorAproveitamento) {
+        piorAproveitamentoList.push(t)
+      }
+    }
+  }
+
+  // 4. Mito dos Grandes Jogos (maior pontuador exclusivamente em jogos eliminatórios/clássicos)
+  // Contar quantos jogos do recorte foram considerados grandes jogos
+  const countGrandesJogos = jogosFinalizados.filter((j) =>
+    isGrandeJogo(j, bolaoMap.get(j.bolao)),
+  ).length
+  let topGrandesJogos = -1
+  const topGrandesJogosList: string[] = []
+  for (const t of tabela) {
+    if (t.pontosGrandesJogos > topGrandesJogos) {
+      topGrandesJogos = t.pontosGrandesJogos
+      topGrandesJogosList.length = 0
+      if (topGrandesJogos > 0) {
+        topGrandesJogosList.push(t.nome)
+      }
+    } else if (t.pontosGrandesJogos === topGrandesJogos && topGrandesJogos > 0) {
+      topGrandesJogosList.push(t.nome)
+    }
+  }
+
   const recordes: RecordHolders = {
     reiDaCravada: {
       participante: topCravadasList.length > 0 ? topCravadasList[0] : '—',
@@ -456,6 +808,35 @@ export function calculateStatistics(params: {
       empate: topGolsList.length > 1 ? topGolsList : undefined,
     },
     maiorPontuadorRodada: maxRodada,
+    paiDosDefensores: {
+      participante: topDefensoresList.length > 0 ? topDefensoresList[0] : '—',
+      valor: Math.max(0, topDefensores),
+      empate: topDefensoresList.length > 1 ? topDefensoresList : undefined,
+      temDados: topDefensores > 0,
+    },
+    mestreDoQuase: {
+      participante: topQuasesList.length > 0 ? topQuasesList[0] : '—',
+      valor: Math.max(0, topQuases),
+      empate: topQuasesList.length > 1 ? topQuasesList : undefined,
+      temDados: topQuases > 0,
+    },
+    peFrioDaRodada: {
+      participante: piorAproveitamentoList.length > 0 ? piorAproveitamentoList[0].nome : '—',
+      aproveitamento:
+        piorAproveitamentoList.length > 0 ? piorAproveitamentoList[0].aproveitamento : 0,
+      jogosPalpitados:
+        piorAproveitamentoList.length > 0 ? piorAproveitamentoList[0].jogosPalpitadosEncerrados : 0,
+      empate:
+        piorAproveitamentoList.length > 1 ? piorAproveitamentoList.map((p) => p.nome) : undefined,
+      temDados: participantesComJogos.length > 0,
+    },
+    mitoDosGrandesJogos: {
+      participante: topGrandesJogosList.length > 0 ? topGrandesJogosList[0] : '—',
+      pontos: Math.max(0, topGrandesJogos),
+      jogosConsiderados: countGrandesJogos,
+      empate: topGrandesJogosList.length > 1 ? topGrandesJogosList : undefined,
+      temDados: countGrandesJogos > 0 && topGrandesJogos > 0,
+    },
   }
 
   // Gráfico de Evolução ao longo dos jogos / rodadas cronológicas
