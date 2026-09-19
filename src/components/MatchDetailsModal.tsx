@@ -79,6 +79,17 @@ export function MatchDetailsModal({ isOpen, onClose, match }: MatchDetailsModalP
   const [lineup, setLineup] = useState<LineupResponse | null>(null)
   const [lineupTab, setLineupTab] = useState<'home' | 'away'>('home')
 
+  // Cooldown defensivo no botão Atualizar: mínimo 30s no cliente
+  const [refreshCooldown, setRefreshCooldown] = useState(0)
+
+  useEffect(() => {
+    if (refreshCooldown <= 0) return
+    const timer = setInterval(() => {
+      setRefreshCooldown((prev) => (prev <= 1 ? 0 : prev - 1))
+    }, 1000)
+    return () => clearInterval(timer)
+  }, [refreshCooldown])
+
   const fetchDetails = useCallback(
     async (currentMatch: DayFixture, silent = false, force = false) => {
       if (!currentMatch) return
@@ -111,7 +122,9 @@ export function MatchDetailsModal({ isOpen, onClose, match }: MatchDetailsModalP
       }
 
       try {
-        const headers: Record<string, string> = {}
+        const headers: Record<string, string> = {
+          'X-Cascade-Priority': 'db-fallback-first',
+        }
         if (pb.authStore.token) {
           headers['Authorization'] = pb.authStore.token
         }
@@ -124,6 +137,7 @@ export function MatchDetailsModal({ isOpen, onClose, match }: MatchDetailsModalP
         if (st) queryParams.set('status', st)
         if (live) queryParams.set('isLive', 'true')
         if (silent || force) queryParams.set('refresh', '1')
+        queryParams.set('cascade', 'graceful')
 
         const url = `${import.meta.env.VITE_POCKETBASE_URL}/backend/v1/detalhes-partida?${queryParams.toString()}`
         const res = await fetch(url, { headers })
@@ -273,6 +287,20 @@ export function MatchDetailsModal({ isOpen, onClose, match }: MatchDetailsModalP
       clearInterval(intervalId)
     }
   }, [isOpen, match, activeTab, fetchDetails, loadModalLineup])
+
+  // Handler seguro com cooldown de 30s e prevenção de duplo clique
+  const handleManualRefresh = useCallback(
+    (targetMatch: DayFixture) => {
+      if (refreshCooldown > 0 || loading || lineupLoading) return
+      setRefreshCooldown(30)
+      if (activeTab === 'timeline') {
+        fetchDetails(targetMatch, false, true)
+      } else {
+        loadModalLineup(targetMatch, true)
+      }
+    },
+    [refreshCooldown, loading, lineupLoading, activeTab, fetchDetails, loadModalLineup],
+  )
 
   if (!match) return null
 
@@ -542,10 +570,12 @@ export function MatchDetailsModal({ isOpen, onClose, match }: MatchDetailsModalP
                 <Button
                   size="sm"
                   variant="outline"
-                  onClick={() => fetchDetails(match, false, true)}
+                  disabled={refreshCooldown > 0 || loading}
+                  onClick={() => handleManualRefresh(match)}
                   className="text-xs h-8 gap-1.5"
                 >
-                  <RefreshCw className="h-3 w-3" /> Tentar novamente
+                  <RefreshCw className={`h-3 w-3 ${loading ? 'animate-spin' : ''}`} />
+                  {refreshCooldown > 0 ? `Aguarde ${refreshCooldown}s` : 'Tentar novamente'}
                 </Button>
               </div>
             ) : events.length === 0 ? (
@@ -556,10 +586,12 @@ export function MatchDetailsModal({ isOpen, onClose, match }: MatchDetailsModalP
                 <Button
                   size="sm"
                   variant="ghost"
-                  onClick={() => fetchDetails(match, false, true)}
+                  disabled={refreshCooldown > 0 || loading}
+                  onClick={() => handleManualRefresh(match)}
                   className="text-xs text-slate-600 mt-2 gap-1"
                 >
-                  <RefreshCw className="h-3 w-3" /> Atualizar
+                  <RefreshCw className={`h-3 w-3 ${loading ? 'animate-spin' : ''}`} />
+                  {refreshCooldown > 0 ? `Aguarde ${refreshCooldown}s` : 'Atualizar'}
                 </Button>
               </div>
             ) : (
@@ -605,10 +637,12 @@ export function MatchDetailsModal({ isOpen, onClose, match }: MatchDetailsModalP
                   <span>Total de {events.length} evento(s) registrado(s)</span>
                   <button
                     type="button"
-                    onClick={() => fetchDetails(match, false, true)}
-                    className="hover:text-slate-600 flex items-center gap-1 underline font-medium cursor-pointer"
+                    disabled={refreshCooldown > 0 || loading}
+                    onClick={() => handleManualRefresh(match)}
+                    className="hover:text-slate-600 flex items-center gap-1 underline font-medium cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                   >
-                    <RefreshCw className="h-2.5 w-2.5" /> Reconsultar
+                    <RefreshCw className={`h-2.5 w-2.5 ${loading ? 'animate-spin' : ''}`} />
+                    {refreshCooldown > 0 ? `Aguarde ${refreshCooldown}s` : 'Reconsultar'}
                   </button>
                 </div>
               </div>
@@ -638,10 +672,12 @@ export function MatchDetailsModal({ isOpen, onClose, match }: MatchDetailsModalP
                 type="button"
                 size="sm"
                 variant="outline"
-                onClick={() => loadModalLineup(match, true)}
+                disabled={refreshCooldown > 0 || lineupLoading}
+                onClick={() => handleManualRefresh(match)}
                 className="text-xs h-8 gap-1.5 mt-2 text-[#0F2A43]"
               >
-                <RefreshCw className="h-3 w-3" /> Verificar agora
+                <RefreshCw className={`h-3 w-3 ${lineupLoading ? 'animate-spin' : ''}`} />
+                {refreshCooldown > 0 ? `Aguarde ${refreshCooldown}s` : 'Verificar agora'}
               </Button>
             </div>
           ) : (
@@ -772,10 +808,14 @@ export function MatchDetailsModal({ isOpen, onClose, match }: MatchDetailsModalP
                         </span>
                         <button
                           type="button"
-                          onClick={() => loadModalLineup(match, true)}
-                          className="hover:text-slate-800 flex items-center gap-1 underline cursor-pointer"
+                          disabled={refreshCooldown > 0 || lineupLoading}
+                          onClick={() => handleManualRefresh(match)}
+                          className="hover:text-slate-800 flex items-center gap-1 underline cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                         >
-                          <RefreshCw className="h-2.5 w-2.5" /> Reconsultar
+                          <RefreshCw
+                            className={`h-2.5 w-2.5 ${lineupLoading ? 'animate-spin' : ''}`}
+                          />
+                          {refreshCooldown > 0 ? `Aguarde ${refreshCooldown}s` : 'Reconsultar'}
                         </button>
                       </div>
                     )}

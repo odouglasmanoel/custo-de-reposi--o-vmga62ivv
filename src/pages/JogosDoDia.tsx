@@ -1028,7 +1028,7 @@ export default function JogosDoDia() {
 
     const timer = setInterval(() => {
       fetchJogos(selectedDate, false)
-    }, 720_000) // 12 minutos (720.000ms) durante partidas ao vivo
+    }, 900_000) // 15 minutos (900.000ms) durante partidas ao vivo
     return () => clearInterval(timer)
   }, [relevantFixtures, isRateLimited, selectedDate, fetchJogos])
 

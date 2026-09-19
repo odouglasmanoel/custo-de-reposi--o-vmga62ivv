@@ -35,6 +35,27 @@ routerAdd(
   'GET',
   '/backend/v1/detalhes-partida',
   (e) => {
+    if (typeof globalThis !== 'undefined' && !globalThis.__apiFootballThrottle) {
+      globalThis.__apiFootballThrottle = { lastCallTimestamp: 0, minIntervalMs: 15 * 60 * 1000 }
+    }
+    var checkApiFootballThrottle = function () {
+      if (typeof globalThis === 'undefined' || !globalThis.__apiFootballThrottle) {
+        return { canCall: true, waitMs: 0 }
+      }
+      var now = Date.now()
+      var diff = now - (globalThis.__apiFootballThrottle.lastCallTimestamp || 0)
+      var interval = globalThis.__apiFootballThrottle.minIntervalMs || 900000
+      if (diff < interval) {
+        return { canCall: false, waitMs: interval - diff }
+      }
+      return { canCall: true, waitMs: 0 }
+    }
+    var recordApiFootballCall = function () {
+      if (typeof globalThis !== 'undefined' && globalThis.__apiFootballThrottle) {
+        globalThis.__apiFootballThrottle.lastCallTimestamp = Date.now()
+      }
+    }
+
     var API_FOOTBALL_BACKOFF_DURATION_MS = 60 * 60 * 1000 // 1 HORA
 
     var checkApiFootballCircuitBreaker = function () {
@@ -252,11 +273,18 @@ routerAdd(
         fixtureIdParam.indexOf('tsdb_') === 0 || fixtureIdParam.indexOf('thesportsdb_') === 0
       var rawTsdbEventId = isTsdbId ? fixtureIdParam.replace(/^tsdb_|^thesportsdb_/, '') : ''
 
-      // 2. FONTE 1: Tenta API-Football por fixture ID se for ID numérico (e não estiver com circuit breaker bloqueado)
+      // 2. FONTE 1: Tenta API-Football por fixture ID se for ID numérico (e não estiver com circuit breaker ou throttle bloqueado)
       var cbCheckDet = checkApiFootballCircuitBreaker()
+      var throttleCheckDet = checkApiFootballThrottle()
+
       if (cbCheckDet.shouldSkip) {
         console.log(
           '[DetalhesPartida] Circuit breaker ativo — pulando API-Football para fixture ' +
+            fixtureIdParam,
+        )
+      } else if (!throttleCheckDet.canCall) {
+        console.log(
+          '[DetalhesPartida] Throttle ativo de 15min — pulando API-Football para fixture ' +
             fixtureIdParam,
         )
       } else if (apiKey && isDirectNumeric) {
@@ -288,6 +316,7 @@ routerAdd(
             Array.isArray(res.json.response) &&
             res.json.response.length > 0
           ) {
+            recordApiFootballCall()
             resetApiFootballCircuitBreaker()
             var fixItem = res.json.response[0]
             if (fixItem && Array.isArray(fixItem.events) && fixItem.events.length > 0) {
@@ -299,9 +328,15 @@ routerAdd(
           console.log('[DetalhesPartida] Erro ao buscar /fixtures?id na API-Football:', errApi)
         }
 
-        // Se ainda não trouxe events pelo /fixtures?id, tenta endpoint específico /fixtures/events?fixture={id} se CB não caiu
+        // Se ainda não trouxe events pelo /fixtures?id, tenta endpoint específico /fixtures/events?fixture={id} se CB e Throttle permitirem
         var cbCheckDet2 = checkApiFootballCircuitBreaker()
-        if (resultEvents.length === 0 && apiKey && !cbCheckDet2.shouldSkip) {
+        var throttleCheckDet2 = checkApiFootballThrottle()
+        if (
+          resultEvents.length === 0 &&
+          apiKey &&
+          !cbCheckDet2.shouldSkip &&
+          throttleCheckDet2.canCall
+        ) {
           try {
             var urlEvents = isRapid
               ? 'https://api-football-v1.p.rapidapi.com/v3/fixtures/events?fixture=' +
@@ -328,6 +363,7 @@ routerAdd(
               Array.isArray(resEv.json.response) &&
               resEv.json.response.length > 0
             ) {
+              recordApiFootballCall()
               resetApiFootballCircuitBreaker()
               resultEvents = resEv.json.response
               providerUsed = 'api_football_events'

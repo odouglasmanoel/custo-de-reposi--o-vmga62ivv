@@ -33,6 +33,27 @@ if (typeof globalThis !== 'undefined' && !globalThis.__apiFootballCircuitBreaker
 // GET /backend/v1/placar-ao-vivo
 // -------------------------------------------------------------
 routerAdd('GET', '/backend/v1/placar-ao-vivo', (e) => {
+  if (typeof globalThis !== 'undefined' && !globalThis.__apiFootballThrottle) {
+    globalThis.__apiFootballThrottle = { lastCallTimestamp: 0, minIntervalMs: 15 * 60 * 1000 }
+  }
+  var checkApiFootballThrottle = function () {
+    if (typeof globalThis === 'undefined' || !globalThis.__apiFootballThrottle) {
+      return { canCall: true, waitMs: 0 }
+    }
+    var now = Date.now()
+    var diff = now - (globalThis.__apiFootballThrottle.lastCallTimestamp || 0)
+    var interval = globalThis.__apiFootballThrottle.minIntervalMs || 900000
+    if (diff < interval) {
+      return { canCall: false, waitMs: interval - diff }
+    }
+    return { canCall: true, waitMs: 0 }
+  }
+  var recordApiFootballCall = function () {
+    if (typeof globalThis !== 'undefined' && globalThis.__apiFootballThrottle) {
+      globalThis.__apiFootballThrottle.lastCallTimestamp = Date.now()
+    }
+  }
+
   var API_FOOTBALL_BACKOFF_DURATION_MS = 60 * 60 * 1000 // 1 HORA
 
   var checkApiFootballCircuitBreaker = function () {
@@ -1672,12 +1693,21 @@ routerAdd('GET', '/backend/v1/placar-ao-vivo', (e) => {
       }
     }
 
-    // CIRCUIT BREAKER CHECK: Se bloqueado, pula integralmente chamadas HTTP à API-Football
+    // PRIORIDADE 2: THROTTLE GLOBAL (15min) & CIRCUIT BREAKER CHECK
     var cbStatus = checkApiFootballCircuitBreaker()
+    var throttleStatus = checkApiFootballThrottle()
+
     if (cbStatus.shouldSkip) {
       console.log(
         '[placar-ao-vivo] Circuit breaker ativo — pulando chamadas à API-Football. Motivo:',
         cbStatus.reason,
+      )
+      rateLimitDetected = true
+    } else if (!throttleStatus.canCall) {
+      console.log(
+        '[placar-ao-vivo] Throttle ativo de 15min — repouso de cota API-Football (aguardar ' +
+          Math.round(throttleStatus.waitMs / 1000) +
+          's). Redirecionando para contingência.',
       )
       rateLimitDetected = true
     }
@@ -1715,6 +1745,7 @@ routerAdd('GET', '/backend/v1/placar-ao-vivo', (e) => {
             rateLimitDetected = true
             break
           } else if (resDirect.statusCode === 200) {
+            recordApiFootballCall()
             resetApiFootballCircuitBreaker()
           }
 
@@ -1754,6 +1785,7 @@ routerAdd('GET', '/backend/v1/placar-ao-vivo', (e) => {
           tripApiFootballCircuitBreaker('Rate limit 429 ao consultar live fixtures')
           rateLimitDetected = true
         } else if (resLive.statusCode === 200) {
+          recordApiFootballCall()
           resetApiFootballCircuitBreaker()
           if (resLive.json && Array.isArray(resLive.json.response)) {
             liveFixtures = resLive.json.response.map(mapApiFootballItem)
@@ -1786,6 +1818,7 @@ routerAdd('GET', '/backend/v1/placar-ao-vivo', (e) => {
           )
           rateLimitDetected = true
         } else if (resDate.statusCode === 200) {
+          recordApiFootballCall()
           resetApiFootballCircuitBreaker()
           if (resDate.json && Array.isArray(resDate.json.response)) {
             var dateResponseList = resDate.json.response
@@ -3613,6 +3646,27 @@ routerAdd('GET', '/backend/v1/jogos-do-dia', (e) => {
       } catch (_) {}
     }
 
+    if (typeof globalThis !== 'undefined' && !globalThis.__apiFootballThrottle) {
+      globalThis.__apiFootballThrottle = { lastCallTimestamp: 0, minIntervalMs: 15 * 60 * 1000 }
+    }
+    var checkApiFootballThrottle = function () {
+      if (typeof globalThis === 'undefined' || !globalThis.__apiFootballThrottle) {
+        return { canCall: true, waitMs: 0 }
+      }
+      var now = Date.now()
+      var diff = now - (globalThis.__apiFootballThrottle.lastCallTimestamp || 0)
+      var interval = globalThis.__apiFootballThrottle.minIntervalMs || 900000
+      if (diff < interval) {
+        return { canCall: false, waitMs: interval - diff }
+      }
+      return { canCall: true, waitMs: 0 }
+    }
+    var recordApiFootballCall = function () {
+      if (typeof globalThis !== 'undefined' && globalThis.__apiFootballThrottle) {
+        globalThis.__apiFootballThrottle.lastCallTimestamp = Date.now()
+      }
+    }
+
     // CIRCUIT BREAKER CHECK para jogos-do-dia:
     var API_FOOTBALL_BACKOFF_DURATION_MS = 60 * 60 * 1000 // 1 HORA
 
@@ -3674,12 +3728,20 @@ routerAdd('GET', '/backend/v1/jogos-do-dia', (e) => {
     }
 
     var cbStatusDay = checkApiFootballCircuitBreaker()
-    var skipApiFootballDay = cbStatusDay.shouldSkip
+    var throttleStatusDay = checkApiFootballThrottle()
+    var skipApiFootballDay = cbStatusDay.shouldSkip || !throttleStatusDay.canCall
 
-    if (skipApiFootballDay) {
+    if (cbStatusDay.shouldSkip) {
       console.log(
         '[jogos-do-dia] Circuit breaker ativo — pulando API-Football diretamente para fallback. Motivo:',
         cbStatusDay.reason,
+      )
+      rateLimitHit = true
+    } else if (!throttleStatusDay.canCall) {
+      console.log(
+        '[jogos-do-dia] Throttle ativo de 15min — repouso de cota API-Football (aguardar ' +
+          Math.round(throttleStatusDay.waitMs / 1000) +
+          's). Redirecionando para contingência.',
       )
       rateLimitHit = true
     } else if (apiFootballKey && apiFootballKey !== fallbackApiKey) {
@@ -3716,6 +3778,7 @@ routerAdd('GET', '/backend/v1/jogos-do-dia', (e) => {
           resp.json &&
           Array.isArray(resp.json.response)
         ) {
+          recordApiFootballCall()
           resetApiFootballCircuitBreaker()
           allFixtures = resp.json.response
         }

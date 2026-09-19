@@ -37,6 +37,27 @@ routerAdd(
   'GET',
   '/backend/v1/escalacoes',
   (e) => {
+    if (typeof globalThis !== 'undefined' && !globalThis.__apiFootballThrottle) {
+      globalThis.__apiFootballThrottle = { lastCallTimestamp: 0, minIntervalMs: 15 * 60 * 1000 }
+    }
+    var checkApiFootballThrottle = function () {
+      if (typeof globalThis === 'undefined' || !globalThis.__apiFootballThrottle) {
+        return { canCall: true, waitMs: 0 }
+      }
+      var now = Date.now()
+      var diff = now - (globalThis.__apiFootballThrottle.lastCallTimestamp || 0)
+      var interval = globalThis.__apiFootballThrottle.minIntervalMs || 900000
+      if (diff < interval) {
+        return { canCall: false, waitMs: interval - diff }
+      }
+      return { canCall: true, waitMs: 0 }
+    }
+    var recordApiFootballCall = function () {
+      if (typeof globalThis !== 'undefined' && globalThis.__apiFootballThrottle) {
+        globalThis.__apiFootballThrottle.lastCallTimestamp = Date.now()
+      }
+    }
+
     var API_FOOTBALL_BACKOFF_DURATION_MS = 60 * 60 * 1000 // 1 HORA
 
     var checkApiFootballCircuitBreaker = function () {
@@ -240,11 +261,18 @@ routerAdd(
         fixtureIdParam.indexOf('tsdb_') === 0 || fixtureIdParam.indexOf('thesportsdb_') === 0
       var rawTsdbEventId = isTsdbId ? fixtureIdParam.replace(/^tsdb_|^thesportsdb_/, '') : ''
 
-      // 2. FONTE 1: API-Football (lineups) se tiver chave e for ID numérico direto e circuit breaker não estiver bloqueado
+      // 2. FONTE 1: API-Football (lineups) se tiver chave e for ID numérico direto, throttle ok e circuit breaker não estiver bloqueado
       var cbCheckEsc = checkApiFootballCircuitBreaker()
+      var throttleCheckEsc = checkApiFootballThrottle()
+
       if (cbCheckEsc.shouldSkip) {
         console.log(
           '[Escalacoes] Circuit breaker ativo — pulando API-Football para fixture ' +
+            fixtureIdParam,
+        )
+      } else if (!throttleCheckEsc.canCall) {
+        console.log(
+          '[Escalacoes] Throttle ativo de 15min — pulando API-Football para fixture ' +
             fixtureIdParam,
         )
       } else if (apiKey && isDirectNumeric) {
@@ -277,6 +305,7 @@ routerAdd(
             Array.isArray(res.json.response) &&
             res.json.response.length > 0
           ) {
+            recordApiFootballCall()
             resetApiFootballCircuitBreaker()
             var rawLineups = res.json.response
             var teamsData = []
@@ -449,31 +478,45 @@ routerAdd(
         }
       }
 
-      // 4. FONTE 3: Fallback TheSportsDB lookuplineup.php se tiver ID de evento do TSDB ou numérico
+      // 4. FONTE 3: Fallback TheSportsDB lookuplineup.php / eventslineup.php se tiver ID de evento do TSDB ou numérico
       if (!result && (rawTsdbEventId || isTsdbId || isDirectNumeric)) {
         try {
           var evId = rawTsdbEventId || fixtureIdParam.replace(/\D/g, '')
           if (evId) {
-            var tsdbLineupUrl =
+            // Tenta lookuplineup.php e eventslineup.php
+            var tsdbLineupUrls = [
               'https://www.thesportsdb.com/api/v1/json/' +
-              encodeURIComponent(theSportsDbKey) +
-              '/lookuplineup.php?id=' +
-              encodeURIComponent(evId)
+                encodeURIComponent(theSportsDbKey) +
+                '/lookuplineup.php?id=' +
+                encodeURIComponent(evId),
+              'https://www.thesportsdb.com/api/v1/json/' +
+                encodeURIComponent(theSportsDbKey) +
+                '/eventslineup.php?id=' +
+                encodeURIComponent(evId),
+            ]
 
-            var resTsdb = $http.send({
-              url: tsdbLineupUrl,
-              method: 'GET',
-              timeout: 7,
-            })
+            var list = null
+            for (var uIdx = 0; uIdx < tsdbLineupUrls.length; uIdx++) {
+              var tsdbLineupUrl = tsdbLineupUrls[uIdx]
+              var resTsdb = $http.send({
+                url: tsdbLineupUrl,
+                method: 'GET',
+                timeout: 7,
+              })
 
-            if (
-              resTsdb &&
-              resTsdb.statusCode === 200 &&
-              resTsdb.json &&
-              Array.isArray(resTsdb.json.lineup) &&
-              resTsdb.json.lineup.length > 0
-            ) {
-              var list = resTsdb.json.lineup
+              if (
+                resTsdb &&
+                resTsdb.statusCode === 200 &&
+                resTsdb.json &&
+                Array.isArray(resTsdb.json.lineup) &&
+                resTsdb.json.lineup.length > 0
+              ) {
+                list = resTsdb.json.lineup
+                break
+              }
+            }
+
+            if (list && list.length > 0) {
               var homeStarters = []
               var homeBench = []
               var awayStarters = []

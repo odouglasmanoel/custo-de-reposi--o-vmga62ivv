@@ -25,6 +25,27 @@ routerAdd(
   'GET',
   '/backend/v1/enquetes/buscar-jogos',
   (e) => {
+    if (typeof globalThis !== 'undefined' && !globalThis.__apiFootballThrottle) {
+      globalThis.__apiFootballThrottle = { lastCallTimestamp: 0, minIntervalMs: 15 * 60 * 1000 }
+    }
+    var checkApiFootballThrottle = function () {
+      if (typeof globalThis === 'undefined' || !globalThis.__apiFootballThrottle) {
+        return { canCall: true, waitMs: 0 }
+      }
+      var now = Date.now()
+      var diff = now - (globalThis.__apiFootballThrottle.lastCallTimestamp || 0)
+      var interval = globalThis.__apiFootballThrottle.minIntervalMs || 900000
+      if (diff < interval) {
+        return { canCall: false, waitMs: interval - diff }
+      }
+      return { canCall: true, waitMs: 0 }
+    }
+    var recordApiFootballCall = function () {
+      if (typeof globalThis !== 'undefined' && globalThis.__apiFootballThrottle) {
+        globalThis.__apiFootballThrottle.lastCallTimestamp = Date.now()
+      }
+    }
+
     var API_FOOTBALL_BACKOFF_DURATION_MS = 60 * 60 * 1000 // 1 HORA
 
     var checkApiFootballCircuitBreaker = function () {
@@ -532,11 +553,17 @@ routerAdd(
           var fdCollected = []
           var tsdbCollected = []
 
-          // A) API-Football: consulta a data quando chave disponível e circuit breaker não bloqueado
+          // A) API-Football: consulta a data quando chave disponível, throttle ok e circuit breaker não bloqueado
           var cbCheckEnq = checkApiFootballCircuitBreaker()
+          var throttleCheckEnq = checkApiFootballThrottle()
+
           if (cbCheckEnq.shouldSkip) {
             console.log(
               '[Enquetes] Circuit breaker ativo — pulando API-Football para data ' + targetDate,
+            )
+          } else if (!throttleCheckEnq.canCall) {
+            console.log(
+              '[Enquetes] Throttle ativo de 15min — pulando API-Football para data ' + targetDate,
             )
           } else if (apiKey && apiKey !== fallbackApiKey) {
             var baseUrl = isRapidApi
@@ -563,6 +590,7 @@ routerAdd(
                   'Rate limit 429 em enquetes_buscar_jogos para data ' + targetDate,
                 )
               } else if (resAF && resAF.statusCode === 200) {
+                recordApiFootballCall()
                 resetApiFootballCircuitBreaker()
                 if (resAF.json && Array.isArray(resAF.json.response)) {
                   for (var afi = 0; afi < resAF.json.response.length; afi++) {
@@ -1111,6 +1139,27 @@ routerAdd(
   'GET',
   '/backend/v1/enquetes/buscar-escudo',
   (e) => {
+    if (typeof globalThis !== 'undefined' && !globalThis.__apiFootballThrottle) {
+      globalThis.__apiFootballThrottle = { lastCallTimestamp: 0, minIntervalMs: 15 * 60 * 1000 }
+    }
+    var checkApiFootballThrottle = function () {
+      if (typeof globalThis === 'undefined' || !globalThis.__apiFootballThrottle) {
+        return { canCall: true, waitMs: 0 }
+      }
+      var now = Date.now()
+      var diff = now - (globalThis.__apiFootballThrottle.lastCallTimestamp || 0)
+      var interval = globalThis.__apiFootballThrottle.minIntervalMs || 900000
+      if (diff < interval) {
+        return { canCall: false, waitMs: interval - diff }
+      }
+      return { canCall: true, waitMs: 0 }
+    }
+    var recordApiFootballCall = function () {
+      if (typeof globalThis !== 'undefined' && globalThis.__apiFootballThrottle) {
+        globalThis.__apiFootballThrottle.lastCallTimestamp = Date.now()
+      }
+    }
+
     var API_FOOTBALL_BACKOFF_DURATION_MS = 60 * 60 * 1000 // 1 HORA
 
     var checkApiFootballCircuitBreaker = function () {
@@ -1306,7 +1355,8 @@ routerAdd(
         if (afKey.length > 40) isRapid = true
 
         var cbCheckBadge = checkApiFootballCircuitBreaker()
-        if (afKey && !cbCheckBadge.shouldSkip) {
+        var throttleCheckBadge = checkApiFootballThrottle()
+        if (afKey && !cbCheckBadge.shouldSkip && throttleCheckBadge.canCall) {
           try {
             var urlAF = isRapid
               ? 'https://api-football-v1.p.rapidapi.com/v3/teams?search=' +
@@ -1331,6 +1381,7 @@ routerAdd(
               Array.isArray(resAF.json.response) &&
               resAF.json.response.length > 0
             ) {
+              recordApiFootballCall()
               resetApiFootballCircuitBreaker()
               var tAfObj = resAF.json.response[0]
               if (tAfObj && tAfObj.team && tAfObj.team.logo) {

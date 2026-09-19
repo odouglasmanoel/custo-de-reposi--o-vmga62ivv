@@ -173,12 +173,25 @@ export async function fetchGameLineup(params: {
         method: 'GET',
         headers: {
           'Content-Type': 'application/json',
+          'X-Cascade-Priority': 'db-fallback-first',
           Authorization: token,
         },
       })
 
       if (!response.ok) {
         const errorJson = await response.json().catch(() => ({}))
+        // Se já existia cache anterior para esta partida, reaproveita para a modal nunca ficar vazia
+        const previousCached =
+          cacheKey && lineupsMemoryCache.has(cacheKey) ? lineupsMemoryCache.get(cacheKey) : null
+        if (
+          previousCached &&
+          previousCached.data &&
+          previousCached.data.teams &&
+          previousCached.data.teams.length > 0
+        ) {
+          return { ...previousCached.data, cached: true }
+        }
+
         const fallback: LineupResponse = {
           status: 'indisponivel',
           teams: [
@@ -197,9 +210,38 @@ export async function fetchGameLineup(params: {
       }
 
       const dataJson: LineupResponse = await response.json()
+      // Se vier status indisponivel mas tivermos versão em cache com escalação, preserva a versão anterior com jogadores
+      const previousCached =
+        cacheKey && lineupsMemoryCache.has(cacheKey) ? lineupsMemoryCache.get(cacheKey) : null
+      const hasNewPlayers = dataJson.teams?.some(
+        (t) => (t.starters && t.starters.length > 0) || (t.substitutes && t.substitutes.length > 0),
+      )
+      if (
+        !hasNewPlayers &&
+        previousCached &&
+        previousCached.data?.teams?.some(
+          (t) =>
+            (t.starters && t.starters.length > 0) || (t.substitutes && t.substitutes.length > 0),
+        )
+      ) {
+        return { ...previousCached.data, cached: true }
+      }
+
       setWithBoundedCapacity(lineupsMemoryCache, cacheKey, { data: dataJson, timestamp: now }, 100)
       return dataJson
     } catch (err: unknown) {
+      // Se houver falha de rede/throttle e tiver cache anterior, retorna cache para evitar tela em branco
+      const previousCached =
+        cacheKey && lineupsMemoryCache.has(cacheKey) ? lineupsMemoryCache.get(cacheKey) : null
+      if (
+        previousCached &&
+        previousCached.data &&
+        previousCached.data.teams &&
+        previousCached.data.teams.length > 0
+      ) {
+        return { ...previousCached.data, cached: true }
+      }
+
       const errorMsg = err instanceof Error ? err.message : 'Falha na conexão com o servidor'
       const fallback: LineupResponse = {
         status: 'indisponivel',
