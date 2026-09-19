@@ -3,8 +3,10 @@ import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import {
   Trophy,
   Calendar,
+  Check,
   CheckCircle2,
   Clock,
+  Copy,
   MessageSquare,
   History,
   Shield,
@@ -17,6 +19,7 @@ import {
   RefreshCcw,
   AlertCircle,
   Vote,
+  XCircle,
 } from 'lucide-react'
 import pb from '@/lib/pocketbase/client'
 import { useAuth, BOLAO_MEMBERS } from '@/context/AuthContext'
@@ -28,6 +31,7 @@ import { formatBolaoLabel, GERAL_BOLAO_ID } from '@/types/bolao'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
+import { cn } from '@/lib/utils'
 import {
   formatDataBR,
   formatHoraBR,
@@ -265,6 +269,9 @@ export default function BolaoDashboard() {
   >({})
 
   const [isRateLimited, setIsRateLimited] = useState<boolean>(false)
+
+  // Estado para feedback do botão "Cobrar WhatsApp"
+  const [copiado, setCopiado] = useState(false)
 
   // Modal de sobrescrita manual de partida em andamento pelo Admin Douglas
   const [adminSobrescritaJogo, setAdminSobrescritaJogo] = useState<{
@@ -1193,6 +1200,123 @@ export default function BolaoDashboard() {
     }
   }, [isGeral, allJogos, jogos])
 
+  // Deduplicação dos participantes oficiais a partir de allParticipantes/participantes
+  const membrosAtivos = useMemo<{ nome: string; ids: string[] }[]>(() => {
+    const sourceParts = allParticipantes.length > 0 ? allParticipantes : participantes
+    const map = new Map<string, { nome: string; ids: Set<string> }>()
+
+    for (const part of sourceParts) {
+      if (!part.nome) continue
+      const normName = normalizeMemberName(part.nome)
+      if (!map.has(normName)) {
+        map.set(normName, { nome: normName, ids: new Set<string>() })
+      }
+      map.get(normName)!.ids.add(part.id)
+    }
+
+    return Array.from(map.values())
+      .map((item) => ({
+        nome: item.nome,
+        ids: Array.from(item.ids),
+      }))
+      .sort((a, b) => a.nome.localeCompare(b.nome))
+  }, [allParticipantes, participantes])
+
+  // Função auxiliar: checa se um determinado membro já registrou palpite para o jogo
+  const checarPalpiteRegistrado = useCallback(
+    (jogoId: string, nome: string, ids: string[]): boolean => {
+      const idsSet = new Set(ids)
+      const normMembro = nome.toLowerCase()
+
+      return palpites.some((p) => {
+        if (p.jogo !== jogoId) return false
+        if (p.placar_a == null || p.placar_b == null) return false
+
+        if (idsSet.has(p.participante)) return true
+
+        const partObj = participantesMap.get(p.participante)
+        if (partObj && normalizeMemberName(partObj.nome).toLowerCase() === normMembro) {
+          return true
+        }
+
+        return false
+      })
+    },
+    [palpites, participantesMap],
+  )
+
+  // Geração do texto de cobrança para WhatsApp
+  const gerarTextoCobrancaWhatsApp = useCallback((): string => {
+    const hojeSP = getHojeDataSaoPaulo(nowMs)
+    const dataFormatada = formatDataBR(hojeSP) || hojeSP
+
+    const linhasJogos = jogosDeHoje.map((jogo) => {
+      const horario = formatHoraBR(jogo.hora) || '—'
+      const pendentes: string[] = []
+
+      for (const membro of membrosAtivos) {
+        if (!checarPalpiteRegistrado(jogo.id, membro.nome, membro.ids)) {
+          pendentes.push(membro.nome)
+        }
+      }
+
+      const tituloJogo = `⚽ *${jogo.time_a} x ${jogo.time_b}* (${horario})`
+      const statusJogo =
+        pendentes.length > 0
+          ? `   ❌ Pendentes: ${pendentes.join(', ')}`
+          : '   ✅ Todos os palpites foram registrados!'
+
+      return `${tituloJogo}\n${statusJogo}`
+    })
+
+    return [
+      `⏰ *Cobrança de Palpites — Bolão (${dataFormatada})*`,
+      '',
+      ...linhasJogos,
+      '',
+      '👉 Acesse o app para registrar o seu palpite.',
+    ].join('\n')
+  }, [jogosDeHoje, membrosAtivos, checarPalpiteRegistrado, nowMs])
+
+  // Ação de copiar texto de cobrança com fallback robusto
+  const handleCopiarWhatsApp = useCallback(async () => {
+    const texto = gerarTextoCobrancaWhatsApp()
+    let copiou = false
+
+    if (navigator?.clipboard?.writeText) {
+      try {
+        await navigator.clipboard.writeText(texto)
+        copiou = true
+      } catch {
+        copiou = false
+      }
+    }
+
+    if (!copiou) {
+      try {
+        const textarea = document.createElement('textarea')
+        textarea.value = texto
+        textarea.style.position = 'fixed'
+        textarea.style.left = '-9999px'
+        textarea.style.top = '0'
+        textarea.setAttribute('readonly', '')
+        document.body.appendChild(textarea)
+        textarea.select()
+        copiou = document.execCommand('copy')
+        document.body.removeChild(textarea)
+      } catch {
+        copiou = false
+      }
+    }
+
+    if (copiou) {
+      setCopiado(true)
+      setTimeout(() => {
+        setCopiado(false)
+      }, 2000)
+    }
+  }, [gerarTextoCobrancaWhatsApp])
+
   // Quick stats com fallback para o último valor válido conhecido
   // NUNCA zera as estatísticas por falta de tempo de resposta ou carregamento
   // Jogos com isJogoConcluido=true são contabilizados como Jogos Encerrados (registrados)
@@ -1542,17 +1666,45 @@ export default function BolaoDashboard() {
           {' '}
           <div className="flex items-center justify-between">
             <div className="min-w-0 flex-1">
-              <div className="flex items-center justify-between pr-2">
+              <div className="flex items-center justify-between pr-2 gap-2 flex-wrap">
                 <p className="text-xs font-medium text-[#64748B]">Jogos de Hoje</p>
                 {loading && (isGeral ? allJogos.length === 0 : jogos.length === 0) ? (
                   <div className="h-4 w-12 animate-pulse rounded bg-slate-200" />
                 ) : (
-                  <Badge
-                    variant="outline"
-                    className="border-blue-200 bg-blue-50/60 text-[10px] font-semibold text-[#0F2A43]"
-                  >
-                    {jogosDeHoje.length} jogo(s)
-                  </Badge>
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    <Badge
+                      variant="outline"
+                      className="border-blue-200 bg-blue-50/60 text-[10px] font-semibold text-[#0F2A43]"
+                    >
+                      {jogosDeHoje.length} jogo(s)
+                    </Badge>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={handleCopiarWhatsApp}
+                      disabled={jogosDeHoje.length === 0}
+                      className={cn(
+                        'h-7 px-2 text-[10px] font-bold transition-all',
+                        copiado
+                          ? 'border-emerald-300 bg-emerald-50 text-emerald-800 hover:bg-emerald-100'
+                          : 'border-slate-300 text-slate-700 hover:bg-slate-50',
+                      )}
+                      title="Copiar lista de pendentes formatada para o WhatsApp"
+                    >
+                      {copiado ? (
+                        <>
+                          <Check className="h-3 w-3 text-emerald-600 mr-1 shrink-0" />
+                          <span>Copiado!</span>
+                        </>
+                      ) : (
+                        <>
+                          <Copy className="h-3 w-3 text-slate-600 mr-1 shrink-0" />
+                          <span>Cobrar WhatsApp</span>
+                        </>
+                      )}
+                    </Button>
+                  </div>
                 )}
               </div>
               {loading && (isGeral ? allJogos.length === 0 : jogos.length === 0) ? (
@@ -1565,7 +1717,7 @@ export default function BolaoDashboard() {
                   Nenhum jogo agendado para hoje
                 </p>
               ) : (
-                <div className="mt-1.5 space-y-1.5 max-h-24 overflow-y-auto pr-1">
+                <div className="mt-1.5 space-y-2 max-h-60 overflow-y-auto pr-1">
                   {jogosDeHoje.map((jogo) => {
                     const bolaoOrigem = isGeral ? bolaoMap.get(jogo.bolao) : null
                     const jogoDataISO = normalizeDataISO(jogo.data)
@@ -1591,48 +1743,87 @@ export default function BolaoDashboard() {
                     return (
                       <div
                         key={jogo.id}
-                        className="flex items-center justify-between gap-2 text-xs py-0.5"
+                        className="rounded-md border border-slate-100 bg-slate-50/50 p-1.5 text-xs"
                       >
-                        <div className="flex items-center gap-1.5 min-w-0 flex-1">
-                          {bolaoOrigem && (
-                            <Badge
-                              variant="secondary"
-                              className="border border-[#CBD5E1] bg-slate-100 text-[#0F2A43] font-semibold text-[9px] px-1 py-0 shrink-0"
-                            >
-                              {bolaoOrigem.nome.replace('Copa ', '')}
-                            </Badge>
-                          )}
-                          <div className="flex items-center gap-1.5 min-w-0 truncate">
-                            <span className="flex items-center gap-1 min-w-0 truncate">
-                              <TeamShield
-                                escudo={logoCasa}
-                                nomeTime={jogo.time_a}
-                                sigla={initialsA}
-                                sizeClass="h-5 w-5"
-                                textClass="text-[8px] font-black"
-                              />
-                              <span className="font-bold text-[#0F172A] truncate">
-                                {jogo.time_a}
+                        <div className="flex items-center justify-between gap-2 py-0.5">
+                          <div className="flex items-center gap-1.5 min-w-0 flex-1">
+                            {bolaoOrigem && (
+                              <Badge
+                                variant="secondary"
+                                className="border border-[#CBD5E1] bg-slate-100 text-[#0F2A43] font-semibold text-[9px] px-1 py-0 shrink-0"
+                              >
+                                {bolaoOrigem.nome.replace('Copa ', '')}
+                              </Badge>
+                            )}
+                            <div className="flex items-center gap-1.5 min-w-0 truncate">
+                              <span className="flex items-center gap-1 min-w-0 truncate">
+                                <TeamShield
+                                  escudo={logoCasa}
+                                  nomeTime={jogo.time_a}
+                                  sigla={initialsA}
+                                  sizeClass="h-5 w-5"
+                                  textClass="text-[8px] font-black"
+                                />
+                                <span className="font-bold text-[#0F172A] truncate">
+                                  {jogo.time_a}
+                                </span>
                               </span>
-                            </span>
-                            <span className="text-slate-400 font-bold px-0.5 shrink-0">x</span>
-                            <span className="flex items-center gap-1 min-w-0 truncate">
-                              <TeamShield
-                                escudo={logoVisitante}
-                                nomeTime={jogo.time_b}
-                                sigla={initialsB}
-                                sizeClass="h-5 w-5"
-                                textClass="text-[8px] font-black"
-                              />
-                              <span className="font-bold text-[#0F172A] truncate">
-                                {jogo.time_b}
+                              <span className="text-slate-400 font-bold px-0.5 shrink-0">x</span>
+                              <span className="flex items-center gap-1 min-w-0 truncate">
+                                <TeamShield
+                                  escudo={logoVisitante}
+                                  nomeTime={jogo.time_b}
+                                  sigla={initialsB}
+                                  sizeClass="h-5 w-5"
+                                  textClass="text-[8px] font-black"
+                                />
+                                <span className="font-bold text-[#0F172A] truncate">
+                                  {jogo.time_b}
+                                </span>
                               </span>
-                            </span>
+                            </div>
                           </div>
+                          <span className="shrink-0 font-semibold text-[#0F2A43] bg-slate-100 px-1.5 py-0.5 rounded text-[11px]">
+                            {formatHoraBR(jogo.hora) || '—'}
+                          </span>
                         </div>
-                        <span className="shrink-0 font-semibold text-[#0F2A43] bg-slate-100 px-1.5 py-0.5 rounded text-[11px]">
-                          {formatHoraBR(jogo.hora) || '—'}
-                        </span>
+
+                        {/* Linha discreta de palpites por membro ativo */}
+                        <div className="mt-1.5 flex flex-wrap items-center gap-1.5 pt-1 border-t border-slate-100">
+                          <span className="text-[10px] font-medium text-slate-500 mr-0.5">
+                            Palpites:
+                          </span>
+                          {membrosAtivos.map((membro) => {
+                            const jaPalpitou = checarPalpiteRegistrado(
+                              jogo.id,
+                              membro.nome,
+                              membro.ids,
+                            )
+                            return (
+                              <span
+                                key={membro.nome}
+                                className={cn(
+                                  'inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold transition-colors',
+                                  jaPalpitou
+                                    ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                                    : 'bg-rose-50 text-rose-700 border border-rose-200',
+                                )}
+                                title={
+                                  jaPalpitou
+                                    ? `${membro.nome}: Palpite registrado`
+                                    : `${membro.nome}: Palpite pendente`
+                                }
+                              >
+                                {jaPalpitou ? (
+                                  <CheckCircle2 className="h-3 w-3 text-emerald-600 shrink-0" />
+                                ) : (
+                                  <XCircle className="h-3 w-3 text-rose-600 shrink-0" />
+                                )}
+                                <span>{membro.nome}</span>
+                              </span>
+                            )
+                          })}
+                        </div>
                       </div>
                     )
                   })}
