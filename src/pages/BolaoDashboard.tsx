@@ -1068,25 +1068,71 @@ export default function BolaoDashboard() {
     }
   }, [gamesKickoffSignature, isGeral, fetchLiveScores])
 
-  // 2. REGRA DO POLLING: APENAS quando há jogos liberados/em andamento ou com partidas ao vivo na API
-  // E nunca se tiver atingido rate limit
+  // 2. REGRA DO POLLING: APENAS quando há jogos realmente em andamento (ao vivo)
+  // Requisitos estritos para habilitar polling:
+  // - j.resultado_finalizado !== true
+  // - Horário atual entre kickoff e kickoff + 150 min
+  // - Status não terminal (não é FT/AET/PEN/CANC/PST/ABD/FINISHED)
+  // Intervalo elevado de 2 min para 12 min (720_000 ms) para proteção rigorosa da cota de API.
+  // Jogos futuros e encerrados = polling desativado (clearInterval), consulta única no carregamento.
   useEffect(() => {
     if (isRateLimited) {
       return
     }
 
-    const hasAnyLiveGame =
-      jogosLiberados.length > 0 || apiFixtures.some((f) => isFixtureLive(f.fixture?.status?.short))
+    const TERMINAL_STATUSES = new Set([
+      'FT',
+      'AET',
+      'PEN',
+      'CANC',
+      'CANCELLED',
+      'PST',
+      'POSTPONED',
+      'ABD',
+      'ABANDONED',
+      'FINISHED',
+    ])
 
-    if (!hasAnyLiveGame) {
-      // Nenhum jogo ao vivo: NENHUM polling contínuo (economia estrita de cota API)
+    const now = Date.now()
+    const targetGames = isGeral ? allJogos : jogos
+
+    // 1. Verifica se há algum jogo do bolão que esteja realmente em andamento agora
+    const hasLiveBolaoGame = targetGames.some((j) => {
+      if (j.resultado_finalizado === true) return false
+      const kickoff = getJogoKickoffTimestamp(j.data, j.hora)
+      if (!kickoff) return false
+      // Horário atual entre kickoff e kickoff + 150 min (duração típica de uma partida de futebol)
+      if (now < kickoff || now > kickoff + 150 * 60 * 1000) return false
+
+      // Verifica status associado na API de futebol se existir
+      const jogoDataISO = normalizeDataISO(j.data)
+      const matched = resolveLiveScoreForGame(j, apiFixtures, 0.55, jogoDataISO)
+      if (matched) {
+        const stUpper = (matched.statusShort || matched.statusLong || '').trim().toUpperCase()
+        if (TERMINAL_STATUSES.has(stUpper)) return false
+        if (matched.isFinished) return false
+      }
+      return true
+    })
+
+    // 2. Ou se há alguma fixture explicitamente em status ao vivo não terminal na API
+    const hasLiveApiFixture = apiFixtures.some((f) => {
+      const st = (f.fixture?.status?.short || '').trim().toUpperCase()
+      if (TERMINAL_STATUSES.has(st)) return false
+      return isFixtureLive(st)
+    })
+
+    const hasReallyLiveGame = hasLiveBolaoGame || hasLiveApiFixture
+
+    if (!hasReallyLiveGame) {
+      // Jogos futuros e encerrados = polling desativado (clearInterval)
       return
     }
 
-    // Polling a cada 75s (60-90s) durante partidas ao vivo para atualizar placares e gols
-    const interval = setInterval(fetchLiveScores, 75000)
+    // Polling estrito de 12 minutos (720_000 ms) durante partidas ao vivo
+    const interval = setInterval(fetchLiveScores, 720_000)
     return () => clearInterval(interval)
-  }, [jogosLiberados.length, apiFixtures, isRateLimited, fetchLiveScores])
+  }, [isGeral, allJogos, jogos, apiFixtures, isRateLimited, fetchLiveScores])
 
   // Carregamento de escudos para os times dos Jogos de Hoje / Jogos Liberados
   useEffect(() => {

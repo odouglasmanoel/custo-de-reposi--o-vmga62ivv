@@ -975,19 +975,62 @@ export default function JogosDoDia() {
     }
   }, [relevantFixtures, selectedDate, fetchJogos])
 
-  // Polling periódico APENAS quando há jogos efetivamente com status "Ao Vivo" (> 0)
-  // Intervalo de 2 minutos (120s) em segundo plano enquanto houver partidas em andamento.
-  // Se counts.live === 0: NENHUMA chamada periódica é executada, servindo do cache/banco local.
+  // Polling periódico APENAS quando há jogos realmente em andamento (ao vivo)
+  // Requisitos estritos para habilitar polling:
+  // - Horário atual entre kickoff e kickoff + 150 min
+  // - Status não terminal (não é FT/AET/PEN/CANC/PST/ABD/FINISHED)
+  // Intervalo elevado de 2 min para 12 min (720_000 ms) para proteger cota da API-Football.
+  // Jogos futuros e encerrados = polling desativado (clearInterval), consulta única no carregamento via cache local/banco.
   useEffect(() => {
-    if (counts.live === 0 || isRateLimited) {
+    if (isRateLimited) {
+      return
+    }
+
+    const TERMINAL_STATUSES = new Set([
+      'FT',
+      'AET',
+      'PEN',
+      'CANC',
+      'CANCELLED',
+      'PST',
+      'POSTPONED',
+      'ABD',
+      'ABANDONED',
+      'FINISHED',
+    ])
+
+    const now = Date.now()
+    const hasLiveMatchNow = relevantFixtures.some((f) => {
+      const st = (f.fixture?.status?.short || '').trim().toUpperCase()
+      const long = (f.fixture?.status?.long || '').trim().toUpperCase()
+      if (TERMINAL_STATUSES.has(st) || TERMINAL_STATUSES.has(long)) {
+        return false
+      }
+
+      // Verifica janela de kickoff (kickoff <= now <= kickoff + 150 min)
+      const rawDate = f.fixture?.date
+      if (rawDate) {
+        const kickoff = new Date(rawDate).getTime()
+        if (!isNaN(kickoff)) {
+          if (now < kickoff || now > kickoff + 150 * 60 * 1000) {
+            return false
+          }
+        }
+      }
+
+      return ['1H', 'HT', '2H', 'ET', 'BT', 'P', 'LIVE'].includes(st)
+    })
+
+    if (!hasLiveMatchNow) {
+      // Jogos futuros e encerrados = polling desativado
       return
     }
 
     const timer = setInterval(() => {
       fetchJogos(selectedDate, false)
-    }, 120000) // 2 minutos (120.000ms) durante partidas ao vivo
+    }, 720_000) // 12 minutos (720.000ms) durante partidas ao vivo
     return () => clearInterval(timer)
-  }, [counts.live, isRateLimited, selectedDate, fetchJogos])
+  }, [relevantFixtures, isRateLimited, selectedDate, fetchJogos])
 
   // Lista de competições 100% dinâmica derivada dos jogos do dia
   const availableCompetitions = useMemo(() => {

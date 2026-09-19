@@ -25,7 +25,7 @@ routerAdd(
   'GET',
   '/backend/v1/enquetes/buscar-jogos',
   (e) => {
-    var API_FOOTBALL_BACKOFF_DURATION_MS = 20 * 60 * 1000
+    var API_FOOTBALL_BACKOFF_DURATION_MS = 60 * 60 * 1000 // 1 HORA
 
     var checkApiFootballCircuitBreaker = function () {
       if (typeof globalThis === 'undefined' || !globalThis.__apiFootballCircuitBreaker) {
@@ -65,7 +65,7 @@ routerAdd(
       cb.probing = false
       cb.reason = reason || 'Rate limit / quota exceeded (429)'
       console.log(
-        '[CircuitBreaker API-Football] TRIP ATIVADO por 20 minutos até ' +
+        '[CircuitBreaker API-Football] TRIP ATIVADO por 60 minutos até ' +
           new Date(cb.blockedUntil).toISOString() +
           '. Motivo: ' +
           cb.reason,
@@ -95,6 +95,10 @@ routerAdd(
       }
       strBody = strBody.toLowerCase()
       return (
+        strBody.indexOf('100% used') !== -1 ||
+        strBody.indexOf('100%') !== -1 ||
+        strBody.indexOf('requests limit') !== -1 ||
+        strBody.indexOf('quota') !== -1 ||
         strBody.indexOf('requests limit reached') !== -1 ||
         strBody.indexOf('request limit reached') !== -1 ||
         strBody.indexOf('rate limit') !== -1 ||
@@ -1107,7 +1111,7 @@ routerAdd(
   'GET',
   '/backend/v1/enquetes/buscar-escudo',
   (e) => {
-    var API_FOOTBALL_BACKOFF_DURATION_MS = 20 * 60 * 1000
+    var API_FOOTBALL_BACKOFF_DURATION_MS = 60 * 60 * 1000 // 1 HORA
 
     var checkApiFootballCircuitBreaker = function () {
       if (typeof globalThis === 'undefined' || !globalThis.__apiFootballCircuitBreaker) {
@@ -1147,7 +1151,7 @@ routerAdd(
       cb.probing = false
       cb.reason = reason || 'Rate limit / quota exceeded (429)'
       console.log(
-        '[CircuitBreaker API-Football] TRIP ATIVADO por 20 minutos até ' +
+        '[CircuitBreaker API-Football] TRIP ATIVADO por 60 minutos até ' +
           new Date(cb.blockedUntil).toISOString() +
           '. Motivo: ' +
           cb.reason,
@@ -1177,6 +1181,10 @@ routerAdd(
       }
       strBody = strBody.toLowerCase()
       return (
+        strBody.indexOf('100% used') !== -1 ||
+        strBody.indexOf('100%') !== -1 ||
+        strBody.indexOf('requests limit') !== -1 ||
+        strBody.indexOf('quota') !== -1 ||
         strBody.indexOf('requests limit reached') !== -1 ||
         strBody.indexOf('request limit reached') !== -1 ||
         strBody.indexOf('rate limit') !== -1 ||

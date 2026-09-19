@@ -33,7 +33,7 @@ if (typeof globalThis !== 'undefined' && !globalThis.__apiFootballCircuitBreaker
 // GET /backend/v1/placar-ao-vivo
 // -------------------------------------------------------------
 routerAdd('GET', '/backend/v1/placar-ao-vivo', (e) => {
-  var API_FOOTBALL_BACKOFF_DURATION_MS = 20 * 60 * 1000
+  var API_FOOTBALL_BACKOFF_DURATION_MS = 60 * 60 * 1000 // 1 HORA
 
   var checkApiFootballCircuitBreaker = function () {
     if (typeof globalThis === 'undefined' || !globalThis.__apiFootballCircuitBreaker) {
@@ -74,7 +74,7 @@ routerAdd('GET', '/backend/v1/placar-ao-vivo', (e) => {
     cb.probing = false
     cb.reason = reason || 'Rate limit / quota exceeded (429)'
     console.log(
-      '[CircuitBreaker API-Football] TRIP ATIVADO por 20 minutos até ' +
+      '[CircuitBreaker API-Football] TRIP ATIVADO por 60 minutos até ' +
         new Date(cb.blockedUntil).toISOString() +
         '. Motivo: ' +
         cb.reason,
@@ -840,19 +840,19 @@ routerAdd('GET', '/backend/v1/placar-ao-vivo', (e) => {
       nowMs - cacheEntry.lastLiveTimestamp < 10 * 60 * 1000,
     )
 
-    // TTL: 1-2 min (90.000 ms) se houver jogo ao vivo ou transição recente; 7 min (faixa 5-10 min) para dias/jogos agendados sem live
-    var effectiveTTL = entryHasLive || hadRecentLive ? 90 * 1000 : 7 * 60 * 1000
+    // TTL: NO MÍNIMO 12 min se houver jogo ao vivo ou transição recente; 30 min para dias/jogos agendados sem live
+    var effectiveTTL = entryHasLive || hadRecentLive ? 12 * 60 * 1000 : 30 * 60 * 1000
     var cacheAgeMs = cacheEntry ? nowMs - cacheEntry.timestamp : 999999999
 
     // Se o cache é válido, serve diretamente do cache interno SEM fazer nenhuma chamada externa
-    // (Apenas se o cache possuir dados válidos)
+    // (Apenas se o cache possuir dados válidos). Garantia: cacheAgeMs < effectiveTTL NUNCA fura o cache (ignora forceRefresh).
     if (cacheEntry && cacheEntry.data) {
       var totalCachedFixtures =
         (Array.isArray(cacheEntry.data.live) ? cacheEntry.data.live.length : 0) +
         (Array.isArray(cacheEntry.data.dateFixtures) ? cacheEntry.data.dateFixtures.length : 0) +
         (Array.isArray(cacheEntry.data.directFixtures) ? cacheEntry.data.directFixtures.length : 0)
       if (totalCachedFixtures > 0) {
-        if (!forceRefresh || cacheAgeMs < effectiveTTL) {
+        if (cacheAgeMs < effectiveTTL) {
           var cachedPayload = Object.assign({}, cacheEntry.data, {
             sobrescritas: sobrescritasMap,
             cached: true,
@@ -903,6 +903,10 @@ routerAdd('GET', '/backend/v1/placar-ao-vivo', (e) => {
       }
       strBody = strBody.toLowerCase()
       if (
+        strBody.indexOf('100% used') !== -1 ||
+        strBody.indexOf('100%') !== -1 ||
+        strBody.indexOf('requests limit') !== -1 ||
+        strBody.indexOf('quota') !== -1 ||
         strBody.indexOf('requests limit reached') !== -1 ||
         strBody.indexOf('request limit reached') !== -1 ||
         strBody.indexOf('rate limit') !== -1 ||
@@ -2301,19 +2305,19 @@ routerAdd('GET', '/backend/v1/jogos-do-dia', (e) => {
     var maxAgeMs = isContingencyEntry
       ? 60 * 1000
       : entryHasLive || dayHadRecentLive
-        ? 90 * 1000
-        : 7 * 60 * 1000
+        ? 12 * 60 * 1000
+        : 30 * 60 * 1000
 
     // REGRA DE ON-DEMAND FETCHING E CARREGAMENTO PASSIVO:
     // Se há cache válido para a API externa, concatenamos SEMPRE os jogos manuais do banco no TOPO
     // garantindo bypass absoluto para qualquer jogo manual cadastrado ou alterado recentemente.
-    // Se forceRefresh for solicitado (ex: botão Atualizar do usuário), BYPASS no cache para tentar API principal.
+    // Garantia estrita: cacheAgeMs < maxAgeMs SEMPRE servido do cache, ignorando forceRefresh para proteger cota da API.
     if (dayEntry && dayEntry.payload) {
       var cachedFixturesCount = Array.isArray(dayEntry.payload.fixtures)
         ? dayEntry.payload.fixtures.length
         : 0
       if (cachedFixturesCount > 0) {
-        if (!forceRefresh && cacheAgeMs < maxAgeMs) {
+        if (cacheAgeMs < maxAgeMs) {
           var combinedCachedList = mergeManualFixturesOnTop(
             liveManualFixtures,
             dayEntry.payload.fixtures,
@@ -2332,10 +2336,6 @@ routerAdd('GET', '/backend/v1/jogos-do-dia', (e) => {
             ttlRemainingSeconds: Math.max(0, Math.round((maxAgeMs - cacheAgeMs) / 1000)),
           })
           return e.json(200, cachedResp)
-        } else if (forceRefresh) {
-          console.log(
-            '[Cache Jogos-do-Dia] forceRefresh solicitado pelo cliente. Ignorando cache e revalidando com API externa.',
-          )
         }
       } else {
         console.log(
@@ -2447,6 +2447,10 @@ routerAdd('GET', '/backend/v1/jogos-do-dia', (e) => {
       }
       strBody = strBody.toLowerCase()
       if (
+        strBody.indexOf('100% used') !== -1 ||
+        strBody.indexOf('100%') !== -1 ||
+        strBody.indexOf('requests limit') !== -1 ||
+        strBody.indexOf('quota') !== -1 ||
         strBody.indexOf('requests limit reached') !== -1 ||
         strBody.indexOf('request limit reached') !== -1 ||
         strBody.indexOf('rate limit') !== -1 ||
@@ -3610,7 +3614,7 @@ routerAdd('GET', '/backend/v1/jogos-do-dia', (e) => {
     }
 
     // CIRCUIT BREAKER CHECK para jogos-do-dia:
-    var API_FOOTBALL_BACKOFF_DURATION_MS = 20 * 60 * 1000
+    var API_FOOTBALL_BACKOFF_DURATION_MS = 60 * 60 * 1000 // 1 HORA
 
     var checkApiFootballCircuitBreaker = function () {
       if (typeof globalThis === 'undefined' || !globalThis.__apiFootballCircuitBreaker) {
@@ -3650,7 +3654,7 @@ routerAdd('GET', '/backend/v1/jogos-do-dia', (e) => {
       cb.probing = false
       cb.reason = reason || 'Rate limit / quota exceeded (429)'
       console.log(
-        '[CircuitBreaker API-Football] TRIP ATIVADO por 20 minutos até ' +
+        '[CircuitBreaker API-Football] TRIP ATIVADO por 60 minutos até ' +
           new Date(cb.blockedUntil).toISOString() +
           '. Motivo: ' +
           cb.reason,
@@ -4471,7 +4475,7 @@ routerAdd('GET', '/backend/v1/jogos-do-dia', (e) => {
       200,
       Object.assign({}, finalPayload, {
         cached: false,
-        ttlSeconds: Math.round((hasLiveMatch ? 90 * 1000 : 7 * 60 * 1000) / 1000),
+        ttlSeconds: Math.round((hasLiveMatch ? 12 * 60 * 1000 : 30 * 60 * 1000) / 1000),
       }),
     )
   } catch (err) {
