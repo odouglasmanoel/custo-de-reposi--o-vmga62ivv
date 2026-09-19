@@ -188,7 +188,7 @@ export function parseDetalhamentoStrings(detList: string[]): ScoreRuleBadge[] {
           .filter(Boolean)
 
         for (let i = 0; i < rawNames.length; i++) {
-          const nm = rawNames[i].replace(/[.,;]$/, '').trim()
+          const nm = rawNames[i].replace(/[.,;)]+$/, '').trim()
           if (!nm) continue
           addBadge({
             id: `marcador_txt_${cleanPlayerName(nm)}_${i}`,

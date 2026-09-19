@@ -551,7 +551,8 @@ export default function Estatisticas() {
                         </TooltipTrigger>
                         <TooltipContent className="max-w-xs text-xs">
                           Mestre da Zaga: participante que mais acertou marcadores de gol cuja
-                          posição registrada é Zagueiro ou Lateral (+3 pts por gol).
+                          posição registrada é Zagueiro ou Lateral (+3 pts por gol, incluindo
+                          apuração retroativa).
                         </TooltipContent>
                       </Tooltip>
                     </div>

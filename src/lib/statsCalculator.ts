@@ -195,38 +195,161 @@ export function isQuaseCravada(palpite: Palpite, jogo: Jogo): boolean {
 }
 
 /**
+ * Subtrai pontos de regras base (placar, vencedor, saldo, metade, pênaltis)
+ * a partir de uma pontuação total e de uma lista de tokens ou strings de detalhamento.
+ */
+function extractScorerPointsFromScoreAndDetails(
+  totalPts: number,
+  detList: string[],
+  palpite: Palpite,
+  jogo: Jogo,
+): number {
+  if (totalPts <= 0) return 0
+
+  let basePoints = 0
+  const combinedText = detList.join(' | ').toLowerCase()
+
+  // 1. Placar Exato: 8 pts
+  if (
+    combinedText.includes('placar exato') ||
+    (jogo.placar_a !== null &&
+      jogo.placar_b !== null &&
+      palpite.placar_a !== null &&
+      palpite.placar_b !== null &&
+      Number(palpite.placar_a) === Number(jogo.placar_a) &&
+      Number(palpite.placar_b) === Number(jogo.placar_b))
+  ) {
+    basePoints += 8
+  } else {
+    // 2. Vencedor ou Empate: 2 pts
+    if (
+      combinedText.includes('empate') ||
+      combinedText.includes('vencedor') ||
+      isResultadoAcertado(palpite, jogo)
+    ) {
+      basePoints += 2
+    }
+
+    // 3. Diferença de Gols / Saldo: 1 pt
+    if (combinedText.includes('diferença de gols') || combinedText.includes('diferenca de gols')) {
+      basePoints += 1
+    } else if (
+      jogo.placar_a !== null &&
+      jogo.placar_b !== null &&
+      palpite.placar_a !== null &&
+      palpite.placar_b !== null
+    ) {
+      const getWinner = (a: number, b: number) => (a > b ? 1 : b > a ? -1 : 0)
+      const realWinner = getWinner(Number(jogo.placar_a), Number(jogo.placar_b))
+      const predWinner = getWinner(Number(palpite.placar_a), Number(palpite.placar_b))
+      const realDiff = Math.abs(Number(jogo.placar_a) - Number(jogo.placar_b))
+      const predDiff = Math.abs(Number(palpite.placar_a) - Number(palpite.placar_b))
+      if (realWinner === predWinner && realDiff === predDiff) {
+        basePoints += 1
+      }
+    }
+
+    // 4. Metade do Placar: 1 pt
+    if (combinedText.includes('metade do placar')) {
+      basePoints += 1
+    } else if (
+      jogo.placar_a !== null &&
+      jogo.placar_b !== null &&
+      palpite.placar_a !== null &&
+      palpite.placar_b !== null
+    ) {
+      if (
+        Number(palpite.placar_a) === Number(jogo.placar_a) ||
+        Number(palpite.placar_b) === Number(jogo.placar_b)
+      ) {
+        basePoints += 1
+      }
+    }
+  }
+
+  // 5. Pênaltis: 2 pts
+  if (
+    combinedText.includes('pênaltis') ||
+    combinedText.includes('penaltis') ||
+    (jogo.tem_penaltis &&
+      jogo.vencedor_penaltis &&
+      palpite.vencedor_penaltis &&
+      String(jogo.vencedor_penaltis).toUpperCase().trim() ===
+        String(palpite.vencedor_penaltis).toUpperCase().trim())
+  ) {
+    basePoints += 2
+  }
+
+  const remaining = totalPts - basePoints
+  return remaining > 0 ? remaining : 0
+}
+
+/**
  * Conta quantos marcadores de gol cuja posição é Defensor (Zagueiro ou Lateral) foram acertados.
- * Analisa tanto os itens de detalhamento quanto a lista de gols_time_a/b do jogo contra os goleadores_a/b do palpite.
+ * Analisa:
+ * 1. Detalhamento gravado nos palpites (ex: "Gols acertados: Van Hecke (+3 pts - Zagueiro/Lateral)")
+ * 2. Itens com +3 pts no detalhamento ("+3 pts", "+3 pt")
+ * 3. Lista de gols_time_a/b do jogo contra os goleadores_a/b do palpite
+ * 4. Inferência retroativa por pontuação diferenciada: nas planilhas importadas históricas onde a posição
+ *    não foi explicitamente gravada, sempre que um palpite de marcador tiver concedido 3 pontos
+ *    (em vez de 1 ponto concedido para atacantes/médios, contabilizando os +2 pontos bônus por ser defensor),
+ *    identifica esse acerto como gol de defensor.
  */
 export function countMarcadoresDefensoresAcertados(palpite: Palpite, jogo: Jogo): number {
   let count = 0
 
-  // 1. Detalhamento gravado nos palpites (ex: "Gols acertados: Van Hecke (+3 pts - Zagueiro/Lateral)")
+  const detList: string[] = []
   if (Array.isArray(palpite.detalhamento)) {
     for (const item of palpite.detalhamento) {
-      if (typeof item !== 'string') continue
-      // Caso 1a: Detalhamento explícito com cargo/posição
+      if (typeof item === 'string' && item.trim()) {
+        detList.push(item.trim())
+      }
+    }
+  }
+
+  // 1. Detalhamento gravado nos palpites
+  if (detList.length > 0) {
+    for (const item of detList) {
       if (/gol|marcador/i.test(item)) {
-        // Encontrar ocorrências com zagueiro, lateral ou defensor
+        // Caso 1a: Detalhamento explícito com cargo/posição (ex: "Van Hecke (+3 pts - Zagueiro/Lateral)")
         const defRegex =
           /([A-Za-zÀ-ÖØ-öø-ÿ\s'-]+)\s*\(\+\d+\s*pts?\s*-\s*[^)]*(?:zagueiro|lateral|defensor)[^)]*\)/gi
         let match: RegExpExecArray | null
+        let found1a = 0
         while ((match = defRegex.exec(item)) !== null) {
-          count++
+          found1a++
+        }
+        if (found1a > 0) {
+          count += found1a
+          continue
         }
 
-        // Caso 1b: Se tem menção direta a "+3 pts" associada a zagueiro/lateral
-        if (count === 0 && /(?:zagueiro|lateral|defensor)/i.test(item)) {
+        // Caso 1b: Menção explícita a "+3 pts" ou "+3 pt" dentro de item de marcador/gol
+        // (padrão oficial: acerto de defensor sempre rende 3 pontos)
+        const pts3Regex = /\+3\s*pts?/gi
+        let pts3Match: RegExpExecArray | null
+        let pts3Count = 0
+        while ((pts3Match = pts3Regex.exec(item)) !== null) {
+          pts3Count++
+        }
+        if (pts3Count > 0) {
+          count += pts3Count
+          continue
+        }
+
+        // Caso 1c: Menção direta a zagueiro/lateral/defensor no item
+        if (/(?:zagueiro|lateral|defensor)/i.test(item)) {
           const simpleDefMatch = item.match(/(?:zagueiro|lateral|defensor)/gi)
           if (simpleDefMatch) {
             count += simpleDefMatch.length
+            continue
           }
         }
       }
     }
   }
 
-  // 2. Se detalhamento não encontrou ou não possuía posições gravadas, cruzar os dados de gols do jogo com o palpite
+  // 2. Se detalhamento não encontrou posições, cruzar os dados de gols do jogo com o palpite
   if (count === 0) {
     const defenderScorers: Array<{ nome: string; norm: string; used: boolean }> = []
     const collectDefenders = (gols?: any[]) => {
@@ -275,6 +398,88 @@ export function countMarcadoresDefensoresAcertados(palpite: Palpite, jogo: Jogo)
         if (found) {
           found.used = true
           count++
+        }
+      }
+    }
+  }
+
+  // 3. Inferência Retroativa por Pontuação Diferenciada (Planilhas Importadas)
+  // Nas planilhas importadas das 4 copas, os registros de palpites frequentemente têm apenas
+  // strings como "Vencedor, Metade do Placar e gol do Gustavo Henrique" com pontuacao_jogo = 6
+  // (2 de vencedor + 1 de metade = 3 de base => restam 3 pontos de gol).
+  // Sempre que a pontuação total do palpite menos as regras de base revelar pontos de marcadores
+  // em múltiplos de 3 (ou uma combinação onde 3 pontos foram atribuídos a um marcador),
+  // contabilizamos como gol de defensor.
+  if (count === 0 && Number(palpite.pontuacao_jogo) > 0) {
+    // 3a. Verificar se há itens com "gol do X" ou "gols de X e Y" no detalhamento
+    const scorerNamesFromDetails: string[] = []
+    for (const item of detList) {
+      if (/gols?\s+d[oe]\s+/i.test(item)) {
+        const withoutBase = item
+          .replace(/placar exato/gi, '')
+          .replace(/vencedor nos p[eê]naltis/gi, '')
+          .replace(/vencedor/gi, '')
+          .replace(/empate/gi, '')
+          .replace(/metade do placar/gi, '')
+          .replace(/diferen[cç]a de gols/gi, '')
+          .replace(/^[,\s–-]+|[,\s–-]+$/g, '')
+
+        const scorerMatch = withoutBase.match(/gols?\s+d[oe]\s+(.+)/i)
+        if (scorerMatch && scorerMatch[1]) {
+          const names = scorerMatch[1]
+            .split(/\s+e\s+|,/)
+            .map((n) => n.trim().replace(/[.,;)]+$/, ''))
+            .filter(Boolean)
+          scorerNamesFromDetails.push(...names)
+        }
+      }
+    }
+
+    const totalPts = Number(palpite.pontuacao_jogo) || 0
+    const scorerPts = extractScorerPointsFromScoreAndDetails(totalPts, detList, palpite, jogo)
+
+    // Se temos pontos de marcadores identificados:
+    // Exemplo clássico 1: 1 marcador citado e scorerPts === 3 -> exatamente 1 defensor (+3 pts)!
+    // Exemplo clássico 2: 2 marcadores citados e scorerPts === 4 (3 do defensor + 1 do atacante) -> 1 defensor!
+    // Exemplo clássico 3: 2 marcadores citados e scorerPts === 6 (3 + 3) -> 2 defensores!
+    // Exemplo clássico 4: 1 marcador citado e scorerPts === 6 (defensor que fez 2 gols ou 2 acertos) -> 2 defensores!
+    if (scorerPts >= 3) {
+      const numScorersInText = Math.max(1, scorerNamesFromDetails.length)
+
+      if (numScorersInText === 1) {
+        // Ex: 1 jogador citado no detalhamento
+        // Se rendeu 3 pontos -> 1 gol de defensor (+3 pts)
+        // Se rendeu 6 pontos -> 2 gols de defensor (+6 pts)
+        count = Math.floor(scorerPts / 3)
+      } else if (numScorersInText === 2) {
+        // Ex: 2 jogadores citados (ex: "Gustavo Henrique e Pedro Raul")
+        // Se scorerPts === 4: 1 defensor (+3) e 1 atacante (+1) => 1 defensor
+        // Se scorerPts === 6: 2 defensores (+3 + 3) => 2 defensores
+        // Se scorerPts === 3: 1 defensor (+3) => 1 defensor
+        if (scorerPts === 4) {
+          count = 1
+        } else if (scorerPts === 6) {
+          count = 2
+        } else if (scorerPts === 3) {
+          count = 1
+        } else {
+          // Decomposição geral de soma: 3 * def + 1 * atc = scorerPts com (def + atc <= numScorersInText)
+          for (let def = Math.min(numScorersInText, Math.floor(scorerPts / 3)); def >= 1; def--) {
+            const rem = scorerPts - def * 3
+            if (rem >= 0) {
+              count = def
+              break
+            }
+          }
+        }
+      } else {
+        // Mais de 2 marcadores: decompor a soma maximizando ou ajustando defensores de 3 pts
+        for (let def = Math.min(numScorersInText, Math.floor(scorerPts / 3)); def >= 1; def--) {
+          const rem = scorerPts - def * 3
+          if (rem >= 0) {
+            count = def
+            break
+          }
         }
       }
     }
@@ -404,10 +609,21 @@ export function getPontosGols(palpite: Palpite, jogo: Jogo): number {
           foundInMatches = true
         }
         if (!foundInMatches) {
-          // Se é detalhamento de "Gols acertados: Jogador" sem o "+X pt", podemos tentar calcular
-          // ou contar ao menos 1 ponto por gol identificado
-          const countCommas = (item.match(/,/g) || []).length + 1
-          pontosGols += Math.max(1, countCommas)
+          // Se é detalhamento de "Gols acertados: Jogador" ou "gol do X" / "gols de X e Y"
+          // tentar extrair pela pontuação do jogo deduzindo a base
+          const totalPts = Number(palpite.pontuacao_jogo) || 0
+          const inferredGols = extractScorerPointsFromScoreAndDetails(
+            totalPts,
+            palpite.detalhamento,
+            palpite,
+            jogo,
+          )
+          if (inferredGols > 0) {
+            pontosGols += inferredGols
+          } else {
+            const countCommas = (item.match(/,/g) || []).length + 1
+            pontosGols += Math.max(1, countCommas)
+          }
         }
       }
     }

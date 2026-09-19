@@ -400,6 +400,80 @@ describe('statsCalculator', () => {
       collectionName: '',
     }
     expect(countMarcadoresDefensoresAcertados(pSemDetalhamento, jogo)).toBe(1)
+
+    // Caso retroativo de planilha importada:
+    // Placar real: 2x1 (Corinthians x Internacional).
+    // Palpite 1: chutou 2x0, pontuação 6 (2 de vencedor + 1 de metade = 3 de base, sobram 3 pts de marcador)
+    // Detalhamento: ["Vencedor, Metade do Placar e gol do Gustavo Henrique"]
+    const jogoCorinthians: Jogo = {
+      id: 'j_cor',
+      bolao: 'b1',
+      time_a: 'Corinthians',
+      time_b: 'Internacional',
+      data: '2026-09-16',
+      hora: '16:00',
+      placar_a: 2,
+      placar_b: 1,
+      resultado_finalizado: true,
+      tem_penaltis: false,
+      gols_time_a: [],
+      gols_time_b: [],
+      created: '',
+      updated: '',
+      collectionId: '',
+      collectionName: '',
+    }
+    const palpiteGustavoHenrique: Palpite = {
+      id: 'p_gh',
+      bolao: 'b1',
+      jogo: 'j_cor',
+      participante: 'p_davi',
+      placar_a: 2,
+      placar_b: 0,
+      pontuacao_jogo: 6,
+      detalhamento: ['Vencedor, Metade do Placar e gol do Gustavo Henrique'],
+      created: '',
+      updated: '',
+      collectionId: '',
+      collectionName: '',
+    }
+    expect(countMarcadoresDefensoresAcertados(palpiteGustavoHenrique, jogoCorinthians)).toBe(1)
+
+    // Palpite 2: chutou 2x1 (placar exato = 8 pts) + gols de Gustavo Henrique e Pedro Raul (total 12 pts)
+    // 12 - 8 (placar exato) = 4 pts de marcador (3 de defensor + 1 de atacante) => 1 defensor!
+    const palpiteExatoComDoisGols: Palpite = {
+      id: 'p_gh_pr',
+      bolao: 'b1',
+      jogo: 'j_cor',
+      participante: 'p_gabriel',
+      placar_a: 2,
+      placar_b: 1,
+      pontuacao_jogo: 12,
+      detalhamento: ['Placar Exato e gols de Gustavo Henrique e Pedro Raul'],
+      created: '',
+      updated: '',
+      collectionId: '',
+      collectionName: '',
+    }
+    expect(countMarcadoresDefensoresAcertados(palpiteExatoComDoisGols, jogoCorinthians)).toBe(1)
+
+    // Palpite 3: atacante apenas (ex: Kaio Jorge +1 pt, placar exato 8 pts => total 9 pts)
+    // 9 - 8 = 1 pt de marcador => 0 defensores
+    const palpiteAtacante: Palpite = {
+      id: 'p_atacante',
+      bolao: 'b1',
+      jogo: 'j_cor',
+      participante: 'p_bruno',
+      placar_a: 2,
+      placar_b: 1,
+      pontuacao_jogo: 9,
+      detalhamento: ['Placar Exato e gol do Kaio Jorge'],
+      created: '',
+      updated: '',
+      collectionId: '',
+      collectionName: '',
+    }
+    expect(countMarcadoresDefensoresAcertados(palpiteAtacante, jogoCorinthians)).toBe(0)
   })
 
   it('identifies big matches (isGrandeJogo) for playoffs, finals and derbies', () => {
