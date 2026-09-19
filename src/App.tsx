@@ -173,6 +173,7 @@ const App = () => (
             />
 
             {/* Admin Routes (Douglas Only) */}
+            <Route path="/admin/jogos" element={<Navigate to="/bolao/admin/jogos" replace />} />
             <Route
               path="/bolao/admin/jogos"
               element={
