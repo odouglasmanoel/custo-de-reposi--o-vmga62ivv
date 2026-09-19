@@ -1,6 +1,5 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo, useRef } from 'react'
 import { Link } from 'react-router-dom'
-import { useRef } from 'react'
 import {
   Shield,
   Plus,
@@ -19,7 +18,7 @@ import {
 import pb from '@/lib/pocketbase/client'
 import { useActivePool } from '@/context/ActivePoolContext'
 import { useRealtime } from '@/hooks/use-realtime'
-import type { Jogo } from '@/types/bolao'
+import type { Bolao, Jogo } from '@/types/bolao'
 import { formatBolaoLabel } from '@/types/bolao'
 import { formatDataBR, formatHoraBR, sortJogosCadastrados } from '@/lib/dateUtils'
 import {
@@ -46,6 +45,7 @@ import { useToast } from '@/hooks/use-toast'
 export default function AdminJogos() {
   const { boloes, activeBolao, activeBolaoId, setActiveBolaoId, refreshBoloes } = useActivePool()
   const { toast } = useToast()
+  const [boloesLocais, setBoloesLocais] = useState<Bolao[]>([])
 
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [jogos, setJogos] = useState<Jogo[]>(() => {
@@ -105,8 +105,40 @@ export default function AdminJogos() {
     loadJogos()
   })
 
+  // PATCH 1: Carregamento autônomo dos bolões na montagem
+  useEffect(() => {
+    const fetchBoloesLocais = async () => {
+      try {
+        const records = await pb.collection('boloes').getFullList<Bolao>({
+          sort: '-created',
+        })
+        if (records && records.length > 0) {
+          setBoloesLocais(records)
+        }
+      } catch (err) {
+        // try/catch silencioso para não interromper a interface
+        console.warn('Carregamento autônomo de bolões (AdminJogos):', err)
+      }
+    }
+    fetchBoloesLocais()
+  }, [])
+
+  // Merge sem duplicar IDs entre boloesLocais e boloes do contexto
+  const boloesDisponiveis = useMemo(() => {
+    const map = new Map<string, Bolao>()
+    for (const b of boloesLocais) {
+      if (b && b.id) map.set(b.id, b)
+    }
+    for (const b of boloes) {
+      if (b && b.id && !map.has(b.id)) {
+        map.set(b.id, b)
+      }
+    }
+    return Array.from(map.values())
+  }, [boloesLocais, boloes])
+
   const loadJogos = async (overrideBolaoId?: string) => {
-    const targetBolaoId = overrideBolaoId !== undefined ? overrideBolaoId : activeBolaoId
+    const targetBolaoId = overrideBolaoId !== undefined ? overrideBolaoId : activeBolaoId || 'geral'
     if (!targetBolaoId) return
     try {
       const isGeral = targetBolaoId === 'geral'
@@ -122,29 +154,34 @@ export default function AdminJogos() {
     }
   }
 
-  // Validação e auto-seleção de bolão
+  // PATCH 2: Auto-seleção sem conflito
+  // Se activeBolaoId for 'geral' ou um id válido de bolão existente, NÃO reescrever.
+  // Manter 'geral' como default quando nada estiver definido/persistido.
   useEffect(() => {
-    if (boloes.length > 0) {
-      if (
-        !activeBolaoId ||
-        (activeBolaoId !== 'geral' && !boloes.some((b) => b.id === activeBolaoId))
-      ) {
-        const firstBolaoId = boloes[0]?.id
-        if (firstBolaoId) {
-          setActiveBolaoId(firstBolaoId)
-          setLoading(true)
-          loadJogos(firstBolaoId)
-          return
-        }
+    if (!activeBolaoId || activeBolaoId.trim() === '') {
+      setActiveBolaoId('geral')
+      return
+    }
+
+    if (activeBolaoId === 'geral') {
+      return
+    }
+
+    // Se tiver um ID específico, checar se é válido na lista disponível (se já carregada)
+    if (boloesDisponiveis.length > 0) {
+      const isValid = boloesDisponiveis.some((b) => b.id === activeBolaoId)
+      if (!isValid) {
+        // ID inválido/inexistente: fallback seguro para 'geral'
+        setActiveBolaoId('geral')
       }
     }
-  }, [boloes, activeBolaoId, setActiveBolaoId])
+  }, [boloesDisponiveis, activeBolaoId, setActiveBolaoId])
 
+  // PATCH 3: Garantir ciclo de filtragem disparado ao alterar activeBolaoId
   useEffect(() => {
-    if (activeBolaoId) {
-      setLoading(true)
-      loadJogos()
-    }
+    const targetId = activeBolaoId || 'geral'
+    setLoading(true)
+    loadJogos(targetId)
   }, [activeBolaoId])
 
   const handleCreateJogo = async (e: React.FormEvent) => {
@@ -328,6 +365,7 @@ export default function AdminJogos() {
       })
 
       await refreshBoloes()
+      setBoloesLocais((prev) => [created as Bolao, ...prev])
       setActiveBolaoId(created.id)
       setNovoBolaoNome('')
       setNovoBolaoFoco('')
@@ -436,7 +474,7 @@ export default function AdminJogos() {
             </label>
             <select
               id="admin-pool-select"
-              value={activeBolaoId || ''}
+              value={activeBolaoId || 'geral'}
               onChange={(e) => {
                 const newId = e.target.value
                 setActiveBolaoId(newId)
@@ -446,9 +484,13 @@ export default function AdminJogos() {
               className="rounded-lg border border-[#CBD5E1] bg-white px-3 py-1.5 text-xs font-medium text-[#0F2A43] shadow-xs focus:border-[#10B981] focus:outline-none"
             >
               <option value="geral">Geral (Todas as Copas)</option>
-              {boloes.map((b) => (
+              {boloesDisponiveis.map((b) => (
                 <option key={b.id} value={b.id}>
-                  {formatBolaoLabel(b)}
+                  {b.nome
+                    ? b.ativo === false
+                      ? `${b.nome} (Encerrado)`
+                      : b.nome
+                    : formatBolaoLabel(b)}
                 </option>
               ))}
             </select>
