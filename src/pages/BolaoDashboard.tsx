@@ -328,6 +328,16 @@ export default function BolaoDashboard() {
         ),
       )
 
+      // Adiciona fixture_ids de jogos do dia atual mesmo que já tenham sido gravados erroneamente
+      const hojeJogosFixtureIds = relevantGames
+        .filter((j) => isJogoHoje(j.data, Date.now()) && j.fixture_id && j.fixture_id.trim())
+        .map((j) => j.fixture_id!.trim())
+      for (const fid of hojeJogosFixtureIds) {
+        if (!fixtureIdsFromGames.includes(fid)) {
+          fixtureIdsFromGames.push(fid)
+        }
+      }
+
       let url = `${baseUrl}?date=${encodeURIComponent(hojeSP)}`
       if (fixtureIdsFromGames.length > 0) {
         url += `&ids=${encodeURIComponent(fixtureIdsFromGames.join(','))}`
@@ -663,26 +673,7 @@ export default function BolaoDashboard() {
               const newStats = { registrados: reg, pendentes: pend }
               setLastValidStats(newStats)
 
-              // Atualiza em background os jogos passados com placar preenchido que ainda não estavam finalizados
-              const nowForSync = Date.now()
-              allGames.forEach((j) => {
-                if (
-                  !j.resultado_finalizado &&
-                  j.placar_a !== null &&
-                  j.placar_a !== undefined &&
-                  j.placar_b !== null &&
-                  j.placar_b !== undefined
-                ) {
-                  const kick = getJogoKickoffTimestamp(j.data, j.hora)
-                  if (kick !== null && nowForSync >= kick) {
-                    pb.collection('jogos')
-                      .update(j.id, { resultado_finalizado: true })
-                      .catch(() => {
-                        /* silencioso */
-                      })
-                  }
-                }
-              })
+              // Nunca auto-finalizar jogos em background silenciosamente por placar default ou tempo
 
               // Grava em cache de 2 níveis para renderização instantânea nas próximas visitas
               writeDashboardCache(GERAL_BOLAO_ID, {
@@ -746,26 +737,7 @@ export default function BolaoDashboard() {
               const newStats = { registrados: reg, pendentes: pend }
               setLastValidStats(newStats)
 
-              // Atualiza em background os jogos passados com placar preenchido que ainda não estavam finalizados
-              const nowForSync = Date.now()
-              globalGames.forEach((j) => {
-                if (
-                  !j.resultado_finalizado &&
-                  j.placar_a !== null &&
-                  j.placar_a !== undefined &&
-                  j.placar_b !== null &&
-                  j.placar_b !== undefined
-                ) {
-                  const kick = getJogoKickoffTimestamp(j.data, j.hora)
-                  if (kick !== null && nowForSync >= kick) {
-                    pb.collection('jogos')
-                      .update(j.id, { resultado_finalizado: true })
-                      .catch(() => {
-                        /* silencioso */
-                      })
-                  }
-                }
-              })
+              // Nunca auto-finalizar jogos em background silenciosamente por placar default ou tempo
 
               // Grava no cache de 2 níveis
               writeDashboardCache(activeBolaoId, {
@@ -998,48 +970,23 @@ export default function BolaoDashboard() {
   }, [allParticipantes])
 
   // Função unificada que determina se o jogo já foi concluído/finalizado
-  // (via banco de dados, API ao vivo matchedLive ou status textual do jogo, placar preenchido no passado,
-  // sobrescrita manual de admin passada ou partida iniciada há mais de 24h sem status ao vivo)
-  const isJogoConcluido = useCallback(
-    (j: Jogo, matchedLive?: MatchedLiveScore | null): boolean => {
-      if (j.resultado_finalizado) return true
-      if (matchedLive && matchedLive.isFinished) return true
-      if (
-        j.status &&
-        ['ft', 'finished', 'encerrado', 'finalizado'].includes(j.status.toLowerCase().trim())
-      ) {
-        return true
-      }
+  // Regra antifalha estrita:
+  // Saída SOMENTE quando resultado_finalizado === true (Admin via /admin/jogos OU status terminal confirmado da API: FT/AET/PEN/"Match Finished")
+  // Nunca encerra antecipadamente por 0x0 default ou por expiração de tempo dentro da janela de 24h.
+  const isJogoConcluido = useCallback((j: Jogo, matchedLive?: MatchedLiveScore | null): boolean => {
+    if (j.resultado_finalizado) return true
+    if (matchedLive && matchedLive.isFinished) return true
+    if (
+      j.status &&
+      ['ft', 'aet', 'pen', 'finished', 'encerrado', 'finalizado', 'match finished'].includes(
+        j.status.toLowerCase().trim(),
+      )
+    ) {
+      return true
+    }
 
-      const kickoffMs = getJogoKickoffTimestamp(j.data, j.hora)
-
-      // Condição 1: placar_a != null && placar_b != null e data/hora do jogo já passou
-      if (
-        j.placar_a !== null &&
-        j.placar_a !== undefined &&
-        j.placar_b !== null &&
-        j.placar_b !== undefined &&
-        kickoffMs !== null &&
-        nowMs >= kickoffMs
-      ) {
-        return true
-      }
-
-      // Condição 2: existir sobrescrita do admin com data passada
-      if (Boolean(sobrescritasAdmin[j.id]) && kickoffMs !== null && nowMs >= kickoffMs) {
-        return true
-      }
-
-      // Condição 3: partida iniciada há mais de 24h sem status ao vivo
-      const isLive = Boolean(matchedLive && isFixtureLive(matchedLive.statusShort))
-      if (kickoffMs !== null && nowMs - kickoffMs > 24 * 60 * 60 * 1000 && !isLive) {
-        return true
-      }
-
-      return false
-    },
-    [nowMs, sobrescritasAdmin],
-  )
+    return false
+  }, [])
 
   // Jogos cujos palpites foram liberados:
   // SOMENTE jogos pendentes (não concluídos) cujo horário de início já passou (dataHoraAtual >= dataHoraJogo)
@@ -1735,10 +1682,16 @@ export default function BolaoDashboard() {
                     ? sobrescritaJogo.marcadores.join(', ')
                     : ''
                 } else if (matchedLive) {
-                  // (b) Dados reais da API
-                  placarExibido = `${matchedLive.placarA} x ${matchedLive.placarB}`
-                  tituloConfronto = `${jogo.time_a} ${matchedLive.placarA} x ${matchedLive.placarB} ${jogo.time_b}`
-                  tipoFontePlacar = 'api'
+                  // (b) Dados reais da API (só exibe números se informados, nunca 0x0 falso quando null)
+                  if (matchedLive.placarA !== null && matchedLive.placarB !== null) {
+                    placarExibido = `${matchedLive.placarA} x ${matchedLive.placarB}`
+                    tituloConfronto = `${jogo.time_a} ${matchedLive.placarA} x ${matchedLive.placarB} ${jogo.time_b}`
+                    tipoFontePlacar = 'api'
+                  } else {
+                    placarExibido = null
+                    tituloConfronto = `${jogo.time_a} x ${jogo.time_b}`
+                    tipoFontePlacar = 'aguardando'
+                  }
                   marcadoresParaExibir =
                     matchedLive.scorers && matchedLive.scorers.length > 0
                       ? matchedLive.scorers
@@ -1768,9 +1721,19 @@ export default function BolaoDashboard() {
                         ? 'Football-Data.org'
                         : 'API-Football'
 
-                // Status badge: Ao Vivo (API em andamento ou Sobrescrita manual do Admin) ou Encerrado
+                // Status badge: Ao Vivo (API em andamento, Sobrescrita manual do Admin ou nativo por horário kickoff <= agora)
+                const kickoffTimestamp = getJogoKickoffTimestamp(jogo.data, jogo.hora)
+                const isNativamenteInPlay =
+                  kickoffTimestamp !== null &&
+                  nowMs >= kickoffTimestamp &&
+                  !jogo.resultado_finalizado &&
+                  !(matchedLive && matchedLive.isFinished)
+
                 const isStatusAoVivo =
-                  tipoFontePlacar === 'sobrescrita' || Boolean(matchedLive?.isLive)
+                  tipoFontePlacar === 'sobrescrita' ||
+                  Boolean(matchedLive?.isLive) ||
+                  isNativamenteInPlay
+
                 const isStatusEncerrado = Boolean(
                   (matchedLive && matchedLive.isFinished) || jogo.resultado_finalizado,
                 )
@@ -1845,7 +1808,7 @@ export default function BolaoDashboard() {
                             <Badge
                               variant="secondary"
                               className="border border-emerald-400 bg-emerald-50 text-emerald-800 text-[10px] font-bold shadow-2xs flex items-center gap-1.5 animate-pulse"
-                              title={`Partida em andamento via ${providerLabel} (${matchedLive?.statusLong || 'Ao Vivo'}${matchedLive?.matchedBy === 'fixture_id' ? ' • ID Direto' : ''}).`}
+                              title={`Partida em andamento via ${providerLabel} (${matchedLive?.statusLong || (isNativamenteInPlay ? 'Em Andamento' : 'Ao Vivo')}${matchedLive?.matchedBy === 'fixture_id' ? ' • ID Direto' : ''}).`}
                             >
                               <Radio className="h-3 w-3 text-emerald-600" />
                               <span>

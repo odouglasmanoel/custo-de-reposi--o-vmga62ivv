@@ -218,8 +218,8 @@ const MatchRowItem = React.memo(
 
     const showDash = isUpcomingMatch || !hasExplicitHomeScore || !hasExplicitAwayScore
 
-    const homeScore = showDash ? '-' : match.goals?.home
-    const awayScore = showDash ? '-' : match.goals?.away
+    const homeScore = showDash ? '—' : match.goals?.home
+    const awayScore = showDash ? '—' : match.goals?.away
 
     return (
       <div

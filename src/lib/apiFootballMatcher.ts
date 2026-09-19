@@ -61,8 +61,8 @@ export interface MatchedLiveScore {
   awayTeamName: string
   homeTeamLogo?: string
   awayTeamLogo?: string
-  placarA: number
-  placarB: number
+  placarA: number | null
+  placarB: number | null
   statusShort: string
   statusLong: string
   elapsed: number | null
@@ -86,24 +86,24 @@ export function formatFixtureToLiveScore(
   const homeName = fixture.teams?.home?.name || ''
   const awayName = fixture.teams?.away?.name || ''
 
-  // Extrai goals reais atualizados
-  const rawHome =
+  // Extrai goals reais atualizados. Quando null/undefined/indisponível na API, retorna null (nunca 0 falso).
+  const rawHome: number | null =
     fixture.goals?.home != null && !isNaN(Number(fixture.goals.home))
       ? Number(fixture.goals.home)
       : fixture.score?.fulltime?.home != null && !isNaN(Number(fixture.score.fulltime.home))
         ? Number(fixture.score.fulltime.home)
         : fixture.score?.halftime?.home != null && !isNaN(Number(fixture.score.halftime.home))
           ? Number(fixture.score.halftime.home)
-          : 0
+          : null
 
-  const rawAway =
+  const rawAway: number | null =
     fixture.goals?.away != null && !isNaN(Number(fixture.goals.away))
       ? Number(fixture.goals.away)
       : fixture.score?.fulltime?.away != null && !isNaN(Number(fixture.score.fulltime.away))
         ? Number(fixture.score.fulltime.away)
         : fixture.score?.halftime?.away != null && !isNaN(Number(fixture.score.halftime.away))
           ? Number(fixture.score.halftime.away)
-          : 0
+          : null
 
   // Se informado os nomes cadastrados, verifica se time A é home ou away
   let isHomeA = true
@@ -124,13 +124,15 @@ export function formatFixtureToLiveScore(
   const isLive = isFixtureLive(statusShort)
   const isFinished = isFixtureFinished(statusShort, statusLong)
 
-  let displayLabel = `AO VIVO ${placarA} x ${placarB}`
+  const placarLabelStr = placarA !== null && placarB !== null ? `${placarA} x ${placarB}` : '— x —'
+
+  let displayLabel = `AO VIVO ${placarLabelStr}`
   if (statusShort === 'HT' || statusShort === 'PAUSED' || statusLong.toUpperCase() === 'PAUSED') {
-    displayLabel = `AO VIVO (Intervalo) ${placarA} x ${placarB}`
+    displayLabel = `AO VIVO (Intervalo) ${placarLabelStr}`
   } else if (elapsed && isLive) {
-    displayLabel = `AO VIVO ${elapsed}' • ${placarA} x ${placarB}`
+    displayLabel = `AO VIVO ${elapsed}' • ${placarLabelStr}`
   } else if (isFinished) {
-    displayLabel = `Encerrado ${placarA} x ${placarB}`
+    displayLabel = `Encerrado ${placarLabelStr}`
   }
 
   const scorers: LiveScorerItem[] = []
@@ -652,25 +654,24 @@ export function matchGameWithApiFixtures(
   }
 
   const { fixture, isHomeA } = bestMatch
-  // Extrai goals reais atualizados. Se fixture.goals.home/away for null ou undefined,
-  // tenta obter de score.fulltime ou score.halftime antes de recorrer a 0.
-  const rawHome =
+  // Extrai goals reais atualizados. Quando null/undefined/indisponível na API, retorna null (nunca 0 falso).
+  const rawHome: number | null =
     fixture.goals?.home != null && !isNaN(Number(fixture.goals.home))
       ? Number(fixture.goals.home)
       : fixture.score?.fulltime?.home != null && !isNaN(Number(fixture.score.fulltime.home))
         ? Number(fixture.score.fulltime.home)
         : fixture.score?.halftime?.home != null && !isNaN(Number(fixture.score.halftime.home))
           ? Number(fixture.score.halftime.home)
-          : 0
+          : null
 
-  const rawAway =
+  const rawAway: number | null =
     fixture.goals?.away != null && !isNaN(Number(fixture.goals.away))
       ? Number(fixture.goals.away)
       : fixture.score?.fulltime?.away != null && !isNaN(Number(fixture.score.fulltime.away))
         ? Number(fixture.score.fulltime.away)
         : fixture.score?.halftime?.away != null && !isNaN(Number(fixture.score.halftime.away))
           ? Number(fixture.score.halftime.away)
-          : 0
+          : null
 
   const placarA = isHomeA ? rawHome : rawAway
   const placarB = isHomeA ? rawAway : rawHome
@@ -701,7 +702,9 @@ export function matchGameWithApiFixtures(
     longUpper === 'ABANDONED' ||
     longUpper === 'MATCH ABANDONED'
 
-  let displayLabel = `AO VIVO ${placarA} x ${placarB}`
+  const placarLabelStr = placarA !== null && placarB !== null ? `${placarA} x ${placarB}` : '— x —'
+
+  let displayLabel = `AO VIVO ${placarLabelStr}`
   if (isPostponed) {
     displayLabel = 'Adiado'
   } else if (isCancelled) {
@@ -711,11 +714,11 @@ export function matchGameWithApiFixtures(
     statusShort === 'PAUSED' ||
     statusLong.toUpperCase() === 'PAUSED'
   ) {
-    displayLabel = `AO VIVO (Intervalo) ${placarA} x ${placarB}`
+    displayLabel = `AO VIVO (Intervalo) ${placarLabelStr}`
   } else if (elapsed && isLive) {
-    displayLabel = `AO VIVO ${elapsed}' • ${placarA} x ${placarB}`
+    displayLabel = `AO VIVO ${elapsed}' • ${placarLabelStr}`
   } else if (isFinished) {
-    displayLabel = `Encerrado ${placarA} x ${placarB}`
+    displayLabel = `Encerrado ${placarLabelStr}`
   }
 
   // Processamento e formatação de autores dos gols
