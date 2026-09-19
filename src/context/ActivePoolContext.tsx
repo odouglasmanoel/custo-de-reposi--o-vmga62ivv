@@ -80,6 +80,11 @@ export const ActivePoolProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         sort: '-ativo,nome',
       })
       setBoloes(records)
+      try {
+        localStorage.setItem('bolao_cache_boloes', JSON.stringify(records))
+      } catch {
+        /* ignore */
+      }
 
       setSelectedBolaoId((prev) => {
         // Se já houver uma seleção válida e explicitamente setada nesta sessão
@@ -91,6 +96,19 @@ export const ActivePoolProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       })
     } catch (err) {
       console.error('Erro ao carregar bolões:', err)
+      // Fallback em caso de indisponibilidade do backend: recupera do cache local preservado
+      try {
+        const raw =
+          localStorage.getItem('bolao_cache_boloes') || sessionStorage.getItem('bolao_cache_boloes')
+        if (raw) {
+          const parsed = JSON.parse(raw)
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            setBoloes(parsed)
+          }
+        }
+      } catch {
+        /* ignore */
+      }
     } finally {
       setLoading(false)
     }

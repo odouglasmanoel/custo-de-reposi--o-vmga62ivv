@@ -71,7 +71,7 @@ export default function Historico() {
   const { isAdmin } = useAuth()
   const { refreshBoloes: refreshGlobalBoloes } = useActivePool()
 
-  // Bolões conhecidos para fallback instantâneo
+  // Bolões conhecidos para fallback instantâneo (todas as competições históricas do sistema)
   const fallbackBoloesPadrao: Bolao[] = useMemo(
     () => [
       {
@@ -79,6 +79,16 @@ export default function Historico() {
         nome: 'Copa Coni',
         ativo: true,
         foco: 'Jogos Aleatórios',
+        collectionId: 'boloes',
+        collectionName: 'boloes',
+        created: '',
+        updated: '',
+      } as Bolao,
+      {
+        id: 'copa-mundo-fallback',
+        nome: 'Copa do Mundo',
+        ativo: false,
+        foco: 'Seleções Mundiais',
         collectionId: 'boloes',
         collectionName: 'boloes',
         created: '',
