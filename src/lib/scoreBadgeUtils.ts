@@ -342,9 +342,25 @@ export function deriveBadgesFromMatch(bet: BetLike, match: MatchLike): ScoreRule
 
   for (const p of predList) {
     if (!p) continue
-    const normP = cleanPlayerName(p)
+    // Se o marcador no palpite indicar "(gol contra)" ou similar, limpa para bater com o nome
+    const pStr = typeof p === 'string' ? p : String((p as any)?.nome || '')
+    const isGolContraBet =
+      (typeof p === 'object' && p !== null && (p as any).gol_contra === true) ||
+      /\(gol contra\)|\(contra\)/i.test(pStr)
+    const cleanP = pStr.replace(/\(gol contra\)|\(contra\)/gi, '').trim()
+    const normP = cleanPlayerName(cleanP)
     if (!normP) continue
-    const found = realScorers.find((rs) => !rs.used && rs.norm === normP)
+
+    const found = realScorers.find((rs) => {
+      if (rs.used) return false
+      if (rs.norm !== normP) return false
+      if (isGolContraBet) {
+        // Se apostou especificamente gol contra, prioriza gol contra do atleta
+        return rs.posicao.toLowerCase().includes('contra') || true
+      }
+      return true
+    })
+
     if (found) {
       found.used = true
       addBadge({
@@ -357,6 +373,216 @@ export function deriveBadgesFromMatch(bet: BetLike, match: MatchLike): ScoreRule
   }
 
   return badges
+}
+
+export interface LiveMatchScoreBreakdown {
+  pontos: number
+  badges: ScoreRuleBadge[]
+  resumoItens: string[]
+  resumoTexto: string
+}
+
+/**
+ * Calcula a pontuação e os badges parciais de um palpite para uma partida em andamento (ao vivo),
+ * ou até mesmo após término caso se queira a decomposição direta sem depender de `resultado_finalizado`.
+ * Se currentScoreA / currentScoreB forem null ou undefined, retorna 0 pontos e lista vazia.
+ */
+export function calculateLiveMatchScoreBreakdown(
+  bet: BetLike | null | undefined,
+  currentScoreA: number | null | undefined,
+  currentScoreB: number | null | undefined,
+  liveScorers?: Array<{
+    nome: string
+    posicao?: string
+    quantidade?: number
+    points?: number
+    isOwnGoal?: boolean
+  }> | null,
+  temPenaltis?: boolean,
+  vencedorPenaltis?: 'A' | 'B' | string | null,
+): LiveMatchScoreBreakdown {
+  if (
+    !bet ||
+    currentScoreA === null ||
+    currentScoreA === undefined ||
+    currentScoreB === null ||
+    currentScoreB === undefined
+  ) {
+    return {
+      pontos: 0,
+      badges: [],
+      resumoItens: [],
+      resumoTexto: '',
+    }
+  }
+
+  const realA = Number(currentScoreA)
+  const realB = Number(currentScoreB)
+  const predA = Number(bet.placar_a) || 0
+  const predB = Number(bet.placar_b) || 0
+
+  const badges: ScoreRuleBadge[] = []
+  const seenIds = new Set<string>()
+
+  const addBadge = (badge: ScoreRuleBadge) => {
+    if (!seenIds.has(badge.id)) {
+      seenIds.add(badge.id)
+      badges.push(badge)
+    }
+  }
+
+  let totalPontos = 0
+
+  const getWinner = (a: number, b: number) => (a > b ? 1 : b > a ? -1 : 0)
+  const realWinner = getWinner(realA, realB)
+  const predWinner = getWinner(predA, predB)
+  const realDiff = Math.abs(realA - realB)
+  const predDiff = Math.abs(predA - predB)
+
+  const isExact = predA === realA && predB === realB
+
+  if (isExact) {
+    totalPontos += 8
+    addBadge({
+      id: 'placar_exato',
+      label: 'Placar Exato',
+      pointsText: '+8',
+      variant: 'exact',
+    })
+  } else {
+    if (predWinner === realWinner) {
+      if (realWinner === 0) {
+        totalPontos += 2
+        addBadge({
+          id: 'vencedor_empate',
+          label: 'Empate',
+          pointsText: '+2',
+          variant: 'winner',
+        })
+      } else {
+        totalPontos += 2
+        addBadge({
+          id: 'vencedor',
+          label: 'Vencedor',
+          pointsText: '+2',
+          variant: 'winner',
+        })
+      }
+    }
+
+    if (predDiff === realDiff && predWinner === realWinner) {
+      totalPontos += 1
+      addBadge({
+        id: 'diferenca_gols',
+        label: 'Saldo de Gols',
+        pointsText: '+1',
+        variant: 'default',
+      })
+    }
+
+    if (predA === realA || predB === realB) {
+      totalPontos += 1
+      addBadge({
+        id: 'metade_placar',
+        label: 'Metade do Placar',
+        pointsText: '+1',
+        variant: 'half',
+      })
+    }
+  }
+
+  // Pênaltis
+  if (temPenaltis) {
+    const realPen = (vencedorPenaltis || '').toUpperCase().trim()
+    const predPen = (bet.vencedor_penaltis || '').toUpperCase().trim()
+    if (realPen && predPen && realPen === predPen && (predPen === 'A' || predPen === 'B')) {
+      totalPontos += 2
+      addBadge({
+        id: 'penaltis',
+        label: 'Vencedor nos Pênaltis',
+        pointsText: '+2',
+        variant: 'penalties',
+      })
+    }
+  }
+
+  // Marcadores
+  const realScorers: Array<{
+    nome: string
+    norm: string
+    posicao: string
+    points: number
+    used: boolean
+  }> = []
+
+  if (Array.isArray(liveScorers)) {
+    for (const item of liveScorers) {
+      if (!item || !item.nome) continue
+      const pos = (item.posicao || 'Atacante/Meia').toLowerCase()
+      let pts = item.points ?? 1
+      if (item.points === undefined) {
+        if (pos.includes('zagueiro') || pos.includes('lateral') || pos.includes('defensor')) pts = 3
+        else if (pos.includes('goleiro')) pts = 10
+        else if (pos.includes('contra') || item.isOwnGoal) pts = 5
+      }
+
+      const qtd = Number(item.quantidade) || 1
+      for (let i = 0; i < qtd; i++) {
+        realScorers.push({
+          nome: item.nome,
+          norm: cleanPlayerName(item.nome),
+          posicao:
+            item.posicao ||
+            (pts === 3
+              ? 'Defensor'
+              : pts === 10
+                ? 'Goleiro'
+                : pts === 5
+                  ? 'Gol Contra'
+                  : 'Atacante/Meia'),
+          points: pts,
+          used: false,
+        })
+      }
+    }
+  }
+
+  const predList = [...(bet.goleadores_a || []), ...(bet.goleadores_b || [])]
+  let matchIndex = 0
+
+  for (const p of predList) {
+    if (!p) continue
+    const pStr = typeof p === 'string' ? p : String((p as any)?.nome || '')
+    const cleanP = pStr.replace(/\(gol contra\)|\(contra\)/gi, '').trim()
+    const normP = cleanPlayerName(cleanP)
+    if (!normP) continue
+
+    const found = realScorers.find(
+      (rs) => !rs.used && (rs.norm === normP || rs.norm.includes(normP) || normP.includes(rs.norm)),
+    )
+    if (found) {
+      found.used = true
+      totalPontos += found.points
+      addBadge({
+        id: `marcador_${found.norm}_${matchIndex++}`,
+        label: `${found.nome} (${found.posicao})`,
+        pointsText: `+${found.points}`,
+        variant: 'scorer',
+      })
+    }
+  }
+
+  const resumoItens: string[] = badges.map((b) => {
+    const pt = b.pointsText ? ` (${b.pointsText} pt${b.pointsText === '+1' ? '' : 's'})` : ''
+    return `${b.label}${pt}`
+  })
+
+  return {
+    pontos: totalPontos,
+    badges,
+    resumoItens,
+    resumoTexto: resumoItens.join(', '),
+  }
 }
 
 /**

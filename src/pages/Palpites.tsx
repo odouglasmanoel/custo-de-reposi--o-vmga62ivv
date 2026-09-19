@@ -31,6 +31,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Badge } from '@/components/ui/badge'
+import { Checkbox } from '@/components/ui/checkbox'
 import { useToast } from '@/hooks/use-toast'
 import {
   formatDataBR,
@@ -53,6 +54,8 @@ interface PalpiteFormData {
   placar_b: number | string
   goleadores_a: string[]
   goleadores_b: string[]
+  goleadores_contra_a?: boolean[]
+  goleadores_contra_b?: boolean[]
   vencedor_penaltis: 'A' | 'B' | 'N' | string
 }
 
@@ -110,30 +113,50 @@ function writeLocalCache(
   }
 }
 
-function normalizeScorersArray(raw: any, goalCount: number): string[] {
-  let currentList: string[] = []
+function normalizeScorersArray(
+  raw: any,
+  goalCount: number,
+): { names: string[]; contraFlags: boolean[] } {
+  let rawList: any[] = []
   if (Array.isArray(raw)) {
-    currentList = raw.map((x) => String(x || '').trim())
+    rawList = raw
   } else if (typeof raw === 'string' && raw.trim()) {
-    // Pode ser JSON stringificado ou texto separado por vírgula
     try {
       const parsed = JSON.parse(raw)
       if (Array.isArray(parsed)) {
-        currentList = parsed.map((x) => String(x || '').trim())
+        rawList = parsed
       } else {
-        currentList = raw.split(',').map((s) => s.trim())
+        rawList = raw.split(',').map((s) => s.trim())
       }
     } catch (_) {
-      currentList = raw.split(',').map((s) => s.trim())
+      rawList = raw.split(',').map((s) => s.trim())
     }
   }
 
-  if (goalCount <= 0) return []
-  const result: string[] = []
-  for (let i = 0; i < goalCount; i++) {
-    result.push(currentList[i] ?? '')
+  const names: string[] = []
+  const contraFlags: boolean[] = []
+
+  if (goalCount <= 0) {
+    return { names: [], contraFlags: [] }
   }
-  return result
+
+  for (let i = 0; i < goalCount; i++) {
+    const item = rawList[i]
+    if (item && typeof item === 'object') {
+      const nome = String(item.nome || '').trim()
+      const isContra = Boolean(item.gol_contra || item.posicao === 'Gol Contra')
+      names.push(nome)
+      contraFlags.push(isContra)
+    } else {
+      const str = String(item || '').trim()
+      const isContra = /\(gol contra\)|\(contra\)/i.test(str)
+      const clean = str.replace(/\(gol contra\)|\(contra\)/gi, '').trim()
+      names.push(clean)
+      contraFlags.push(isContra)
+    }
+  }
+
+  return { names, contraFlags }
 }
 
 export default function Palpites() {
@@ -551,11 +574,15 @@ export default function Palpites() {
             for (const p of myPalpites) {
               const gA = p.placar_a !== null && p.placar_a !== undefined ? Number(p.placar_a) : 0
               const gB = p.placar_b !== null && p.placar_b !== undefined ? Number(p.placar_b) : 0
+              const normA = normalizeScorersArray(p.goleadores_a, gA)
+              const normB = normalizeScorersArray(p.goleadores_b, gB)
               nextFormDataMap[p.jogo] = {
                 placar_a: p.placar_a ?? '',
                 placar_b: p.placar_b ?? '',
-                goleadores_a: normalizeScorersArray(p.goleadores_a, gA),
-                goleadores_b: normalizeScorersArray(p.goleadores_b, gB),
+                goleadores_a: normA.names,
+                goleadores_b: normB.names,
+                goleadores_contra_a: normA.contraFlags,
+                goleadores_contra_b: normB.contraFlags,
                 vencedor_penaltis: p.vencedor_penaltis || 'N',
               }
             }
@@ -669,11 +696,15 @@ export default function Palpites() {
             for (const p of myPalpites) {
               const gA = p.placar_a !== null && p.placar_a !== undefined ? Number(p.placar_a) : 0
               const gB = p.placar_b !== null && p.placar_b !== undefined ? Number(p.placar_b) : 0
+              const normA = normalizeScorersArray(p.goleadores_a, gA)
+              const normB = normalizeScorersArray(p.goleadores_b, gB)
               nextFormDataMap[p.jogo] = {
                 placar_a: p.placar_a ?? '',
                 placar_b: p.placar_b ?? '',
-                goleadores_a: normalizeScorersArray(p.goleadores_a, gA),
-                goleadores_b: normalizeScorersArray(p.goleadores_b, gB),
+                goleadores_a: normA.names,
+                goleadores_b: normB.names,
+                goleadores_contra_a: normA.contraFlags,
+                goleadores_contra_b: normB.contraFlags,
                 vencedor_penaltis: p.vencedor_penaltis || 'N',
               }
             }
@@ -749,24 +780,33 @@ export default function Palpites() {
 
       if (team === 'a') {
         const goalCount = typeof valNum === 'number' ? valNum : 0
-        const updatedList = normalizeScorersArray(cur.goleadores_a, goalCount)
+        const updated = normalizeScorersArray(cur.goleadores_a, goalCount)
+        // Preserva flags existentes se houver
+        const nextContraFlags = Array.from({ length: goalCount }).map(
+          (_, i) => cur.goleadores_contra_a?.[i] ?? updated.contraFlags[i] ?? false,
+        )
         return {
           ...prev,
           [jogoId]: {
             ...cur,
             placar_a: valNum,
-            goleadores_a: updatedList,
+            goleadores_a: updated.names,
+            goleadores_contra_a: nextContraFlags,
           },
         }
       } else {
         const goalCount = typeof valNum === 'number' ? valNum : 0
-        const updatedList = normalizeScorersArray(cur.goleadores_b, goalCount)
+        const updated = normalizeScorersArray(cur.goleadores_b, goalCount)
+        const nextContraFlags = Array.from({ length: goalCount }).map(
+          (_, i) => cur.goleadores_contra_b?.[i] ?? updated.contraFlags[i] ?? false,
+        )
         return {
           ...prev,
           [jogoId]: {
             ...cur,
             placar_b: valNum,
-            goleadores_b: updatedList,
+            goleadores_b: updated.names,
+            goleadores_contra_b: nextContraFlags,
           },
         }
       }
@@ -806,6 +846,45 @@ export default function Palpites() {
           [jogoId]: {
             ...cur,
             goleadores_b: list,
+          },
+        }
+      }
+    })
+  }
+
+  const handleScorerContraChange = (
+    jogoId: string,
+    team: 'a' | 'b',
+    index: number,
+    checked: boolean,
+  ) => {
+    setFormData((prev) => {
+      const cur = prev[jogoId] || {
+        placar_a: '',
+        placar_b: '',
+        goleadores_a: [],
+        goleadores_b: [],
+        vencedor_penaltis: 'N',
+      }
+
+      if (team === 'a') {
+        const flags = [...(cur.goleadores_contra_a || [])]
+        flags[index] = checked
+        return {
+          ...prev,
+          [jogoId]: {
+            ...cur,
+            goleadores_contra_a: flags,
+          },
+        }
+      } else {
+        const flags = [...(cur.goleadores_contra_b || [])]
+        flags[index] = checked
+        return {
+          ...prev,
+          [jogoId]: {
+            ...cur,
+            goleadores_contra_b: flags,
           },
         }
       }
@@ -903,13 +982,29 @@ export default function Palpites() {
       const numA = Number(currentForm.placar_a)
       const numB = Number(currentForm.placar_b)
 
-      // Regras de marcadores:
-      // Se gols > 0: lista de marcadores (suporta repetidos, ex: "Pedro Raul, Pedro Raul")
-      // Se gols == 0: string vazia "" ou null (nunca lista de objetos vazios)
-      const gA =
-        numA > 0 ? (currentForm.goleadores_a || []).map((s) => s.trim()).filter(Boolean) : []
-      const gB =
-        numB > 0 ? (currentForm.goleadores_b || []).map((s) => s.trim()).filter(Boolean) : []
+      // Regras de marcadores com suporte a "Gol Contra":
+      // Se o marcador estiver marcado como gol contra, formata com "Nome (gol contra)"
+      const gA: string[] = []
+      if (numA > 0 && Array.isArray(currentForm.goleadores_a)) {
+        for (let i = 0; i < numA; i++) {
+          const rawName = (currentForm.goleadores_a[i] || '').trim()
+          if (!rawName) continue
+          const isContra = Boolean(currentForm.goleadores_contra_a?.[i])
+          const cleanName = rawName.replace(/\(gol contra\)|\(contra\)/gi, '').trim()
+          gA.push(isContra ? `${cleanName} (gol contra)` : cleanName)
+        }
+      }
+
+      const gB: string[] = []
+      if (numB > 0 && Array.isArray(currentForm.goleadores_b)) {
+        for (let i = 0; i < numB; i++) {
+          const rawName = (currentForm.goleadores_b[i] || '').trim()
+          if (!rawName) continue
+          const isContra = Boolean(currentForm.goleadores_contra_b?.[i])
+          const cleanName = rawName.replace(/\(gol contra\)|\(contra\)/gi, '').trim()
+          gB.push(isContra ? `${cleanName} (gol contra)` : cleanName)
+        }
+      }
 
       // Marcadores time A e B: texto simples separado por vírgulas ("" ou null quando o time fez 0 gols, incluindo o caso 0x0)
       const marcadoresTimeA = numA > 0 ? gA.join(', ') : ''
@@ -1133,6 +1228,7 @@ export default function Palpites() {
         onCancelEditing,
         onScoreChange,
         onScorerLineChange,
+        onScorerContraChange,
         onPenaltisChange,
         onSavePalpite,
         onAdminEdit,
@@ -1172,6 +1268,12 @@ export default function Palpites() {
         onCancelEditing: (id: string, palpite: Palpite | undefined) => void
         onScoreChange: (jogoId: string, side: 'a' | 'b', val: string) => void
         onScorerLineChange: (jogoId: string, side: 'a' | 'b', index: number, val: string) => void
+        onScorerContraChange: (
+          jogoId: string,
+          side: 'a' | 'b',
+          index: number,
+          checked: boolean,
+        ) => void
         onPenaltisChange: (jogoId: string, val: string) => void
         onSavePalpite: (jogo: Jogo) => void
         onAdminEdit: (data: {
@@ -1807,6 +1909,7 @@ export default function Palpites() {
                             <div className="space-y-2">
                               {Array.from({ length: numGolsA }).map((_, idx) => {
                                 const currentScorer = form.goleadores_a?.[idx] || ''
+                                const isContra = Boolean(form.goleadores_contra_a?.[idx])
                                 const lineupCheck = checkPlayerInLineup(
                                   currentScorer,
                                   currentLineup?.teams?.[0],
@@ -1858,6 +1961,24 @@ export default function Palpites() {
                                           </div>
                                         )}
                                       </div>
+                                      <label className="flex items-center gap-1.5 shrink-0 cursor-pointer select-none text-[11px] font-medium text-slate-700 hover:text-slate-950">
+                                        <Checkbox
+                                          disabled={isLocked}
+                                          checked={isContra}
+                                          onCheckedChange={(checked) =>
+                                            onScorerContraChange(
+                                              jogo.id,
+                                              'a',
+                                              idx,
+                                              Boolean(checked),
+                                            )
+                                          }
+                                          className="h-3.5 w-3.5 rounded border-slate-300 data-[state=checked]:bg-rose-600 data-[state=checked]:border-rose-600"
+                                        />
+                                        <span className="text-[10px] text-slate-600">
+                                          Gol Contra
+                                        </span>
+                                      </label>
                                     </div>
                                     {/* Badge explicativa discreta se houver match */}
                                     {isStarter && (
@@ -1914,6 +2035,7 @@ export default function Palpites() {
                             <div className="space-y-2">
                               {Array.from({ length: numGolsB }).map((_, idx) => {
                                 const currentScorer = form.goleadores_b?.[idx] || ''
+                                const isContra = Boolean(form.goleadores_contra_b?.[idx])
                                 const lineupCheck = checkPlayerInLineup(
                                   currentScorer,
                                   currentLineup?.teams?.[1],
@@ -1965,6 +2087,24 @@ export default function Palpites() {
                                           </div>
                                         )}
                                       </div>
+                                      <label className="flex items-center gap-1.5 shrink-0 cursor-pointer select-none text-[11px] font-medium text-slate-700 hover:text-slate-950">
+                                        <Checkbox
+                                          disabled={isLocked}
+                                          checked={isContra}
+                                          onCheckedChange={(checked) =>
+                                            onScorerContraChange(
+                                              jogo.id,
+                                              'b',
+                                              idx,
+                                              Boolean(checked),
+                                            )
+                                          }
+                                          className="h-3.5 w-3.5 rounded border-slate-300 data-[state=checked]:bg-rose-600 data-[state=checked]:border-rose-600"
+                                        />
+                                        <span className="text-[10px] text-slate-600">
+                                          Gol Contra
+                                        </span>
+                                      </label>
                                     </div>
                                     {/* Badge explicativa discreta se houver match */}
                                     {isStarter && (
@@ -2082,6 +2222,8 @@ export default function Palpites() {
           prev.form.vencedor_penaltis === next.form.vencedor_penaltis &&
           prev.form.goleadores_a?.join(',') === next.form.goleadores_a?.join(',') &&
           prev.form.goleadores_b?.join(',') === next.form.goleadores_b?.join(',') &&
+          prev.form.goleadores_contra_a?.join(',') === next.form.goleadores_contra_a?.join(',') &&
+          prev.form.goleadores_contra_b?.join(',') === next.form.goleadores_contra_b?.join(',') &&
           prev.expandedDetails === next.expandedDetails &&
           prev.selectedBetId === next.selectedBetId &&
           prev.isGroupBetsExpanded === next.isGroupBetsExpanded &&
@@ -2408,13 +2550,17 @@ export default function Palpites() {
                       p.placar_a !== null && p.placar_a !== undefined ? Number(p.placar_a) : 0
                     const gB =
                       p.placar_b !== null && p.placar_b !== undefined ? Number(p.placar_b) : 0
+                    const normA = normalizeScorersArray(p.goleadores_a, gA)
+                    const normB = normalizeScorersArray(p.goleadores_b, gB)
                     setFormData((prev) => ({
                       ...prev,
                       [id]: {
                         placar_a: p.placar_a ?? '',
                         placar_b: p.placar_b ?? '',
-                        goleadores_a: normalizeScorersArray(p.goleadores_a, gA),
-                        goleadores_b: normalizeScorersArray(p.goleadores_b, gB),
+                        goleadores_a: normA.names,
+                        goleadores_b: normB.names,
+                        goleadores_contra_a: normA.contraFlags,
+                        goleadores_contra_b: normB.contraFlags,
                         vencedor_penaltis: p.vencedor_penaltis || 'N',
                       },
                     }))
@@ -2426,6 +2572,7 @@ export default function Palpites() {
                 }}
                 onScoreChange={handleScoreChange}
                 onScorerLineChange={handleScorerLineChange}
+                onScorerContraChange={handleScorerContraChange}
                 onPenaltisChange={handlePenaltisChange}
                 onSavePalpite={handleSavePalpite}
                 onAdminEdit={setAdminEditingPalpite}

@@ -49,6 +49,7 @@ import {
   getPalpiteMarcadoresPorTime,
   splitMatchScorersByTeam,
 } from '@/lib/scorerUtils'
+import { calculateLiveMatchScoreBreakdown } from '@/lib/scoreBadgeUtils'
 import {
   resolveLiveScoreForGame,
   isFixtureLive,
@@ -836,9 +837,150 @@ export default function BolaoDashboard() {
     }
   }, [activeBolaoId, loadData])
 
-  // Dynamic leaderboard calculation (SUM of valid finished games + imported points)
+  // Mapa de pontuação ao vivo acumulada por participanteId para jogos em andamento
+  // (kickoff já iniciado e !resultado_finalizado com placar válido na API, sobrescrita ou banco)
+  const liveScoresBreakdownByBetId = useMemo(() => {
+    const map = new Map<
+      string,
+      {
+        pontos: number
+        badges: any[]
+        resumoTexto: string
+        resumoItens: string[]
+        hasScore: boolean
+      }
+    >()
+
+    const targetGames = isGeral ? allJogos : jogos
+
+    for (const jogo of targetGames) {
+      const jogoDataISO = normalizeDataISO(jogo.data)
+      const matchedLive = resolveLiveScoreForGame(jogo, apiFixtures, 0.55, jogoDataISO)
+      const sobrescrita = sobrescritasAdmin[jogo.id]
+
+      const placarA =
+        sobrescrita != null
+          ? sobrescrita.placar_a
+          : matchedLive?.placarA != null
+            ? matchedLive.placarA
+            : jogo.placar_a != null
+              ? Number(jogo.placar_a)
+              : null
+
+      const placarB =
+        sobrescrita != null
+          ? sobrescrita.placar_b
+          : matchedLive?.placarB != null
+            ? matchedLive.placarB
+            : jogo.placar_b != null
+              ? Number(jogo.placar_b)
+              : null
+
+      const splitScorers = splitMatchScorersByTeam({
+        teamAName: jogo.time_a,
+        teamBName: jogo.time_b,
+        placarA,
+        placarB,
+        sobrescritaMarcadoresA: sobrescrita?.marcadores_a ?? null,
+        sobrescritaMarcadoresB: sobrescrita?.marcadores_b ?? null,
+        sobrescritaMarcadores: sobrescrita?.marcadores ?? null,
+        liveScorers: matchedLive?.scorers ?? null,
+        golsBancoA: (jogo as any).gols_time_a ?? null,
+        golsBancoB: (jogo as any).gols_time_b ?? null,
+        marcadoresBancoLegado: jogo.marcadores ?? null,
+      })
+
+      const liveScorersUnified: Array<{
+        nome: string
+        posicao?: string
+        quantidade?: number
+        points?: number
+      }> = [
+        ...splitScorers.scorersA.map((rawStr) => {
+          const str = String(rawStr || '').trim()
+          const posMatch = str.match(/\(([^)]+)\)$/)
+          const rawPos = posMatch ? posMatch[1].toLowerCase() : ''
+          const nomeClean = str.replace(/\s*\([^)]+\)$/, '').trim()
+          let pts = 1
+          if (rawPos.includes('contra')) pts = 5
+          else if (rawPos.includes('goleiro')) pts = 10
+          else if (
+            rawPos.includes('defensor') ||
+            rawPos.includes('zagueiro') ||
+            rawPos.includes('lateral')
+          )
+            pts = 3
+          return {
+            nome: nomeClean,
+            posicao: rawPos || 'Atacante',
+            quantidade: 1,
+            points: pts,
+          }
+        }),
+        ...splitScorers.scorersB.map((rawStr) => {
+          const str = String(rawStr || '').trim()
+          const posMatch = str.match(/\(([^)]+)\)$/)
+          const rawPos = posMatch ? posMatch[1].toLowerCase() : ''
+          const nomeClean = str.replace(/\s*\([^)]+\)$/, '').trim()
+          let pts = 1
+          if (rawPos.includes('contra')) pts = 5
+          else if (rawPos.includes('goleiro')) pts = 10
+          else if (
+            rawPos.includes('defensor') ||
+            rawPos.includes('zagueiro') ||
+            rawPos.includes('lateral')
+          )
+            pts = 3
+          return {
+            nome: nomeClean,
+            posicao: rawPos || 'Atacante',
+            quantidade: 1,
+            points: pts,
+          }
+        }),
+      ]
+
+      const gameBets = palpites.filter((p) => p.jogo === jogo.id)
+      for (const bet of gameBets) {
+        if (placarA === null || placarB === null) {
+          map.set(bet.id, {
+            pontos: 0,
+            badges: [],
+            resumoTexto: '',
+            resumoItens: [],
+            hasScore: false,
+          })
+        } else {
+          const breakdown = calculateLiveMatchScoreBreakdown(
+            bet,
+            placarA,
+            placarB,
+            liveScorersUnified,
+            jogo.tem_penaltis,
+            (jogo as any).vencedor_penaltis,
+          )
+          map.set(bet.id, {
+            ...breakdown,
+            hasScore: true,
+          })
+        }
+      }
+    }
+
+    return map
+  }, [isGeral, allJogos, jogos, palpites, apiFixtures, sobrescritasAdmin])
+
+  // Dynamic leaderboard calculation (SUM of valid finished games + imported points + PONTUAÇÃO AO VIVO)
   // Otimizado com pré-indexação por participante em O(N) para SUM e COUNT instantâneos
   const rankingParticipantes = useMemo(() => {
+    // Jogos atualmente em andamento: kickoff já iniciado e !resultado_finalizado
+    const targetGames = isGeral ? allJogos : jogos
+    const liveGameIds = new Set(
+      targetGames
+        .filter((j) => !j.resultado_finalizado && isPalpiteEncerrado(j.data, j.hora, nowMs))
+        .map((j) => j.id),
+    )
+
     if (isGeral) {
       // Visão Geral: agregar os 4 participantes em todas as copas
       const finishedGameIds = new Set(
@@ -847,10 +989,17 @@ export default function BolaoDashboard() {
 
       // Pré-agrega palpites finalizados por participante: Map<participanteId, sumPontos> em O(P)
       const pointsByParticipantId = new Map<string, number>()
+      const livePointsByParticipantId = new Map<string, number>()
+
       for (const p of palpites) {
         if (finishedGameIds.has(p.jogo)) {
           const current = pointsByParticipantId.get(p.participante) || 0
           pointsByParticipantId.set(p.participante, current + (Number(p.pontuacao_jogo) || 0))
+        } else if (liveGameIds.has(p.jogo)) {
+          const liveBreakdown = liveScoresBreakdownByBetId.get(p.id)
+          const livePts = liveBreakdown?.pontos || 0
+          const currentLive = livePointsByParticipantId.get(p.participante) || 0
+          livePointsByParticipantId.set(p.participante, currentLive + livePts)
         }
       }
 
@@ -867,13 +1016,16 @@ export default function BolaoDashboard() {
           // Soma de pontos importados de todas as copas para este membro
           let totalImportados = 0
           let sumPalpites = 0
+          let sumAoVivo = 0
 
           for (const rec of memberPartRecords) {
             totalImportados += Number(rec.pontos_importados) || 0
             sumPalpites += pointsByParticipantId.get(rec.id) || 0
+            sumAoVivo += livePointsByParticipantId.get(rec.id) || 0
           }
 
-          const pontuacaoConsolidada = totalImportados + sumPalpites
+          const pontuacaoBase = totalImportados + sumPalpites
+          const pontuacaoConsolidada = pontuacaoBase + sumAoVivo
 
           return {
             id: memberPartRecords[0]?.id || `geral-${memberName}`,
@@ -881,11 +1033,13 @@ export default function BolaoDashboard() {
             nome: memberName,
             pontos_importados: totalImportados,
             pontuacao_total: pontuacaoConsolidada,
+            pontos_ao_vivo: sumAoVivo,
+            pontuacao_base: pontuacaoBase,
             collectionId: '',
             collectionName: 'participantes',
             created: '',
             updated: '',
-          } as Participante
+          } as Participante & { pontos_ao_vivo?: number; pontuacao_base?: number }
         })
         .sort((a, b) => {
           if (b.pontuacao_total !== a.pontuacao_total) {
@@ -900,10 +1054,17 @@ export default function BolaoDashboard() {
 
     // Pré-agrega palpites finalizados por participante em O(P)
     const pointsByParticipantId = new Map<string, number>()
+    const livePointsByParticipantId = new Map<string, number>()
+
     for (const p of palpites) {
       if (finishedGameIds.has(p.jogo)) {
         const current = pointsByParticipantId.get(p.participante) || 0
         pointsByParticipantId.set(p.participante, current + (Number(p.pontuacao_jogo) || 0))
+      } else if (liveGameIds.has(p.jogo)) {
+        const liveBreakdown = liveScoresBreakdownByBetId.get(p.id)
+        const livePts = liveBreakdown?.pontos || 0
+        const currentLive = livePointsByParticipantId.get(p.participante) || 0
+        livePointsByParticipantId.set(p.participante, currentLive + livePts)
       }
     }
 
@@ -933,20 +1094,26 @@ export default function BolaoDashboard() {
       }
     }
 
-    const consolidated: Participante[] = []
+    const consolidated: Array<Participante & { pontos_ao_vivo?: number; pontuacao_base?: number }> =
+      []
     for (const [normName, group] of groupedByMember.entries()) {
       let sumPalpites = 0
+      let sumAoVivo = 0
       for (const pId of group.allPartIds) {
         sumPalpites += pointsByParticipantId.get(pId) || 0
+        sumAoVivo += livePointsByParticipantId.get(pId) || 0
       }
 
-      const pontuacaoDinamica = group.totalImported + sumPalpites
+      const pontuacaoBase = group.totalImported + sumPalpites
+      const pontuacaoDinamica = pontuacaoBase + sumAoVivo
 
       consolidated.push({
         ...group.primaryPart,
         nome: normName,
         pontos_importados: group.totalImported,
         pontuacao_total: pontuacaoDinamica,
+        pontos_ao_vivo: sumAoVivo,
+        pontuacao_base: pontuacaoBase,
       })
     }
 
@@ -956,7 +1123,16 @@ export default function BolaoDashboard() {
       }
       return a.nome.localeCompare(b.nome)
     })
-  }, [isGeral, participantes, jogos, palpites, allJogos, allParticipantes])
+  }, [
+    isGeral,
+    participantes,
+    jogos,
+    palpites,
+    allJogos,
+    allParticipantes,
+    nowMs,
+    liveScoresBreakdownByBetId,
+  ])
 
   // Mapa de bolões para nomes rápidos
   const bolaoMap = useMemo(() => {
@@ -2288,6 +2464,8 @@ export default function BolaoDashboard() {
                               nomeParticipante.trim().toLowerCase() ===
                                 participantName.trim().toLowerCase()
 
+                            const liveBreakdown = liveScoresBreakdownByBetId.get(bet.id)
+
                             return (
                               <div
                                 key={bet.id}
@@ -2379,6 +2557,36 @@ export default function BolaoDashboard() {
                                     </div>
                                   )
                                 })()}
+                                {/* Detalhamento da pontuação parcial / ao vivo */}
+                                <div className="mt-2 pt-2 border-t border-slate-200/80">
+                                  {liveBreakdown && liveBreakdown.hasScore ? (
+                                    <div className="space-y-1">
+                                      <div className="flex items-center justify-between">
+                                        <span className="text-[10px] font-bold text-emerald-800">
+                                          +{liveBreakdown.pontos} pt
+                                          {liveBreakdown.pontos === 1 ? '' : 's'} parciais
+                                        </span>
+                                        {liveBreakdown.pontos > 0 && (
+                                          <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                                        )}
+                                      </div>
+                                      {liveBreakdown.resumoItens.length > 0 ? (
+                                        <p className="text-[10px] text-slate-600 leading-tight">
+                                          {liveBreakdown.resumoItens.join(', ')}
+                                        </p>
+                                      ) : (
+                                        <p className="text-[10px] text-slate-400 italic">
+                                          Nenhum acerto parcial no momento (0 pts)
+                                        </p>
+                                      )}
+                                    </div>
+                                  ) : (
+                                    <div className="flex items-center justify-between text-[10px] text-slate-400 italic">
+                                      <span>Aguardando início</span>
+                                      <span className="font-semibold">-</span>
+                                    </div>
+                                  )}
+                                </div>
                               </div>
                             )
                           })}
@@ -2467,11 +2675,18 @@ export default function BolaoDashboard() {
                         </div>
 
                         {/* Points */}
-                        <div className="text-right">
-                          <span className="text-lg font-black text-[#0F2A43]">
-                            {part.pontuacao_total}
-                          </span>
-                          <span className="ml-1 text-xs font-medium text-slate-500">pts</span>
+                        <div className="text-right flex flex-col items-end">
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-lg font-black text-[#0F2A43]">
+                              {part.pontuacao_total}
+                            </span>
+                            <span className="text-xs font-medium text-slate-500">pts</span>
+                          </div>
+                          {(part as any).pontos_ao_vivo > 0 && (
+                            <span className="text-xs text-emerald-600 font-semibold leading-tight">
+                              (+{(part as any).pontos_ao_vivo} ao vivo)
+                            </span>
+                          )}
                         </div>
                       </div>
                     )

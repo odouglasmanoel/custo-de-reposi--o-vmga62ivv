@@ -3,6 +3,7 @@ import {
   parseDetalhamentoStrings,
   deriveBadgesFromMatch,
   getScoreBreakdownBadges,
+  calculateLiveMatchScoreBreakdown,
 } from './scoreBadgeUtils'
 
 describe('scoreBadgeUtils', () => {
@@ -162,6 +163,70 @@ describe('scoreBadgeUtils', () => {
       )
       expect(badges.length).toBeGreaterThanOrEqual(1)
       expect(badges[0].id).toBe('placar_exato')
+    })
+  })
+
+  describe('calculateLiveMatchScoreBreakdown', () => {
+    it('retorna 0 pontos e vazio se placar não iniciado (null)', () => {
+      const res = calculateLiveMatchScoreBreakdown(
+        { placar_a: 2, placar_b: 1, pontuacao_jogo: 0 },
+        null,
+        null,
+      )
+      expect(res.pontos).toBe(0)
+      expect(res.badges).toHaveLength(0)
+      expect(res.resumoTexto).toBe('')
+    })
+
+    it('calcula pontos ao vivo com placar parcial e marcadores com pesos de posições', () => {
+      // Palpite: 2x1 (goleador Raphinha)
+      // Placar parcial: 2x0 (Raphinha marcou 1)
+      // Pontos esperados: Vencedor (+2) + Metade (+1) + Raphinha (+1 atacante) = +4 parciais
+      const res = calculateLiveMatchScoreBreakdown(
+        {
+          placar_a: 2,
+          placar_b: 1,
+          pontuacao_jogo: 0,
+          goleadores_a: ['Raphinha'],
+        },
+        2,
+        0,
+        [{ nome: 'Raphinha', posicao: 'Atacante', quantidade: 1 }],
+      )
+      expect(res.pontos).toBe(4)
+      expect(res.badges.some((b) => b.id === 'vencedor')).toBe(true)
+      expect(res.badges.some((b) => b.id === 'metade_placar')).toBe(true)
+      expect(res.resumoTexto).toContain('Vencedor (+2 pts)')
+      expect(res.resumoTexto).toContain('Metade do Placar (+1 pt)')
+      expect(res.resumoTexto).toContain('Raphinha (Atacante) (+1 pt)')
+    })
+
+    it('aplica pontuações de zagueiro (+3), goleiro (+10) e gol contra (+5)', () => {
+      const res = calculateLiveMatchScoreBreakdown(
+        {
+          placar_a: 3,
+          placar_b: 0,
+          pontuacao_jogo: 0,
+          goleadores_a: ['Gómez', 'Cássio', 'Lyanco (gol contra)'],
+        },
+        3,
+        0,
+        [
+          { nome: 'Gómez', posicao: 'Defensor', quantidade: 1 },
+          { nome: 'Cássio', posicao: 'Goleiro', quantidade: 1 },
+          { nome: 'Lyanco', posicao: 'Gol Contra', quantidade: 1 },
+        ],
+      )
+      // Placar exato: +8
+      // Gómez: +3
+      // Cássio: +10
+      // Lyanco (gol contra): +5
+      // Total: 8 + 3 + 10 + 5 = 26
+      expect(res.pontos).toBe(26)
+      expect(res.badges.some((b) => b.id === 'placar_exato')).toBe(true)
+      expect(res.resumoTexto).toContain('Gómez (Defensor) (+3 pts)')
+      expect(res.resumoTexto).toContain('Cássio (Goleiro) (+10 pts)')
+      expect(res.resumoTexto).toContain('Lyanco (Gol Contra) (+5 pts)')
     })
   })
 })

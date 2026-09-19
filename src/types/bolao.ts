@@ -22,8 +22,17 @@ export function formatBolaoLabel(bolao: { nome: string; foco?: string; ativo?: b
 
 export interface ScorerItem {
   nome: string
-  posicao: 'Atacante/Meia' | 'Zagueiro/Lateral' | 'Goleiro' | 'Gol Contra' | string
-  quantidade: number
+  posicao?:
+    | 'Atacante'
+    | 'Meio-campista'
+    | 'Defensor'
+    | 'Goleiro'
+    | 'Gol Contra'
+    | 'Atacante/Meia'
+    | 'Zagueiro/Lateral'
+    | string
+  quantidade?: number
+  gol_contra?: boolean
 }
 
 export interface Jogo extends RecordModel {

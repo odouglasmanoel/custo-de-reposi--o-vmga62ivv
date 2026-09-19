@@ -1,12 +1,20 @@
 import { useState, useEffect } from 'react'
-import { Edit3, Loader2, Save, User, ShieldCheck } from 'lucide-react'
+import { Loader2, Save, User, ShieldCheck } from 'lucide-react'
 import pb from '@/lib/pocketbase/client'
 import type { Palpite } from '@/types/bolao'
 import { extractScorerNames } from '@/lib/scorerUtils'
+import { invalidateStatsCache } from '@/services/stats'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Badge } from '@/components/ui/badge'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import {
   Dialog,
   DialogContent,
@@ -27,6 +35,69 @@ interface AdminEditMarcadoresModalProps {
   onSuccess?: (updatedPalpite: Palpite) => void
 }
 
+interface ScorerInputState {
+  nome: string
+  posicao: 'Atacante' | 'Meio-campista' | 'Defensor' | 'Goleiro'
+}
+
+const POSICOES_DISPONIVEIS: Array<{
+  value: 'Atacante' | 'Meio-campista' | 'Defensor' | 'Goleiro'
+  label: string
+}> = [
+  { value: 'Atacante', label: 'Atacante (+1 pt)' },
+  { value: 'Meio-campista', label: 'Meio-campista (+1 pt)' },
+  { value: 'Defensor', label: 'Defensor / Lateral (+3 pts)' },
+  { value: 'Goleiro', label: 'Goleiro (+10 pts)' },
+]
+
+function inferPosicaoFromNameOrItem(
+  raw: any,
+): 'Atacante' | 'Meio-campista' | 'Defensor' | 'Goleiro' {
+  if (raw && typeof raw === 'object' && raw.posicao) {
+    const p = String(raw.posicao).toLowerCase()
+    if (p.includes('goleiro')) return 'Goleiro'
+    if (p.includes('defensor') || p.includes('zagueiro') || p.includes('lateral')) return 'Defensor'
+    if (p.includes('meio') || p.includes('meia')) return 'Meio-campista'
+    return 'Atacante'
+  }
+  const str = String(typeof raw === 'string' ? raw : raw?.nome || '').toLowerCase()
+  if (str.includes('goleiro')) return 'Goleiro'
+  if (str.includes('zagueiro') || str.includes('lateral') || str.includes('defensor'))
+    return 'Defensor'
+  if (str.includes('meio') || str.includes('meia')) return 'Meio-campista'
+  return 'Atacante'
+}
+
+function parseRawScorerList(raw: any, count: number): ScorerInputState[] {
+  const extracted = extractScorerNames(raw)
+  const slots = Math.max(count, extracted.length)
+  const result: ScorerInputState[] = []
+
+  let rawArray: any[] = []
+  if (Array.isArray(raw)) {
+    rawArray = raw
+  } else if (typeof raw === 'string' && raw.trim().startsWith('[')) {
+    try {
+      const parsed = JSON.parse(raw)
+      if (Array.isArray(parsed)) rawArray = parsed
+    } catch {
+      rawArray = []
+    }
+  }
+
+  for (let i = 0; i < slots; i++) {
+    const itemRaw = rawArray[i]
+    const fallbackName = extracted[i] || ''
+    const cleanName = fallbackName.replace(/\(gol contra\)|\(contra\)/gi, '').trim()
+    result.push({
+      nome: cleanName,
+      posicao: inferPosicaoFromNameOrItem(itemRaw || fallbackName),
+    })
+  }
+
+  return result
+}
+
 export function AdminEditMarcadoresModal({
   open,
   onOpenChange,
@@ -38,8 +109,8 @@ export function AdminEditMarcadoresModal({
 }: AdminEditMarcadoresModalProps) {
   const { toast } = useToast()
   const [saving, setSaving] = useState(false)
-  const [scorersA, setScorersA] = useState<string[]>([])
-  const [scorersB, setScorersB] = useState<string[]>([])
+  const [scorersA, setScorersA] = useState<ScorerInputState[]>([])
+  const [scorersB, setScorersB] = useState<ScorerInputState[]>([])
 
   const placarA = Math.max(0, Number(palpite?.placar_a) || 0)
   const placarB = Math.max(0, Number(palpite?.placar_b) || 0)
@@ -47,40 +118,23 @@ export function AdminEditMarcadoresModal({
   // Preenche os marcadores ao abrir o modal
   useEffect(() => {
     if (palpite && open) {
-      const extractedA = extractScorerNames(palpite.goleadores_a)
-      const extractedB = extractScorerNames(palpite.goleadores_b)
-
-      // Garante quantidade de inputs proporcional aos gols indicados no palpite
-      // (se placarA for 2, teremos no mínimo 2 slots, ou se extraídos > placar, mantém todos)
-      const slotsA = Math.max(placarA, extractedA.length)
-      const initialA: string[] = []
-      for (let i = 0; i < slotsA; i++) {
-        initialA.push(extractedA[i] || '')
-      }
-
-      const slotsB = Math.max(placarB, extractedB.length)
-      const initialB: string[] = []
-      for (let i = 0; i < slotsB; i++) {
-        initialB.push(extractedB[i] || '')
-      }
-
-      setScorersA(initialA)
-      setScorersB(initialB)
+      setScorersA(parseRawScorerList(palpite.goleadores_a, placarA))
+      setScorersB(parseRawScorerList(palpite.goleadores_b, placarB))
     }
   }, [palpite, open, placarA, placarB])
 
-  const handleUpdateScorerA = (idx: number, val: string) => {
+  const handleUpdateScorerA = (idx: number, patch: Partial<ScorerInputState>) => {
     setScorersA((prev) => {
       const next = [...prev]
-      next[idx] = val
+      next[idx] = { ...next[idx], ...patch }
       return next
     })
   }
 
-  const handleUpdateScorerB = (idx: number, val: string) => {
+  const handleUpdateScorerB = (idx: number, patch: Partial<ScorerInputState>) => {
     setScorersB((prev) => {
       const next = [...prev]
-      next[idx] = val
+      next[idx] = { ...next[idx], ...patch }
       return next
     })
   }
@@ -91,8 +145,8 @@ export function AdminEditMarcadoresModal({
 
     try {
       // Limpa espaços e remove itens totalmente vazios além do limite de gols
-      const cleanA = scorersA.map((s) => s.trim()).filter(Boolean)
-      const cleanB = scorersB.map((s) => s.trim()).filter(Boolean)
+      const cleanA = scorersA.filter((s) => s.nome.trim().length > 0).map((s) => s.nome.trim())
+      const cleanB = scorersB.filter((s) => s.nome.trim().length > 0).map((s) => s.nome.trim())
 
       // Atualiza o palpite no banco PocketBase
       const updatedRecord = await pb.collection('palpites').update<Palpite>(palpite.id, {
@@ -100,9 +154,49 @@ export function AdminEditMarcadoresModal({
         goleadores_b: cleanB,
       })
 
-      // Se o jogo já estiver finalizado, aciona recálculo imediato de pontuação para manter tudo consistente
+      // Atualiza também no jogo as posições dos marcadores cadastrados em jogos.gols_time_a / gols_time_b
       try {
         const game = await pb.collection('jogos').getOne(palpite.jogo)
+        const existingGolsA: any[] = Array.isArray((game as any).gols_time_a)
+          ? (game as any).gols_time_a
+          : []
+        const existingGolsB: any[] = Array.isArray((game as any).gols_time_b)
+          ? (game as any).gols_time_b
+          : []
+
+        // Mapeia novas posições informadas pelo Admin
+        const newGolsA = existingGolsA.map((g: any) => {
+          const matchA = scorersA.find(
+            (s) =>
+              s.nome.trim().toLowerCase() ===
+              String(g.nome || '')
+                .trim()
+                .toLowerCase(),
+          )
+          return matchA
+            ? { nome: g.nome, posicao: matchA.posicao, quantidade: g.quantidade || 1 }
+            : g
+        })
+
+        const newGolsB = existingGolsB.map((g: any) => {
+          const matchB = scorersB.find(
+            (s) =>
+              s.nome.trim().toLowerCase() ===
+              String(g.nome || '')
+                .trim()
+                .toLowerCase(),
+          )
+          return matchB
+            ? { nome: g.nome, posicao: matchB.posicao, quantidade: g.quantidade || 1 }
+            : g
+        })
+
+        await pb.collection('jogos').update(game.id, {
+          gols_time_a: newGolsA,
+          gols_time_b: newGolsB,
+        })
+
+        // Se o jogo já estiver finalizado, aciona recálculo imediato de pontuação para manter tudo consistente
         if (game.resultado_finalizado) {
           const headers: Record<string, string> = {
             'Content-Type': 'application/json',
@@ -117,12 +211,19 @@ export function AdminEditMarcadoresModal({
           })
         }
       } catch (errCalc) {
-        console.warn('Aviso: recalculo após edição de marcadores:', errCalc)
+        console.warn('Aviso: atualização de jogo e recálculo após edição de marcadores:', errCalc)
+      }
+
+      // Invalida cache de estatísticas para cards e tabela refletirem imediatamente
+      try {
+        invalidateStatsCache()
+      } catch (e) {
+        console.warn('Erro ao invalidar cache de estatísticas:', e)
       }
 
       toast({
         title: 'Marcadores atualizados!',
-        description: `Grafia dos marcadores do palpite de ${nomeParticipante || 'Participante'} salva com sucesso.`,
+        description: `Marcadores e posições do palpite de ${nomeParticipante || 'Participante'} salvos com sucesso.`,
       })
 
       if (onSuccess) {
@@ -199,18 +300,37 @@ export function AdminEditMarcadoresModal({
               Nenhum marcador a preencher (0 gols).
             </p>
           ) : (
-            <div className="space-y-1.5">
-              {scorersA.map((val, idx) => (
-                <div key={idx} className="flex items-center gap-2">
-                  <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-slate-200 text-[10px] font-bold text-slate-700">
-                    {idx + 1}º
-                  </span>
-                  <Input
-                    value={val}
-                    onChange={(e) => handleUpdateScorerA(idx, e.target.value)}
-                    placeholder={`Nome padronizado do ${idx + 1}º marcador`}
-                    className="h-8 text-xs bg-white border-slate-300 focus-visible:border-[#10B981] focus-visible:ring-[#10B981]"
-                  />
+            <div className="space-y-2">
+              {scorersA.map((item, idx) => (
+                <div key={idx} className="flex flex-col sm:flex-row sm:items-center gap-2">
+                  <div className="flex items-center gap-2 flex-1">
+                    <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-slate-200 text-[10px] font-bold text-slate-700">
+                      {idx + 1}º
+                    </span>
+                    <Input
+                      value={item.nome}
+                      onChange={(e) => handleUpdateScorerA(idx, { nome: e.target.value })}
+                      placeholder={`Nome do ${idx + 1}º marcador`}
+                      className="h-8 text-xs bg-white border-slate-300 focus-visible:border-[#10B981] focus-visible:ring-[#10B981]"
+                    />
+                  </div>
+                  <div className="sm:w-52 ml-8 sm:ml-0">
+                    <Select
+                      value={item.posicao}
+                      onValueChange={(val: any) => handleUpdateScorerA(idx, { posicao: val })}
+                    >
+                      <SelectTrigger className="h-8 text-[11px] bg-slate-50 border-slate-300">
+                        <SelectValue placeholder="Selecione a posição" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {POSICOES_DISPONIVEIS.map((p) => (
+                          <SelectItem key={p.value} value={p.value} className="text-xs">
+                            {p.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
                 </div>
               ))}
             </div>
@@ -232,18 +352,37 @@ export function AdminEditMarcadoresModal({
               Nenhum marcador a preencher (0 gols).
             </p>
           ) : (
-            <div className="space-y-1.5">
-              {scorersB.map((val, idx) => (
-                <div key={idx} className="flex items-center gap-2">
-                  <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-slate-200 text-[10px] font-bold text-slate-700">
-                    {idx + 1}º
-                  </span>
-                  <Input
-                    value={val}
-                    onChange={(e) => handleUpdateScorerB(idx, e.target.value)}
-                    placeholder={`Nome padronizado do ${idx + 1}º marcador`}
-                    className="h-8 text-xs bg-white border-slate-300 focus-visible:border-[#10B981] focus-visible:ring-[#10B981]"
-                  />
+            <div className="space-y-2">
+              {scorersB.map((item, idx) => (
+                <div key={idx} className="flex flex-col sm:flex-row sm:items-center gap-2">
+                  <div className="flex items-center gap-2 flex-1">
+                    <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-slate-200 text-[10px] font-bold text-slate-700">
+                      {idx + 1}º
+                    </span>
+                    <Input
+                      value={item.nome}
+                      onChange={(e) => handleUpdateScorerB(idx, { nome: e.target.value })}
+                      placeholder={`Nome do ${idx + 1}º marcador`}
+                      className="h-8 text-xs bg-white border-slate-300 focus-visible:border-[#10B981] focus-visible:ring-[#10B981]"
+                    />
+                  </div>
+                  <div className="sm:w-52 ml-8 sm:ml-0">
+                    <Select
+                      value={item.posicao}
+                      onValueChange={(val: any) => handleUpdateScorerB(idx, { posicao: val })}
+                    >
+                      <SelectTrigger className="h-8 text-[11px] bg-slate-50 border-slate-300">
+                        <SelectValue placeholder="Selecione a posição" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {POSICOES_DISPONIVEIS.map((p) => (
+                          <SelectItem key={p.value} value={p.value} className="text-xs">
+                            {p.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
                 </div>
               ))}
             </div>

@@ -31,7 +31,20 @@ export function extractScorerNames(raw: any): string[] {
   if (!raw) return []
   if (Array.isArray(raw)) {
     return raw
-      .map((item) => (typeof item === 'string' ? item.trim() : String(item?.nome || '').trim()))
+      .map((item) => {
+        if (typeof item === 'string') {
+          return item.trim()
+        }
+        if (item && typeof item === 'object') {
+          const nome = String(item.nome || '').trim()
+          if (!nome) return ''
+          if (item.gol_contra || item.posicao === 'Gol Contra') {
+            return `${nome} (gol contra)`
+          }
+          return nome
+        }
+        return String(item || '').trim()
+      })
       .filter((s) => s.length > 0)
   }
   if (typeof raw === 'string') {
