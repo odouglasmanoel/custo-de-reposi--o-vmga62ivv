@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-09-20T20:32:34.609Z",
+  "generatedAt": "2026-09-20T20:44:52.306Z",
   "collections": [
     {
       "name": "users",
@@ -493,7 +493,7 @@
           "type": "select",
           "required": true,
           "system": false,
-          "selectValues": ["football_data", "thesportsdb", "api_football"]
+          "selectValues": ["api_football"]
         },
         {
           "name": "api_key",

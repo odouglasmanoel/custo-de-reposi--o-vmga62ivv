@@ -386,39 +386,13 @@ routerAdd(
         }
       }
 
-      // 1. Recupera as chaves das APIs
+      // 1. Recupera exclusivamente a chave da API-Football
       var apiKey = ''
-      var footballDataKey = ''
-      var theSportsDbKey = '3'
 
       try {
         var configRec = $app.findFirstRecordByData('config_integracoes', 'chave', 'placar_ao_vivo')
         if (configRec) {
           apiKey = (configRec.getString('api_key') || '').trim()
-        }
-      } catch (_) {}
-
-      try {
-        var fdRec = $app.findFirstRecordByData(
-          'config_integracoes',
-          'chave',
-          'football_data_fallback',
-        )
-        if (fdRec) {
-          var fKey = (fdRec.getString('api_key') || '').trim()
-          if (fKey) footballDataKey = fKey
-        }
-      } catch (_) {}
-
-      try {
-        var tsdbRec = $app.findFirstRecordByData(
-          'config_integracoes',
-          'chave',
-          'thesportsdb_fallback',
-        )
-        if (tsdbRec) {
-          var k = (tsdbRec.getString('api_key') || '').trim()
-          if (k) theSportsDbKey = k
         }
       } catch (_) {}
 
@@ -428,28 +402,6 @@ routerAdd(
             apiKey = ($secrets.get('API_FOOTBALL_KEY') || '').trim()
           } else {
             apiKey = ($os.getenv('API_FOOTBALL_KEY') || '').trim()
-          }
-        } catch (_) {}
-      }
-
-      if (!footballDataKey) {
-        try {
-          if ($secrets && $secrets.has && $secrets.has('FOOTBALL_DATA_KEY')) {
-            footballDataKey = ($secrets.get('FOOTBALL_DATA_KEY') || '').trim()
-          } else {
-            footballDataKey = ($os.getenv('FOOTBALL_DATA_KEY') || '').trim()
-          }
-        } catch (_) {}
-      }
-
-      if (!theSportsDbKey || theSportsDbKey === '3') {
-        try {
-          if ($secrets && $secrets.has && $secrets.has('THESPORTSDB_KEY')) {
-            var tk = ($secrets.get('THESPORTSDB_KEY') || '').trim()
-            if (tk) theSportsDbKey = tk
-          } else {
-            var tkEnv = ($os.getenv('THESPORTSDB_KEY') || '').trim()
-            if (tkEnv) theSportsDbKey = tkEnv
           }
         } catch (_) {}
       }

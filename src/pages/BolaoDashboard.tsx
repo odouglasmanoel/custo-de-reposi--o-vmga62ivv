@@ -231,10 +231,10 @@ export default function BolaoDashboard() {
   const lastFetchTimeRef = useRef<number>(0)
   const prevDashboardScopeRef = useRef<string>(currentTargetKey)
 
-  // Live score state via API de futebol (Football-Data.org / TheSportsDB / API-Football)
+  // Live score state via API de futebol (API-Football exclusiva)
   const [apiFixtures, setApiFixtures] = useState<ApiFootballFixture[]>([])
   const [apiConfigured, setApiConfigured] = useState<boolean | null>(null)
-  const [apiProvider, setApiProvider] = useState<string>('football_data')
+  const [apiProvider, setApiProvider] = useState<string>('api_football')
 
   // Mapa de escudos dos times em cache / sob demanda
   const [escudosMap, setEscudosMap] = useState<Record<string, string>>(() => {
