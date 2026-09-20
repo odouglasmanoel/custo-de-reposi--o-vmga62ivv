@@ -71,9 +71,16 @@ const POSICOES_DISPONIVEIS: Array<{
 export function inferPosicaoFromNameOrItem(raw: any): PersistedPosicao {
   if (raw && typeof raw === 'object' && raw.posicao) {
     const p = String(raw.posicao).trim().toLowerCase()
-    if (p === 'g' || p.includes('goleiro')) return 'Goleiro'
-    if (p === 'd' || p.includes('defensor') || p.includes('zagueiro') || p.includes('lateral'))
+    if (p === 'g' || p === 'goleiro' || p.includes('goleiro')) return 'Goleiro'
+    if (
+      p === 'd' ||
+      p === 'defensor' ||
+      p.includes('defensor') ||
+      p.includes('zagueiro') ||
+      p.includes('lateral')
+    ) {
       return 'Defensor'
+    }
     // 'A', 'Meio-campista', 'Meia', 'Atacante' ou outros caem em 'Atacante'
     return 'Atacante'
   }
@@ -126,9 +133,30 @@ export function parseRawScorerList(raw: any, count: number): ScorerInputState[] 
 
     const cleanName = (fallbackName || rawString).replace(/\(gol contra\)|\(contra\)/gi, '').trim()
 
+    // Se o item for objeto com posição explícita válida, usar direto a posição
+    let posicao: PersistedPosicao
+    if (itemRaw && typeof itemRaw === 'object' && itemRaw.posicao && !isGolContra) {
+      const posStr = String(itemRaw.posicao).trim().toLowerCase()
+      if (
+        posStr === 'defensor' ||
+        posStr === 'd' ||
+        posStr.includes('defensor') ||
+        posStr.includes('zagueiro') ||
+        posStr.includes('lateral')
+      ) {
+        posicao = 'Defensor'
+      } else if (posStr === 'goleiro' || posStr === 'g' || posStr.includes('goleiro')) {
+        posicao = 'Goleiro'
+      } else {
+        posicao = 'Atacante'
+      }
+    } else {
+      posicao = inferPosicaoFromNameOrItem(itemRaw || fallbackName)
+    }
+
     result.push({
       nome: cleanName,
-      posicao: inferPosicaoFromNameOrItem(itemRaw || fallbackName),
+      posicao,
       gol_contra: isGolContra,
     })
   }

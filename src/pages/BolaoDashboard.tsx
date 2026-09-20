@@ -3087,8 +3087,10 @@ export default function BolaoDashboard() {
         nomeParticipante={adminEditingPalpite?.participanteNome}
         timeA={adminEditingPalpite?.timeA}
         timeB={adminEditingPalpite?.timeB}
-        onSuccess={() => {
-          loadData()
+        onSuccess={(updatedRecord) => {
+          setAdminEditingPalpite((prev) => (prev ? { ...prev, palpite: updatedRecord } : null))
+          setPalpites((prev) => prev.map((p) => (p.id === updatedRecord.id ? updatedRecord : p)))
+          loadData(true)
         }}
       />
     </div>

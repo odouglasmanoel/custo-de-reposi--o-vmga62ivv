@@ -967,7 +967,9 @@ export default function AdminResultado() {
         nomeParticipante={editingPalpite?.participanteNome}
         timeA={jogo.time_a}
         timeB={jogo.time_b}
-        onSuccess={() => {
+        onSuccess={(updatedRecord) => {
+          setEditingPalpite((prev) => (prev ? { ...prev, palpite: updatedRecord } : null))
+          setPalpites((prev) => prev.map((p) => (p.id === updatedRecord.id ? updatedRecord : p)))
           loadGameData(jogo.id)
         }}
       />

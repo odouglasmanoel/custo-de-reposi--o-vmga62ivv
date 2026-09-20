@@ -1009,6 +1009,7 @@ export default function Historico() {
         timeA={editingPalpite?.timeA}
         timeB={editingPalpite?.timeB}
         onSuccess={(updated) => {
+          setEditingPalpite((prev) => (prev ? { ...prev, palpite: updated } : null))
           setPalpites((prev) => {
             const nextBets = prev.map((p) => (p.id === updated.id ? updated : p))
             if (selectedBolao) {

@@ -2618,8 +2618,18 @@ export default function Palpites() {
         nomeParticipante={adminEditingPalpite?.participanteNome}
         timeA={adminEditingPalpite?.timeA}
         timeB={adminEditingPalpite?.timeB}
-        onSuccess={() => {
-          loadData(1, false, false)
+        onSuccess={(updatedRecord) => {
+          setAdminEditingPalpite((prev) => (prev ? { ...prev, palpite: updatedRecord } : null))
+          setAllGroupPalpites((prev) =>
+            prev.map((p) => (p.id === updatedRecord.id ? updatedRecord : p)),
+          )
+          setPalpites((prev) => {
+            if (prev[updatedRecord.jogo]) {
+              return { ...prev, [updatedRecord.jogo]: updatedRecord }
+            }
+            return prev
+          })
+          loadData(1, true, false)
         }}
       />
     </div>
