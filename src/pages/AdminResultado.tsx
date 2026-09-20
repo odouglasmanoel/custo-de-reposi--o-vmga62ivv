@@ -206,8 +206,12 @@ export default function AdminResultado() {
   const allPredictedNames = Array.from(
     new Set(
       palpites.flatMap((p) => [
-        ...(Array.isArray(p.goleadores_a) ? p.goleadores_a : []),
-        ...(Array.isArray(p.goleadores_b) ? p.goleadores_b : []),
+        ...(Array.isArray(p.goleadores_a)
+          ? p.goleadores_a.map((g) => (typeof g === 'string' ? g : g?.nome || ''))
+          : []),
+        ...(Array.isArray(p.goleadores_b)
+          ? p.goleadores_b.map((g) => (typeof g === 'string' ? g : g?.nome || ''))
+          : []),
       ]),
     ),
   ).filter(Boolean)

@@ -321,6 +321,23 @@ describe('dateUtils - Jogos de Hoje e Fuso de Brasília', () => {
       expect(sorted[2].id).toBe('jogo_16_01')
     })
 
+    it('ordena decrescente exatamente conforme exemplo do usuário: 20/09 16h00 antes de 20/09 15h45, antes de 19/09 18h00, antes de 16/09 16h00', () => {
+      const jogosExemplo = [
+        { id: 'j_16_16h', data: '2026-09-16', hora: '16:00', resultado_finalizado: true },
+        { id: 'j_20_15h45', data: '2026-09-20', hora: '15:45', resultado_finalizado: true },
+        { id: 'j_19_18h', data: '2026-09-19', hora: '18:00', resultado_finalizado: true },
+        { id: 'j_20_16h00', data: '2026-09-20', hora: '16:00', resultado_finalizado: true },
+      ]
+
+      const ordenados = sortJogosDecrescente(jogosExemplo)
+      expect(ordenados.map((j) => j.id)).toEqual([
+        'j_20_16h00', // 20/09 16:00
+        'j_20_15h45', // 20/09 15:45
+        'j_19_18h', // 19/09 18:00
+        'j_16_16h', // 16/09 16:00
+      ])
+    })
+
     it('reordena jogos corretamente alternando entre asc (crescente) e desc (decrescente)', () => {
       const getGameTimestampMs = (jogo: { data: string; hora: string }): number => {
         const dataISO = normalizeDataISO(jogo.data)

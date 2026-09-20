@@ -12,7 +12,7 @@ import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { formatDataBR, formatHoraBR, formatDateTimeBR } from '@/lib/dateUtils'
+import { formatDataBR, formatHoraBR, formatDateTimeBR, sortJogosDecrescente } from '@/lib/dateUtils'
 import { getPalpiteMarcadoresPorTime, splitMatchScorersByTeam } from '@/lib/scorerUtils'
 import { AdminEditMarcadoresModal } from '@/components/AdminEditMarcadoresModal'
 import { getScoreBreakdownBadges } from '@/lib/scoreBadgeUtils'
@@ -158,6 +158,8 @@ export default function Historico() {
   )
   const [jogos, setJogos] = useState<Jogo[]>(() => initialPoolCache?.jogos || [])
   const [palpites, setPalpites] = useState<Palpite[]>(() => initialPoolCache?.palpites || [])
+
+  const jogosOrdenadosDecrescente = useMemo(() => sortJogosDecrescente(jogos), [jogos])
 
   const [editingPalpite, setEditingPalpite] = useState<{
     palpite: Palpite
@@ -678,7 +680,7 @@ export default function Historico() {
 
               {/* Tab 2: Resultados */}
               <TabsContent value="resultados" className="space-y-4">
-                {jogos.length === 0 ? (
+                {jogosOrdenadosDecrescente.length === 0 ? (
                   hasLoadedCurrentPool ? (
                     <div className="rounded-xl border border-dashed border-slate-300 bg-slate-50 py-10 text-center text-xs text-slate-500">
                       Nenhum jogo cadastrado para esta edição histórica. As planilhas históricas
@@ -699,7 +701,7 @@ export default function Historico() {
                   )
                 ) : (
                   <div className="divide-y divide-slate-200 rounded-xl border border-slate-200 overflow-hidden">
-                    {jogos.map((jogo) => {
+                    {jogosOrdenadosDecrescente.map((jogo) => {
                       const gameBets = palpites.filter((p) => p.jogo === jogo.id)
 
                       const penWinnerTeam =

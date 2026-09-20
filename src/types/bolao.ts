@@ -65,8 +65,8 @@ export interface Palpite extends RecordModel {
   participante: string
   placar_a: number
   placar_b: number
-  goleadores_a?: string[]
-  goleadores_b?: string[]
+  goleadores_a?: Array<string | ScorerItem>
+  goleadores_b?: Array<string | ScorerItem>
   vencedor_penaltis?: 'A' | 'B' | 'N' | string
   pontuacao_jogo: number
   detalhamento?: string[]

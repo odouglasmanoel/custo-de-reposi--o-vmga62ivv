@@ -36,8 +36,8 @@ interface BetLike {
   pontuacao_jogo: number
   detalhamento?: string[] | string | null
   vencedor_penaltis?: 'A' | 'B' | 'N' | string | null
-  goleadores_a?: string[] | null
-  goleadores_b?: string[] | null
+  goleadores_a?: any[] | null
+  goleadores_b?: any[] | null
 }
 
 function cleanPlayerName(name: string): string {

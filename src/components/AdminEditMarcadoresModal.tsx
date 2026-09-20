@@ -36,12 +36,27 @@ interface AdminEditMarcadoresModalProps {
   onSuccess?: (updatedPalpite: Palpite) => void
 }
 
-type PersistedPosicao = 'Atacante' | 'Defensor' | 'Goleiro'
+export type PersistedPosicao = 'Atacante' | 'Defensor' | 'Goleiro'
 
-interface ScorerInputState {
+export interface ScorerInputState {
   nome: string
   posicao: PersistedPosicao
   gol_contra: boolean
+}
+
+export const formatScorerListPayload = (items: ScorerInputState[]) => {
+  return items
+    .filter((s) => s.nome.replace(/\(gol contra\)|\(contra\)/gi, '').trim().length > 0)
+    .map((item) => {
+      const clean = item.nome.replace(/\(gol contra\)|\(contra\)/gi, '').trim()
+      const finalName = item.gol_contra ? `${clean} (gol contra)` : clean
+      return {
+        nome: finalName,
+        quantidade: 1,
+        posicao: item.gol_contra ? 'Gol Contra' : item.posicao || 'Atacante',
+        gol_contra: item.gol_contra,
+      }
+    })
 }
 
 const POSICOES_DISPONIVEIS: Array<{
@@ -53,12 +68,13 @@ const POSICOES_DISPONIVEIS: Array<{
   { value: 'Goleiro', label: 'Goleiro (+10 pts)' },
 ]
 
-function inferPosicaoFromNameOrItem(raw: any): PersistedPosicao {
+export function inferPosicaoFromNameOrItem(raw: any): PersistedPosicao {
   if (raw && typeof raw === 'object' && raw.posicao) {
-    const p = String(raw.posicao).toLowerCase()
-    if (p.includes('goleiro')) return 'Goleiro'
-    if (p.includes('defensor') || p.includes('zagueiro') || p.includes('lateral')) return 'Defensor'
-    // 'Meio-campista', 'Meia', 'Atacante' ou outros caem em 'Atacante'
+    const p = String(raw.posicao).trim().toLowerCase()
+    if (p === 'g' || p.includes('goleiro')) return 'Goleiro'
+    if (p === 'd' || p.includes('defensor') || p.includes('zagueiro') || p.includes('lateral'))
+      return 'Defensor'
+    // 'A', 'Meio-campista', 'Meia', 'Atacante' ou outros caem em 'Atacante'
     return 'Atacante'
   }
   const str = String(typeof raw === 'string' ? raw : raw?.nome || '').toLowerCase()
@@ -68,7 +84,7 @@ function inferPosicaoFromNameOrItem(raw: any): PersistedPosicao {
   return 'Atacante'
 }
 
-function parseRawScorerList(raw: any, count: number): ScorerInputState[] {
+export function parseRawScorerList(raw: any, count: number): ScorerInputState[] {
   const extracted = extractScorerNames(raw)
   const slots = Math.max(count, extracted.length)
   const result: ScorerInputState[] = []
@@ -166,24 +182,13 @@ export function AdminEditMarcadoresModal({
     setSaving(true)
 
     try {
-      // Formata os nomes: se marcada como gol contra, adiciona sufixo " (gol contra)", senão salva o nome limpo
-      const formatScorerValue = (s: ScorerInputState) => {
-        const clean = s.nome.replace(/\(gol contra\)|\(contra\)/gi, '').trim()
-        return s.gol_contra ? `${clean} (gol contra)` : clean
-      }
+      const cleanA = formatScorerListPayload(scorersA)
+      const cleanB = formatScorerListPayload(scorersB)
 
-      // Limpa espaços e remove itens totalmente vazios além do limite de gols
-      const cleanA = scorersA
-        .filter((s) => s.nome.replace(/\(gol contra\)|\(contra\)/gi, '').trim().length > 0)
-        .map(formatScorerValue)
-      const cleanB = scorersB
-        .filter((s) => s.nome.replace(/\(gol contra\)|\(contra\)/gi, '').trim().length > 0)
-        .map(formatScorerValue)
-
-      // Atualiza o palpite no banco PocketBase
+      // Atualiza o palpite no banco PocketBase preservando objetos estruturados
       const updatedRecord = await pb.collection('palpites').update<Palpite>(palpite.id, {
-        goleadores_a: cleanA,
-        goleadores_b: cleanB,
+        goleadores_a: cleanA as any,
+        goleadores_b: cleanB as any,
       })
 
       // Atualiza também no jogo as posições dos marcadores cadastrados em jogos.gols_time_a / gols_time_b
