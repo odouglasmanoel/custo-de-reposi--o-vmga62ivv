@@ -229,6 +229,34 @@ describe('scoreBadgeUtils', () => {
       expect(res.resumoTexto).toContain('Lyanco [Gol Contra] (+5 pts)')
     })
 
+    it('prioriza a posição definida pelo admin no palpite sobre a posição da API ao vivo (caso Davi / Marquinhos Defensor)', () => {
+      // Palpite do Davi: 0x3, Marquinhos salvo como Defensor no palpite
+      // API ao vivo veio com Marquinhos como Atacante (ou fallback 1 pt)
+      const res = calculateLiveMatchScoreBreakdown(
+        {
+          placar_a: 0,
+          placar_b: 3,
+          pontuacao_jogo: 0,
+          goleadores_b: [
+            { nome: 'Marquinhos', posicao: 'Defensor', quantidade: 1, gol_contra: false },
+          ],
+        },
+        0,
+        5, // Marseille 0 x 5 PSG
+        [{ nome: "Marquinhos 74'", posicao: 'Atacante', quantidade: 1, points: 1 }],
+      )
+
+      // Marseille 0 x 5 PSG vs palpite 0 x 3:
+      // Vencedor (+2 pts)
+      // Metade do Placar (+1 pt, acertou 0 do Marseille)
+      // Marquinhos 74' [Defensor] (+3 pts)
+      // Total: 2 + 1 + 3 = 6 pts parciais
+      expect(res.pontos).toBe(6)
+      expect(res.badges.some((b) => b.id === 'vencedor')).toBe(true)
+      expect(res.badges.some((b) => b.id === 'metade_placar')).toBe(true)
+      expect(res.resumoTexto).toContain("Marquinhos 74' [Defensor] (+3 pts)")
+    })
+
     describe('cálculo por frequência min(N, M)', () => {
       it('N=2, M=2 com minutos -> +2 pts (Atacante) e texto consolidado com minutos', () => {
         const res = calculateLiveMatchScoreBreakdown(

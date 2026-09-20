@@ -234,68 +234,47 @@ export function AdminEditMarcadoresModal({
           ? (game as any).gols_time_b
           : []
 
-        // Mapeia novas posições informadas pelo Admin, preservando a posição existente da partida
-        // se já estiver salva como Defensor/Goleiro e o marcador do palpite vier sem posição ou como Atacante
-        const resolvePreservedPosicao = (existingPos: any, matchItem: ScorerInputState): string => {
-          if (matchItem.gol_contra) return 'Gol Contra'
-          const existingStr = String(existingPos || '')
-            .trim()
+        const normalizeScorerString = (name: string): string => {
+          return (name || '')
+            .normalize('NFD')
+            .replace(/[\u0300-\u036f]/g, '')
             .toLowerCase()
-          const isExistingSpecial =
-            existingStr === 'defensor' ||
-            existingStr === 'd' ||
-            existingStr.includes('defensor') ||
-            existingStr.includes('zagueiro') ||
-            existingStr.includes('lateral') ||
-            existingStr === 'goleiro' ||
-            existingStr === 'g' ||
-            existingStr.includes('goleiro')
+            .replace(/\s*\d+\s*['’]/g, '')
+            .replace(/\(gol contra\)|\(contra\)/gi, '')
+            .replace(/[^a-z0-9]/g, '')
+            .trim()
+        }
 
-          // Se a partida já tem posição especial (Defensor/Goleiro) e o palpite veio como Atacante (ou sem posição), preservar a da partida
-          if (isExistingSpecial && (!matchItem.posicao || matchItem.posicao === 'Atacante')) {
-            return existingPos
-          }
+        const isMatchScorer = (itemA: string, itemB: string): boolean => {
+          const normA = normalizeScorerString(itemA)
+          const normB = normalizeScorerString(itemB)
+          if (!normA || !normB) return false
+          return normA === normB || normA.includes(normB) || normB.includes(normA)
+        }
 
-          return matchItem.posicao || existingPos || 'Atacante'
+        const resolveTargetPosicao = (existingPos: any, matchItem: ScorerInputState): string => {
+          if (matchItem.gol_contra) return 'Gol Contra'
+          if (matchItem.posicao) return matchItem.posicao
+          return existingPos || 'Atacante'
         }
 
         const newGolsA = existingGolsA.map((g: any) => {
-          const matchA = scorersA.find((s) => {
-            const sClean = s.nome
-              .replace(/\(gol contra\)|\(contra\)/gi, '')
-              .trim()
-              .toLowerCase()
-            const gClean = String(g.nome || '')
-              .replace(/\(gol contra\)|\(contra\)/gi, '')
-              .trim()
-              .toLowerCase()
-            return sClean === gClean
-          })
+          const matchA = scorersA.find((s) => isMatchScorer(s.nome, String(g.nome || '')))
           if (!matchA) return g
           return {
             nome: g.nome,
-            posicao: resolvePreservedPosicao(g.posicao, matchA),
+            posicao: resolveTargetPosicao(g.posicao, matchA),
             quantidade: g.quantidade || 1,
             gol_contra: matchA.gol_contra,
           }
         })
 
         const newGolsB = existingGolsB.map((g: any) => {
-          const matchB = scorersB.find((s) => {
-            const sClean = s.nome
-              .replace(/\(gol contra\)|\(contra\)/gi, '')
-              .trim()
-              .toLowerCase()
-            const gClean = String(g.nome || '')
-              .replace(/\(gol contra\)|\(contra\)/gi, '')
-              .trim()
-              .toLowerCase()
-            return sClean === gClean
-          })
+          const matchB = scorersB.find((s) => isMatchScorer(s.nome, String(g.nome || '')))
           if (!matchB) return g
           return {
             nome: g.nome,
-            posicao: resolvePreservedPosicao(g.posicao, matchB),
+            posicao: resolveTargetPosicao(g.posicao, matchB),
             quantidade: g.quantidade || 1,
             gol_contra: matchB.gol_contra,
           }
@@ -306,20 +285,19 @@ export function AdminEditMarcadoresModal({
           gols_time_b: newGolsB,
         })
 
-        // Se o jogo já estiver finalizado, aciona recálculo imediato de pontuação para manter tudo consistente
-        if (game.resultado_finalizado) {
-          const headers: Record<string, string> = {
-            'Content-Type': 'application/json',
-          }
-          if (pb.authStore.token) {
-            headers['Authorization'] = pb.authStore.token
-          }
-          await fetch(`${import.meta.env.VITE_POCKETBASE_URL}/backend/v1/calcular-pontuacao`, {
-            method: 'POST',
-            headers,
-            body: JSON.stringify({ jogo_id: palpite.jogo }),
-          })
+        // Aciona recálculo de pontuação no backend SEMPRE que o admin salvar o modal,
+        // mesmo para jogos ao vivo (resultado_finalizado: false) para manter cards e rankings atualizados.
+        const headers: Record<string, string> = {
+          'Content-Type': 'application/json',
         }
+        if (pb.authStore.token) {
+          headers['Authorization'] = pb.authStore.token
+        }
+        await fetch(`${import.meta.env.VITE_POCKETBASE_URL}/backend/v1/calcular-pontuacao`, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({ jogo_id: palpite.jogo }),
+        })
       } catch (errCalc) {
         console.warn('Aviso: atualização de jogo e recálculo após edição de marcadores:', errCalc)
       }

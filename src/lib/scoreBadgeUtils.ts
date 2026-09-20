@@ -384,8 +384,13 @@ export function deriveBadgesFromMatch(bet: BetLike, match: MatchLike): ScoreRule
   addReal(match.gols_time_a)
   addReal(match.gols_time_b)
 
-  // Agrupa palpites por jogador normalizado (frequência M)
-  const predCountMap = new Map<string, number>()
+  // Agrupa palpites por jogador normalizado (frequência M) e mapeia posições definidas pelo admin/usuário
+  interface PredScorerInfo {
+    count: number
+    posicao?: string
+    golContra?: boolean
+  }
+  const predInfoMap = new Map<string, PredScorerInfo>()
   const predList = [...(bet.goleadores_a || []), ...(bet.goleadores_b || [])]
   for (const p of predList) {
     if (!p) continue
@@ -396,12 +401,32 @@ export function deriveBadgesFromMatch(bet: BetLike, match: MatchLike): ScoreRule
       .trim()
     const normP = cleanPlayerName(cleanP)
     if (!normP) continue
-    predCountMap.set(normP, (predCountMap.get(normP) || 0) + 1)
+
+    const pPos = typeof p === 'object' && p !== null ? (p as any).posicao : undefined
+    const pContra =
+      (typeof p === 'object' && p !== null && (p as any).gol_contra === true) ||
+      /\(gol contra\)|\(contra\)/i.test(pStr) ||
+      String(pPos || '')
+        .toLowerCase()
+        .includes('contra')
+
+    const existing = predInfoMap.get(normP)
+    if (existing) {
+      existing.count += 1
+      if (!existing.posicao && pPos) existing.posicao = pPos
+      if (pContra) existing.golContra = true
+    } else {
+      predInfoMap.set(normP, {
+        count: 1,
+        posicao: pPos,
+        golContra: pContra,
+      })
+    }
   }
 
   // Para cada jogador presente em ambos: G = min(countReal, countPalpite)
   let matchIndex = 0
-  for (const [normPred, countPred] of predCountMap.entries()) {
+  for (const [normPred, predInfo] of predInfoMap.entries()) {
     let matchedReal: RealScorerGroup | undefined = realGroupMap.get(normPred)
     if (!matchedReal) {
       for (const [realNorm, group] of realGroupMap.entries()) {
@@ -413,18 +438,47 @@ export function deriveBadgesFromMatch(bet: BetLike, match: MatchLike): ScoreRule
     }
 
     if (matchedReal && matchedReal.countReal > 0) {
-      const g = Math.min(matchedReal.countReal, countPred)
+      const g = Math.min(matchedReal.countReal, predInfo.count)
       if (g > 0) {
-        const ptsTotal = g * matchedReal.ptsUnitario
+        // Prioriza a posição definida pelo admin no palpite e/ou no jogo
+        const posStr = (predInfo.posicao || matchedReal.posicao || '').toLowerCase()
+        let ptsUnitario = matchedReal.ptsUnitario
+        let posLabel = matchedReal.posicao
+
+        if (predInfo.golContra || posStr.includes('contra')) {
+          ptsUnitario = 5
+          posLabel = 'Gol Contra'
+        } else if (
+          posStr.includes('defensor') ||
+          posStr.includes('zagueiro') ||
+          posStr.includes('lateral') ||
+          posStr === 'd'
+        ) {
+          ptsUnitario = 3
+          posLabel = 'Defensor'
+        } else if (posStr.includes('goleiro') || posStr === 'g') {
+          ptsUnitario = 10
+          posLabel = 'Goleiro'
+        } else if (
+          posStr.includes('atacante') ||
+          posStr.includes('meia') ||
+          posStr.includes('meio') ||
+          posStr === 'a'
+        ) {
+          ptsUnitario = 1
+          posLabel = 'Atacante'
+        }
+
+        const ptsTotal = g * ptsUnitario
         let labelText = ''
         const minsToUse = matchedReal.minutes.slice(0, g)
         if (minsToUse.length > 0) {
           const minsStr = minsToUse.map((m) => `${m}'`).join(', ')
-          labelText = `${matchedReal.displayName} ${minsStr} [${matchedReal.posicao}]`
+          labelText = `${matchedReal.displayName} ${minsStr} [${posLabel}]`
         } else if (g > 1) {
-          labelText = `${matchedReal.displayName} ×${g} [${matchedReal.posicao}]`
+          labelText = `${matchedReal.displayName} ×${g} [${posLabel}]`
         } else {
-          labelText = `${matchedReal.displayName} [${matchedReal.posicao}]`
+          labelText = `${matchedReal.displayName} [${posLabel}]`
         }
 
         addBadge({
@@ -634,8 +688,13 @@ export function calculateLiveMatchScoreBreakdown(
     }
   }
 
-  // Agrupa palpites por jogador normalizado (frequência M)
-  const predCountMap = new Map<string, number>()
+  // Agrupa palpites por jogador normalizado (frequência M) e extrai posição ajustada no palpite
+  interface LivePredInfo {
+    count: number
+    posicao?: string
+    golContra?: boolean
+  }
+  const predLiveInfoMap = new Map<string, LivePredInfo>()
   const predList = [...(bet.goleadores_a || []), ...(bet.goleadores_b || [])]
   for (const p of predList) {
     if (!p) continue
@@ -646,12 +705,32 @@ export function calculateLiveMatchScoreBreakdown(
       .trim()
     const normP = cleanPlayerName(cleanP)
     if (!normP) continue
-    predCountMap.set(normP, (predCountMap.get(normP) || 0) + 1)
+
+    const pPos = typeof p === 'object' && p !== null ? (p as any).posicao : undefined
+    const pContra =
+      (typeof p === 'object' && p !== null && (p as any).gol_contra === true) ||
+      /\(gol contra\)|\(contra\)/i.test(pStr) ||
+      String(pPos || '')
+        .toLowerCase()
+        .includes('contra')
+
+    const existing = predLiveInfoMap.get(normP)
+    if (existing) {
+      existing.count += 1
+      if (!existing.posicao && pPos) existing.posicao = pPos
+      if (pContra) existing.golContra = true
+    } else {
+      predLiveInfoMap.set(normP, {
+        count: 1,
+        posicao: pPos,
+        golContra: pContra,
+      })
+    }
   }
 
   // Para cada jogador presente em ambos: G = min(countReal, countPalpite)
   let scorerBadgeIdx = 0
-  for (const [normPred, countPred] of predCountMap.entries()) {
+  for (const [normPred, predInfo] of predLiveInfoMap.entries()) {
     // Busca no realGroupMap por chave exata ou contenção flexível
     let matchedReal: RealPlayerGroup | undefined = realGroupMap.get(normPred)
     if (!matchedReal) {
@@ -664,9 +743,38 @@ export function calculateLiveMatchScoreBreakdown(
     }
 
     if (matchedReal && matchedReal.countReal > 0) {
-      const g = Math.min(matchedReal.countReal, countPred)
+      const g = Math.min(matchedReal.countReal, predInfo.count)
       if (g > 0) {
-        const ptsTotal = g * matchedReal.ptsUnitario
+        // Prioriza a posição definida pelo admin no palpite e/ou no registro do jogo sobre a da API ao vivo
+        const posStr = (predInfo.posicao || matchedReal.posicao || '').toLowerCase()
+        let ptsUnitario = matchedReal.ptsUnitario
+        let posLabel = matchedReal.posicao
+
+        if (predInfo.golContra || posStr.includes('contra')) {
+          ptsUnitario = 5
+          posLabel = 'Gol Contra'
+        } else if (
+          posStr.includes('defensor') ||
+          posStr.includes('zagueiro') ||
+          posStr.includes('lateral') ||
+          posStr === 'd'
+        ) {
+          ptsUnitario = 3
+          posLabel = 'Defensor'
+        } else if (posStr.includes('goleiro') || posStr === 'g') {
+          ptsUnitario = 10
+          posLabel = 'Goleiro'
+        } else if (
+          posStr.includes('atacante') ||
+          posStr.includes('meia') ||
+          posStr.includes('meio') ||
+          posStr === 'a'
+        ) {
+          ptsUnitario = 1
+          posLabel = 'Atacante'
+        }
+
+        const ptsTotal = g * ptsUnitario
         totalPontos += ptsTotal
 
         // Formatação consolidada:
@@ -677,11 +785,11 @@ export function calculateLiveMatchScoreBreakdown(
         const minsToUse = matchedReal.minutes.slice(0, g)
         if (minsToUse.length > 0) {
           const minsStr = minsToUse.map((m) => `${m}'`).join(', ')
-          labelText = `${matchedReal.displayName} ${minsStr} [${matchedReal.posicao}]`
+          labelText = `${matchedReal.displayName} ${minsStr} [${posLabel}]`
         } else if (g > 1) {
-          labelText = `${matchedReal.displayName} ×${g} [${matchedReal.posicao}]`
+          labelText = `${matchedReal.displayName} ×${g} [${posLabel}]`
         } else {
-          labelText = `${matchedReal.displayName} [${matchedReal.posicao}]`
+          labelText = `${matchedReal.displayName} [${posLabel}]`
         }
 
         addBadge({

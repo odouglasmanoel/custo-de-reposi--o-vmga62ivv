@@ -226,11 +226,11 @@ routerAdd('POST', '/backend/v1/calcular-pontuacao', (e) => {
         }
       }
 
-      // Check predicted goal scorers - Agrupamento por frequência min(N, M)
+      // Check predicted goal scorers - Agrupamento por frequência min(N, M) e priorização da posição definida
       const predScorersA = parseJsonField(palpite, 'goleadores_a')
       const predScorersB = parseJsonField(palpite, 'goleadores_b')
 
-      const predCounts = {}
+      const predInfo = {}
       const addPredScorer = (p) => {
         if (!p) return
         const pStr = typeof p === 'string' ? p : String(p.nome || '')
@@ -240,15 +240,35 @@ routerAdd('POST', '/backend/v1/calcular-pontuacao', (e) => {
           .trim()
         const normP = normalizePlayerName(cleanP)
         if (!normP) return
-        predCounts[normP] = (predCounts[normP] || 0) + 1
+
+        const pPos = typeof p === 'object' && p !== null ? p.posicao : undefined
+        const pContra =
+          (typeof p === 'object' && p !== null && p.gol_contra === true) ||
+          /\(gol contra\)|\(contra\)/i.test(pStr) ||
+          String(pPos || '')
+            .toLowerCase()
+            .indexOf('contra') >= 0
+
+        if (predInfo[normP]) {
+          predInfo[normP].count += 1
+          if (!predInfo[normP].posicao && pPos) predInfo[normP].posicao = pPos
+          if (pContra) predInfo[normP].golContra = true
+        } else {
+          predInfo[normP] = {
+            count: 1,
+            posicao: pPos,
+            golContra: pContra,
+          }
+        }
       }
 
       for (const p of predScorersA) addPredScorer(p)
       for (const p of predScorersB) addPredScorer(p)
 
       const matchedScorers = []
-      for (const normPred in predCounts) {
-        const countPalpite = predCounts[normPred]
+      for (const normPred in predInfo) {
+        const itemInfo = predInfo[normPred]
+        const countPalpite = itemInfo.count
         // Busca jogador real por chave exata ou contenção flexível
         let matchedReal = realScorersMap[normPred]
         if (!matchedReal) {
@@ -263,7 +283,38 @@ routerAdd('POST', '/backend/v1/calcular-pontuacao', (e) => {
         if (matchedReal && matchedReal.countReal > 0) {
           const g = Math.min(matchedReal.countReal, countPalpite)
           if (g > 0) {
-            const ptsTotal = g * matchedReal.points
+            // Prioriza posição definida no palpite ou jogo sobre qualquer default
+            const targetPosStr = String(itemInfo.posicao || matchedReal.position || '')
+              .toLowerCase()
+              .trim()
+            let unitPoints = matchedReal.points
+            let displayPos = matchedReal.position
+
+            if (itemInfo.golContra || targetPosStr.indexOf('contra') >= 0) {
+              unitPoints = 5
+              displayPos = 'Gol Contra'
+            } else if (
+              targetPosStr.indexOf('defensor') >= 0 ||
+              targetPosStr.indexOf('zagueiro') >= 0 ||
+              targetPosStr.indexOf('lateral') >= 0 ||
+              targetPosStr === 'd'
+            ) {
+              unitPoints = 3
+              displayPos = 'Defensor'
+            } else if (targetPosStr.indexOf('goleiro') >= 0 || targetPosStr === 'g') {
+              unitPoints = 10
+              displayPos = 'Goleiro'
+            } else if (
+              targetPosStr.indexOf('atacante') >= 0 ||
+              targetPosStr.indexOf('meia') >= 0 ||
+              targetPosStr.indexOf('meio') >= 0 ||
+              targetPosStr === 'a'
+            ) {
+              unitPoints = 1
+              displayPos = 'Atacante'
+            }
+
+            const ptsTotal = g * unitPoints
             pontos += ptsTotal
 
             // Formatação do detalhamento consolidado:
@@ -274,11 +325,11 @@ routerAdd('POST', '/backend/v1/calcular-pontuacao', (e) => {
             let txt = ''
             if (minsToUse.length > 0) {
               const minsStr = minsToUse.map((m) => m + "'").join(', ')
-              txt = `${matchedReal.displayName} ${minsStr} [${matchedReal.position}] (+${ptsTotal} pt${ptsTotal > 1 ? 's' : ''})`
+              txt = `${matchedReal.displayName} ${minsStr} [${displayPos}] (+${ptsTotal} pt${ptsTotal > 1 ? 's' : ''})`
             } else if (g > 1) {
-              txt = `${matchedReal.displayName} ×${g} [${matchedReal.position}] (+${ptsTotal} pt${ptsTotal > 1 ? 's' : ''})`
+              txt = `${matchedReal.displayName} ×${g} [${displayPos}] (+${ptsTotal} pt${ptsTotal > 1 ? 's' : ''})`
             } else {
-              txt = `${matchedReal.displayName} [${matchedReal.position}] (+${ptsTotal} pt${ptsTotal > 1 ? 's' : ''})`
+              txt = `${matchedReal.displayName} [${displayPos}] (+${ptsTotal} pt${ptsTotal > 1 ? 's' : ''})`
             }
             matchedScorers.push(txt)
           }
