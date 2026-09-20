@@ -40,7 +40,7 @@ import { Badge } from '@/components/ui/badge'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { Skeleton } from '@/components/ui/skeleton'
 
-// Cores temáticas para cada um dos 4 participantes no gráfico
+// Cores temáticas para cada participante no gráfico
 const PARTICIPANT_COLORS: Record<string, { stroke: string; bg: string; border: string }> = {
   Douglas: {
     stroke: '#2563EB', // Blue 600
@@ -52,8 +52,18 @@ const PARTICIPANT_COLORS: Record<string, { stroke: string; bg: string; border: s
     bg: 'bg-emerald-50',
     border: 'border-emerald-200',
   },
-  Bruno: {
+  'Bruno Lopes': {
     stroke: '#F59E0B', // Amber 500
+    bg: 'bg-amber-50',
+    border: 'border-amber-200',
+  },
+  'Bruno Xavier': {
+    stroke: '#EC4899', // Pink 500
+    bg: 'bg-pink-50',
+    border: 'border-pink-200',
+  },
+  Bruno: {
+    stroke: '#F59E0B', // Amber 500 (legado)
     bg: 'bg-amber-50',
     border: 'border-amber-200',
   },
@@ -1279,6 +1289,24 @@ export default function Estatisticas() {
                         stroke={PARTICIPANT_COLORS.Gabriel.stroke}
                         strokeWidth={2.5}
                         dot={{ r: 3, fill: PARTICIPANT_COLORS.Gabriel.stroke }}
+                        activeDot={{ r: 5 }}
+                      />
+                      <Line
+                        type="monotone"
+                        dataKey="Bruno Lopes"
+                        name="Bruno Lopes"
+                        stroke={PARTICIPANT_COLORS['Bruno Lopes'].stroke}
+                        strokeWidth={2.5}
+                        dot={{ r: 3, fill: PARTICIPANT_COLORS['Bruno Lopes'].stroke }}
+                        activeDot={{ r: 5 }}
+                      />
+                      <Line
+                        type="monotone"
+                        dataKey="Bruno Xavier"
+                        name="Bruno Xavier"
+                        stroke={PARTICIPANT_COLORS['Bruno Xavier'].stroke}
+                        strokeWidth={2.5}
+                        dot={{ r: 3, fill: PARTICIPANT_COLORS['Bruno Xavier'].stroke }}
                         activeDot={{ r: 5 }}
                       />
                       <Line

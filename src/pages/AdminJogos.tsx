@@ -406,19 +406,18 @@ export default function AdminJogos() {
       })
 
       // Seed 4 standard participants with 0 points
-      const defaultMembers = ['Douglas', 'Gabriel', 'Bruno', 'Davi']
+      const defaultMembers = ['Douglas', 'Gabriel', 'Bruno Lopes', 'Bruno Xavier', 'Davi']
       for (const m of defaultMembers) {
-        try {
+        if (!existingNames.has(m.toLowerCase())) {
           await pb.collection('participantes').create({
-            bolao: created.id,
+            bolao: selectedBolaoId,
             nome: m,
             pontos_importados: 0,
             pontuacao_total: 0,
           })
-        } catch {
-          /* intentionally ignored */
+          createdCount++
         }
-      }
+      }      }
 
       toast({
         title: 'Bolão criado com sucesso!',

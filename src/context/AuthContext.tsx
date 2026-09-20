@@ -2,12 +2,13 @@ import React, { createContext, useContext, useEffect, useState, useMemo } from '
 import type { RecordModel } from 'pocketbase'
 import pb from '@/lib/pocketbase/client'
 
-export const BOLAO_MEMBERS = ['Douglas', 'Gabriel', 'Bruno', 'Davi'] as const
+export const BOLAO_MEMBERS = ['Douglas', 'Gabriel', 'Bruno Lopes', 'Bruno Xavier', 'Davi'] as const
 export const ADMIN_MEMBER = 'Douglas'
 
 export function isBolaoName(name?: string | null): boolean {
   if (!name) return false
   const trimmed = name.trim().toLowerCase()
+  if (trimmed === 'bruno') return true
   return BOLAO_MEMBERS.some((m) => m.toLowerCase() === trimmed)
 }
 

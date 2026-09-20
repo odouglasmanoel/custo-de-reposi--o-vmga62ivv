@@ -56,6 +56,15 @@ export function cleanKey(val: string): string {
  */
 export function matchParticipantName(rawName: string): string {
   const clean = cleanKey(rawName)
+  if (clean.includes('brunox') || clean.includes('xavier')) {
+    return 'Bruno Xavier'
+  }
+  if (clean.includes('brunol') || clean.includes('lopes')) {
+    return 'Bruno Lopes'
+  }
+  if (clean === 'bruno') {
+    return 'Bruno Lopes'
+  }
   for (const known of BOLAO_MEMBERS) {
     const cleanKnown = cleanKey(known)
     if (cleanKnown === clean || clean.includes(cleanKnown) || cleanKnown.includes(clean)) {

@@ -87,10 +87,18 @@ export interface StatsCalculationResult {
 }
 
 /**
- * Normaliza nomes de participantes para um dos 4 participantes oficiais (Douglas, Gabriel, Bruno, Davi)
+ * Normaliza nomes de participantes para os membros oficiais (Douglas, Gabriel, Bruno Lopes, Bruno Xavier, Davi)
  */
 export function normalizeMemberName(name: string): string {
   const clean = (name || '').trim().toLowerCase()
+  if (!clean) return ''
+  if (clean.includes('douglas')) return 'Douglas'
+  if (clean.includes('gabriel')) return 'Gabriel'
+  if (clean.includes('brunox') || clean.includes('xavier')) return 'Bruno Xavier'
+  if (clean.includes('brunol') || clean.includes('lopes')) return 'Bruno Lopes'
+  if (clean === 'bruno') return 'Bruno Lopes'
+  if (clean.includes('davi')) return 'Davi'
+
   for (const m of BOLAO_MEMBERS) {
     if (
       m.toLowerCase() === clean ||

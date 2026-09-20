@@ -15,7 +15,10 @@ describe('statsCalculator', () => {
   it('normalizes member names correctly', () => {
     expect(normalizeMemberName('douglas')).toBe('Douglas')
     expect(normalizeMemberName('gabriel')).toBe('Gabriel')
-    expect(normalizeMemberName('bruno')).toBe('Bruno')
+    expect(normalizeMemberName('bruno')).toBe('Bruno Lopes')
+    expect(normalizeMemberName('brunol')).toBe('Bruno Lopes')
+    expect(normalizeMemberName('brunox')).toBe('Bruno Xavier')
+    expect(normalizeMemberName('Bruno Xavier')).toBe('Bruno Xavier')
     expect(normalizeMemberName('davi')).toBe('Davi')
   })
 
