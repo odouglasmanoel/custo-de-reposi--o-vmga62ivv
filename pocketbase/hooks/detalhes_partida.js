@@ -1,10 +1,11 @@
 // -------------------------------------------------------------
-// CIRCUIT BREAKER GLOBAL EM MEMÓRIA PARA API-FOOTBALL
+// CIRCUIT BREAKER GLOBAL EM MEMÓRIA PARA DETALHES DE PARTIDAS (API-FOOTBALL)
+// Desacoplado do circuit breaker de escudos (__badgeCircuitBreaker)
 // Evita requisições 429 em loop quando a cota diária estiver esgotada.
 // Backoff padrão: 60 minutos. Permite 1 probe (half-open) após a janela.
 // -------------------------------------------------------------
-if (typeof globalThis !== 'undefined' && !globalThis.__apiFootballCircuitBreaker) {
-  globalThis.__apiFootballCircuitBreaker = {
+if (typeof globalThis !== 'undefined' && !globalThis.__apiFootballDetailsCircuitBreaker) {
+  globalThis.__apiFootballDetailsCircuitBreaker = {
     isBlocked: false,
     blockedUntil: 0,
     probing: false,
@@ -12,44 +13,52 @@ if (typeof globalThis !== 'undefined' && !globalThis.__apiFootballCircuitBreaker
   }
 }
 
+// Anti-spam leve por partida (30 a 60 segundos por fixture_id)
+if (typeof globalThis !== 'undefined' && !globalThis.__apiFootballFixtureSpamMap) {
+  globalThis.__apiFootballFixtureSpamMap = {}
+}
+
 /**
  * Hook dedicado para buscar detalhes completos da partida (ficha técnica, estatísticas e eventos).
  * Rota: GET /backend/v1/detalhes-partida
- * Parâmetros: fixture_id (obrigatório), time_a, time_b, data
+ * Parâmetros: fixture_id (obrigatório ou tsdb_*), time_a, time_b, data
  * Retorna dados normalizados para a modal MatchDetailsModal.
  */
 routerAdd(
   'GET',
   '/backend/v1/detalhes-partida',
   (e) => {
-    if (typeof globalThis !== 'undefined' && !globalThis.__apiFootballThrottle) {
-      globalThis.__apiFootballThrottle = { lastCallTimestamp: 0, minIntervalMs: 15 * 60 * 1000 }
-    }
-    var checkApiFootballThrottle = function () {
-      if (typeof globalThis === 'undefined' || !globalThis.__apiFootballThrottle) {
+    // Anti-spam leve por fixture (30s) para chamadas sob demanda
+    var FIXTURE_SPAM_WINDOW_MS = 30 * 1000
+
+    var checkFixtureAntiSpam = function (fixtureId) {
+      if (!fixtureId) return { canCall: true, waitMs: 0 }
+      if (typeof globalThis === 'undefined' || !globalThis.__apiFootballFixtureSpamMap) {
         return { canCall: true, waitMs: 0 }
       }
       var now = Date.now()
-      var diff = now - (globalThis.__apiFootballThrottle.lastCallTimestamp || 0)
-      var interval = globalThis.__apiFootballThrottle.minIntervalMs || 900000
-      if (diff < interval) {
-        return { canCall: false, waitMs: interval - diff }
+      var lastCall = globalThis.__apiFootballFixtureSpamMap[String(fixtureId)] || 0
+      var diff = now - lastCall
+      if (diff < FIXTURE_SPAM_WINDOW_MS) {
+        return { canCall: false, waitMs: FIXTURE_SPAM_WINDOW_MS - diff }
       }
       return { canCall: true, waitMs: 0 }
     }
-    var recordApiFootballCall = function () {
-      if (typeof globalThis !== 'undefined' && globalThis.__apiFootballThrottle) {
-        globalThis.__apiFootballThrottle.lastCallTimestamp = Date.now()
+
+    var recordFixtureCall = function (fixtureId) {
+      if (!fixtureId) return
+      if (typeof globalThis !== 'undefined' && globalThis.__apiFootballFixtureSpamMap) {
+        globalThis.__apiFootballFixtureSpamMap[String(fixtureId)] = Date.now()
       }
     }
 
     var API_FOOTBALL_BACKOFF_DURATION_MS = 60 * 60 * 1000 // 1 HORA
 
     var checkApiFootballCircuitBreaker = function () {
-      if (typeof globalThis === 'undefined' || !globalThis.__apiFootballCircuitBreaker) {
+      if (typeof globalThis === 'undefined' || !globalThis.__apiFootballDetailsCircuitBreaker) {
         return { shouldSkip: false, isProbe: false }
       }
-      var cb = globalThis.__apiFootballCircuitBreaker
+      var cb = globalThis.__apiFootballDetailsCircuitBreaker
       if (!cb.isBlocked) {
         return { shouldSkip: false, isProbe: false }
       }
@@ -57,7 +66,7 @@ routerAdd(
       if (now < cb.blockedUntil) {
         return {
           shouldSkip: true,
-          reason: cb.reason || 'Cota da API-Football esgotada (Circuit Breaker ativo)',
+          reason: cb.reason || 'Cota da API-Football esgotada (Details Circuit Breaker ativo)',
         }
       }
       if (!cb.probing) {
@@ -69,21 +78,21 @@ routerAdd(
 
     var tripApiFootballCircuitBreaker = function (reason) {
       if (typeof globalThis === 'undefined') return
-      if (!globalThis.__apiFootballCircuitBreaker) {
-        globalThis.__apiFootballCircuitBreaker = {
+      if (!globalThis.__apiFootballDetailsCircuitBreaker) {
+        globalThis.__apiFootballDetailsCircuitBreaker = {
           isBlocked: false,
           blockedUntil: 0,
           probing: false,
           reason: '',
         }
       }
-      var cb = globalThis.__apiFootballCircuitBreaker
+      var cb = globalThis.__apiFootballDetailsCircuitBreaker
       cb.isBlocked = true
       cb.blockedUntil = Date.now() + API_FOOTBALL_BACKOFF_DURATION_MS
       cb.probing = false
       cb.reason = reason || 'Rate limit / quota exceeded (429)'
       console.log(
-        '[CircuitBreaker API-Football] TRIP ATIVADO por 60 minutos até ' +
+        '[CircuitBreaker API-Football Detalhes] TRIP ATIVADO por 60 minutos até ' +
           new Date(cb.blockedUntil).toISOString() +
           '. Motivo: ' +
           cb.reason,
@@ -91,10 +100,13 @@ routerAdd(
     }
 
     var resetApiFootballCircuitBreaker = function () {
-      if (typeof globalThis === 'undefined' || !globalThis.__apiFootballCircuitBreaker) return
-      var cb = globalThis.__apiFootballCircuitBreaker
+      if (typeof globalThis === 'undefined' || !globalThis.__apiFootballDetailsCircuitBreaker)
+        return
+      var cb = globalThis.__apiFootballDetailsCircuitBreaker
       if (cb.isBlocked || cb.probing) {
-        console.log('[CircuitBreaker API-Football] RESET: Conexão normalizada com resposta 200.')
+        console.log(
+          '[CircuitBreaker API-Football Detalhes] RESET: Conexão normalizada com resposta 200.',
+        )
       }
       cb.isBlocked = false
       cb.probing = false
@@ -126,80 +138,6 @@ routerAdd(
         strBody.indexOf('exceeded the maximum') !== -1 ||
         strBody.indexOf('free-tier limit') !== -1
       )
-    }
-
-    // JANELA DE POLLING INLINE (Item 2 do pedido):
-    // Retorna true somente se:
-    // (agora >= kickoff - 60min) E (jogo não finalizado)
-    var isDentroJanelaPolling = function (dataHoraJogo, agora) {
-      if (!dataHoraJogo) return false
-      var nowMs = agora
-        ? typeof agora === 'number'
-          ? agora
-          : new Date(agora).getTime()
-        : Date.now()
-      var kickoffMs = null
-      if (typeof dataHoraJogo === 'number') {
-        kickoffMs = dataHoraJogo
-      } else if (typeof dataHoraJogo === 'object' && dataHoraJogo !== null) {
-        var isFin = false
-        if (typeof dataHoraJogo.getBool === 'function') {
-          isFin = dataHoraJogo.getBool('resultado_finalizado')
-        } else if (dataHoraJogo.resultado_finalizado != null) {
-          isFin = Boolean(dataHoraJogo.resultado_finalizado)
-        }
-        if (isFin) return false
-
-        var dtVal =
-          typeof dataHoraJogo.getString === 'function'
-            ? dataHoraJogo.getString('data')
-            : dataHoraJogo.data
-        var hrVal =
-          typeof dataHoraJogo.getString === 'function'
-            ? dataHoraJogo.getString('hora')
-            : dataHoraJogo.hora
-
-        if (dtVal) {
-          var y = 0,
-            m = 0,
-            d = 0
-          var dtStr = String(dtVal).trim()
-          var brM = dtStr.match(/^(\d{2})\/(\d{2})\/(\d{4})/)
-          if (brM) {
-            d = parseInt(brM[1], 10)
-            m = parseInt(brM[2], 10)
-            y = parseInt(brM[3], 10)
-          } else {
-            var isoM = dtStr.match(/^(\d{4})-(\d{2})-(\d{2})/)
-            if (isoM) {
-              y = parseInt(isoM[1], 10)
-              m = parseInt(isoM[2], 10)
-              d = parseInt(isoM[3], 10)
-            }
-          }
-          var hrs = 16,
-            mins = 0
-          if (hrVal) {
-            var hrM = String(hrVal).match(/^(\d{1,2}):(\d{2})/)
-            if (hrM) {
-              hrs = parseInt(hrM[1], 10)
-              mins = parseInt(hrM[2], 10)
-            }
-          }
-          if (y && m && d) {
-            kickoffMs = Date.UTC(y, m - 1, d, hrs + 3, mins, 0, 0)
-          }
-        }
-      } else if (typeof dataHoraJogo === 'string') {
-        var dtObj = new Date(dataHoraJogo)
-        if (!isNaN(dtObj.getTime())) {
-          kickoffMs = dtObj.getTime()
-        }
-      }
-
-      if (!kickoffMs) return false
-      var inicioJanela = kickoffMs - 60 * 60 * 1000 // 60 min antes do kickoff
-      return nowMs >= inicioJanela
     }
 
     var sinonimosConhecidosTimes = {
@@ -342,45 +280,9 @@ routerAdd(
         return e.json(400, { error: 'Informe fixture_id ou time_a e time_b' })
       }
 
-      // =============================================================
-      // ESCOPO RESTRITO (Item 1 do pedido):
-      // Carrega os registros da collection jogos (apenas não-finalizados)
-      // e constrói o conjunto de fixture_id cadastrados.
-      // Se o fixture_id solicitado NÃO estiver nesse conjunto,
-      // NUNCA chame a API-Football — sirva direto do banco/cache e APIs secundárias.
-      // =============================================================
-      var cadastradosFixtureIds = []
-      var cadastradosRecordsMap = {}
       var matchingJogoRecord = null
 
-      try {
-        var jogosNaoFinalizados = $app.findRecordsByFilter(
-          'jogos',
-          'resultado_finalizado = false',
-          '-data',
-          200,
-          0,
-        )
-        if (Array.isArray(jogosNaoFinalizados)) {
-          for (var jIdx = 0; jIdx < jogosNaoFinalizados.length; jIdx++) {
-            var jRec = jogosNaoFinalizados[jIdx]
-            var fid = (jRec.getString('fixture_id') || '').trim()
-            if (fid) {
-              cadastradosFixtureIds.push(fid)
-              cadastradosRecordsMap[fid] = jRec
-            }
-          }
-        }
-      } catch (errJogosScope) {
-        console.log(
-          '[DetalhesPartida] Erro ao carregar escopo de jogos cadastrados:',
-          errJogosScope,
-        )
-      }
-
-      if (fixtureIdParam && cadastradosRecordsMap[fixtureIdParam]) {
-        matchingJogoRecord = cadastradosRecordsMap[fixtureIdParam]
-      } else if (fixtureIdParam) {
+      if (fixtureIdParam) {
         try {
           matchingJogoRecord = $app.findFirstRecordByData('jogos', 'fixture_id', fixtureIdParam)
         } catch (_) {}
@@ -400,8 +302,6 @@ routerAdd(
             0,
           )
           if (Array.isArray(candRecords)) {
-            var nA = normalizeStr(timeA)
-            var nB = normalizeStr(timeB)
             for (var cri = 0; cri < candRecords.length; cri++) {
               var cr = candRecords[cri]
               var crA = cr.getString('time_a') || ''
@@ -410,15 +310,6 @@ routerAdd(
               var matchInvertido = timesCoincidem(timeA, crB) && timesCoincidem(timeB, crA)
               if (matchDireto || matchInvertido) {
                 matchingJogoRecord = cr
-                var crFid = (cr.getString('fixture_id') || '').trim()
-                if (
-                  crFid &&
-                  cadastradosFixtureIds.indexOf(crFid) === -1 &&
-                  !cr.getBool('resultado_finalizado')
-                ) {
-                  cadastradosFixtureIds.push(crFid)
-                  cadastradosRecordsMap[crFid] = cr
-                }
                 break
               }
             }
@@ -426,23 +317,10 @@ routerAdd(
         } catch (_) {}
       }
 
-      console.log(
-        '[DetalhesPartida] Conjunto de fixture_id em jogos pendentes (' +
-          cadastradosFixtureIds.length +
-          ' IDs): [' +
-          cadastradosFixtureIds.join(', ') +
-          ']. Solicitado: ' +
-          (fixtureIdParam || timeA + ' x ' + timeB),
-      )
-
-      var fixtureIdEstaNoEscopo = Boolean(
-        fixtureIdParam && cadastradosFixtureIds.indexOf(fixtureIdParam) !== -1,
-      )
-
       // =============================================================
-      // PERSISTÊNCIA / LEITURA PREVIA DO BANCO (Item 3 do pedido):
-      // Se o jogo já possui ficha_detalhes salva no banco e o jogo está finalizado
-      // ou não há necessidade de nova consulta externa, servimos diretamente.
+      // PERSISTÊNCIA / LEITURA PREVIA DO BANCO:
+      // Se o jogo já possui ficha_detalhes salva no banco e o jogo está finalizado,
+      // servimos direto do banco (custo zero de cota).
       // =============================================================
       if (matchingJogoRecord && !forceRefresh) {
         try {
@@ -460,7 +338,6 @@ routerAdd(
               savedFichaObj &&
               (savedFichaObj.fixture || savedFichaObj.events || savedFichaObj.statistics)
             ) {
-              // Se o jogo está finalizado, ficha salva é definitiva
               if (matchingJogoRecord.getBool('resultado_finalizado')) {
                 console.log(
                   '[DetalhesPartida] Jogo finalizado com ficha_detalhes salva no banco (id: ' +
@@ -567,19 +444,12 @@ routerAdd(
       // =============================================================
       // RESOLUÇÃO DE FIXTURE_ID NUMÉRICO PARA CASOS COM ID TSDB_* OU SEM FIXTURE_ID
       // Se o jogo tem ID tsdb_* ou não tem fixture_id numérico, tenta resolver via API-Football
-      // com casamento por nome de time (similaridade >= 0.85) antes de consultar /fixtures?id=...
-      // Se resolvido, persiste o fixture_id numérico no banco de dados.
+      // com busca reversa por data + similaridade Levenshtein >= 0.85 antes de consultar /fixtures?id=...
+      // Se resolvido, persiste o fixture_id numérico no banco de dados e prossegue.
       // =============================================================
       var cbCheckDet = checkApiFootballCircuitBreaker()
-      var throttleCheckDet = checkApiFootballThrottle()
 
-      if (
-        apiKey &&
-        !isDirectNumeric &&
-        (isTsdbId || (timeA && timeB)) &&
-        !cbCheckDet.shouldSkip &&
-        throttleCheckDet.canCall
-      ) {
+      if (apiKey && !isDirectNumeric && (isTsdbId || (timeA && timeB)) && !cbCheckDet.shouldSkip) {
         try {
           var resolveDateParam = dataParam
           if (!resolveDateParam && matchingJogoRecord) {
@@ -617,7 +487,6 @@ routerAdd(
               resSearch.json &&
               Array.isArray(resSearch.json.response)
             ) {
-              recordApiFootballCall()
               resetApiFootballCircuitBreaker()
               var listResp = resSearch.json.response
               var targetA =
@@ -661,11 +530,6 @@ routerAdd(
                         )
                       }
                     }
-                    if (cadastradosFixtureIds.indexOf(resolvedId) === -1) {
-                      cadastradosFixtureIds.push(resolvedId)
-                      if (matchingJogoRecord) cadastradosRecordsMap[resolvedId] = matchingJogoRecord
-                    }
-                    fixtureIdEstaNoEscopo = true
                     break
                   }
                 }
@@ -678,61 +542,24 @@ routerAdd(
       }
 
       // =============================================================
-      // VERIFICAÇÃO DE ESCOPO E JANELA PARA API-FOOTBALL (Itens 1 e 2):
-      // Condições para chamar API-Football /fixtures?id=...:
-      // 1. Possuir apiKey configurada e fixture_id numérico direto
-      // 2. ESCOPO: fixture_id DEVE estar no conjunto de jogos pendentes cadastrados no banco
-      //    OU forçado pelo clique explícito do usuário (forceRefresh / clique na modal)
-      // 3. JANELA: agora >= kickoff - 60min E jogo não finalizado
-      //    (ou consulta sob demanda caso o banco ainda não tenha a ficha gravada)
-      // 4. Circuit Breaker e Throttle (15 min) não bloqueados
+      // CONSULTA SOB DEMANDA NA API-FOOTBALL (Sem bloqueio global de 15min e sem bloqueio de janela/escopo):
+      // Anti-spam leve por fixture_id (30s) para cliques repetidos no mesmo jogo.
+      // Permite chamadas para jogos da lista de enquetes, jogos do dia ou bolão.
       // =============================================================
       cbCheckDet = checkApiFootballCircuitBreaker()
-      throttleCheckDet = checkApiFootballThrottle()
-
-      var dentroDaJanela = false
-      if (matchingJogoRecord) {
-        dentroDaJanela = isDentroJanelaPolling(matchingJogoRecord, Date.now())
-      } else if (dataParam) {
-        dentroDaJanela = isDentroJanelaPolling(
-          { data: dataParam, hora: '16:00', resultado_finalizado: false },
-          Date.now(),
-        )
-      }
-
-      // Se o usuário clicou para exibir a modal (consulta direcionada) e não temos dados,
-      // permitimos a consulta do fixture_id desde que não haja bloqueio severo por circuit breaker
-      var consultaSobDemandaModal = Boolean(isDirectNumeric && !cbCheckDet.shouldSkip)
+      var spamCheck = checkFixtureAntiSpam(fixtureIdParam)
 
       var podeChamarApiFootball =
-        apiKey &&
-        isDirectNumeric &&
-        (dentroDaJanela || consultaSobDemandaModal || forceRefresh) &&
-        !cbCheckDet.shouldSkip &&
-        throttleCheckDet.canCall
+        apiKey && isDirectNumeric && !cbCheckDet.shouldSkip && (spamCheck.canCall || forceRefresh)
 
-      if (apiKey && isDirectNumeric) {
-        if (!fixtureIdEstaNoEscopo) {
-          console.log(
-            '[DetalhesPartida] BLOQUEIO DE ESCOPO: Fixture ID ' +
-              fixtureIdParam +
-              ' NÃO está nos jogos cadastrados no banco. Chamada API-Football proibida.',
-          )
-        } else if (!dentroDaJanela) {
-          console.log(
-            '[DetalhesPartida] BLOQUEIO DE JANELA: Fora da janela pré-kickoff (kickoff - 60min até fim). Chamada API-Football proibida.',
-          )
-        } else if (cbCheckDet.shouldSkip) {
-          console.log(
-            '[DetalhesPartida] Circuit breaker ativo — pulando API-Football para fixture ' +
-              fixtureIdParam,
-          )
-        } else if (!throttleCheckDet.canCall) {
-          console.log(
-            '[DetalhesPartida] Throttle ativo de 15min — pulando API-Football para fixture ' +
-              fixtureIdParam,
-          )
-        }
+      if (apiKey && isDirectNumeric && !spamCheck.canCall && !forceRefresh) {
+        console.log(
+          '[DetalhesPartida] Anti-spam ativo para fixture ' +
+            fixtureIdParam +
+            ' (aguarde ' +
+            Math.round(spamCheck.waitMs / 1000) +
+            's). Servindo do cache/banco se disponível.',
+        )
       }
 
       // 1. FONTE 1: API-Football (fixtures?id=...)
@@ -765,7 +592,7 @@ routerAdd(
             Array.isArray(res.json.response) &&
             res.json.response.length > 0
           ) {
-            recordApiFootballCall()
+            recordFixtureCall(fixtureIdParam)
             resetApiFootballCircuitBreaker()
             var fixData = res.json.response[0]
 
@@ -799,11 +626,10 @@ routerAdd(
               updatedAt: new Date().toISOString(),
             }
 
-            // PERSISTÊNCIA NA COLLECTION JOGOS (Item 3 do pedido):
+            // PERSISTÊNCIA NA COLLECTION JOGOS:
             // Salva ficha técnica e escalações no jogo correspondente no banco
             if (matchingJogoRecord) {
               try {
-                // Preservar regra antifalha: nunca sobrescrever jogo já finalizado
                 var isAlreadyFinalized = matchingJogoRecord.getBool('resultado_finalizado')
                 if (!isAlreadyFinalized) {
                   matchingJogoRecord.set('ficha_detalhes', result)
