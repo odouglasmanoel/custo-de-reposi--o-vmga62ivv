@@ -335,6 +335,45 @@ const TEAM_SYNONYMS: Record<string, string> = {
   'csd colo colo': 'colo colo',
   'colo colo': 'colo colo',
   colocolo: 'colo colo',
+  // PSG / Paris Saint-Germain
+  psg: 'paris saint germain',
+  'paris sg': 'paris saint germain',
+  'paris saint germain': 'paris saint germain',
+  'paris saint-germain': 'paris saint germain',
+  'paris s.g.': 'paris saint germain',
+  // Olympique de Marseille / Marseille
+  marseille: 'olympique marseille',
+  'olympique marseille': 'olympique marseille',
+  'olympique de marseille': 'olympique marseille',
+  'olimpia de marsella': 'olympique marseille',
+  om: 'olympique marseille',
+  // Bournemouth / AFC Bournemouth
+  bournemouth: 'bournemouth',
+  'afc bournemouth': 'bournemouth',
+  // Atlético de Madrid / Atlético Madrid
+  'atletico madrid': 'atletico madrid',
+  'atletico de madrid': 'atletico madrid',
+  'club atletico de madrid': 'atletico madrid',
+  atleti: 'atletico madrid',
+  // Liverpool
+  liverpool: 'liverpool',
+  'liverpool fc': 'liverpool',
+  // Internazionale / Inter de Milão
+  internazionale: 'inter milan',
+  'inter milan': 'inter milan',
+  'inter de milao': 'inter milan',
+  'fc internazionale': 'inter milan',
+  // Sporting
+  'sporting cp': 'sporting lisbon',
+  'sporting lisbon': 'sporting lisbon',
+  'sporting clube de portugal': 'sporting lisbon',
+  // Athletic Club
+  'athletic club': 'athletic bilbao',
+  'athletic bilbao': 'athletic club',
+  // Bayern
+  'bayern munich': 'bayern munchen',
+  'bayern de munique': 'bayern munchen',
+  'fc bayern': 'bayern munchen',
 }
 
 /**
@@ -363,23 +402,32 @@ export function cleanTeamName(name: string): string {
     return TEAM_SYNONYMS[rawClean]
   }
 
-  // Remove termos genéricos de clubes de futebol
+  // Remove partículas e prefixos genéricos (NÃO remover "real")
   const noiseWords = [
+    'afc',
     'fc',
     'f.c.',
+    'sc',
+    's.c.',
+    'ac',
+    'a.c.',
+    'cf',
+    'c.f.',
+    'cd',
+    'c.d.',
+    'sd',
+    's.d.',
+    'clube',
+    'club',
     'ec',
     'e.c.',
     'cr',
     'c.r.',
     'se',
     's.e.',
-    'sc',
-    's.c.',
-    'clube',
-    'club',
     'de',
-    'da',
     'do',
+    'da',
     'dos',
     'das',
     'del',
@@ -388,9 +436,6 @@ export function cleanTeamName(name: string): string {
     'futbol',
     'sport',
     'association',
-    'afc',
-    'cf',
-    'c.f.',
     'sociedade',
     'esportiva',
   ]
@@ -453,12 +498,11 @@ export function stringSimilarity(strA: string, strB: string): number {
   }
 
   // Token matching: se qualquer palavra significativa coincide
-  // Ex: "atletico mg" vs "atletico", ou "ldu" vs "ldu quito"
   const tokensA = cleanA.split(/\s+/).filter((t) => t.length >= 3)
   const tokensB = cleanB.split(/\s+/).filter((t) => t.length >= 3)
   const hasCommonToken = tokensA.some((tA) => tokensB.includes(tA))
   if (hasCommonToken && (tokensA.length <= 2 || tokensB.length <= 2)) {
-    return 0.85
+    return 0.88
   }
 
   const maxLen = Math.max(cleanA.length, cleanB.length)

@@ -553,107 +553,9 @@ routerAdd(
           var fdCollected = []
           var tsdbCollected = []
 
-          // A) API-Football: consulta a data quando chave disponível, throttle ok e circuit breaker não bloqueado
-          var cbCheckEnq = checkApiFootballCircuitBreaker()
-          var throttleCheckEnq = checkApiFootballThrottle()
-
-          if (cbCheckEnq.shouldSkip) {
-            console.log(
-              '[Enquetes] Circuit breaker ativo — pulando API-Football para data ' + targetDate,
-            )
-          } else if (!throttleCheckEnq.canCall) {
-            console.log(
-              '[Enquetes] Throttle ativo de 15min — pulando API-Football para data ' + targetDate,
-            )
-          } else if (apiKey && apiKey !== fallbackApiKey) {
-            var baseUrl = isRapidApi
-              ? 'https://api-football-v1.p.rapidapi.com/v3/fixtures'
-              : 'https://v3.football.api-sports.io/fixtures'
-            var headersApi = isRapidApi
-              ? { 'x-rapidapi-key': apiKey, 'x-rapidapi-host': 'api-football-v1.p.rapidapi.com' }
-              : { 'x-apisports-key': apiKey }
-
-            try {
-              var resAF = $http.send({
-                url:
-                  baseUrl +
-                  '?date=' +
-                  encodeURIComponent(targetDate) +
-                  '&timezone=America%2FSao_Paulo',
-                method: 'GET',
-                headers: headersApi,
-                timeout: 8,
-              })
-
-              if (isRateLimitErrorHelper(resAF.statusCode, resAF.json || resAF.raw)) {
-                tripApiFootballCircuitBreaker(
-                  'Rate limit 429 em enquetes_buscar_jogos para data ' + targetDate,
-                )
-              } else if (resAF && resAF.statusCode === 200) {
-                recordApiFootballCall()
-                resetApiFootballCircuitBreaker()
-                if (resAF.json && Array.isArray(resAF.json.response)) {
-                  for (var afi = 0; afi < resAF.json.response.length; afi++) {
-                    var item = resAF.json.response[afi]
-                    var lId = item.league ? item.league.id : 0
-                    var lName = item.league ? item.league.name : ''
-                    var tCheck = isTargetCompetition(lId, lName, '')
-                    if (!tCheck.valid) continue
-
-                    var fixDate = item.fixture && item.fixture.date ? String(item.fixture.date) : ''
-                    var dateSP = toDateStringSaoPaulo(fixDate) || targetDate
-                    var timeSP = toTimeStringSaoPaulo(fixDate)
-                    var authenticAFName =
-                      (item.league && item.league.name) || tCheck.categoria || 'Futebol'
-
-                    afCollected.push({
-                      fixture: {
-                        id: item.fixture ? String(item.fixture.id) : '',
-                        date: fixDate,
-                        status: {
-                          short:
-                            (item.fixture && item.fixture.status && item.fixture.status.short) ||
-                            'NS',
-                        },
-                      },
-                      league: {
-                        id: lId,
-                        name: authenticAFName,
-                        categoria: tCheck.categoria,
-                        prioridade: tCheck.prioridade,
-                        logo: item.league ? item.league.logo : '',
-                        region:
-                          tCheck.categoria.indexOf('Brasileir') !== -1
-                            ? 'Brasileirão & Copas'
-                            : 'Futebol Europeu',
-                      },
-                      teams: {
-                        home: {
-                          id: item.teams && item.teams.home ? item.teams.home.id : 0,
-                          name: (item.teams && item.teams.home && item.teams.home.name) || '',
-                          logo: (item.teams && item.teams.home && item.teams.home.logo) || '',
-                        },
-                        away: {
-                          id: item.teams && item.teams.away ? item.teams.away.id : 0,
-                          name: (item.teams && item.teams.away && item.teams.away.name) || '',
-                          logo: (item.teams && item.teams.away && item.teams.away.logo) || '',
-                        },
-                      },
-                      dateSP: dateSP,
-                      timeSP: timeSP,
-                      provider: 'api_football',
-                      sourcePriority: 1,
-                    })
-                  }
-                }
-              }
-            } catch (errAF) {
-              console.log(
-                '[Enquetes] Erro ao consultar API-Football para ' + targetDate + ':',
-                errAF,
-              )
-            }
-          }
+          // A) EDIÇÃO 3: NUNCA mais chamar API-Football com /fixtures?date=
+          // Para enquetes, a busca de partidas do dia usa TheSportsDB e Football-Data.org (que suportam listagem diária sem esgotar cota).
+          // A API-Football é preservada 100% para os jogos cadastrados do bolão por ID direto (/fixtures?id=...).
 
           // B) Football-Data.org: sempre consultado para merge quando token disponível
           var fdTokenToUse = fallbackApiKey || (provedor === 'football_data' ? apiKey : '')
@@ -1245,17 +1147,141 @@ routerAdd(
       )
     }
 
-    // Helper unificado de busca de escudo respeitando a ordem:
-    // 1) cache em memória (globalThis.__tsdbBadgeCache)
-    // 2) TheSportsDB (strTeamBadge, gratuito)
-    // 3) Football-Data.org (crest)
-    // 4) API-Football só como último recurso (com breaker exclusivo de escudos)
+    // Helper de normalização e similaridade para validação rigorosa de escudos (Edições 4 e 5)
+    var sinonimosEscudos = {
+      'paris saint germain': 'paris saint germain',
+      'paris saint-germain': 'paris saint germain',
+      'paris sg': 'paris saint germain',
+      psg: 'paris saint germain',
+      'olympique de marseille': 'olympique marseille',
+      'olympique marseille': 'olympique marseille',
+      marseille: 'olympique marseille',
+      'olimpia de marsella': 'olympique marseille',
+      om: 'olympique marseille',
+      'afc bournemouth': 'bournemouth',
+      bournemouth: 'bournemouth',
+      'atletico madrid': 'atletico madrid',
+      'atletico de madrid': 'atletico madrid',
+      'club atletico de madrid': 'atletico madrid',
+      atleti: 'atletico madrid',
+      'liverpool fc': 'liverpool',
+      liverpool: 'liverpool',
+      internazionale: 'inter milan',
+      'inter milan': 'inter milan',
+      'inter de milao': 'inter milan',
+      'fc internazionale': 'inter milan',
+      'sporting cp': 'sporting lisbon',
+      'sporting lisbon': 'sporting lisbon',
+      'sporting clube de portugal': 'sporting lisbon',
+      'athletic club': 'athletic bilbao',
+      'athletic bilbao': 'athletic club',
+      'real madrid': 'real madrid',
+      'real madrid cf': 'real madrid',
+      ldu: 'ldu quito',
+      'liga de quito': 'ldu quito',
+    }
+
+    var normalizarNomeEscudo = function (nome) {
+      if (!nome) return ''
+      var s = String(nome).toLowerCase().trim()
+      try {
+        s = s.normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+      } catch (_) {}
+      s = s.replace(/[^a-z0-9\s]/g, ' ')
+      var rawTokens = s.split(/\s+/).filter(Boolean)
+      var rawClean = rawTokens.join(' ').trim()
+      if (sinonimosEscudos[rawClean]) return sinonimosEscudos[rawClean]
+      var noise = [
+        'afc',
+        'fc',
+        'sc',
+        'ac',
+        'cf',
+        'cd',
+        'sd',
+        'clube',
+        'club',
+        'ec',
+        'cr',
+        'se',
+        'de',
+        'do',
+        'da',
+        'dos',
+        'das',
+        'del',
+        'futebol',
+        'futbol',
+        'sport',
+        'association',
+        'sociedade',
+        'esportiva',
+      ]
+      var tokens = rawTokens.filter(function (t) {
+        return noise.indexOf(t) === -1
+      })
+      if (tokens.length === 0) return s.replace(/[^a-z0-9]/g, '').trim()
+      var clean = tokens.join(' ').trim()
+      return sinonimosEscudos[clean] || clean
+    }
+
+    var levenshteinBadge = function (a, b) {
+      var m = a.length
+      var n = b.length
+      if (m === 0) return n
+      if (n === 0) return m
+      var d = []
+      for (var i = 0; i <= m; i++) d[i] = [i]
+      for (var j = 0; j <= n; j++) d[0][j] = j
+      for (var i1 = 1; i1 <= m; i1++) {
+        for (var j1 = 1; j1 <= n; j1++) {
+          var cost = a[i1 - 1] === b[j1 - 1] ? 0 : 1
+          d[i1][j1] = Math.min(d[i1 - 1][j1] + 1, d[i1][j1 - 1] + 1, d[i1 - 1][j1 - 1] + cost)
+        }
+      }
+      return d[m][n]
+    }
+
+    var similaridadeEscudo = function (a, b) {
+      var normA = normalizarNomeEscudo(a)
+      var normB = normalizarNomeEscudo(b)
+      if (!normA || !normB) return 0
+      if (normA === normB) return 1
+      if (normA.indexOf(normB) !== -1 || normB.indexOf(normA) !== -1) return 0.92
+      var tA = normA.split(/\s+/).filter(function (t) {
+        return t.length >= 3
+      })
+      var tB = normB.split(/\s+/).filter(function (t) {
+        return t.length >= 3
+      })
+      var common = false
+      for (var ti = 0; ti < tA.length; ti++) {
+        if (tB.indexOf(tA[ti]) !== -1) {
+          common = true
+          break
+        }
+      }
+      if (common && (tA.length <= 2 || tB.length <= 2)) return 0.88
+      var maxLen = Math.max(normA.length, normB.length)
+      if (maxLen === 0) return 1
+      var dist = levenshteinBadge(normA, normB)
+      return Math.max(0, 1 - dist / maxLen)
+    }
+
+    // Helper unificado de busca de escudo respeitando a ordem e exigindo similaridade >= 0.85:
+    // 0) PURGA de cache contaminado conhecido (ex: Köln associado a Paris)
+    // 1) cache em memória (validado)
+    // 2) TheSportsDB (strTeamBadge, gratuito) com verificação de similaridade >= 0.85
+    // 3) Football-Data.org (crest) com verificação de similaridade >= 0.85
+    // 4) API-Football com busca por nome e verificação de similaridade >= 0.85
     var fetchTeamBadgeOrdered = function (teamName) {
       if (!teamName) return ''
-      var cleanKey = teamName.toLowerCase().trim()
-      try {
-        cleanKey = cleanKey.normalize('NFD').replace(/[\u0300-\u036f]/g, '')
-      } catch (_) {}
+      var cleanKey = normalizarNomeEscudo(teamName)
+
+      // 0) Tratamento explícito para PSG / Paris Saint-Germain
+      if (cleanKey === 'paris saint germain') {
+        return 'https://media.api-sports.io/football/teams/85.png'
+      }
 
       // 1) Cache em memória
       if (typeof globalThis !== 'undefined' && !globalThis.__tsdbBadgeCache) {
@@ -1266,7 +1292,20 @@ routerAdd(
         globalThis.__tsdbBadgeCache &&
         globalThis.__tsdbBadgeCache[cleanKey] !== undefined
       ) {
-        return globalThis.__tsdbBadgeCache[cleanKey] || ''
+        var cachedVal = globalThis.__tsdbBadgeCache[cleanKey] || ''
+        // Invalida cache se for contaminação de Colônia (Köln) em time que não seja Köln
+        if (
+          cachedVal &&
+          (cachedVal.indexOf('192') !== -1 ||
+            cachedVal.indexOf('koln') !== -1 ||
+            cachedVal.indexOf('cologne') !== -1)
+        ) {
+          if (cleanKey.indexOf('koln') === -1 && cleanKey.indexOf('cologne') === -1) {
+            cachedVal = ''
+            globalThis.__tsdbBadgeCache[cleanKey] = ''
+          }
+        }
+        if (cachedVal) return cachedVal
       }
 
       var badgeFound = ''
@@ -1313,8 +1352,14 @@ routerAdd(
           Array.isArray(resTsdb.json.teams) &&
           resTsdb.json.teams.length > 0
         ) {
-          var tObj = resTsdb.json.teams[0]
-          badgeFound = (tObj.strTeamBadge || tObj.strBadge || tObj.strLogo || '').trim()
+          for (var ti = 0; ti < resTsdb.json.teams.length; ti++) {
+            var cand = resTsdb.json.teams[ti]
+            var candName = cand.strTeam || ''
+            if (similaridadeEscudo(teamName, candName) >= 0.85) {
+              badgeFound = (cand.strTeamBadge || cand.strBadge || cand.strLogo || '').trim()
+              if (badgeFound) break
+            }
+          }
         }
       } catch (errTsdb) {
         console.log('[TSDB Escudo] Erro na busca por ' + teamName + ':', errTsdb)
@@ -1357,9 +1402,13 @@ routerAdd(
               Array.isArray(resFD.json.teams) &&
               resFD.json.teams.length > 0
             ) {
-              var fdTeamObj = resFD.json.teams[0]
-              if (fdTeamObj && fdTeamObj.crest) {
-                badgeFound = String(fdTeamObj.crest).trim()
+              for (var fdi = 0; fdi < resFD.json.teams.length; fdi++) {
+                var fdTeamObj = resFD.json.teams[fdi]
+                var fdName = (fdTeamObj && (fdTeamObj.name || fdTeamObj.shortName)) || ''
+                if (similaridadeEscudo(teamName, fdName) >= 0.85 && fdTeamObj.crest) {
+                  badgeFound = String(fdTeamObj.crest).trim()
+                  if (badgeFound) break
+                }
               }
             }
           } catch (errFD) {
@@ -1421,9 +1470,17 @@ routerAdd(
                 resAF.json.response.length > 0
               ) {
                 resetBadgeCircuitBreaker()
-                var tAfObj = resAF.json.response[0]
-                if (tAfObj && tAfObj.team && tAfObj.team.logo) {
-                  badgeFound = String(tAfObj.team.logo).trim()
+                for (var afi = 0; afi < resAF.json.response.length; afi++) {
+                  var tAfObj = resAF.json.response[afi]
+                  var tNameAf = (tAfObj && tAfObj.team && tAfObj.team.name) || ''
+                  if (
+                    similaridadeEscudo(teamName, tNameAf) >= 0.85 &&
+                    tAfObj.team &&
+                    tAfObj.team.logo
+                  ) {
+                    badgeFound = String(tAfObj.team.logo).trim()
+                    if (badgeFound) break
+                  }
                 }
               }
             } catch (errAF) {

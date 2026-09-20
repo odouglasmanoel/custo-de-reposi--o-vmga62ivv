@@ -535,14 +535,30 @@ export function readEscudoCache(teamName: string): string | null {
   const key = normalizeEscudoKey(teamName)
   if (!key) return null
 
+  // Invalidação e purga de cache contaminado:
+  // Se o time for Paris / PSG mas a URL apontar para 192 (Köln) ou koln/cologne, expurga!
+  const isParis = key.includes('paris') || key === 'psg'
+  const isKoln = (url: string) =>
+    url.includes('/192.') || url.includes('koln') || url.includes('cologne')
+
   // 1. Memória RAM
   const fromMem = escudoMemoryCache.get(key)
-  if (fromMem !== undefined) return fromMem
+  if (fromMem !== undefined) {
+    if (isParis && isKoln(fromMem)) {
+      escudoMemoryCache.delete(key)
+    } else {
+      return fromMem
+    }
+  }
 
   // 2. LocalStorage
   try {
     const raw = localStorage.getItem(`${ESCUDO_CACHE_PREFIX}_${key}`)
     if (raw !== null) {
+      if (isParis && isKoln(raw)) {
+        localStorage.removeItem(`${ESCUDO_CACHE_PREFIX}_${key}`)
+        return null
+      }
       setWithBoundedCapacity(escudoMemoryCache, key, raw, 200)
       return raw
     }
@@ -595,6 +611,14 @@ export async function buscarEscudoTime(teamName: string): Promise<string> {
   if (!trimmed) return ''
 
   // Consulta cache de dois níveis primeiro
+  // Tratamento direto para PSG para garantir o escudo oficial imediatamente
+  const normKey = normalizeEscudoKey(trimmed)
+  if (normKey === 'psg' || normKey === 'parissaintgermain' || normKey === 'parissg') {
+    const psgLogo = 'https://media.api-sports.io/football/teams/85.png'
+    writeEscudoCache(trimmed, psgLogo)
+    return psgLogo
+  }
+
   const cached = readEscudoCache(trimmed)
   if (cached !== null && cached !== '') {
     return cached

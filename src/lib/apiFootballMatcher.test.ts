@@ -28,6 +28,28 @@ describe('apiFootballMatcher', () => {
       expect(cleanTeamName('Liga Deportiva Universitaria')).toBe('ldu quito')
       expect(stringSimilarity('LDU', 'Liga de Quito')).toBe(1)
     })
+
+    it('deve normalizar PSG, Marseille, Bournemouth e Atlético de Madrid com similaridade >= 0.85', () => {
+      // PSG
+      expect(cleanTeamName('PSG')).toBe('paris saint germain')
+      expect(cleanTeamName('Paris Saint-Germain')).toBe('paris saint germain')
+      expect(stringSimilarity('PSG', 'Paris Saint-Germain')).toBeGreaterThanOrEqual(0.85)
+
+      // Marseille
+      expect(cleanTeamName('Marseille')).toBe('olympique marseille')
+      expect(cleanTeamName('Olympique de Marseille')).toBe('olympique marseille')
+      expect(stringSimilarity('Marseille', 'Olympique de Marseille')).toBeGreaterThanOrEqual(0.85)
+
+      // Bournemouth
+      expect(cleanTeamName('Bournemouth')).toBe('bournemouth')
+      expect(cleanTeamName('AFC Bournemouth')).toBe('bournemouth')
+      expect(stringSimilarity('Bournemouth', 'AFC Bournemouth')).toBeGreaterThanOrEqual(0.85)
+
+      // Atlético de Madrid
+      expect(cleanTeamName('Atlético Madrid')).toBe('atletico madrid')
+      expect(cleanTeamName('Atlético de Madrid')).toBe('atletico madrid')
+      expect(stringSimilarity('Atlético Madrid', 'Atlético de Madrid')).toBeGreaterThanOrEqual(0.85)
+    })
   })
 
   describe('stringSimilarity', () => {

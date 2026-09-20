@@ -1766,7 +1766,40 @@ routerAdd('GET', '/backend/v1/placar-ao-vivo', (e) => {
       return nowMs >= inicioJanela
     }
 
-    // Funções de matching por nome para resolução de IDs tsdb_*
+    // Funções de matching por nome para resolução de IDs tsdb_* com similaridade >= 0.85
+    var sinonimosConhecidosTimes = {
+      'paris saint germain': 'paris saint germain',
+      'paris saint-germain': 'paris saint germain',
+      'paris sg': 'paris saint germain',
+      psg: 'paris saint germain',
+      'olympique de marseille': 'olympique marseille',
+      'olympique marseille': 'olympique marseille',
+      marseille: 'olympique marseille',
+      'olimpia de marsella': 'olympique marseille',
+      om: 'olympique marseille',
+      'afc bournemouth': 'bournemouth',
+      bournemouth: 'bournemouth',
+      'atletico madrid': 'atletico madrid',
+      'atletico de madrid': 'atletico madrid',
+      'club atletico de madrid': 'atletico madrid',
+      atleti: 'atletico madrid',
+      'liverpool fc': 'liverpool',
+      liverpool: 'liverpool',
+      internazionale: 'inter milan',
+      'inter milan': 'inter milan',
+      'inter de milao': 'inter milan',
+      'fc internazionale': 'inter milan',
+      'sporting cp': 'sporting lisbon',
+      'sporting lisbon': 'sporting lisbon',
+      'sporting clube de portugal': 'sporting lisbon',
+      'athletic club': 'athletic bilbao',
+      'athletic bilbao': 'athletic club',
+      'real madrid': 'real madrid',
+      'real madrid cf': 'real madrid',
+      ldu: 'ldu quito',
+      'liga de quito': 'ldu quito',
+    }
+
     var normalizarNomeTime = function (nome) {
       if (!nome) return ''
       var s = String(nome).toLowerCase().trim()
@@ -1774,62 +1807,96 @@ routerAdd('GET', '/backend/v1/placar-ao-vivo', (e) => {
         s = s.normalize('NFD').replace(/[\u0300-\u036f]/g, '')
       } catch (_) {}
       s = s.replace(/[^a-z0-9\s]/g, ' ')
-      var tokens = s.split(/\s+/).filter(function (t) {
-        return (
-          t &&
-          [
-            'fc',
-            'cf',
-            'club',
-            'clube',
-            'ec',
-            'cr',
-            'se',
-            'sc',
-            'de',
-            'da',
-            'do',
-            'del',
-            'futebol',
-            'futbol',
-            'sport',
-            'afc',
-          ].indexOf(t) === -1
-        )
+      var rawTokens = s.split(/\s+/).filter(Boolean)
+      var rawClean = rawTokens.join(' ').trim()
+      if (sinonimosConhecidosTimes[rawClean]) {
+        return sinonimosConhecidosTimes[rawClean]
+      }
+      var noiseWords = [
+        'afc',
+        'fc',
+        'sc',
+        'ac',
+        'cf',
+        'cd',
+        'sd',
+        'clube',
+        'club',
+        'ec',
+        'cr',
+        'se',
+        'de',
+        'do',
+        'da',
+        'dos',
+        'das',
+        'del',
+        'futebol',
+        'futbol',
+        'sport',
+        'association',
+        'sociedade',
+        'esportiva',
+      ]
+      var tokens = rawTokens.filter(function (t) {
+        return noiseWords.indexOf(t) === -1
       })
       if (tokens.length === 0) {
         return s.replace(/[^a-z0-9]/g, '').trim()
       }
-      return tokens.join(' ').trim()
+      var cleanStr = tokens.join(' ').trim()
+      return sinonimosConhecidosTimes[cleanStr] || cleanStr
     }
 
-    var sinonimosConhecidosTimes = {
-      'paris saint germain': 'psg',
-      psg: 'paris saint germain',
-      'atletico madrid': 'atletico de madrid',
-      'atletico de madrid': 'atletico madrid',
-      internazionale: 'inter milan',
-      'inter milan': 'internazionale',
-      'inter de milao': 'inter milan',
-      'sporting cp': 'sporting lisbon',
-      'sporting lisbon': 'sporting cp',
-      'athletic club': 'athletic bilbao',
-      'athletic bilbao': 'athletic club',
+    var calcularLevenshtein = function (a, b) {
+      var m = a.length
+      var n = b.length
+      if (m === 0) return n
+      if (n === 0) return m
+      var d = []
+      for (var i = 0; i <= m; i++) {
+        d[i] = [i]
+      }
+      for (var j = 0; j <= n; j++) {
+        d[0][j] = j
+      }
+      for (var i1 = 1; i1 <= m; i1++) {
+        for (var j1 = 1; j1 <= n; j1++) {
+          var cost = a[i1 - 1] === b[j1 - 1] ? 0 : 1
+          d[i1][j1] = Math.min(d[i1 - 1][j1] + 1, d[i1][j1 - 1] + 1, d[i1 - 1][j1 - 1] + cost)
+        }
+      }
+      return d[m][n]
+    }
+
+    var calcularSimilaridadeTimes = function (a, b) {
+      var normA = normalizarNomeTime(a)
+      var normB = normalizarNomeTime(b)
+      if (!normA || !normB) return 0
+      if (normA === normB) return 1
+      if (normA.indexOf(normB) !== -1 || normB.indexOf(normA) !== -1) return 0.92
+      var tA = normA.split(/\s+/).filter(function (t) {
+        return t.length >= 3
+      })
+      var tB = normB.split(/\s+/).filter(function (t) {
+        return t.length >= 3
+      })
+      var common = false
+      for (var ti = 0; ti < tA.length; ti++) {
+        if (tB.indexOf(tA[ti]) !== -1) {
+          common = true
+          break
+        }
+      }
+      if (common && (tA.length <= 2 || tB.length <= 2)) return 0.88
+      var maxLen = Math.max(normA.length, normB.length)
+      if (maxLen === 0) return 1
+      var dist = calcularLevenshtein(normA, normB)
+      return Math.max(0, 1 - dist / maxLen)
     }
 
     var timesCoincidem = function (a, b) {
-      var normA = normalizarNomeTime(a)
-      var normB = normalizarNomeTime(b)
-      if (!normA || !normB) return false
-      if (normA === normB) return true
-      if (normA.indexOf(normB) !== -1 || normB.indexOf(normA) !== -1) return true
-      var sinA = sinonimosConhecidosTimes[normA]
-      if (sinA && (sinA === normB || sinA.indexOf(normB) !== -1 || normB.indexOf(sinA) !== -1))
-        return true
-      var sinB = sinonimosConhecidosTimes[normB]
-      if (sinB && (sinB === normA || sinB.indexOf(normA) !== -1 || normA.indexOf(sinB) !== -1))
-        return true
-      return false
+      return calcularSimilaridadeTimes(a, b) >= 0.85
     }
 
     // =============================================================
@@ -2081,102 +2148,11 @@ routerAdd('GET', '/backend/v1/placar-ao-vivo', (e) => {
       }
     }
 
+    // EDIÇÃO 3: NUNCA mais chamar API-Football por /fixtures?date=
+    // Chamadas à API-Football são EXCLUSIVAMENTE por ID direto (/fixtures?id=...)
+    // ou por live fixtures dentro da janela (/fixtures?live=all).
+    // O array dateFixtures da API-Football permanece vazio para poupar 100% da cota.
     let dateFixtures = []
-    // Consulta date fixtures apenas se houver jogos cadastrados dentro da janela
-    if (
-      !rateLimitDetected &&
-      fixturesDentroJanela.length > 0 &&
-      dateQuery &&
-      /^\d{4}-\d{2}-\d{2}$/.test(dateQuery)
-    ) {
-      var baseUrlDate = isRapidApi
-        ? 'https://api-football-v1.p.rapidapi.com/v3/fixtures'
-        : 'https://v3.football.api-sports.io/fixtures'
-      var urlDate =
-        baseUrlDate + '?date=' + encodeURIComponent(dateQuery) + '&timezone=America%2FSao_Paulo'
-
-      try {
-        var resDate = $http.send({
-          url: urlDate,
-          method: 'GET',
-          headers: headers,
-          timeout: 8,
-        })
-
-        if (isRateLimitError(resDate.statusCode, resDate.json || resDate.raw)) {
-          tripApiFootballCircuitBreaker(
-            'Rate limit 429 ao consultar date fixtures (' + dateQuery + ')',
-          )
-          rateLimitDetected = true
-        } else if (resDate.statusCode === 200) {
-          recordApiFootballCall()
-          resetApiFootballCircuitBreaker()
-          if (resDate.json && Array.isArray(resDate.json.response)) {
-            var dateResponseList = resDate.json.response
-            for (var rj = 0; rj < dateResponseList.length; rj++) {
-              var dItem = dateResponseList[rj]
-              var dFid = dItem && dItem.fixture && dItem.fixture.id ? String(dItem.fixture.id) : ''
-              if (!dFid) continue
-
-              var dateAceito = false
-              if (cadastradosFixtureIds.indexOf(dFid) !== -1) {
-                dateAceito = true
-              } else if (jogosTsdbNaJanela.length > 0) {
-                var dHome = (dItem.teams && dItem.teams.home && dItem.teams.home.name) || ''
-                var dAway = (dItem.teams && dItem.teams.away && dItem.teams.away.name) || ''
-                for (var dIdx = 0; dIdx < jogosTsdbNaJanela.length; dIdx++) {
-                  var dTsdbCand = jogosTsdbNaJanela[dIdx]
-                  var dCandRec = dTsdbCand.rec
-                  var dTimeA = (dCandRec.getString('time_a') || '').trim()
-                  var dTimeB = (dCandRec.getString('time_b') || '').trim()
-
-                  var dMatchDireto = timesCoincidem(dTimeA, dHome) && timesCoincidem(dTimeB, dAway)
-                  var dMatchInvertido =
-                    timesCoincidem(dTimeA, dAway) && timesCoincidem(dTimeB, dHome)
-                  if (dMatchDireto || dMatchInvertido) {
-                    if (!dCandRec.getBool('resultado_finalizado')) {
-                      dCandRec.set('fixture_id', dFid)
-                      try {
-                        $app.save(dCandRec)
-                        console.log(
-                          '[placar-ao-vivo] MATCH POR NOME: jogo ' +
-                            dCandRec.id +
-                            ' (' +
-                            dTimeA +
-                            ' x ' +
-                            dTimeB +
-                            ') => fixture API-Football ' +
-                            dFid +
-                            '. fixture_id atualizado no banco.',
-                        )
-                        cadastradosFixtureIds.push(dFid)
-                        cadastradosRecordsMap[dFid] = dCandRec
-                        jogosTsdbNaJanela.splice(dIdx, 1)
-                        dateAceito = true
-                        break
-                      } catch (errSaveDateTsdb) {
-                        console.log(
-                          '[placar-ao-vivo] Erro ao atualizar fixture_id do jogo TSDB ' +
-                            dCandRec.id +
-                            ':',
-                          errSaveDateTsdb,
-                        )
-                      }
-                    }
-                  }
-                }
-              }
-
-              if (dateAceito) {
-                dateFixtures.push(mapApiFootballItem(dItem))
-              }
-            }
-          }
-        }
-      } catch (errDate) {
-        console.log('Aviso ao consultar date fixtures API-Football:', errDate)
-      }
-    }
 
     // -------------------------------------------------------------
     // CONTINGÊNCIA AUTOMÁTICA SE A API-FOOTBALL ESTOUROU A COTA (429)
@@ -4152,6 +4128,8 @@ routerAdd('GET', '/backend/v1/jogos-do-dia', (e) => {
       )
       rateLimitHit = true
     } else if (apiFootballKey && apiFootballKey !== fallbackApiKey) {
+      // EDIÇÃO 3: NUNCA chamar /fixtures?date= na API-Football para poupar cota diária.
+      // Carrega os IDs dos jogos cadastrados no banco para a data e consulta exclusivamente por esses IDs!
       var baseUrl = isRapidApi
         ? 'https://api-football-v1.p.rapidapi.com/v3/fixtures'
         : 'https://v3.football.api-sports.io/fixtures'
@@ -4165,32 +4143,69 @@ routerAdd('GET', '/backend/v1/jogos-do-dia', (e) => {
             'x-apisports-key': apiFootballKey,
           }
 
-      var callUrl =
-        baseUrl + '?date=' + encodeURIComponent(dateQuery) + '&timezone=America%2FSao_Paulo'
-
+      // Buscar fixture_ids dos jogos cadastrados para a data
+      var fixtureIdsParaData = []
       try {
-        var resp = $http.send({
-          url: callUrl,
-          method: 'GET',
-          headers: headers,
-          timeout: 8,
-        })
-
-        if (isRateLimitErrorDay(resp.statusCode, resp.json || resp.raw)) {
-          tripApiFootballCircuitBreaker('Rate limit 429 em jogos-do-dia para data ' + dateQuery)
-          rateLimitHit = true
-        } else if (
-          resp &&
-          resp.statusCode === 200 &&
-          resp.json &&
-          Array.isArray(resp.json.response)
-        ) {
-          recordApiFootballCall()
-          resetApiFootballCircuitBreaker()
-          allFixtures = resp.json.response
+        var jogosDataRecs = $app.findRecordsByFilter(
+          'jogos',
+          "data ~ '" + dateQuery + "' || data = '" + dateQuery + "'",
+          'hora',
+          50,
+          0,
+        )
+        for (var jdi = 0; jdi < jogosDataRecs.length; jdi++) {
+          var jFid = (jogosDataRecs[jdi].getString('fixture_id') || '').trim()
+          if (jFid && /^\d+$/.test(jFid) && fixtureIdsParaData.indexOf(jFid) === -1) {
+            fixtureIdsParaData.push(jFid)
+          }
         }
-      } catch (eH) {
-        console.log('Aviso ao consultar data ' + dateQuery + ' na API-Football:', eH)
+      } catch (errDbJogosDia) {
+        console.log('[jogos-do-dia] Erro ao carregar jogos da data do banco:', errDbJogosDia)
+      }
+
+      if (fixtureIdsParaData.length > 0) {
+        for (var fpi = 0; fpi < fixtureIdsParaData.length; fpi++) {
+          var targetFid = fixtureIdsParaData[fpi]
+          var callUrl =
+            baseUrl + '?id=' + encodeURIComponent(targetFid) + '&timezone=America%2FSao_Paulo'
+          try {
+            var resp = $http.send({
+              url: callUrl,
+              method: 'GET',
+              headers: headers,
+              timeout: 8,
+            })
+
+            if (isRateLimitErrorDay(resp.statusCode, resp.json || resp.raw)) {
+              tripApiFootballCircuitBreaker(
+                'Rate limit 429 em jogos-do-dia para fixture ' + targetFid,
+              )
+              rateLimitHit = true
+              break
+            } else if (
+              resp &&
+              resp.statusCode === 200 &&
+              resp.json &&
+              Array.isArray(resp.json.response)
+            ) {
+              recordApiFootballCall()
+              resetApiFootballCircuitBreaker()
+              if (!allFixtures) allFixtures = []
+              for (var ari = 0; ari < resp.json.response.length; ari++) {
+                allFixtures.push(resp.json.response[ari])
+              }
+            }
+          } catch (eH) {
+            console.log('Aviso ao consultar fixture ' + targetFid + ' na API-Football:', eH)
+          }
+        }
+      } else {
+        // Zero jogos com ID cadastrado para a data: não consome nenhuma chamada à API-Football!
+        console.log(
+          '[jogos-do-dia] Sem fixture_id cadastrado para a data ' +
+            dateQuery +
+            '. Zero chamadas à API-Football.',
+        )
       }
     } else {
       rateLimitHit = true

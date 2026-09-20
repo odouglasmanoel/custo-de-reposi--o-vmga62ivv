@@ -41,7 +41,12 @@ import {
   isFixtureLive,
   isFixtureFinished,
 } from '@/lib/apiFootballMatcher'
-import { buscarJogosIntervalo, JogoBuscado } from '@/services/enquetes'
+import {
+  buscarJogosIntervalo,
+  buscarEscudoTime,
+  readEscudoCache,
+  JogoBuscado,
+} from '@/services/enquetes'
 import {
   Select,
   SelectContent,
@@ -767,6 +772,75 @@ export default function JogosDoDia() {
                 isLive: false,
               }
               mergedFixtures.push(localFixture)
+            }
+          }
+        }
+
+        // Preenchimento de escudos faltantes priorizando team.logo e resolvendo times sem logo (Bournemouth, Liverpool, Atlético Madrid, Marseille)
+        for (const item of mergedFixtures) {
+          const hName = item.teams?.home?.name
+          if (hName) {
+            // Se for PSG com logo contaminado (Köln 192), purga e atribui o logo oficial
+            if (
+              (hName.toLowerCase().includes('paris') || hName.toLowerCase() === 'psg') &&
+              item.teams.home.logo &&
+              (item.teams.home.logo.includes('192.') ||
+                item.teams.home.logo.includes('koln') ||
+                item.teams.home.logo.includes('cologne'))
+            ) {
+              item.teams.home.logo = 'https://media.api-sports.io/football/teams/85.png'
+            }
+
+            if (!item.teams.home.logo) {
+              const fromCache = readEscudoCache(hName)
+              if (fromCache) {
+                item.teams.home.logo = fromCache
+              } else {
+                // Dispara busca assíncrona para hidratar
+                buscarEscudoTime(hName).then((badge) => {
+                  if (badge) {
+                    setFixtures((prev) =>
+                      prev.map((f) =>
+                        f.teams?.home?.name === hName && !f.teams.home.logo
+                          ? { ...f, teams: { ...f.teams, home: { ...f.teams.home, logo: badge } } }
+                          : f,
+                      ),
+                    )
+                  }
+                })
+              }
+            }
+          }
+          const aName = item.teams?.away?.name
+          if (aName) {
+            if (
+              (aName.toLowerCase().includes('paris') || aName.toLowerCase() === 'psg') &&
+              item.teams.away.logo &&
+              (item.teams.away.logo.includes('192.') ||
+                item.teams.away.logo.includes('koln') ||
+                item.teams.away.logo.includes('cologne'))
+            ) {
+              item.teams.away.logo = 'https://media.api-sports.io/football/teams/85.png'
+            }
+
+            if (!item.teams.away.logo) {
+              const fromCache = readEscudoCache(aName)
+              if (fromCache) {
+                item.teams.away.logo = fromCache
+              } else {
+                // Dispara busca assíncrona para hidratar
+                buscarEscudoTime(aName).then((badge) => {
+                  if (badge) {
+                    setFixtures((prev) =>
+                      prev.map((f) =>
+                        f.teams?.away?.name === aName && !f.teams.away.logo
+                          ? { ...f, teams: { ...f.teams, away: { ...f.teams.away, logo: badge } } }
+                          : f,
+                      ),
+                    )
+                  }
+                })
+              }
             }
           }
         }

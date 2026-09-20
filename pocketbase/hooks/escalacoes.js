@@ -221,15 +221,128 @@ routerAdd(
       return nowMs >= inicioJanela
     }
 
+    var sinonimosConhecidosTimes = {
+      'paris saint germain': 'paris saint germain',
+      'paris saint-germain': 'paris saint germain',
+      'paris sg': 'paris saint germain',
+      psg: 'paris saint germain',
+      'olympique de marseille': 'olympique marseille',
+      'olympique marseille': 'olympique marseille',
+      marseille: 'olympique marseille',
+      'olimpia de marsella': 'olympique marseille',
+      om: 'olympique marseille',
+      'afc bournemouth': 'bournemouth',
+      bournemouth: 'bournemouth',
+      'atletico madrid': 'atletico madrid',
+      'atletico de madrid': 'atletico madrid',
+      'club atletico de madrid': 'atletico madrid',
+      atleti: 'atletico madrid',
+      'liverpool fc': 'liverpool',
+      liverpool: 'liverpool',
+      internazionale: 'inter milan',
+      'inter milan': 'inter milan',
+      'inter de milao': 'inter milan',
+      'fc internazionale': 'inter milan',
+      'sporting cp': 'sporting lisbon',
+      'sporting lisbon': 'sporting lisbon',
+      'sporting clube de portugal': 'sporting lisbon',
+      'athletic club': 'athletic bilbao',
+      'athletic bilbao': 'athletic club',
+      'real madrid': 'real madrid',
+      'real madrid cf': 'real madrid',
+      ldu: 'ldu quito',
+      'liga de quito': 'ldu quito',
+    }
+
     var normalizeStr = function (str) {
       if (!str) return ''
-      return str
+      var s = str
         .normalize('NFD')
         .replace(/[\u0300-\u036f]/g, '')
         .toLowerCase()
         .replace(/[^a-z0-9\s]/g, ' ')
-        .replace(/\s+/g, ' ')
-        .trim()
+      var rawTokens = s.split(/\s+/).filter(Boolean)
+      var rawClean = rawTokens.join(' ').trim()
+      if (sinonimosConhecidosTimes[rawClean]) {
+        return sinonimosConhecidosTimes[rawClean]
+      }
+      var noiseWords = [
+        'afc',
+        'fc',
+        'sc',
+        'ac',
+        'cf',
+        'cd',
+        'sd',
+        'clube',
+        'club',
+        'ec',
+        'cr',
+        'se',
+        'de',
+        'do',
+        'da',
+        'dos',
+        'das',
+        'del',
+        'futebol',
+        'futbol',
+        'sport',
+        'association',
+        'sociedade',
+        'esportiva',
+      ]
+      var tokens = rawTokens.filter(function (t) {
+        return noiseWords.indexOf(t) === -1
+      })
+      if (tokens.length === 0) {
+        return s.replace(/[^a-z0-9]/g, '').trim()
+      }
+      var clean = tokens.join(' ').trim()
+      return sinonimosConhecidosTimes[clean] || clean
+    }
+
+    var calcularLevenshtein = function (a, b) {
+      var m = a.length
+      var n = b.length
+      if (m === 0) return n
+      if (n === 0) return m
+      var d = []
+      for (var i = 0; i <= m; i++) d[i] = [i]
+      for (var j = 0; j <= n; j++) d[0][j] = j
+      for (var i1 = 1; i1 <= m; i1++) {
+        for (var j1 = 1; j1 <= n; j1++) {
+          var cost = a[i1 - 1] === b[j1 - 1] ? 0 : 1
+          d[i1][j1] = Math.min(d[i1 - 1][j1] + 1, d[i1][j1 - 1] + 1, d[i1 - 1][j1 - 1] + cost)
+        }
+      }
+      return d[m][n]
+    }
+
+    var timesCoincidem = function (a, b) {
+      var normA = normalizeStr(a)
+      var normB = normalizeStr(b)
+      if (!normA || !normB) return false
+      if (normA === normB) return true
+      if (normA.indexOf(normB) !== -1 || normB.indexOf(normA) !== -1) return true
+      var tA = normA.split(/\s+/).filter(function (t) {
+        return t.length >= 3
+      })
+      var tB = normB.split(/\s+/).filter(function (t) {
+        return t.length >= 3
+      })
+      var common = false
+      for (var ti = 0; ti < tA.length; ti++) {
+        if (tB.indexOf(tA[ti]) !== -1) {
+          common = true
+          break
+        }
+      }
+      if (common && (tA.length <= 2 || tB.length <= 2)) return true
+      var maxLen = Math.max(normA.length, normB.length)
+      if (maxLen === 0) return true
+      var dist = calcularLevenshtein(normA, normB)
+      return 1 - dist / maxLen >= 0.85
     }
 
     try {
@@ -310,12 +423,11 @@ routerAdd(
             var nB = normalizeStr(timeB)
             for (var cri = 0; cri < candRecords.length; cri++) {
               var cr = candRecords[cri]
-              var crA = normalizeStr(cr.getString('time_a') || '')
-              var crB = normalizeStr(cr.getString('time_b') || '')
-              if (
-                (crA.indexOf(nA) !== -1 || nA.indexOf(crA) !== -1) &&
-                (crB.indexOf(nB) !== -1 || nB.indexOf(crB) !== -1)
-              ) {
+              var crA = cr.getString('time_a') || ''
+              var crB = cr.getString('time_b') || ''
+              var matchDireto = timesCoincidem(timeA, crA) && timesCoincidem(timeB, crB)
+              var matchInvertido = timesCoincidem(timeA, crB) && timesCoincidem(timeB, crA)
+              if (matchDireto || matchInvertido) {
                 matchingJogoRecord = cr
                 var crFid = (cr.getString('fixture_id') || '').trim()
                 if (
