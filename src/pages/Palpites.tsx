@@ -1286,9 +1286,9 @@ export default function Palpites() {
         const horaEncerramento = formatHoraEncerramento(jogo.hora)
 
         return (
-          <Card className="overflow-hidden rounded-[14px] border-[#E2E8F0] bg-white shadow-xs transition hover:shadow-sm flex flex-col justify-between">
+          <Card className="overflow-hidden rounded-[14px] border-[#E2E8F0] bg-white shadow-xs transition hover:shadow-sm flex flex-col justify-between w-full">
             {/* Match meta bar (copa, data, hora e status de registro do palpite) */}
-            <div className="flex flex-wrap items-center justify-between border-b border-slate-100 bg-slate-50/70 px-4 py-2 gap-1.5">
+            <div className="flex flex-wrap items-center justify-between border-b border-slate-100 bg-slate-50/70 px-3.5 py-1.5 gap-1.5">
               <div className="flex flex-wrap items-center gap-1.5 text-[11px] text-slate-600">
                 {bolaoOrigem && (
                   <Badge
@@ -1361,20 +1361,20 @@ export default function Palpites() {
               </div>
             </div>
 
-            <div className="p-4 flex-1 flex flex-col justify-between">
+            <div className="p-3 sm:p-3.5 flex-1 flex flex-col justify-between">
               {/* Placar centralizado estilo Google em 3 colunas:
                   Esquerda: escudo do mandante acima do nome
                   Centro: placar oficial em destaque (ou vs) com status/tempo abaixo
                   Direita: escudo do visitante acima do nome */}
-              <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-2 py-2 mb-2">
+              <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-2 py-1 mb-1">
                 {/* Mandante */}
                 <div className="flex flex-col items-center text-center min-w-0">
-                  <div className="h-10 w-10 sm:h-12 sm:w-12 flex items-center justify-center shrink-0 mb-1.5">
+                  <div className="h-9 w-9 sm:h-10 sm:w-10 flex items-center justify-center shrink-0 mb-1">
                     <TeamShield
                       escudo={escudoA}
                       nomeTime={jogo.time_a}
                       sigla={initialsA}
-                      sizeClass="h-10 w-10 sm:h-12 sm:w-12"
+                      sizeClass="h-9 w-9 sm:h-10 sm:w-10"
                       textClass="text-xs font-bold text-slate-700"
                     />
                   </div>
@@ -1390,7 +1390,7 @@ export default function Palpites() {
                 <div className="flex flex-col items-center justify-center text-center px-2 shrink-0">
                   {finalizado ? (
                     <>
-                      <div className="text-xl sm:text-2xl font-black text-[#0F2A43] tracking-tight whitespace-nowrap">
+                      <div className="text-lg sm:text-xl font-black text-[#0F2A43] tracking-tight whitespace-nowrap">
                         {jogo.placar_a != null ? Number(jogo.placar_a) : 0} -{' '}
                         {jogo.placar_b != null ? Number(jogo.placar_b) : 0}
                       </div>
@@ -1401,7 +1401,7 @@ export default function Palpites() {
                   ) : isExpired ? (
                     <>
                       {jogo.placar_a != null && jogo.placar_b != null ? (
-                        <div className="text-xl sm:text-2xl font-black text-[#0F2A43] tracking-tight whitespace-nowrap">
+                        <div className="text-lg sm:text-xl font-black text-[#0F2A43] tracking-tight whitespace-nowrap">
                           {Number(jogo.placar_a)} - {Number(jogo.placar_b)}
                         </div>
                       ) : (
@@ -1425,12 +1425,12 @@ export default function Palpites() {
 
                 {/* Visitante */}
                 <div className="flex flex-col items-center text-center min-w-0">
-                  <div className="h-10 w-10 sm:h-12 sm:w-12 flex items-center justify-center shrink-0 mb-1.5">
+                  <div className="h-9 w-9 sm:h-10 sm:w-10 flex items-center justify-center shrink-0 mb-1">
                     <TeamShield
                       escudo={escudoB}
                       nomeTime={jogo.time_b}
                       sigla={initialsB}
-                      sizeClass="h-10 w-10 sm:h-12 sm:w-12"
+                      sizeClass="h-9 w-9 sm:h-10 sm:w-10"
                       textClass="text-xs font-bold text-slate-700"
                     />
                   </div>
@@ -1450,7 +1450,7 @@ export default function Palpites() {
                 if (!isExpiredOrFinalized) return null
 
                 return (
-                  <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50/80 p-3">
+                  <div className="mt-3 rounded-xl border border-slate-200 bg-slate-50/80 p-3">
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-1.5">
                         <Users className="h-4 w-4 text-[#0F2A43]" />
@@ -1669,7 +1669,7 @@ export default function Palpites() {
                     : detalhamento
 
                   return (
-                    <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-4">
+                    <div className="mt-3 rounded-xl border border-slate-200 bg-slate-50 p-3">
                       <div className="flex flex-wrap items-center justify-between gap-2">
                         <div className="text-xs text-slate-700">
                           {activeSelectedBet && (
@@ -1749,9 +1749,9 @@ export default function Palpites() {
                   )
                 })()
               ) : (
-                <div className="mt-4 space-y-4">
+                <div className="mt-3 space-y-3">
                   {isExpired && (
-                    <div className="flex items-center justify-between rounded-lg border border-rose-200 bg-rose-50 px-4 py-2.5 text-xs text-rose-900">
+                    <div className="flex items-center justify-between rounded-lg border border-rose-200 bg-rose-50 px-3.5 py-2 text-xs text-rose-900">
                       <div className="flex items-center gap-2">
                         <Lock className="h-4 w-4 text-rose-700 shrink-0" />
                         <span>
@@ -1769,7 +1769,7 @@ export default function Palpites() {
                   )}
 
                   {isLocked && !isExpired && (
-                    <div className="flex items-center justify-between rounded-lg border border-emerald-200 bg-emerald-50/70 px-4 py-2.5 text-xs text-emerald-900">
+                    <div className="flex items-center justify-between rounded-lg border border-emerald-200 bg-emerald-50/70 px-3.5 py-2 text-xs text-emerald-900">
                       <div className="flex items-center gap-2">
                         <Lock className="h-4 w-4 text-emerald-700 shrink-0" />
                         <span>
@@ -1790,7 +1790,7 @@ export default function Palpites() {
                   )}
 
                   {isEditing && !isExpired && (
-                    <div className="flex items-center justify-between rounded-lg border border-blue-200 bg-blue-50/70 px-4 py-2.5 text-xs text-blue-900">
+                    <div className="flex items-center justify-between rounded-lg border border-blue-200 bg-blue-50/70 px-3.5 py-2 text-xs text-blue-900">
                       <div className="flex items-center gap-2">
                         <Edit3 className="h-4 w-4 text-blue-700 shrink-0" />
                         <span>
@@ -1821,7 +1821,7 @@ export default function Palpites() {
                   />
 
                   {/* Score inputs with compact team shields: [Escudo A] [input placar A] x [input placar B] [Escudo B] */}
-                  <div className="flex items-center justify-center gap-2 py-1">
+                  <div className="flex items-center justify-center gap-2 py-0.5">
                     {' '}
                     <div className="flex flex-col items-center shrink-0">
                       <TeamShield
@@ -1880,9 +1880,9 @@ export default function Palpites() {
                     const isZeroB = numGolsB === 0
 
                     return (
-                      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                         {/* Team A Scorers */}
-                        <div className="rounded-lg border border-slate-200 bg-slate-50/50 p-3">
+                        <div className="rounded-lg border border-slate-200 bg-slate-50/50 p-2.5 sm:p-3">
                           <div className="flex items-center justify-between pb-1.5 border-b border-slate-200/60 mb-2">
                             <Label className="text-xs font-bold text-slate-800">
                               Marcadores de gols — {jogo.time_a}
@@ -1902,11 +1902,11 @@ export default function Palpites() {
                           </div>
 
                           {isZeroA ? (
-                            <p className="py-3 text-center text-xs italic text-slate-400">
+                            <p className="py-2 text-center text-xs italic text-slate-400">
                               Placar zero (0): campo de marcadores bloqueado.
                             </p>
                           ) : (
-                            <div className="space-y-2">
+                            <div className="space-y-1.5">
                               {Array.from({ length: numGolsA }).map((_, idx) => {
                                 const currentScorer = form.goleadores_a?.[idx] || ''
                                 const isContra = Boolean(form.goleadores_contra_a?.[idx])
@@ -1918,7 +1918,7 @@ export default function Palpites() {
                                 const isSub = lineupCheck.role === 'reserva'
 
                                 return (
-                                  <div key={idx} className="space-y-1">
+                                  <div key={idx} className="space-y-0.5">
                                     <div className="flex items-center gap-2">
                                       <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-slate-200 text-[10px] font-bold text-slate-700">
                                         {idx + 1}º
@@ -2008,7 +2008,7 @@ export default function Palpites() {
                         </div>
 
                         {/* Team B Scorers */}
-                        <div className="rounded-lg border border-slate-200 bg-slate-50/50 p-3">
+                        <div className="rounded-lg border border-slate-200 bg-slate-50/50 p-2.5 sm:p-3">
                           <div className="flex items-center justify-between pb-1.5 border-b border-slate-200/60 mb-2">
                             <Label className="text-xs font-bold text-slate-800">
                               Marcadores de gols — {jogo.time_b}
@@ -2028,11 +2028,11 @@ export default function Palpites() {
                           </div>
 
                           {isZeroB ? (
-                            <p className="py-3 text-center text-xs italic text-slate-400">
+                            <p className="py-2 text-center text-xs italic text-slate-400">
                               Placar zero (0): campo de marcadores bloqueado.
                             </p>
                           ) : (
-                            <div className="space-y-2">
+                            <div className="space-y-1.5">
                               {Array.from({ length: numGolsB }).map((_, idx) => {
                                 const currentScorer = form.goleadores_b?.[idx] || ''
                                 const isContra = Boolean(form.goleadores_contra_b?.[idx])
@@ -2044,7 +2044,7 @@ export default function Palpites() {
                                 const isSub = lineupCheck.role === 'reserva'
 
                                 return (
-                                  <div key={idx} className="space-y-1">
+                                  <div key={idx} className="space-y-0.5">
                                     <div className="flex items-center gap-2">
                                       <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-slate-200 text-[10px] font-bold text-slate-700">
                                         {idx + 1}º
@@ -2138,7 +2138,7 @@ export default function Palpites() {
 
                   {/* Penalties select (when game has tem_penaltis) */}
                   {jogo.tem_penaltis && (
-                    <div className="rounded-lg border border-amber-200 bg-amber-50 p-3">
+                    <div className="rounded-lg border border-amber-200 bg-amber-50 p-2.5 sm:p-3">
                       <Label className="text-xs font-bold text-amber-900">
                         Vencedor nos pênaltis (+2 pontos caso haja disputa):
                       </Label>
@@ -2158,7 +2158,8 @@ export default function Palpites() {
                   )}
 
                   {/* Action buttons footer */}
-                  <div className="flex justify-end pt-2">
+                  <div className="flex justify-end pt-1">
+                    {' '}
                     {isExpired ? (
                       <Button
                         type="button"
@@ -2434,37 +2435,37 @@ export default function Palpites() {
       )}
 
       {loading && displayedJogos.length === 0 ? (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 gap-4 max-w-4xl mx-auto w-full">
           {[1, 2, 3, 4, 5, 6].map((idx) => (
             <Card
               key={idx}
-              className="overflow-hidden rounded-[14px] border-[#E2E8F0] bg-white p-4 shadow-xs"
+              className="overflow-hidden rounded-[14px] border-[#E2E8F0] bg-white p-3.5 shadow-xs"
             >
               <div className="flex items-center justify-between pb-2 border-b border-slate-100">
                 <Skeleton className="h-4 w-28" />
                 <Skeleton className="h-4 w-16 rounded-full" />
               </div>
-              <div className="py-4 flex justify-center items-center gap-3">
+              <div className="py-2.5 flex justify-center items-center gap-3">
                 <Skeleton className="h-7 w-7 rounded-full" />
-                <Skeleton className="h-9 w-12 rounded-lg" />
+                <Skeleton className="h-8 w-12 rounded-lg" />
                 <Skeleton className="h-4 w-4" />
-                <Skeleton className="h-9 w-12 rounded-lg" />
+                <Skeleton className="h-8 w-12 rounded-lg" />
                 <Skeleton className="h-7 w-7 rounded-full" />
               </div>
               <div className="pt-2 flex justify-end">
-                <Skeleton className="h-8 w-24 rounded-lg" />
+                <Skeleton className="h-7 w-24 rounded-lg" />
               </div>
             </Card>
           ))}
         </div>
       ) : displayedJogos.length === 0 ? (
-        <Card className="rounded-[14px] border-[#E2E8F0] bg-white p-12 text-center text-xs text-slate-500">
+        <Card className="rounded-[14px] border-[#E2E8F0] bg-white p-12 text-center text-xs text-slate-500 max-w-4xl mx-auto w-full">
           {filterPendentes
             ? 'Não há jogos pendentes no momento para os critérios selecionados.'
             : 'Nenhuma partida disponível. Os jogos serão cadastrados pelo administrador Douglas.'}
         </Card>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 gap-4 max-w-4xl mx-auto w-full">
           {displayedJogos.map((jogo) => {
             const bolaoOrigem = bolaoMap.get(jogo.bolao)
             const palpite = palpites[jogo.id]
