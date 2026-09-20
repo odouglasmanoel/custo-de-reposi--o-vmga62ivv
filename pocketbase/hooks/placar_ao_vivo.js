@@ -1693,6 +1693,140 @@ routerAdd('GET', '/backend/v1/placar-ao-vivo', (e) => {
       }
     }
 
+    // JANELA DE POLLING INLINE (Item 2 do pedido):
+    // Retorna true somente se: (agora >= kickoff - 60min) E (jogo não finalizado)
+    var isDentroJanelaPolling = function (dataHoraJogo, agora) {
+      if (!dataHoraJogo) return false
+      var nowMs = agora
+        ? typeof agora === 'number'
+          ? agora
+          : new Date(agora).getTime()
+        : Date.now()
+      var kickoffMs = null
+      if (typeof dataHoraJogo === 'number') {
+        kickoffMs = dataHoraJogo
+      } else if (typeof dataHoraJogo === 'object' && dataHoraJogo !== null) {
+        var isFin = false
+        if (typeof dataHoraJogo.getBool === 'function') {
+          isFin = dataHoraJogo.getBool('resultado_finalizado')
+        } else if (dataHoraJogo.resultado_finalizado != null) {
+          isFin = Boolean(dataHoraJogo.resultado_finalizado)
+        }
+        if (isFin) return false
+
+        var dtVal =
+          typeof dataHoraJogo.getString === 'function'
+            ? dataHoraJogo.getString('data')
+            : dataHoraJogo.data
+        var hrVal =
+          typeof dataHoraJogo.getString === 'function'
+            ? dataHoraJogo.getString('hora')
+            : dataHoraJogo.hora
+
+        if (dtVal) {
+          var y = 0,
+            m = 0,
+            d = 0
+          var dtStr = String(dtVal).trim()
+          var brM = dtStr.match(/^(\d{2})\/(\d{2})\/(\d{4})/)
+          if (brM) {
+            d = parseInt(brM[1], 10)
+            m = parseInt(brM[2], 10)
+            y = parseInt(brM[3], 10)
+          } else {
+            var isoM = dtStr.match(/^(\d{4})-(\d{2})-(\d{2})/)
+            if (isoM) {
+              y = parseInt(isoM[1], 10)
+              m = parseInt(isoM[2], 10)
+              d = parseInt(isoM[3], 10)
+            }
+          }
+          var hrs = 16,
+            mins = 0
+          if (hrVal) {
+            var hrM = String(hrVal).match(/^(\d{1,2}):(\d{2})/)
+            if (hrM) {
+              hrs = parseInt(hrM[1], 10)
+              mins = parseInt(hrM[2], 10)
+            }
+          }
+          if (y && m && d) {
+            kickoffMs = Date.UTC(y, m - 1, d, hrs + 3, mins, 0, 0)
+          }
+        }
+      } else if (typeof dataHoraJogo === 'string') {
+        var dtObj = new Date(dataHoraJogo)
+        if (!isNaN(dtObj.getTime())) {
+          kickoffMs = dtObj.getTime()
+        }
+      }
+
+      if (!kickoffMs) return false
+      var inicioJanela = kickoffMs - 60 * 60 * 1000
+      return nowMs >= inicioJanela
+    }
+
+    // =============================================================
+    // ESCOPO RESTRITO & JANELA DE POLLING (Itens 1 e 2 do pedido):
+    // 1. Carrega registros da collection jogos (apenas não finalizados)
+    // 2. Constrói o conjunto de fixture_ids cadastrados
+    // 3. Filtra apenas os IDs que estão DENTRO DA JANELA (agora >= kickoff - 60min)
+    // 4. Se nenhum fixture_id estiver cadastrado e dentro da janela, ZERO chamadas à API-Football!
+    // =============================================================
+    var cadastradosFixtureIds = []
+    var cadastradosRecordsMap = {}
+    var fixturesDentroJanela = []
+
+    try {
+      var jogosNaoFinalizados = $app.findRecordsByFilter(
+        'jogos',
+        'resultado_finalizado = false',
+        '-data',
+        200,
+        0,
+      )
+      if (Array.isArray(jogosNaoFinalizados)) {
+        for (var scIdx = 0; scIdx < jogosNaoFinalizados.length; scIdx++) {
+          var scRec = jogosNaoFinalizados[scIdx]
+          var scFid = (scRec.getString('fixture_id') || '').trim()
+          if (scFid) {
+            cadastradosFixtureIds.push(scFid)
+            cadastradosRecordsMap[scFid] = scRec
+            if (isDentroJanelaPolling(scRec, Date.now())) {
+              fixturesDentroJanela.push(scFid)
+            }
+          }
+        }
+      }
+    } catch (errEscopoPlacar) {
+      console.log('[placar-ao-vivo] Erro ao carregar escopo de jogos cadastrados:', errEscopoPlacar)
+    }
+
+    console.log(
+      '[placar-ao-vivo] ESCOPO: ' +
+        cadastradosFixtureIds.length +
+        ' fixture_ids cadastrados em jogos pendentes: [' +
+        cadastradosFixtureIds.join(', ') +
+        ']. Dentro da janela (kickoff - 60min até fim): [' +
+        fixturesDentroJanela.join(', ') +
+        '].',
+    )
+
+    // Filtra directFixtureIds: APENAS aqueles que estão cadastrados no banco
+    var directFixtureIdsRestritos = []
+    for (var dfi = 0; dfi < directFixtureIds.length; dfi++) {
+      var candFid = directFixtureIds[dfi]
+      if (cadastradosFixtureIds.indexOf(candFid) !== -1) {
+        directFixtureIdsRestritos.push(candFid)
+      } else {
+        console.log(
+          '[placar-ao-vivo] BLOQUEIO DE ESCOPO: Fixture ID ' +
+            candFid +
+            ' NÃO está nos jogos cadastrados no banco. Chamada API-Football proibida.',
+        )
+      }
+    }
+
     // PRIORIDADE 2: THROTTLE GLOBAL (15min) & CIRCUIT BREAKER CHECK
     var cbStatus = checkApiFootballCircuitBreaker()
     var throttleStatus = checkApiFootballThrottle()
@@ -1710,16 +1844,31 @@ routerAdd('GET', '/backend/v1/placar-ao-vivo', (e) => {
           's). Redirecionando para contingência.',
       )
       rateLimitDetected = true
+    } else if (fixturesDentroJanela.length === 0) {
+      console.log(
+        '[placar-ao-vivo] BLOQUEIO DE JANELA: Nenhum jogo cadastrado está dentro da janela de polling (kickoff - 60min até fim). ZERO chamadas à API-Football.',
+      )
+      rateLimitDetected = true
     }
 
     var directFixtures = []
     var seenDirectIds = {}
 
-    // Executa busca direta de fixtures com proteção contra 429 e timeout curto (8s)
+    // Executa busca direta de fixtures restritas ao escopo cadastrado e janela
     if (!rateLimitDetected) {
-      for (var fxi = 0; fxi < directFixtureIds.length; fxi++) {
-        var targetFixtureId = directFixtureIds[fxi]
+      for (var fxi = 0; fxi < directFixtureIdsRestritos.length; fxi++) {
+        var targetFixtureId = directFixtureIdsRestritos[fxi]
         if (!targetFixtureId || seenDirectIds[targetFixtureId]) continue
+
+        var targetJogoRec = cadastradosRecordsMap[targetFixtureId]
+        if (targetJogoRec && !isDentroJanelaPolling(targetJogoRec, Date.now())) {
+          console.log(
+            '[placar-ao-vivo] Fixture ' +
+              targetFixtureId +
+              ' está fora da janela de polling. Pulando API-Football.',
+          )
+          continue
+        }
 
         var baseDirectUrl = isRapidApi
           ? 'https://api-football-v1.p.rapidapi.com/v3/fixtures'
@@ -1772,7 +1921,8 @@ routerAdd('GET', '/backend/v1/placar-ao-vivo', (e) => {
     }
 
     let liveFixtures = []
-    if (!rateLimitDetected) {
+    // Consulta /fixtures?live=all somente se houver partidas cadastradas dentro da janela
+    if (!rateLimitDetected && fixturesDentroJanela.length > 0) {
       try {
         const resLive = $http.send({
           url: urlLive,
@@ -1788,7 +1938,17 @@ routerAdd('GET', '/backend/v1/placar-ao-vivo', (e) => {
           recordApiFootballCall()
           resetApiFootballCircuitBreaker()
           if (resLive.json && Array.isArray(resLive.json.response)) {
-            liveFixtures = resLive.json.response.map(mapApiFootballItem)
+            // Filtra partidas ao vivo pelo escopo restrito de fixtures cadastradas
+            for (var lvi = 0; lvi < resLive.json.response.length; lvi++) {
+              var liveItem = resLive.json.response[lvi]
+              var lFid =
+                liveItem && liveItem.fixture && liveItem.fixture.id
+                  ? String(liveItem.fixture.id)
+                  : ''
+              if (lFid && cadastradosFixtureIds.indexOf(lFid) !== -1) {
+                liveFixtures.push(mapApiFootballItem(liveItem))
+              }
+            }
           }
         }
       } catch (errLive) {
@@ -1797,7 +1957,13 @@ routerAdd('GET', '/backend/v1/placar-ao-vivo', (e) => {
     }
 
     let dateFixtures = []
-    if (!rateLimitDetected && dateQuery && /^\d{4}-\d{2}-\d{2}$/.test(dateQuery)) {
+    // Consulta date fixtures apenas se houver jogos cadastrados dentro da janela
+    if (
+      !rateLimitDetected &&
+      fixturesDentroJanela.length > 0 &&
+      dateQuery &&
+      /^\d{4}-\d{2}-\d{2}$/.test(dateQuery)
+    ) {
       var baseUrlDate = isRapidApi
         ? 'https://api-football-v1.p.rapidapi.com/v3/fixtures'
         : 'https://v3.football.api-sports.io/fixtures'
@@ -1822,78 +1988,13 @@ routerAdd('GET', '/backend/v1/placar-ao-vivo', (e) => {
           resetApiFootballCircuitBreaker()
           if (resDate.json && Array.isArray(resDate.json.response)) {
             var dateResponseList = resDate.json.response
-            // Enriquecimento em lote com /fixtures?ids=id1-id2-... para partidas com gols ou ao vivo sem events
-            var missingEventsDateFixtures = []
-            for (var ri = 0; ri < dateResponseList.length; ri++) {
-              var candDate = dateResponseList[ri]
-              var candDateShort =
-                (candDate.fixture && candDate.fixture.status && candDate.fixture.status.short) || ''
-              var candDateIsLive =
-                ['1H', 'HT', '2H', 'ET', 'BT', 'P', 'LIVE'].indexOf(candDateShort) !== -1
-              var candDateHasGoals = Boolean(
-                (candDate.goals && (candDate.goals.home > 0 || candDate.goals.away > 0)) ||
-                (candDate.score &&
-                  candDate.score.fulltime &&
-                  (candDate.score.fulltime.home > 0 || candDate.score.fulltime.away > 0)),
-              )
-              var candDateHasEvents = Array.isArray(candDate.events) && candDate.events.length > 0
-              if (
-                (candDateIsLive || candDateHasGoals) &&
-                !candDateHasEvents &&
-                candDate.fixture &&
-                candDate.fixture.id
-              ) {
-                missingEventsDateFixtures.push(candDate)
-              }
-            }
-
-            if (missingEventsDateFixtures.length > 0) {
-              // Agrupa IDs em lotes de até 20 (suportado pela API-Football)
-              for (var bi = 0; bi < missingEventsDateFixtures.length; bi += 20) {
-                var chunk = missingEventsDateFixtures.slice(bi, bi + 20)
-                var chunkIds = chunk.map(function (c) {
-                  return c.fixture.id
-                })
-                try {
-                  var chunkUrl =
-                    baseUrlDate +
-                    '?ids=' +
-                    encodeURIComponent(chunkIds.join('-')) +
-                    '&timezone=America%2FSao_Paulo'
-                  var chunkRes = $http.send({
-                    url: chunkUrl,
-                    method: 'GET',
-                    headers: headers,
-                    timeout: 7,
-                  })
-                  if (
-                    chunkRes &&
-                    chunkRes.statusCode === 200 &&
-                    chunkRes.json &&
-                    Array.isArray(chunkRes.json.response)
-                  ) {
-                    var enrichedDateMap = {}
-                    for (var cri = 0; cri < chunkRes.json.response.length; cri++) {
-                      var enrItem = chunkRes.json.response[cri]
-                      if (enrItem.fixture && enrItem.fixture.id && Array.isArray(enrItem.events)) {
-                        enrichedDateMap[enrItem.fixture.id] = enrItem.events
-                      }
-                    }
-                    for (var ci = 0; ci < chunk.length; ci++) {
-                      var targetFix = chunk[ci]
-                      if (enrichedDateMap[targetFix.fixture.id]) {
-                        targetFix.events = enrichedDateMap[targetFix.fixture.id]
-                      }
-                    }
-                  }
-                } catch (chunkErr) {
-                  console.log('[Enrich Date Batch Error]:', chunkErr)
-                }
-              }
-            }
-
             for (var rj = 0; rj < dateResponseList.length; rj++) {
-              dateFixtures.push(mapApiFootballItem(dateResponseList[rj]))
+              var dItem = dateResponseList[rj]
+              var dFid = dItem && dItem.fixture && dItem.fixture.id ? String(dItem.fixture.id) : ''
+              // Escopo restrito: aceita na resposta apenas os fixture_ids cadastrados no banco
+              if (dFid && cadastradosFixtureIds.indexOf(dFid) !== -1) {
+                dateFixtures.push(mapApiFootballItem(dItem))
+              }
             }
           }
         }
@@ -2087,6 +2188,137 @@ routerAdd('GET', '/backend/v1/placar-ao-vivo', (e) => {
       live: liveFixtures,
       dateFixtures: dateFixtures,
       updatedAt: new Date().toISOString(),
+    }
+
+    // =============================================================
+    // PERSISTÊNCIA NA COLLECTION JOGOS (Item 3 do pedido):
+    // Salva automaticamente dados da partida (placar, status, marcadores, ficha_detalhes)
+    // nos jogos cadastrados no banco correspondentes às fixtures retornadas pela API-Football.
+    // REGRA ANTIFALHA: Nunca sobrescreve jogos já finalizados (resultado_finalizado = true)
+    // e nunca força 0x0 por erro de API.
+    // =============================================================
+    try {
+      var allIncomingFixtures = []
+      if (Array.isArray(directFixtures)) {
+        for (var dif = 0; dif < directFixtures.length; dif++)
+          allIncomingFixtures.push(directFixtures[dif])
+      }
+      if (Array.isArray(liveFixtures)) {
+        for (var lif = 0; lif < liveFixtures.length; lif++)
+          allIncomingFixtures.push(liveFixtures[lif])
+      }
+      if (Array.isArray(dateFixtures)) {
+        for (var daf = 0; daf < dateFixtures.length; daf++)
+          allIncomingFixtures.push(dateFixtures[daf])
+      }
+
+      var processedFixtureIds = {}
+      for (var pFi = 0; pFi < allIncomingFixtures.length; pFi++) {
+        var fixItem = allIncomingFixtures[pFi]
+        if (!fixItem || !fixItem.fixture || !fixItem.fixture.id) continue
+        var incomingFid = String(fixItem.fixture.id)
+        if (processedFixtureIds[incomingFid]) continue
+        processedFixtureIds[incomingFid] = true
+
+        var matchedJogo = cadastradosRecordsMap[incomingFid]
+        if (!matchedJogo) continue
+
+        // Se o jogo já está finalizado, NÃO sobrescreve!
+        if (matchedJogo.getBool('resultado_finalizado')) continue
+
+        var homeGoals =
+          fixItem.goals && fixItem.goals.home !== null && fixItem.goals.home !== undefined
+            ? fixItem.goals.home
+            : null
+        var awayGoals =
+          fixItem.goals && fixItem.goals.away !== null && fixItem.goals.away !== undefined
+            ? fixItem.goals.away
+            : null
+
+        var fixStatusShort =
+          fixItem.fixture.status && fixItem.fixture.status.short
+            ? String(fixItem.fixture.status.short).toUpperCase().trim()
+            : ''
+        var isFinishedStatus = ['FT', 'AET', 'PEN'].indexOf(fixStatusShort) !== -1
+
+        // Regra antifalha: se a API retornar null ou indefinido, não força 0x0
+        if (homeGoals !== null && awayGoals !== null) {
+          matchedJogo.set('gols_time_a', homeGoals)
+          matchedJogo.set('gols_time_b', awayGoals)
+        }
+
+        // Se os eventos ou scorers contêm marcadores, organiza para persistir em goleadores_a e goleadores_b
+        if (Array.isArray(fixItem.scorers) && fixItem.scorers.length > 0) {
+          var scHome = []
+          var scAway = []
+          for (var sci = 0; sci < fixItem.scorers.length; sci++) {
+            var scObj = fixItem.scorers[sci]
+            var scName = (scObj.name || '').trim()
+            if (!scName) continue
+            var scItemFormatted = {
+              nome: scName,
+              minuto: scObj.minute != null ? String(scObj.minute) : '',
+              posicao: 'Atacante',
+            }
+            if (scObj.teamSide === 'home') {
+              scHome.push(scItemFormatted)
+            } else if (scObj.teamSide === 'away') {
+              scAway.push(scItemFormatted)
+            } else if (
+              fixItem.teams &&
+              fixItem.teams.home &&
+              scObj.teamId === fixItem.teams.home.id
+            ) {
+              scHome.push(scItemFormatted)
+            } else if (
+              fixItem.teams &&
+              fixItem.teams.away &&
+              scObj.teamId === fixItem.teams.away.id
+            ) {
+              scAway.push(scItemFormatted)
+            }
+          }
+          if (scHome.length > 0 || scAway.length > 0) {
+            matchedJogo.set('goleadores_a', scHome)
+            matchedJogo.set('goleadores_b', scAway)
+          }
+        }
+
+        // Salva também snapshot de ficha técnica resumida no campo ficha_detalhes do jogo
+        matchedJogo.set('ficha_detalhes', fixItem)
+
+        // Se a partida encerrou oficialmente na API-Football (FT, AET, PEN), finaliza o resultado
+        if (isFinishedStatus && homeGoals !== null && awayGoals !== null) {
+          matchedJogo.set('resultado_finalizado', true)
+          matchedJogo.set('status', 'finalizado')
+        } else if (['1H', 'HT', '2H', 'ET', 'BT', 'P', 'LIVE'].indexOf(fixStatusShort) !== -1) {
+          matchedJogo.set('status', 'ao_vivo')
+        }
+
+        try {
+          $app.save(matchedJogo)
+          console.log(
+            '[placar-ao-vivo] Jogo id ' +
+              matchedJogo.id +
+              ' (fixture ' +
+              incomingFid +
+              ') persistido com sucesso no banco. Placar: ' +
+              homeGoals +
+              'x' +
+              awayGoals +
+              ' (Status: ' +
+              fixStatusShort +
+              ')',
+          )
+        } catch (errSavePlacar) {
+          console.log(
+            '[placar-ao-vivo] Erro ao salvar jogo ' + matchedJogo.id + ' no banco:',
+            errSavePlacar,
+          )
+        }
+      }
+    } catch (errPersistPlacar) {
+      console.log('[placar-ao-vivo] Erro geral na rotina de persistência:', errPersistPlacar)
     }
 
     // Só grava no cache se houver pelo menos 1 partida!

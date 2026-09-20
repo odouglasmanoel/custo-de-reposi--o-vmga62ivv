@@ -50,6 +50,8 @@ export interface Jogo extends RecordModel {
   gols_time_b?: ScorerItem[]
   tem_penaltis: boolean
   vencedor_penaltis?: 'A' | 'B' | string
+  escalacoes?: unknown
+  ficha_detalhes?: unknown
 }
 
 export interface Participante extends RecordModel {

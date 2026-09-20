@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-09-20T10:55:15.838Z",
+  "generatedAt": "2026-09-20T13:48:20.924Z",
   "collections": [
     {
       "name": "users",
@@ -303,6 +303,18 @@
         {
           "name": "fixture_id",
           "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "escalacoes",
+          "type": "json",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "ficha_detalhes",
+          "type": "json",
           "required": false,
           "system": false
         }

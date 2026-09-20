@@ -1,7 +1,7 @@
 // -------------------------------------------------------------
 // CIRCUIT BREAKER GLOBAL EM MEMÓRIA PARA API-FOOTBALL
 // Evita requisições 429 em loop quando a cota diária estiver esgotada.
-// Backoff padrão: 20 minutos. Permite 1 probe (half-open) após a janela.
+// Backoff padrão: 60 minutos. Permite 1 probe (half-open) após a janela.
 // -------------------------------------------------------------
 if (typeof globalThis !== 'undefined' && !globalThis.__apiFootballCircuitBreaker) {
   globalThis.__apiFootballCircuitBreaker = {
@@ -143,6 +143,95 @@ routerAdd(
       )
     }
 
+    // JANELA DE POLLING INLINE (Item 2 do pedido):
+    // Retorna true somente se:
+    // (agora >= kickoff - 60min) E (jogo não finalizado)
+    var isDentroJanelaPolling = function (dataHoraJogo, agora) {
+      if (!dataHoraJogo) return false
+      var nowMs = agora
+        ? typeof agora === 'number'
+          ? agora
+          : new Date(agora).getTime()
+        : Date.now()
+      var kickoffMs = null
+      if (typeof dataHoraJogo === 'number') {
+        kickoffMs = dataHoraJogo
+      } else if (typeof dataHoraJogo === 'object' && dataHoraJogo !== null) {
+        // Record do PocketBase ou objeto { data, hora, resultado_finalizado }
+        var isFin = false
+        if (typeof dataHoraJogo.getBool === 'function') {
+          isFin = dataHoraJogo.getBool('resultado_finalizado')
+        } else if (dataHoraJogo.resultado_finalizado != null) {
+          isFin = Boolean(dataHoraJogo.resultado_finalizado)
+        }
+        if (isFin) return false
+
+        var dtVal =
+          typeof dataHoraJogo.getString === 'function'
+            ? dataHoraJogo.getString('data')
+            : dataHoraJogo.data
+        var hrVal =
+          typeof dataHoraJogo.getString === 'function'
+            ? dataHoraJogo.getString('hora')
+            : dataHoraJogo.hora
+
+        if (dtVal) {
+          var y = 0,
+            m = 0,
+            d = 0
+          var dtStr = String(dtVal).trim()
+          var brM = dtStr.match(/^(\d{2})\/(\d{2})\/(\d{4})/)
+          if (brM) {
+            d = parseInt(brM[1], 10)
+            m = parseInt(brM[2], 10)
+            y = parseInt(brM[3], 10)
+          } else {
+            var isoM = dtStr.match(/^(\d{4})-(\d{2})-(\d{2})/)
+            if (isoM) {
+              y = parseInt(isoM[1], 10)
+              m = parseInt(isoM[2], 10)
+              d = parseInt(isoM[3], 10)
+            }
+          }
+          var hrs = 16,
+            mins = 0
+          if (hrVal) {
+            var hrM = String(hrVal).match(/^(\d{1,2}):(\d{2})/)
+            if (hrM) {
+              hrs = parseInt(hrM[1], 10)
+              mins = parseInt(hrM[2], 10)
+            }
+          }
+          if (y && m && d) {
+            // Fuso de Brasília UTC-3: kickoff UTC = hrs + 3
+            kickoffMs = Date.UTC(y, m - 1, d, hrs + 3, mins, 0, 0)
+          }
+        }
+      } else if (typeof dataHoraJogo === 'string') {
+        var dtObj = new Date(dataHoraJogo)
+        if (!isNaN(dtObj.getTime())) {
+          kickoffMs = dtObj.getTime()
+        }
+      }
+
+      if (!kickoffMs) return false
+      var inicioJanela = kickoffMs - 60 * 60 * 1000 // 60 min antes do kickoff
+      // Fim do jogo: normalmente kickoff + ~150 min (2h30). Dentro da janela: agora >= inicioJanela
+      // O critério de jogo não-finalizado é validado pelo objeto jogo
+      return nowMs >= inicioJanela
+    }
+
+    var normalizeStr = function (str) {
+      if (!str) return ''
+      return str
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .toLowerCase()
+        .replace(/[^a-z0-9\s]/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim()
+    }
+
     try {
       var authRecord = e.auth
       if (!authRecord) {
@@ -159,6 +248,140 @@ routerAdd(
         return e.json(400, {
           error: 'Informe fixture_id ou time_a e time_b',
         })
+      }
+
+      // =============================================================
+      // ESCOPO RESTRITO (Item 1 do pedido):
+      // Carrega os registros da collection jogos (apenas não-finalizados)
+      // e constrói o conjunto de fixture_id cadastrados.
+      // Se o fixture_id solicitado NÃO estiver nesse conjunto,
+      // NUNCA chame a API-Football — sirva direto do banco/cache e APIs secundárias.
+      // =============================================================
+      var cadastradosFixtureIds = []
+      var cadastradosRecordsMap = {} // fixture_id -> record
+      var matchingJogoRecord = null
+
+      try {
+        var jogosNaoFinalizados = $app.findRecordsByFilter(
+          'jogos',
+          'resultado_finalizado = false',
+          '-data',
+          200,
+          0,
+        )
+        if (Array.isArray(jogosNaoFinalizados)) {
+          for (var jIdx = 0; jIdx < jogosNaoFinalizados.length; jIdx++) {
+            var jRec = jogosNaoFinalizados[jIdx]
+            var fid = (jRec.getString('fixture_id') || '').trim()
+            if (fid) {
+              cadastradosFixtureIds.push(fid)
+              cadastradosRecordsMap[fid] = jRec
+            }
+          }
+        }
+      } catch (errJogosScope) {
+        console.log('[Escalacoes] Erro ao carregar escopo de jogos cadastrados:', errJogosScope)
+      }
+
+      // Identifica se temos o record do jogo correspondente na collection jogos (mesmo se finalizado, para servir do banco)
+      if (fixtureIdParam && cadastradosRecordsMap[fixtureIdParam]) {
+        matchingJogoRecord = cadastradosRecordsMap[fixtureIdParam]
+      } else if (fixtureIdParam) {
+        try {
+          matchingJogoRecord = $app.findFirstRecordByData('jogos', 'fixture_id', fixtureIdParam)
+        } catch (_) {}
+      }
+
+      if (!matchingJogoRecord && timeA && timeB) {
+        try {
+          var candRecords = $app.findRecordsByFilter(
+            'jogos',
+            "time_a ~ '" +
+              timeA.replace(/'/g, "\\'") +
+              "' || time_b ~ '" +
+              timeB.replace(/'/g, "\\'") +
+              "'",
+            '-data',
+            10,
+            0,
+          )
+          if (Array.isArray(candRecords)) {
+            var nA = normalizeStr(timeA)
+            var nB = normalizeStr(timeB)
+            for (var cri = 0; cri < candRecords.length; cri++) {
+              var cr = candRecords[cri]
+              var crA = normalizeStr(cr.getString('time_a') || '')
+              var crB = normalizeStr(cr.getString('time_b') || '')
+              if (
+                (crA.indexOf(nA) !== -1 || nA.indexOf(crA) !== -1) &&
+                (crB.indexOf(nB) !== -1 || nB.indexOf(crB) !== -1)
+              ) {
+                matchingJogoRecord = cr
+                var crFid = (cr.getString('fixture_id') || '').trim()
+                if (
+                  crFid &&
+                  cadastradosFixtureIds.indexOf(crFid) === -1 &&
+                  !cr.getBool('resultado_finalizado')
+                ) {
+                  cadastradosFixtureIds.push(crFid)
+                  cadastradosRecordsMap[crFid] = cr
+                }
+                break
+              }
+            }
+          }
+        } catch (_) {}
+      }
+
+      console.log(
+        '[Escalacoes] Conjunto de fixture_id em jogos pendentes (' +
+          cadastradosFixtureIds.length +
+          ' IDs): [' +
+          cadastradosFixtureIds.join(', ') +
+          ']. Solicitado: ' +
+          (fixtureIdParam || timeA + ' x ' + timeB),
+      )
+
+      var fixtureIdEstaNoEscopo = Boolean(
+        fixtureIdParam && cadastradosFixtureIds.indexOf(fixtureIdParam) !== -1,
+      )
+
+      // =============================================================
+      // PERSISTÊNCIA / LEITURA PREVIA DO BANCO (Item 3 do pedido):
+      // Se o jogo já possui escalações confirmadas salvas na collection jogos,
+      // servimos direto do banco (economiza 100% de chamadas à API-Football).
+      // =============================================================
+      if (matchingJogoRecord) {
+        try {
+          var savedEscalacoesRaw = matchingJogoRecord.get('escalacoes')
+          if (savedEscalacoesRaw) {
+            var savedEscalacoesObj = null
+            if (typeof savedEscalacoesRaw === 'string') {
+              try {
+                savedEscalacoesObj = JSON.parse(savedEscalacoesRaw)
+              } catch (_) {}
+            } else if (typeof savedEscalacoesRaw === 'object') {
+              savedEscalacoesObj = savedEscalacoesRaw
+            }
+            if (
+              savedEscalacoesObj &&
+              savedEscalacoesObj.status === 'confirmada' &&
+              Array.isArray(savedEscalacoesObj.teams) &&
+              savedEscalacoesObj.teams.length > 0 &&
+              savedEscalacoesObj.teams[0].starters &&
+              savedEscalacoesObj.teams[0].starters.length > 0
+            ) {
+              console.log(
+                '[Escalacoes] Escalação confirmada encontrada diretamente no registro do banco (jogos id: ' +
+                  matchingJogoRecord.id +
+                  '). Servindo do banco sem chamada externa.',
+              )
+              return e.json(200, savedEscalacoesObj)
+            }
+          }
+        } catch (errReadSaved) {
+          console.log('[Escalacoes] Erro ao ler escalações salvas no banco:', errReadSaved)
+        }
       }
 
       // Cache em memória do servidor PB via $app.store()
@@ -244,38 +467,67 @@ routerAdd(
       }
 
       var result = null
-
-      var normalizeStr = function (str) {
-        if (!str) return ''
-        return str
-          .normalize('NFD')
-          .replace(/[\u0300-\u036f]/g, '')
-          .toLowerCase()
-          .replace(/[^a-z0-9\s]/g, ' ')
-          .replace(/\s+/g, ' ')
-          .trim()
-      }
-
       var isDirectNumeric = /^\d+$/.test(fixtureIdParam)
       var isTsdbId =
         fixtureIdParam.indexOf('tsdb_') === 0 || fixtureIdParam.indexOf('thesportsdb_') === 0
       var rawTsdbEventId = isTsdbId ? fixtureIdParam.replace(/^tsdb_|^thesportsdb_/, '') : ''
 
-      // 2. FONTE 1: API-Football (lineups) se tiver chave e for ID numérico direto, throttle ok e circuit breaker não estiver bloqueado
+      // =============================================================
+      // VERIFICAÇÃO DE ESCOPO E JANELA PARA API-FOOTBALL (Itens 1 e 2):
+      // Condições para chamar API-Football /fixtures/lineups:
+      // 1. Possuir apiKey configurada e fixture_id numérico direto
+      // 2. ESCOPO: fixture_id DEVE estar no conjunto de jogos pendentes cadastrados no banco
+      // 3. JANELA: agora >= kickoff - 60min E jogo não finalizado
+      // 4. Circuit Breaker e Throttle (15 min) não bloqueados
+      // Se qualquer condição falhar: NUNCA chame a API-Football (pule para fallbacks).
+      // =============================================================
       var cbCheckEsc = checkApiFootballCircuitBreaker()
       var throttleCheckEsc = checkApiFootballThrottle()
 
-      if (cbCheckEsc.shouldSkip) {
-        console.log(
-          '[Escalacoes] Circuit breaker ativo — pulando API-Football para fixture ' +
-            fixtureIdParam,
+      var dentroDaJanela = false
+      if (matchingJogoRecord) {
+        dentroDaJanela = isDentroJanelaPolling(matchingJogoRecord, Date.now())
+      } else if (dataParam) {
+        dentroDaJanela = isDentroJanelaPolling(
+          { data: dataParam, hora: '16:00', resultado_finalizado: false },
+          Date.now(),
         )
-      } else if (!throttleCheckEsc.canCall) {
-        console.log(
-          '[Escalacoes] Throttle ativo de 15min — pulando API-Football para fixture ' +
-            fixtureIdParam,
-        )
-      } else if (apiKey && isDirectNumeric) {
+      }
+
+      var podeChamarApiFootball =
+        apiKey &&
+        isDirectNumeric &&
+        fixtureIdEstaNoEscopo &&
+        dentroDaJanela &&
+        !cbCheckEsc.shouldSkip &&
+        throttleCheckEsc.canCall
+
+      if (apiKey && isDirectNumeric) {
+        if (!fixtureIdEstaNoEscopo) {
+          console.log(
+            '[Escalacoes] BLOQUEIO DE ESCOPO: Fixture ID ' +
+              fixtureIdParam +
+              ' NÃO está nos jogos cadastrados no banco. Chamada API-Football proibida.',
+          )
+        } else if (!dentroDaJanela) {
+          console.log(
+            '[Escalacoes] BLOQUEIO DE JANELA: Fora da janela pré-kickoff (kickoff - 60min até fim). Chamada API-Football proibida.',
+          )
+        } else if (cbCheckEsc.shouldSkip) {
+          console.log(
+            '[Escalacoes] Circuit breaker ativo — pulando API-Football para fixture ' +
+              fixtureIdParam,
+          )
+        } else if (!throttleCheckEsc.canCall) {
+          console.log(
+            '[Escalacoes] Throttle ativo de 15min — pulando API-Football para fixture ' +
+              fixtureIdParam,
+          )
+        }
+      }
+
+      // 2. FONTE 1: API-Football (lineups) se aprovada por Escopo, Janela, Circuit Breaker e Throttle
+      if (podeChamarApiFootball) {
         try {
           var isRapid = apiKey.length > 40
           var url = isRapid
@@ -359,6 +611,22 @@ routerAdd(
                 teams: teamsData,
                 updatedAt: new Date().toISOString(),
               }
+
+              // PERSISTÊNCIA NA COLLECTION JOGOS (Item 3 do pedido):
+              // Salva escalações confirmadas na collection jogos para nunca mais precisar consultar a API-Football
+              if (matchingJogoRecord) {
+                try {
+                  matchingJogoRecord.set('escalacoes', result)
+                  $app.save(matchingJogoRecord)
+                  console.log(
+                    '[Escalacoes] Escalação confirmada salva com sucesso na collection jogos (id: ' +
+                      matchingJogoRecord.id +
+                      ').',
+                  )
+                } catch (errSaveJogo) {
+                  console.log('[Escalacoes] Erro ao salvar escalações no jogo:', errSaveJogo)
+                }
+              }
             }
           }
         } catch (errApi) {
@@ -373,7 +641,6 @@ routerAdd(
           if (isDirectNumeric) {
             fdMatchId = fixtureIdParam
           } else if ((timeA || timeB) && dataParam) {
-            // Busca ID da partida por data no Football-Data.org
             try {
               var resFdSearch = $http.send({
                 url:
@@ -470,6 +737,13 @@ routerAdd(
                   ],
                   updatedAt: new Date().toISOString(),
                 }
+
+                if (matchingJogoRecord) {
+                  try {
+                    matchingJogoRecord.set('escalacoes', result)
+                    $app.save(matchingJogoRecord)
+                  } catch (_) {}
+                }
               }
             }
           }
@@ -478,12 +752,11 @@ routerAdd(
         }
       }
 
-      // 4. FONTE 3: Fallback TheSportsDB lookuplineup.php / eventslineup.php se tiver ID de evento do TSDB ou numérico
+      // 4. FONTE 3: Fallback TheSportsDB lookuplineup.php / eventslineup.php
       if (!result && (rawTsdbEventId || isTsdbId || isDirectNumeric)) {
         try {
           var evId = rawTsdbEventId || fixtureIdParam.replace(/\D/g, '')
           if (evId) {
-            // Tenta lookuplineup.php e eventslineup.php
             var tsdbLineupUrls = [
               'https://www.thesportsdb.com/api/v1/json/' +
                 encodeURIComponent(theSportsDbKey) +
@@ -547,8 +820,8 @@ routerAdd(
                 var isHome = side === 'yes' || side === 'home' || side === 'h'
                 if (!isHome && itemTeamName && timeA) {
                   var nItem = normalizeStr(itemTeamName)
-                  var nA = normalizeStr(timeA)
-                  if (nItem.indexOf(nA) !== -1 || nA.indexOf(nItem) !== -1) {
+                  var nA2 = normalizeStr(timeA)
+                  if (nItem.indexOf(nA2) !== -1 || nA2.indexOf(nItem) !== -1) {
                     isHome = true
                   }
                 }
@@ -583,6 +856,13 @@ routerAdd(
                   ],
                   updatedAt: new Date().toISOString(),
                 }
+
+                if (matchingJogoRecord) {
+                  try {
+                    matchingJogoRecord.set('escalacoes', result)
+                    $app.save(matchingJogoRecord)
+                  } catch (_) {}
+                }
               }
             }
           }
@@ -591,8 +871,7 @@ routerAdd(
         }
       }
 
-      // 5. FONTE 4: Se ainda não há escalação confirmada e temos nomes de times, tenta buscar o elenco/jogadores disponíveis (Prováveis / Elenco)
-      // No TheSportsDB: searchplayers.php?t={teamName}
+      // 5. FONTE 4: Prováveis / Elenco no TheSportsDB searchplayers.php
       if (!result && (timeA || timeB)) {
         try {
           var teamsSquads = []
@@ -665,7 +944,7 @@ routerAdd(
         }
       }
 
-      // 6. Se nenhuma fonte possuir a escalação no momento, retorna status indisponivel de forma elegante
+      // 6. Se nenhuma fonte possuir a escalação no momento, retorna indisponível
       if (!result) {
         result = {
           status: 'indisponivel',
@@ -679,7 +958,7 @@ routerAdd(
         }
       }
 
-      // Salva em cache do servidor se obteve lista válida (TTL 1 hora para confirmadas/elenco, 2 minutos para indisponível)
+      // Salva em cache do servidor
       try {
         $app.store().set(cacheKey, JSON.stringify(result))
       } catch (_) {}

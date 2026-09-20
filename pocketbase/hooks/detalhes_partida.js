@@ -1,7 +1,7 @@
 // -------------------------------------------------------------
 // CIRCUIT BREAKER GLOBAL EM MEMÓRIA PARA API-FOOTBALL
 // Evita requisições 429 em loop quando a cota diária estiver esgotada.
-// Backoff padrão: 20 minutos. Permite 1 probe (half-open) após a janela.
+// Backoff padrão: 60 minutos. Permite 1 probe (half-open) após a janela.
 // -------------------------------------------------------------
 if (typeof globalThis !== 'undefined' && !globalThis.__apiFootballCircuitBreaker) {
   globalThis.__apiFootballCircuitBreaker = {
@@ -13,24 +13,11 @@ if (typeof globalThis !== 'undefined' && !globalThis.__apiFootballCircuitBreaker
 }
 
 /**
- * Hook dedicado para busca dos detalhes/eventos de uma partida (API-Football com fallback Football-Data.org, TheSportsDB e Banco local).
+ * Hook dedicado para buscar detalhes completos da partida (ficha técnica, estatísticas e eventos).
  * Rota: GET /backend/v1/detalhes-partida
- * Parâmetros: fixture_id, time_a, time_b, data
- * Retorna: {
- *   fixtureId,
- *   events: Array<{
- *     time: { elapsed: number, extra: number | null },
- *     team: { id: string, name: string, logo: string },
- *     player: { id: string, name: string },
- *     assist: { id: string, name: string },
- *     type: 'Goal' | 'Card' | 'subst' | string,
- *     detail: 'Normal Goal' | 'Yellow Card' | 'Red Card' | 'Substitution 1' | string,
- *     comments: string | null
- *   }>,
- *   status: string
- * }
+ * Parâmetros: fixture_id (obrigatório), time_a, time_b, data
+ * Retorna dados normalizados para a modal MatchDetailsModal.
  */
-
 routerAdd(
   'GET',
   '/backend/v1/detalhes-partida',
@@ -141,6 +128,91 @@ routerAdd(
       )
     }
 
+    // JANELA DE POLLING INLINE (Item 2 do pedido):
+    // Retorna true somente se:
+    // (agora >= kickoff - 60min) E (jogo não finalizado)
+    var isDentroJanelaPolling = function (dataHoraJogo, agora) {
+      if (!dataHoraJogo) return false
+      var nowMs = agora
+        ? typeof agora === 'number'
+          ? agora
+          : new Date(agora).getTime()
+        : Date.now()
+      var kickoffMs = null
+      if (typeof dataHoraJogo === 'number') {
+        kickoffMs = dataHoraJogo
+      } else if (typeof dataHoraJogo === 'object' && dataHoraJogo !== null) {
+        var isFin = false
+        if (typeof dataHoraJogo.getBool === 'function') {
+          isFin = dataHoraJogo.getBool('resultado_finalizado')
+        } else if (dataHoraJogo.resultado_finalizado != null) {
+          isFin = Boolean(dataHoraJogo.resultado_finalizado)
+        }
+        if (isFin) return false
+
+        var dtVal =
+          typeof dataHoraJogo.getString === 'function'
+            ? dataHoraJogo.getString('data')
+            : dataHoraJogo.data
+        var hrVal =
+          typeof dataHoraJogo.getString === 'function'
+            ? dataHoraJogo.getString('hora')
+            : dataHoraJogo.hora
+
+        if (dtVal) {
+          var y = 0,
+            m = 0,
+            d = 0
+          var dtStr = String(dtVal).trim()
+          var brM = dtStr.match(/^(\d{2})\/(\d{2})\/(\d{4})/)
+          if (brM) {
+            d = parseInt(brM[1], 10)
+            m = parseInt(brM[2], 10)
+            y = parseInt(brM[3], 10)
+          } else {
+            var isoM = dtStr.match(/^(\d{4})-(\d{2})-(\d{2})/)
+            if (isoM) {
+              y = parseInt(isoM[1], 10)
+              m = parseInt(isoM[2], 10)
+              d = parseInt(isoM[3], 10)
+            }
+          }
+          var hrs = 16,
+            mins = 0
+          if (hrVal) {
+            var hrM = String(hrVal).match(/^(\d{1,2}):(\d{2})/)
+            if (hrM) {
+              hrs = parseInt(hrM[1], 10)
+              mins = parseInt(hrM[2], 10)
+            }
+          }
+          if (y && m && d) {
+            kickoffMs = Date.UTC(y, m - 1, d, hrs + 3, mins, 0, 0)
+          }
+        }
+      } else if (typeof dataHoraJogo === 'string') {
+        var dtObj = new Date(dataHoraJogo)
+        if (!isNaN(dtObj.getTime())) {
+          kickoffMs = dtObj.getTime()
+        }
+      }
+
+      if (!kickoffMs) return false
+      var inicioJanela = kickoffMs - 60 * 60 * 1000 // 60 min antes do kickoff
+      return nowMs >= inicioJanela
+    }
+
+    var normalizeStr = function (str) {
+      if (!str) return ''
+      return str
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .toLowerCase()
+        .replace(/[^a-z0-9\s]/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim()
+    }
+
     try {
       var authRecord = e.auth
       if (!authRecord) {
@@ -151,42 +223,162 @@ routerAdd(
       var timeA = (e.request.url.query().get('time_a') || '').trim()
       var timeB = (e.request.url.query().get('time_b') || '').trim()
       var dataParam = (e.request.url.query().get('data') || '').trim()
-      var statusParam = (e.request.url.query().get('status') || '').trim().toUpperCase()
       var forceRefresh = e.request.url.query().get('refresh') === '1'
-      var isLiveParam =
-        ['1H', '2H', 'HT', 'LIVE', 'ET', 'P', 'BT'].indexOf(statusParam) !== -1 ||
-        e.request.url.query().get('isLive') === 'true' ||
-        e.request.url.query().get('live') === '1'
 
       if (!fixtureIdParam && (!timeA || !timeB)) {
-        return e.json(400, {
-          error: 'Informe fixture_id ou time_a e time_b',
-        })
+        return e.json(400, { error: 'Informe fixture_id ou time_a e time_b' })
       }
 
-      var cacheKey = 'match_details_' + (fixtureIdParam || timeA + '_' + timeB + '_' + dataParam)
+      // =============================================================
+      // ESCOPO RESTRITO (Item 1 do pedido):
+      // Carrega os registros da collection jogos (apenas não-finalizados)
+      // e constrói o conjunto de fixture_id cadastrados.
+      // Se o fixture_id solicitado NÃO estiver nesse conjunto,
+      // NUNCA chame a API-Football — sirva direto do banco/cache e APIs secundárias.
+      // =============================================================
+      var cadastradosFixtureIds = []
+      var cadastradosRecordsMap = {}
+      var matchingJogoRecord = null
+
+      try {
+        var jogosNaoFinalizados = $app.findRecordsByFilter(
+          'jogos',
+          'resultado_finalizado = false',
+          '-data',
+          200,
+          0,
+        )
+        if (Array.isArray(jogosNaoFinalizados)) {
+          for (var jIdx = 0; jIdx < jogosNaoFinalizados.length; jIdx++) {
+            var jRec = jogosNaoFinalizados[jIdx]
+            var fid = (jRec.getString('fixture_id') || '').trim()
+            if (fid) {
+              cadastradosFixtureIds.push(fid)
+              cadastradosRecordsMap[fid] = jRec
+            }
+          }
+        }
+      } catch (errJogosScope) {
+        console.log(
+          '[DetalhesPartida] Erro ao carregar escopo de jogos cadastrados:',
+          errJogosScope,
+        )
+      }
+
+      if (fixtureIdParam && cadastradosRecordsMap[fixtureIdParam]) {
+        matchingJogoRecord = cadastradosRecordsMap[fixtureIdParam]
+      } else if (fixtureIdParam) {
+        try {
+          matchingJogoRecord = $app.findFirstRecordByData('jogos', 'fixture_id', fixtureIdParam)
+        } catch (_) {}
+      }
+
+      if (!matchingJogoRecord && timeA && timeB) {
+        try {
+          var candRecords = $app.findRecordsByFilter(
+            'jogos',
+            "time_a ~ '" +
+              timeA.replace(/'/g, "\\'") +
+              "' || time_b ~ '" +
+              timeB.replace(/'/g, "\\'") +
+              "'",
+            '-data',
+            10,
+            0,
+          )
+          if (Array.isArray(candRecords)) {
+            var nA = normalizeStr(timeA)
+            var nB = normalizeStr(timeB)
+            for (var cri = 0; cri < candRecords.length; cri++) {
+              var cr = candRecords[cri]
+              var crA = normalizeStr(cr.getString('time_a') || '')
+              var crB = normalizeStr(cr.getString('time_b') || '')
+              if (
+                (crA.indexOf(nA) !== -1 || nA.indexOf(crA) !== -1) &&
+                (crB.indexOf(nB) !== -1 || nB.indexOf(crB) !== -1)
+              ) {
+                matchingJogoRecord = cr
+                var crFid = (cr.getString('fixture_id') || '').trim()
+                if (
+                  crFid &&
+                  cadastradosFixtureIds.indexOf(crFid) === -1 &&
+                  !cr.getBool('resultado_finalizado')
+                ) {
+                  cadastradosFixtureIds.push(crFid)
+                  cadastradosRecordsMap[crFid] = cr
+                }
+                break
+              }
+            }
+          }
+        } catch (_) {}
+      }
+
+      console.log(
+        '[DetalhesPartida] Conjunto de fixture_id em jogos pendentes (' +
+          cadastradosFixtureIds.length +
+          ' IDs): [' +
+          cadastradosFixtureIds.join(', ') +
+          ']. Solicitado: ' +
+          (fixtureIdParam || timeA + ' x ' + timeB),
+      )
+
+      var fixtureIdEstaNoEscopo = Boolean(
+        fixtureIdParam && cadastradosFixtureIds.indexOf(fixtureIdParam) !== -1,
+      )
+
+      // =============================================================
+      // PERSISTÊNCIA / LEITURA PREVIA DO BANCO (Item 3 do pedido):
+      // Se o jogo já possui ficha_detalhes salva no banco e o jogo está finalizado
+      // ou não há necessidade de nova consulta externa, servimos diretamente.
+      // =============================================================
+      if (matchingJogoRecord && !forceRefresh) {
+        try {
+          var savedFichaRaw = matchingJogoRecord.get('ficha_detalhes')
+          if (savedFichaRaw) {
+            var savedFichaObj = null
+            if (typeof savedFichaRaw === 'string') {
+              try {
+                savedFichaObj = JSON.parse(savedFichaRaw)
+              } catch (_) {}
+            } else if (typeof savedFichaRaw === 'object') {
+              savedFichaObj = savedFichaRaw
+            }
+            if (
+              savedFichaObj &&
+              (savedFichaObj.fixture || savedFichaObj.events || savedFichaObj.statistics)
+            ) {
+              // Se o jogo está finalizado, ficha salva é definitiva
+              if (matchingJogoRecord.getBool('resultado_finalizado')) {
+                console.log(
+                  '[DetalhesPartida] Jogo finalizado com ficha_detalhes salva no banco (id: ' +
+                    matchingJogoRecord.id +
+                    '). Servindo do banco sem chamada externa.',
+                )
+                return e.json(200, savedFichaObj)
+              }
+            }
+          }
+        } catch (errReadSavedFicha) {
+          console.log('[DetalhesPartida] Erro ao ler ficha salva no banco:', errReadSavedFicha)
+        }
+      }
+
+      // Cache em memória do servidor PB via $app.store()
+      var cacheKey = 'details_' + (fixtureIdParam || timeA + '_' + timeB + '_' + dataParam)
       if (!forceRefresh) {
         var cached = $app.store().get(cacheKey)
         if (cached && typeof cached === 'string') {
           try {
             var parsed = JSON.parse(cached)
-            if (parsed && Array.isArray(parsed.events)) {
-              var cachedAt = parsed.cachedAtMs || 0
-              var nowMs = new Date().getTime()
-              var cacheAgeSec = Math.floor((nowMs - cachedAt) / 1000)
-
-              // Para partidas ao vivo, TTL estrito de 15 segundos
-              // Para partidas finalizadas ou agendadas, aceita cache de até 1 hora
-              var maxAgeSec = isLiveParam ? 15 : 3600
-              if (cacheAgeSec < maxAgeSec) {
-                return e.json(200, parsed)
-              }
+            if (parsed && (parsed.fixture || parsed.events || parsed.statistics)) {
+              return e.json(200, parsed)
             }
           } catch (_) {}
         }
       }
 
-      // 1. Recupera chaves de integração
+      // Recupera as chaves
       var apiKey = ''
       var footballDataKey = ''
       var theSportsDbKey = '3'
@@ -254,40 +446,68 @@ routerAdd(
         } catch (_) {}
       }
 
-      var resultEvents = []
-      var providerUsed = 'none'
-
-      var normalizeStr = function (str) {
-        if (!str) return ''
-        return str
-          .normalize('NFD')
-          .replace(/[\u0300-\u036f]/g, '')
-          .toLowerCase()
-          .replace(/[^a-z0-9\s]/g, ' ')
-          .replace(/\s+/g, ' ')
-          .trim()
-      }
-
+      var result = null
       var isDirectNumeric = /^\d+$/.test(fixtureIdParam)
       var isTsdbId =
         fixtureIdParam.indexOf('tsdb_') === 0 || fixtureIdParam.indexOf('thesportsdb_') === 0
       var rawTsdbEventId = isTsdbId ? fixtureIdParam.replace(/^tsdb_|^thesportsdb_/, '') : ''
 
-      // 2. FONTE 1: Tenta API-Football por fixture ID se for ID numérico (e não estiver com circuit breaker ou throttle bloqueado)
+      // =============================================================
+      // VERIFICAÇÃO DE ESCOPO E JANELA PARA API-FOOTBALL (Itens 1 e 2):
+      // Condições para chamar API-Football /fixtures?id=...:
+      // 1. Possuir apiKey configurada e fixture_id numérico direto
+      // 2. ESCOPO: fixture_id DEVE estar no conjunto de jogos pendentes cadastrados no banco
+      // 3. JANELA: agora >= kickoff - 60min E jogo não finalizado
+      // 4. Circuit Breaker e Throttle (15 min) não bloqueados
+      // Se qualquer condição falhar: NUNCA chame a API-Football (pule para fallbacks).
+      // =============================================================
       var cbCheckDet = checkApiFootballCircuitBreaker()
       var throttleCheckDet = checkApiFootballThrottle()
 
-      if (cbCheckDet.shouldSkip) {
-        console.log(
-          '[DetalhesPartida] Circuit breaker ativo — pulando API-Football para fixture ' +
-            fixtureIdParam,
+      var dentroDaJanela = false
+      if (matchingJogoRecord) {
+        dentroDaJanela = isDentroJanelaPolling(matchingJogoRecord, Date.now())
+      } else if (dataParam) {
+        dentroDaJanela = isDentroJanelaPolling(
+          { data: dataParam, hora: '16:00', resultado_finalizado: false },
+          Date.now(),
         )
-      } else if (!throttleCheckDet.canCall) {
-        console.log(
-          '[DetalhesPartida] Throttle ativo de 15min — pulando API-Football para fixture ' +
-            fixtureIdParam,
-        )
-      } else if (apiKey && isDirectNumeric) {
+      }
+
+      var podeChamarApiFootball =
+        apiKey &&
+        isDirectNumeric &&
+        fixtureIdEstaNoEscopo &&
+        dentroDaJanela &&
+        !cbCheckDet.shouldSkip &&
+        throttleCheckDet.canCall
+
+      if (apiKey && isDirectNumeric) {
+        if (!fixtureIdEstaNoEscopo) {
+          console.log(
+            '[DetalhesPartida] BLOQUEIO DE ESCOPO: Fixture ID ' +
+              fixtureIdParam +
+              ' NÃO está nos jogos cadastrados no banco. Chamada API-Football proibida.',
+          )
+        } else if (!dentroDaJanela) {
+          console.log(
+            '[DetalhesPartida] BLOQUEIO DE JANELA: Fora da janela pré-kickoff (kickoff - 60min até fim). Chamada API-Football proibida.',
+          )
+        } else if (cbCheckDet.shouldSkip) {
+          console.log(
+            '[DetalhesPartida] Circuit breaker ativo — pulando API-Football para fixture ' +
+              fixtureIdParam,
+          )
+        } else if (!throttleCheckDet.canCall) {
+          console.log(
+            '[DetalhesPartida] Throttle ativo de 15min — pulando API-Football para fixture ' +
+              fixtureIdParam,
+          )
+        }
+      }
+
+      // 1. FONTE 1: API-Football (fixtures?id=...)
+      if (podeChamarApiFootball) {
         try {
           var isRapid = apiKey.length > 40
           var url = isRapid
@@ -307,7 +527,7 @@ routerAdd(
 
           if (isRateLimitErrorHelper(res.statusCode, res.json || res.raw)) {
             tripApiFootballCircuitBreaker(
-              'Rate limit 429 em detalhes-partida ao buscar fixture ' + fixtureIdParam,
+              'Rate limit 429 em detalhes_partida ao consultar fixture ' + fixtureIdParam,
             )
           } else if (
             res &&
@@ -318,86 +538,107 @@ routerAdd(
           ) {
             recordApiFootballCall()
             resetApiFootballCircuitBreaker()
-            var fixItem = res.json.response[0]
-            if (fixItem && Array.isArray(fixItem.events) && fixItem.events.length > 0) {
-              resultEvents = fixItem.events
-              providerUsed = 'api_football'
+            var fixData = res.json.response[0]
+
+            result = {
+              provider: 'api_football',
+              fixtureId: fixtureIdParam,
+              fixture: fixData.fixture || {},
+              league: fixData.league || {},
+              teams: fixData.teams || {},
+              goals: fixData.goals || {},
+              score: fixData.score || {},
+              events: fixData.events || [],
+              lineups: fixData.lineups || [],
+              statistics: fixData.statistics || [],
+              players: fixData.players || [],
+              updatedAt: new Date().toISOString(),
+            }
+
+            // PERSISTÊNCIA NA COLLECTION JOGOS (Item 3 do pedido):
+            // Salva ficha técnica e escalações no jogo correspondente no banco
+            if (matchingJogoRecord) {
+              try {
+                // Preservar regra antifalha: nunca sobrescrever jogo já finalizado
+                var isAlreadyFinalized = matchingJogoRecord.getBool('resultado_finalizado')
+                if (!isAlreadyFinalized) {
+                  matchingJogoRecord.set('ficha_detalhes', result)
+                  // Se houver lineups confirmadas, também atualiza o campo escalacoes
+                  if (Array.isArray(fixData.lineups) && fixData.lineups.length > 0) {
+                    var teamsData = []
+                    for (var li = 0; li < fixData.lineups.length; li++) {
+                      var tBlock = fixData.lineups[li]
+                      var tInfo = tBlock.team || {}
+                      var startersList = []
+                      if (Array.isArray(tBlock.startXI)) {
+                        for (var si = 0; si < tBlock.startXI.length; si++) {
+                          var sp = tBlock.startXI[si].player || {}
+                          startersList.push({
+                            id: sp.id ? String(sp.id) : '',
+                            name: sp.name || '',
+                            number: sp.number || null,
+                            pos: sp.pos || '',
+                            grid: sp.grid || null,
+                          })
+                        }
+                      }
+                      var benchList = []
+                      if (Array.isArray(tBlock.substitutes)) {
+                        for (var bi = 0; bi < tBlock.substitutes.length; bi++) {
+                          var bp2 = tBlock.substitutes[bi].player || {}
+                          benchList.push({
+                            id: bp2.id ? String(bp2.id) : '',
+                            name: bp2.name || '',
+                            number: bp2.number || null,
+                            pos: bp2.pos || '',
+                          })
+                        }
+                      }
+                      teamsData.push({
+                        teamId: tInfo.id ? String(tInfo.id) : '',
+                        teamName: tInfo.name || '',
+                        teamLogo: tInfo.logo || '',
+                        formation: tBlock.formation || '',
+                        coach: tBlock.coach ? tBlock.coach.name : '',
+                        starters: startersList,
+                        substitutes: benchList,
+                      })
+                    }
+                    if (teamsData.length > 0) {
+                      matchingJogoRecord.set('escalacoes', {
+                        status: 'confirmada',
+                        provider: 'api_football',
+                        fixtureId: fixtureIdParam,
+                        teams: teamsData,
+                        updatedAt: new Date().toISOString(),
+                      })
+                    }
+                  }
+                  $app.save(matchingJogoRecord)
+                  console.log(
+                    '[DetalhesPartida] Ficha técnica e escalações persistidas com sucesso no jogo id: ' +
+                      matchingJogoRecord.id,
+                  )
+                }
+              } catch (errPersistJogo) {
+                console.log('[DetalhesPartida] Erro ao persistir ficha no jogo:', errPersistJogo)
+              }
             }
           }
         } catch (errApi) {
-          console.log('[DetalhesPartida] Erro ao buscar /fixtures?id na API-Football:', errApi)
-        }
-
-        // Se ainda não trouxe events pelo /fixtures?id, tenta endpoint específico /fixtures/events?fixture={id} se CB e Throttle permitirem
-        var cbCheckDet2 = checkApiFootballCircuitBreaker()
-        var throttleCheckDet2 = checkApiFootballThrottle()
-        if (
-          resultEvents.length === 0 &&
-          apiKey &&
-          !cbCheckDet2.shouldSkip &&
-          throttleCheckDet2.canCall
-        ) {
-          try {
-            var urlEvents = isRapid
-              ? 'https://api-football-v1.p.rapidapi.com/v3/fixtures/events?fixture=' +
-                encodeURIComponent(fixtureIdParam)
-              : 'https://v3.football.api-sports.io/fixtures/events?fixture=' +
-                encodeURIComponent(fixtureIdParam)
-
-            var resEv = $http.send({
-              url: urlEvents,
-              method: 'GET',
-              headers: headers,
-              timeout: 7,
-            })
-
-            if (isRateLimitErrorHelper(resEv.statusCode, resEv.json || resEv.raw)) {
-              tripApiFootballCircuitBreaker(
-                'Rate limit 429 em detalhes-partida /fixtures/events para fixture ' +
-                  fixtureIdParam,
-              )
-            } else if (
-              resEv &&
-              resEv.statusCode === 200 &&
-              resEv.json &&
-              Array.isArray(resEv.json.response) &&
-              resEv.json.response.length > 0
-            ) {
-              recordApiFootballCall()
-              resetApiFootballCircuitBreaker()
-              resultEvents = resEv.json.response
-              providerUsed = 'api_football_events'
-            }
-          } catch (errEvents) {
-            console.log('[DetalhesPartida] Erro ao buscar /fixtures/events:', errEvents)
-          }
+          console.log('[DetalhesPartida] Erro ao buscar API-Football detalhes:', errApi)
         }
       }
 
-      // 3. FONTE 2: Fallback Football-Data.org (por ID numérico ou busca por data e times)
-      if (resultEvents.length === 0 && footballDataKey) {
+      // 2. FONTE 2: Fallback Football-Data.org (GET /v4/matches/{id})
+      if (!result && footballDataKey) {
         try {
-          var fdMatchData = null
-          // Se o fixtureIdParam for numérico e coincidir com ID do Football-Data
+          var fdMatchId = null
           if (isDirectNumeric) {
+            fdMatchId = fixtureIdParam
+          } else if ((timeA || timeB) && dataParam) {
             try {
-              var resFdDirect = $http.send({
-                url:
-                  'https://api.football-data.org/v4/matches/' + encodeURIComponent(fixtureIdParam),
-                method: 'GET',
-                headers: { 'X-Auth-Token': footballDataKey },
-                timeout: 7,
-              })
-              if (resFdDirect && resFdDirect.statusCode === 200 && resFdDirect.json) {
-                fdMatchData = resFdDirect.json
-              }
-            } catch (_) {}
-          }
-
-          // Se não encontrou por ID numérico direto, busca por data e nomes dos times
-          if (!fdMatchData && (timeA || timeB) && dataParam) {
-            try {
-              var resFdDay = $http.send({
+              var resFdSearch = $http.send({
                 url:
                   'https://api.football-data.org/v4/matches?dateFrom=' +
                   encodeURIComponent(dataParam) +
@@ -407,432 +648,339 @@ routerAdd(
                 headers: { 'X-Auth-Token': footballDataKey },
                 timeout: 7,
               })
-
               if (
-                resFdDay &&
-                resFdDay.statusCode === 200 &&
-                resFdDay.json &&
-                Array.isArray(resFdDay.json.matches)
+                resFdSearch &&
+                resFdSearch.statusCode === 200 &&
+                resFdSearch.json &&
+                Array.isArray(resFdSearch.json.matches)
               ) {
-                var fdMatches = resFdDay.json.matches
+                var matchesList = resFdSearch.json.matches
                 var nHome = normalizeStr(timeA)
                 var nAway = normalizeStr(timeB)
-                for (var fdi = 0; fdi < fdMatches.length; fdi++) {
-                  var fdm = fdMatches[fdi]
+                for (var mi = 0; mi < matchesList.length; mi++) {
+                  var m = matchesList[mi]
                   var mH = normalizeStr(
-                    (fdm.homeTeam && (fdm.homeTeam.name || fdm.homeTeam.shortName)) || '',
+                    (m.homeTeam && (m.homeTeam.name || m.homeTeam.shortName)) || '',
                   )
                   var mA = normalizeStr(
-                    (fdm.awayTeam && (fdm.awayTeam.name || fdm.awayTeam.shortName)) || '',
+                    (m.awayTeam && (m.awayTeam.name || m.awayTeam.shortName)) || '',
                   )
-                  var directMatch =
+                  var dM =
                     (mH.indexOf(nHome) !== -1 || nHome.indexOf(mH) !== -1) &&
                     (mA.indexOf(nAway) !== -1 || nAway.indexOf(mA) !== -1)
-                  var invMatch =
+                  var iM =
                     (mH.indexOf(nAway) !== -1 || nAway.indexOf(mH) !== -1) &&
                     (mA.indexOf(nHome) !== -1 || nHome.indexOf(mA) !== -1)
-                  if (directMatch || invMatch) {
-                    fdMatchData = fdm
+                  if (dM || iM) {
+                    fdMatchId = m.id ? String(m.id) : null
                     break
                   }
                 }
               }
-            } catch (errFdDay) {
-              console.log('[DetalhesPartida] Erro ao buscar Football-Data por data:', errFdDay)
-            }
+            } catch (_) {}
           }
 
-          if (fdMatchData) {
-            // Se encontrou a partida no Football-Data mas não veio goals detalhado, consulta GET /matches/{id}
-            if (
-              (!Array.isArray(fdMatchData.goals) || fdMatchData.goals.length === 0) &&
-              fdMatchData.id
-            ) {
-              try {
-                var resSingleFd = $http.send({
-                  url:
-                    'https://api.football-data.org/v4/matches/' +
-                    encodeURIComponent(fdMatchData.id),
-                  method: 'GET',
-                  headers: { 'X-Auth-Token': footballDataKey },
-                  timeout: 7,
-                })
-                if (
-                  resSingleFd &&
-                  resSingleFd.statusCode === 200 &&
-                  resSingleFd.json &&
-                  Array.isArray(resSingleFd.json.goals)
-                ) {
-                  fdMatchData.goals = resSingleFd.json.goals
+          if (fdMatchId) {
+            var resFdMatch = $http.send({
+              url: 'https://api.football-data.org/v4/matches/' + encodeURIComponent(fdMatchId),
+              method: 'GET',
+              headers: { 'X-Auth-Token': footballDataKey },
+              timeout: 7,
+            })
+
+            if (resFdMatch && resFdMatch.statusCode === 200 && resFdMatch.json) {
+              var fdMatch = resFdMatch.json
+              var fdHome = fdMatch.homeTeam || {}
+              var fdAway = fdMatch.awayTeam || {}
+              var fdScore = fdMatch.score || {}
+              var fullTime = fdScore.fullTime || {}
+
+              var events = []
+              if (Array.isArray(fdMatch.goals)) {
+                for (var gi = 0; gi < fdMatch.goals.length; gi++) {
+                  var g = fdMatch.goals[gi]
+                  events.push({
+                    time: { elapsed: g.minute || 0, extra: g.injuryTime || null },
+                    team: {
+                      id: g.team ? g.team.id : null,
+                      name: g.team ? g.team.name : '',
+                    },
+                    player: {
+                      id: g.scorer ? g.scorer.id : null,
+                      name: g.scorer ? g.scorer.name : '',
+                    },
+                    assist: {
+                      id: g.assist ? g.assist.id : null,
+                      name: g.assist ? g.assist.name : null,
+                    },
+                    type: 'Goal',
+                    detail: g.type || 'Normal Goal',
+                  })
                 }
-              } catch (_) {}
-            }
-
-            // Converte gols do Football-Data para o formato unificado de events
-            if (Array.isArray(fdMatchData.goals) && fdMatchData.goals.length > 0) {
-              for (var gi = 0; gi < fdMatchData.goals.length; gi++) {
-                var fdGoal = fdMatchData.goals[gi]
-                var pScorer =
-                  (fdGoal.scorer && (fdGoal.scorer.name || fdGoal.scorer.shortName)) || ''
-                var pAssist =
-                  (fdGoal.assist && (fdGoal.assist.name || fdGoal.assist.shortName)) || ''
-                var isOwn = (fdGoal.type || '').toUpperCase() === 'OWN'
-                var isPen = (fdGoal.type || '').toUpperCase() === 'PENALTY'
-                var gDetail = isOwn ? 'Own Goal' : isPen ? 'Penalty' : 'Normal Goal'
-
-                resultEvents.push({
-                  time: { elapsed: fdGoal.minute || 0, extra: fdGoal.extraTime || null },
-                  team: {
-                    id: fdGoal.team ? String(fdGoal.team.id) : '',
-                    name: (fdGoal.team && (fdGoal.team.name || fdGoal.team.shortName)) || '',
-                    logo: '',
-                  },
-                  player: {
-                    id: fdGoal.scorer ? String(fdGoal.scorer.id) : '',
-                    name: pScorer,
-                  },
-                  assist: {
-                    id: fdGoal.assist ? String(fdGoal.assist.id) : '',
-                    name: pAssist,
-                  },
-                  type: 'Goal',
-                  detail: gDetail,
-                  comments: null,
-                })
               }
-              providerUsed = 'football_data'
+
+              if (Array.isArray(fdMatch.bookings)) {
+                for (var bi = 0; bi < fdMatch.bookings.length; bi++) {
+                  var b = fdMatch.bookings[bi]
+                  events.push({
+                    time: { elapsed: b.minute || 0 },
+                    team: {
+                      id: b.team ? b.team.id : null,
+                      name: b.team ? b.team.name : '',
+                    },
+                    player: {
+                      id: b.player ? b.player.id : null,
+                      name: b.player ? b.player.name : '',
+                    },
+                    type: 'Card',
+                    detail: b.card || 'Yellow Card',
+                  })
+                }
+              }
+
+              if (Array.isArray(fdMatch.substitutions)) {
+                for (var si = 0; si < fdMatch.substitutions.length; si++) {
+                  var s = fdMatch.substitutions[si]
+                  events.push({
+                    time: { elapsed: s.minute || 0 },
+                    team: {
+                      id: s.team ? s.team.id : null,
+                      name: s.team ? s.team.name : '',
+                    },
+                    player: {
+                      id: s.playerOut ? s.playerOut.id : null,
+                      name: s.playerOut ? s.playerOut.name : '',
+                    },
+                    assist: {
+                      id: s.playerIn ? s.playerIn.id : null,
+                      name: s.playerIn ? s.playerIn.name : '',
+                    },
+                    type: 'subst',
+                    detail: 'Substitution',
+                  })
+                }
+              }
+
+              events.sort(function (a, b) {
+                return (a.time ? a.time.elapsed || 0 : 0) - (b.time ? b.time.elapsed || 0 : 0)
+              })
+
+              result = {
+                provider: 'football_data',
+                fixtureId: fixtureIdParam,
+                fixture: {
+                  id: fdMatch.id,
+                  status: {
+                    short:
+                      fdMatch.status === 'FINISHED'
+                        ? 'FT'
+                        : fdMatch.status === 'IN_PLAY'
+                          ? '1H'
+                          : fdMatch.status,
+                    long: fdMatch.status,
+                  },
+                },
+                league: {
+                  name: (fdMatch.competition && fdMatch.competition.name) || '',
+                  round: fdMatch.matchday ? 'Matchday ' + fdMatch.matchday : '',
+                },
+                teams: {
+                  home: {
+                    id: fdHome.id,
+                    name: fdHome.name || fdHome.shortName || timeA || 'Mandante',
+                    logo: fdHome.crest || '',
+                  },
+                  away: {
+                    id: fdAway.id,
+                    name: fdAway.name || fdAway.shortName || timeB || 'Visitante',
+                    logo: fdAway.crest || '',
+                  },
+                },
+                goals: {
+                  home: fullTime.home !== undefined ? fullTime.home : null,
+                  away: fullTime.away !== undefined ? fullTime.away : null,
+                },
+                score: {
+                  halftime: fdScore.halfTime || {},
+                  fulltime: fullTime,
+                },
+                events: events,
+                lineups: [],
+                statistics: [],
+                players: [],
+                updatedAt: new Date().toISOString(),
+              }
+
+              if (matchingJogoRecord && !matchingJogoRecord.getBool('resultado_finalizado')) {
+                try {
+                  matchingJogoRecord.set('ficha_detalhes', result)
+                  $app.save(matchingJogoRecord)
+                } catch (_) {}
+              }
             }
           }
         } catch (errFd) {
-          console.log('[DetalhesPartida] Erro ao buscar Football-Data.org:', errFd)
+          console.log('[DetalhesPartida] Erro ao buscar Football-Data.org detalhes:', errFd)
         }
       }
 
-      // 4. FONTE 3: Fallback TheSportsDB por ID de evento (lookuptimeline.php / lookupevent.php)
-      if (resultEvents.length === 0 && (rawTsdbEventId || isTsdbId)) {
+      // 3. FONTE 3: Fallback TheSportsDB lookupevent.php / lookuptimeline.php
+      if (!result && (rawTsdbEventId || isTsdbId || isDirectNumeric)) {
         try {
           var evId = rawTsdbEventId || fixtureIdParam.replace(/\D/g, '')
           if (evId) {
-            var tsdbTimelineUrl =
+            var tsdbEventUrl =
               'https://www.thesportsdb.com/api/v1/json/' +
               encodeURIComponent(theSportsDbKey) +
-              '/lookuptimeline.php?id=' +
+              '/lookupevent.php?id=' +
               encodeURIComponent(evId)
 
-            var resTl = $http.send({
-              url: tsdbTimelineUrl,
+            var resTsdb = $http.send({
+              url: tsdbEventUrl,
               method: 'GET',
               timeout: 7,
             })
 
             if (
-              resTl &&
-              resTl.statusCode === 200 &&
-              resTl.json &&
-              Array.isArray(resTl.json.timeline) &&
-              resTl.json.timeline.length > 0
+              resTsdb &&
+              resTsdb.statusCode === 200 &&
+              resTsdb.json &&
+              Array.isArray(resTsdb.json.events) &&
+              resTsdb.json.events.length > 0
             ) {
-              var tlList = resTl.json.timeline
-              for (var ti = 0; ti < tlList.length; ti++) {
-                var itemTl = tlList[ti]
-                var rawType = String(itemTl.strTimeline || itemTl.strType || '').toLowerCase()
-                var rawDetail = String(itemTl.strTimelineDetail || '').toLowerCase()
-                var rawPlayer = (itemTl.strPlayer || '').trim()
-                var rawAssist = (itemTl.strAssist || '').trim()
-                var minute = itemTl.intTime ? parseInt(itemTl.intTime, 10) : 0
+              var evData = resTsdb.json.events[0]
+              var homeTeam = evData.strHomeTeam || timeA || 'Mandante'
+              var awayTeam = evData.strAwayTeam || timeB || 'Visitante'
+              var homeScore =
+                evData.intHomeScore !== null && evData.intHomeScore !== ''
+                  ? parseInt(evData.intHomeScore, 10)
+                  : null
+              var awayScore =
+                evData.intAwayScore !== null && evData.intAwayScore !== ''
+                  ? parseInt(evData.intAwayScore, 10)
+                  : null
 
-                var normType = 'Goal'
-                var normDetail = itemTl.strTimelineDetail || 'Normal Goal'
-
-                if (
-                  rawType.indexOf('card') !== -1 ||
-                  rawDetail.indexOf('card') !== -1 ||
-                  rawDetail.indexOf('yellow') !== -1 ||
-                  rawDetail.indexOf('red') !== -1
-                ) {
-                  normType = 'Card'
-                  if (rawDetail.indexOf('yellow') !== -1) {
-                    normDetail = 'Yellow Card'
-                  } else if (rawDetail.indexOf('red') !== -1) {
-                    normDetail = 'Red Card'
-                  }
-                } else if (rawType.indexOf('sub') !== -1 || rawDetail.indexOf('sub') !== -1) {
-                  normType = 'subst'
-                  normDetail = 'Substitution'
-                } else if (rawType.indexOf('goal') !== -1 || rawDetail.indexOf('goal') !== -1) {
-                  normType = 'Goal'
-                  if (rawDetail.indexOf('own') !== -1 || rawDetail.indexOf('contra') !== -1) {
-                    normDetail = 'Own Goal'
-                  } else if (rawDetail.indexOf('penal') !== -1) {
-                    normDetail = 'Penalty'
-                  } else {
-                    normDetail = 'Normal Goal'
-                  }
-                }
-
-                resultEvents.push({
-                  time: { elapsed: minute, extra: null },
-                  team: {
-                    id: itemTl.idTeam ? String(itemTl.idTeam) : '',
-                    name: itemTl.strTeam || '',
-                    logo: '',
-                  },
-                  player: { id: itemTl.idPlayer ? String(itemTl.idPlayer) : '', name: rawPlayer },
-                  assist: { id: '', name: rawAssist },
-                  type: normType,
-                  detail: normDetail,
-                  comments: null,
+              var tsdbEvents = []
+              try {
+                var timelineUrl =
+                  'https://www.thesportsdb.com/api/v1/json/' +
+                  encodeURIComponent(theSportsDbKey) +
+                  '/lookuptimeline.php?id=' +
+                  encodeURIComponent(evId)
+                var resTimeline = $http.send({
+                  url: timelineUrl,
+                  method: 'GET',
+                  timeout: 6,
                 })
-              }
-              providerUsed = 'thesportsdb_timeline'
-            }
-          }
-        } catch (errTsdbTl) {
-          console.log('[DetalhesPartida] Erro ao buscar TheSportsDB timeline:', errTsdbTl)
-        }
-      }
-
-      // 5. FONTE 4: Se ainda sem eventos e temos nomes de times, busca evento no TheSportsDB por data
-      if (resultEvents.length === 0 && (timeA || timeB) && dataParam) {
-        try {
-          var dateQueryUrl =
-            'https://www.thesportsdb.com/api/v1/json/' +
-            encodeURIComponent(theSportsDbKey) +
-            '/eventsday.php?d=' +
-            encodeURIComponent(dataParam) +
-            '&s=Soccer'
-
-          var resDay = $http.send({
-            url: dateQueryUrl,
-            method: 'GET',
-            timeout: 7,
-          })
-
-          if (
-            resDay &&
-            resDay.statusCode === 200 &&
-            resDay.json &&
-            Array.isArray(resDay.json.events)
-          ) {
-            var dayEvs = resDay.json.events
-            var matchedEvent = null
-            var nA = normalizeStr(timeA)
-            var nB = normalizeStr(timeB)
-
-            for (var di = 0; di < dayEvs.length; di++) {
-              var dev = dayEvs[di]
-              var devHome = normalizeStr(dev.strHomeTeam || '')
-              var devAway = normalizeStr(dev.strAwayTeam || '')
-              var matchDirect =
-                (devHome.indexOf(nA) !== -1 || nA.indexOf(devHome) !== -1) &&
-                (devAway.indexOf(nB) !== -1 || nB.indexOf(devAway) !== -1)
-              var matchInv =
-                (devHome.indexOf(nB) !== -1 || nB.indexOf(devHome) !== -1) &&
-                (devAway.indexOf(nA) !== -1 || nA.indexOf(devAway) !== -1)
-
-              if (matchDirect || matchInv) {
-                matchedEvent = dev
-                break
-              }
-            }
-
-            if (matchedEvent && matchedEvent.idEvent) {
-              // Busca timeline pelo idEvent localizado
-              var tlMatchUrl =
-                'https://www.thesportsdb.com/api/v1/json/' +
-                encodeURIComponent(theSportsDbKey) +
-                '/lookuptimeline.php?id=' +
-                encodeURIComponent(matchedEvent.idEvent)
-
-              var resTlMatch = $http.send({
-                url: tlMatchUrl,
-                method: 'GET',
-                timeout: 7,
-              })
-
-              if (
-                resTlMatch &&
-                resTlMatch.statusCode === 200 &&
-                resTlMatch.json &&
-                Array.isArray(resTlMatch.json.timeline) &&
-                resTlMatch.json.timeline.length > 0
-              ) {
-                var listMatch = resTlMatch.json.timeline
-                for (var mi = 0; mi < listMatch.length; mi++) {
-                  var itemM = listMatch[mi]
-                  var rType = String(itemM.strTimeline || itemM.strType || '').toLowerCase()
-                  var rDetail = String(itemM.strTimelineDetail || '').toLowerCase()
-                  var minM = itemM.intTime ? parseInt(itemM.intTime, 10) : 0
-
-                  var mType = 'Goal'
-                  var mDetail = itemM.strTimelineDetail || 'Normal Goal'
-
-                  if (
-                    rType.indexOf('card') !== -1 ||
-                    rDetail.indexOf('card') !== -1 ||
-                    rDetail.indexOf('yellow') !== -1 ||
-                    rDetail.indexOf('red') !== -1
-                  ) {
-                    mType = 'Card'
-                    mDetail = rDetail.indexOf('yellow') !== -1 ? 'Yellow Card' : 'Red Card'
-                  } else if (rType.indexOf('sub') !== -1 || rDetail.indexOf('sub') !== -1) {
-                    mType = 'subst'
-                    mDetail = 'Substitution'
-                  } else if (rType.indexOf('goal') !== -1 || rDetail.indexOf('goal') !== -1) {
-                    mType = 'Goal'
-                    mDetail =
-                      rDetail.indexOf('own') !== -1 || rDetail.indexOf('contra') !== -1
-                        ? 'Own Goal'
-                        : 'Normal Goal'
-                  }
-
-                  resultEvents.push({
-                    time: { elapsed: minM, extra: null },
-                    team: {
-                      id: itemM.idTeam ? String(itemM.idTeam) : '',
-                      name: itemM.strTeam || '',
-                      logo: '',
-                    },
-                    player: {
-                      id: itemM.idPlayer ? String(itemM.idPlayer) : '',
-                      name: (itemM.strPlayer || '').trim(),
-                    },
-                    assist: { id: '', name: (itemM.strAssist || '').trim() },
-                    type: mType,
-                    detail: mDetail,
-                    comments: null,
-                  })
-                }
-                providerUsed = 'thesportsdb_event_timeline'
-              }
-            }
-          }
-        } catch (errSearchDay) {
-          console.log('[DetalhesPartida] Erro ao buscar TheSportsDB por data/times:', errSearchDay)
-        }
-      }
-
-      // 6. FONTE 5: Fallback no Banco de Dados local (coleção 'jogos' - gols cadastrados manualmente ou importados)
-      if (resultEvents.length === 0 && (timeA || timeB)) {
-        try {
-          var localGame = null
-          if (fixtureIdParam) {
-            try {
-              localGame = $app.findFirstRecordByData('jogos', 'fixture_id', fixtureIdParam)
-            } catch (_) {}
-          }
-          if (!localGame && timeA && timeB) {
-            try {
-              var records = $app.findRecordsByFilter(
-                'jogos',
-                "time_a ~ '" +
-                  timeA.replace(/'/g, "\\'") +
-                  "' || time_b ~ '" +
-                  timeB.replace(/'/g, "\\'") +
-                  "'",
-                '-created',
-                5,
-                0,
-              )
-              if (Array.isArray(records)) {
-                var targetHomeClean = normalizeStr(timeA)
-                var targetAwayClean = normalizeStr(timeB)
-                for (var ri = 0; ri < records.length; ri++) {
-                  var r = records[ri]
-                  var rHA = normalizeStr(r.getString('time_a') || '')
-                  var rAA = normalizeStr(r.getString('time_b') || '')
-                  if (
-                    (rHA.indexOf(targetHomeClean) !== -1 || targetHomeClean.indexOf(rHA) !== -1) &&
-                    (rAA.indexOf(targetAwayClean) !== -1 || targetAwayClean.indexOf(rAA) !== -1)
-                  ) {
-                    localGame = r
-                    break
+                if (
+                  resTimeline &&
+                  resTimeline.statusCode === 200 &&
+                  resTimeline.json &&
+                  Array.isArray(resTimeline.json.timeline)
+                ) {
+                  var tlList = resTimeline.json.timeline
+                  for (var tli = 0; tli < tlList.length; tli++) {
+                    var itemTl = tlList[tli]
+                    var minVal = itemTl.strTimeline
+                      ? parseInt(itemTl.strTimeline.replace(/\D/g, ''), 10) || 0
+                      : 0
+                    var tlTeam =
+                      itemTl.strTeam === 'Home'
+                        ? homeTeam
+                        : itemTl.strTeam === 'Away'
+                          ? awayTeam
+                          : itemTl.strTeam || ''
+                    tsdbEvents.push({
+                      time: { elapsed: minVal },
+                      team: { name: tlTeam },
+                      player: { name: itemTl.strPlayer || '' },
+                      assist: { name: itemTl.strAssist || null },
+                      type: itemTl.strTimelineDetail ? itemTl.strTimelineDetail : 'Event',
+                      detail: itemTl.strComment || itemTl.strTimelineDetail || '',
+                    })
                   }
                 }
+              } catch (_) {}
+
+              result = {
+                provider: 'thesportsdb',
+                fixtureId: fixtureIdParam,
+                fixture: {
+                  id: evData.idEvent,
+                  status: {
+                    short: evData.strStatus || 'FT',
+                    long: evData.strStatus || 'Match Finished',
+                  },
+                },
+                league: {
+                  name: evData.strLeague || '',
+                  round: evData.intRound ? 'Round ' + evData.intRound : '',
+                },
+                teams: {
+                  home: {
+                    name: homeTeam,
+                    logo: evData.strHomeTeamBadge || '',
+                  },
+                  away: {
+                    name: awayTeam,
+                    logo: evData.strAwayTeamBadge || '',
+                  },
+                },
+                goals: {
+                  home: homeScore,
+                  away: awayScore,
+                },
+                score: {
+                  halftime: {},
+                  fulltime: { home: homeScore, away: awayScore },
+                },
+                events: tsdbEvents,
+                lineups: [],
+                statistics: [],
+                players: [],
+                updatedAt: new Date().toISOString(),
               }
-            } catch (_) {}
-          }
 
-          if (localGame) {
-            var rawGolsA = localGame.get('gols_time_a')
-            var rawGolsB = localGame.get('gols_time_b')
-            var nameTimeA = localGame.getString('time_a') || timeA || 'Mandante'
-            var nameTimeB = localGame.getString('time_b') || timeB || 'Visitante'
-
-            var parseLocalScorers = function (golsData, sideName) {
-              if (!golsData) return
-              var list = []
-              if (Array.isArray(golsData)) {
-                list = golsData
-              } else if (typeof golsData === 'string' && golsData.trim()) {
+              if (matchingJogoRecord && !matchingJogoRecord.getBool('resultado_finalizado')) {
                 try {
-                  var parsedJson = JSON.parse(golsData)
-                  if (Array.isArray(parsedJson)) list = parsedJson
-                  else list = [golsData]
-                } catch (_) {
-                  list = [golsData]
-                }
+                  matchingJogoRecord.set('ficha_detalhes', result)
+                  $app.save(matchingJogoRecord)
+                } catch (_) {}
               }
-
-              for (var li = 0; li < list.length; li++) {
-                var sc = list[li]
-                var scName = ''
-                var scMin = null
-                if (typeof sc === 'string') {
-                  scName = sc.trim()
-                } else if (sc && typeof sc === 'object') {
-                  scName = (sc.name || sc.jogador || '').trim()
-                  scMin = sc.minuto != null ? parseInt(sc.minuto, 10) : null
-                }
-                if (scName) {
-                  resultEvents.push({
-                    time: { elapsed: scMin, extra: null },
-                    team: { id: '', name: sideName, logo: '' },
-                    player: { id: '', name: scName },
-                    assist: { id: '', name: '' },
-                    type: 'Goal',
-                    detail: 'Normal Goal',
-                    comments: null,
-                  })
-                }
-              }
-            }
-
-            parseLocalScorers(rawGolsA, nameTimeA)
-            parseLocalScorers(rawGolsB, nameTimeB)
-
-            if (resultEvents.length > 0) {
-              providerUsed = 'local_database'
             }
           }
-        } catch (errDb) {
-          console.log('[DetalhesPartida] Erro ao buscar banco local:', errDb)
+        } catch (errTsdb) {
+          console.log('[DetalhesPartida] Erro ao buscar TheSportsDB detalhes:', errTsdb)
         }
       }
 
-      // Ordenar eventos por minuto decorrido
-      resultEvents.sort(function (a, b) {
-        var minA = (a.time && a.time.elapsed) || 0
-        var minB = (b.time && b.time.elapsed) || 0
-        return minA - minB
-      })
-
-      var payloadResult = {
-        fixtureId: fixtureIdParam,
-        provider: providerUsed,
-        events: resultEvents,
-        total: resultEvents.length,
-        isLive: isLiveParam,
-        cachedAtMs: new Date().getTime(),
-        updatedAt: new Date().toISOString(),
+      // Se nenhuma fonte retornou detalhes completos, constrói objeto básico
+      if (!result) {
+        result = {
+          provider: 'none',
+          fixtureId: fixtureIdParam,
+          fixture: { id: fixtureIdParam, status: { short: 'NS', long: 'Not Started' } },
+          league: { name: '' },
+          teams: {
+            home: { name: timeA || 'Mandante', logo: '' },
+            away: { name: timeB || 'Visitante', logo: '' },
+          },
+          goals: { home: null, away: null },
+          score: { halftime: {}, fulltime: {} },
+          events: [],
+          lineups: [],
+          statistics: [],
+          players: [],
+          updatedAt: new Date().toISOString(),
+        }
       }
 
-      // Salva no cache com TTL: 15s para partidas ao vivo, 1h para outras
+      // Salva em cache do servidor
       try {
-        $app.store().set(cacheKey, JSON.stringify(payloadResult))
+        $app.store().set(cacheKey, JSON.stringify(result))
       } catch (_) {}
 
-      return e.json(200, payloadResult)
+      return e.json(200, result)
     } catch (generalErr) {
       console.log('[DetalhesPartida] Erro geral:', generalErr)
       return e.json(500, {
