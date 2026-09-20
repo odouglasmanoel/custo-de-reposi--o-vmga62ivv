@@ -252,6 +252,13 @@ routerAdd('GET', '/backend/v1/placar-ao-vivo', (e) => {
           country: 'South America',
         },
         {
+          id: 4406,
+          name: 'Argentinian Primera Division',
+          shortId: 128,
+          region: 'Sul-Americana',
+          country: 'Argentina',
+        },
+        {
           id: 4351,
           name: 'Brazilian Serie A',
           shortId: 71,
@@ -3206,6 +3213,13 @@ routerAdd('GET', '/backend/v1/jogos-do-dia', (e) => {
           country: 'South America',
         },
         {
+          id: 4406,
+          name: 'Argentinian Primera Division',
+          shortId: 128,
+          region: 'Sul-Americana',
+          country: 'Argentina',
+        },
+        {
           id: 4481,
           name: 'UEFA Europa League',
           shortId: 3,
@@ -4741,6 +4755,7 @@ routerAdd('GET', '/backend/v1/jogos-do-dia', (e) => {
       }
 
       var leagueId = item.league ? item.league.id : null
+      var leagueNameLow = item.league && item.league.name ? item.league.name.toLowerCase() : ''
       var region = 'Outros'
       if (
         leagueId === 71 ||
@@ -4751,7 +4766,18 @@ routerAdd('GET', '/backend/v1/jogos-do-dia', (e) => {
         leagueId === 76
       ) {
         region = 'Brasileirão & Copas'
-      } else if (leagueId === 13 || leagueId === 11 || leagueId === 450) {
+      } else if (
+        leagueId === 13 ||
+        leagueId === 11 ||
+        leagueId === 450 ||
+        leagueId === 4501 ||
+        leagueId === 4724 ||
+        leagueId === 4406 ||
+        leagueId === 128 ||
+        leagueNameLow.indexOf('argentin') !== -1 ||
+        leagueNameLow.indexOf('libertadores') !== -1 ||
+        leagueNameLow.indexOf('sudamericana') !== -1
+      ) {
         region = 'Sul-Americana'
       } else if (
         leagueId === 2 ||

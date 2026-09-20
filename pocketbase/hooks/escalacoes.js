@@ -864,6 +864,35 @@ routerAdd(
               var homeTeamName = timeA
               var awayTeamName = timeB
 
+              // Determina idTeam ou nomes canônicos de mandante/visitante a partir dos itens do lineup
+              var homeTeamIdDetected = null
+              var awayTeamIdDetected = null
+
+              // Primeiro passo: identificar idTeam ou strTeam correspondente a timeA e timeB
+              for (var di = 0; di < list.length; di++) {
+                var dItem = list[di]
+                var dTeamName = dItem.strTeam || ''
+                var dTeamId = dItem.idTeam ? String(dItem.idTeam) : null
+                var dSide = (dItem.strHome || dItem.strSide || '').toLowerCase()
+
+                if (dTeamId) {
+                  if (timeA && timesCoincidem(dTeamName, timeA)) {
+                    homeTeamIdDetected = dTeamId
+                    if (dTeamName) homeTeamName = dTeamName
+                  } else if (timeB && timesCoincidem(dTeamName, timeB)) {
+                    awayTeamIdDetected = dTeamId
+                    if (dTeamName) awayTeamName = dTeamName
+                  } else if (dSide === 'yes' || dSide === 'home' || dSide === 'h') {
+                    if (!homeTeamIdDetected) homeTeamIdDetected = dTeamId
+                    if (dTeamName && !homeTeamName) homeTeamName = dTeamName
+                  } else if (dSide === 'no' || dSide === 'away' || dSide === 'a') {
+                    if (!awayTeamIdDetected) awayTeamIdDetected = dTeamId
+                    if (dTeamName && !awayTeamName) awayTeamName = dTeamName
+                  }
+                }
+              }
+
+              // Segundo passo: iterar 100% dos jogadores do array lineup, sem cortes
               for (var li = 0; li < list.length; li++) {
                 var item = list[li]
                 var pName = (item.strPlayer || '').trim()
@@ -883,22 +912,36 @@ routerAdd(
 
                 var side = (item.strHome || item.strSide || '').toLowerCase()
                 var itemTeamName = item.strTeam || ''
+                var itemTeamId = item.idTeam ? String(item.idTeam) : null
 
-                var isHome = side === 'yes' || side === 'home' || side === 'h'
-                if (!isHome && itemTeamName && timeA) {
-                  var nItem = normalizeStr(itemTeamName)
-                  var nA2 = normalizeStr(timeA)
-                  if (nItem.indexOf(nA2) !== -1 || nA2.indexOf(nItem) !== -1) {
-                    isHome = true
-                  }
+                // Agrupamento robusto:
+                // 1) idTeam bate com homeTeamIdDetected ou awayTeamIdDetected
+                // 2) Similaridade do nome do time com timeA / timeB (timesCoincidem)
+                // 3) Flag strHome / strSide como desempate
+                var isHome = false
+                if (itemTeamId && homeTeamIdDetected && itemTeamId === homeTeamIdDetected) {
+                  isHome = true
+                } else if (itemTeamId && awayTeamIdDetected && itemTeamId === awayTeamIdDetected) {
+                  isHome = false
+                } else if (itemTeamName && timeA && timesCoincidem(itemTeamName, timeA)) {
+                  isHome = true
+                } else if (itemTeamName && timeB && timesCoincidem(itemTeamName, timeB)) {
+                  isHome = false
+                } else if (side === 'yes' || side === 'home' || side === 'h') {
+                  isHome = true
+                } else if (side === 'no' || side === 'away' || side === 'a') {
+                  isHome = false
+                } else {
+                  // Fallback: se o lado da casa tiver menos titulares, agrupa no mandante
+                  isHome = homeStarters.length <= awayStarters.length
                 }
 
                 if (isHome) {
-                  if (itemTeamName) homeTeamName = itemTeamName
+                  if (itemTeamName && !homeTeamName) homeTeamName = itemTeamName
                   if (isSub) homeBench.push(playerObj)
                   else homeStarters.push(playerObj)
                 } else {
-                  if (itemTeamName) awayTeamName = itemTeamName
+                  if (itemTeamName && !awayTeamName) awayTeamName = itemTeamName
                   if (isSub) awayBench.push(playerObj)
                   else awayStarters.push(playerObj)
                 }
@@ -982,7 +1025,8 @@ routerAdd(
                 }
                 if (startersSquad.length < 11) {
                   startersSquad.push(itemPlayer)
-                } else if (benchSquad.length < 12) {
+                } else {
+                  // Sem corte prematuro no banco — preenche todos os reservas disponíveis
                   benchSquad.push(itemPlayer)
                 }
               }

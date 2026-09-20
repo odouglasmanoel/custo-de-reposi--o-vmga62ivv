@@ -202,4 +202,124 @@ describe('detalhes_partida & escalacoes - Edição C (regras de chamada sob dema
     expect(resolvedNumericId).toBe('994411')
     expect(/^\d+$/.test(resolvedNumericId!)).toBe(true)
   })
+
+  it('consolida marcadores nos eventos quando timeline/events não trouxer gols mas o placar for > 0', () => {
+    // Simula cenário da issue: Atlético Madrid 2 x 1 Real Madrid
+    // A API externa enviou apenas 1 evento de substituição na timeline, mas placar = 2x1
+    const rawEventsFromApi = [
+      {
+        time: { elapsed: 72 },
+        team: { name: 'Atlético Madrid' },
+        player: { name: 'Ángel Correa' },
+        type: 'subst',
+        detail: 'Substitution',
+      },
+    ]
+
+    const placarGolsMandante = 2
+    const placarGolsVisitante = 1
+
+    // Marcadores conhecidos do banco / match.scorers
+    const mockMarcadores = [
+      { name: 'Antoine Griezmann', teamSide: 'home', minute: 15 },
+      { name: 'Alexander Sørloth', teamSide: 'home', minute: 60 },
+      { name: 'Kylian Mbappé', teamSide: 'away', minute: 40 },
+    ]
+
+    // Valida que a lista crua de eventos não contém nenhum gol
+    const hasExistingGoals = rawEventsFromApi.some(
+      (ev) => ev.type.toLowerCase().includes('goal') || ev.detail.toLowerCase().includes('goal'),
+    )
+    expect(hasExistingGoals).toBe(false)
+
+    // Lógica idêntica ao pocketbase/hooks/detalhes_partida.js e MatchDetailsModal.tsx
+    let consolidatedEvents = [...rawEventsFromApi]
+    const totalGolsPlacar = placarGolsMandante + placarGolsVisitante
+
+    if (!hasExistingGoals && totalGolsPlacar > 0) {
+      const goalEvents = mockMarcadores.map((sc) => ({
+        time: { elapsed: sc.minute },
+        team: { name: sc.teamSide === 'home' ? 'Atlético Madrid' : 'Real Madrid' },
+        player: { name: sc.name },
+        type: 'Goal',
+        detail: 'Normal Goal',
+      }))
+      consolidatedEvents = [...goalEvents, ...consolidatedEvents]
+    }
+
+    // Filtragem de gols
+    const golsFiltrados = consolidatedEvents.filter((ev) => {
+      const t = (ev.type || '').toLowerCase()
+      const d = (ev.detail || '').toLowerCase()
+      return t.includes('goal') || d.includes('goal')
+    })
+
+    expect(golsFiltrados).toHaveLength(3)
+    expect(golsFiltrados[0].player.name).toBe('Antoine Griezmann')
+    expect(golsFiltrados[1].player.name).toBe('Alexander Sørloth')
+    expect(golsFiltrados[2].player.name).toBe('Kylian Mbappé')
+
+    // Substituição continua preservada no conjunto total de eventos
+    const subsFiltradas = consolidatedEvents.filter((ev) =>
+      (ev.type || '').toLowerCase().includes('sub'),
+    )
+    expect(subsFiltradas).toHaveLength(1)
+  })
+
+  it('mapeia strHomeGoalDetails e strAwayGoalDetails da TheSportsDB para eventos do tipo Goal', () => {
+    // Exemplo real retornado no lookupevent.php
+    const strHomeGoalDetails = "39':Julian Alvarez;70':Antoine Griezmann;"
+    const strAwayGoalDetails = "55':Vinicius Junior;"
+
+    const parsedEvents: any[] = []
+    const parseGoalDetailsStr = (goalStr: string, teamName: string) => {
+      if (!goalStr || !goalStr.trim()) return
+      const parts = goalStr.split(';')
+      for (const rawPart of parts) {
+        const trimmed = rawPart.trim()
+        if (!trimmed) continue
+        const minMatch = trimmed.match(/(\d+)'?/)
+        const extractedMin = minMatch ? parseInt(minMatch[1], 10) : null
+        const nameClean = trimmed
+          .replace(/^\d+'?:?/, '')
+          .replace(/\s*\(pen\.?\)/i, '')
+          .trim()
+        if (nameClean) {
+          parsedEvents.push({
+            type: 'Goal',
+            detail: 'Normal Goal',
+            time: { elapsed: extractedMin },
+            team: { name: teamName },
+            player: { name: nameClean },
+          })
+        }
+      }
+    }
+
+    parseGoalDetailsStr(strHomeGoalDetails, 'Atlético Madrid')
+    parseGoalDetailsStr(strAwayGoalDetails, 'Real Madrid')
+
+    expect(parsedEvents).toHaveLength(3)
+    expect(parsedEvents[0]).toEqual({
+      type: 'Goal',
+      detail: 'Normal Goal',
+      time: { elapsed: 39 },
+      team: { name: 'Atlético Madrid' },
+      player: { name: 'Julian Alvarez' },
+    })
+    expect(parsedEvents[1]).toEqual({
+      type: 'Goal',
+      detail: 'Normal Goal',
+      time: { elapsed: 70 },
+      team: { name: 'Atlético Madrid' },
+      player: { name: 'Antoine Griezmann' },
+    })
+    expect(parsedEvents[2]).toEqual({
+      type: 'Goal',
+      detail: 'Normal Goal',
+      time: { elapsed: 55 },
+      team: { name: 'Real Madrid' },
+      player: { name: 'Vinicius Junior' },
+    })
+  })
 })

@@ -61,6 +61,27 @@ describe('tournamentRegionMatcher', () => {
     expect(r2.country).toBe('América do Sul')
   })
 
+  it('mapeia Liga Argentina (TheSportsDB id 4406 e API-Football 128) para Sul-Americana', () => {
+    // ID TheSportsDB 4406
+    const r1 = getRegionAndCountryByTournament('Argentinian Primera Division', 4406)
+    expect(r1.region).toBe('Sul-Americana')
+    expect(r1.country).toBe('Argentina')
+
+    // ID API-Football 128
+    const r2 = getRegionAndCountryByTournament('Liga Profesional Argentina', 128)
+    expect(r2.region).toBe('Sul-Americana')
+    expect(r2.country).toBe('Argentina')
+
+    // Por nome de liga com variação
+    const r3 = getRegionAndCountryByTournament('Campeonato Argentino')
+    expect(r3.region).toBe('Sul-Americana')
+    expect(r3.country).toBe('Argentina')
+
+    const r4 = getRegionAndCountryByTournament('Primera Division Argentina')
+    expect(r4.region).toBe('Sul-Americana')
+    expect(r4.country).toBe('Argentina')
+  })
+
   it('não fixa América do Sul em competições desconhecidas / fallback neutro', () => {
     const r = getRegionAndCountryByTournament('Torneio Amistoso do Japão')
     expect(r.region).toBe('Outros')

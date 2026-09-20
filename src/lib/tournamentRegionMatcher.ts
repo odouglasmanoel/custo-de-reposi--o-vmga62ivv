@@ -58,15 +58,20 @@ export function getRegionAndCountryByTournament(
       return { region: 'Brasileirão & Copas', country: 'Brasil' }
     }
 
-    // CONMEBOL / Sul-Americana / Libertadores
+    // CONMEBOL / Sul-Americana / Libertadores / Ligas Sul-Americanas (ex: Argentina)
     if (
       id === 13 || // Copa Libertadores
       id === 11 || // Copa Sudamericana
       id === 450 || // Copa Sudamericana alternativa
       id === 4501 || // TheSportsDB Libertadores
-      id === 4724 // TheSportsDB Sudamericana
+      id === 4724 || // TheSportsDB Sudamericana
+      id === 4406 || // TheSportsDB Argentinian Primera Division
+      id === 128 // API-Football Liga Profesional Argentina
     ) {
-      return { region: 'Sul-Americana', country: 'América do Sul' }
+      return {
+        region: 'Sul-Americana',
+        country: id === 4406 || id === 128 ? 'Argentina' : 'América do Sul',
+      }
     }
 
     // Futebol Europeu (Grandes ligas e UEFA)
@@ -185,7 +190,7 @@ export function getRegionAndCountryByTournament(
     return { region: 'Brasileirão & Copas', country: 'Brasil' }
   }
 
-  // América do Sul / CONMEBOL (Libertadores, Sul-Americana, etc.)
+  // América do Sul / CONMEBOL (Libertadores, Sul-Americana, Liga Argentina, etc.)
   if (
     norm.includes('libertadores') ||
     norm.includes('sul-americana') ||
@@ -193,9 +198,16 @@ export function getRegionAndCountryByTournament(
     norm.includes('sul americana') ||
     norm.includes('conmebol') ||
     norm.includes('recopa') ||
-    norm.includes('copa america')
+    norm.includes('copa america') ||
+    norm.includes('argentin') ||
+    norm.includes('primera division argentina') ||
+    norm.includes('liga profesional argentina')
   ) {
-    return { region: 'Sul-Americana', country: 'América do Sul' }
+    const isArgentina =
+      norm.includes('argentin') ||
+      norm.includes('primera division argentina') ||
+      norm.includes('liga profesional argentina')
+    return { region: 'Sul-Americana', country: isArgentina ? 'Argentina' : 'América do Sul' }
   }
 
   // 3. Heurística baseada no país já fornecido pela API

@@ -960,17 +960,89 @@ routerAdd(
                         : itemTl.strTeam === 'Away'
                           ? awayTeam
                           : itemTl.strTeam || ''
+                    var rawTlDetail = itemTl.strTimelineDetail || ''
+                    var tlType = 'Event'
+                    if (
+                      /goal|gol/i.test(rawTlDetail) ||
+                      /goal|gol/i.test(itemTl.strComment || '')
+                    ) {
+                      tlType = 'Goal'
+                    } else if (
+                      /card|yellow|red|amarelo|vermelho/i.test(rawTlDetail) ||
+                      /card|yellow|red/i.test(itemTl.strComment || '')
+                    ) {
+                      tlType = 'Card'
+                    } else if (/sub/i.test(rawTlDetail) || /sub/i.test(itemTl.strComment || '')) {
+                      tlType = 'subst'
+                    }
                     tsdbEvents.push({
                       time: { elapsed: minVal },
                       team: { name: tlTeam },
                       player: { name: itemTl.strPlayer || '' },
                       assist: { name: itemTl.strAssist || null },
-                      type: itemTl.strTimelineDetail ? itemTl.strTimelineDetail : 'Event',
-                      detail: itemTl.strComment || itemTl.strTimelineDetail || '',
+                      type: tlType,
+                      detail: itemTl.strComment || rawTlDetail || '',
                     })
                   }
                 }
               } catch (_) {}
+
+              // Mapear strHomeGoalDetails e strAwayGoalDetails quando lookuptimeline não trouxer a timeline completa de gols
+              var parseGoalDetailsStr = function (goalStr, teamName, teamSide) {
+                if (typeof goalStr !== 'string' || !goalStr.trim()) return
+                var parts = goalStr.split(';')
+                for (var pi = 0; pi < parts.length; pi++) {
+                  var rawPart = parts[pi].trim()
+                  if (!rawPart) continue
+                  var plusMatch = rawPart.match(/(\d+)\s*\+\s*(\d+)/)
+                  var extractedMin = null
+                  var extractedExtra = null
+                  if (plusMatch) {
+                    extractedMin = parseInt(plusMatch[1], 10)
+                    extractedExtra = parseInt(plusMatch[2], 10)
+                  } else {
+                    var minMatch = rawPart.match(/(\d+)'?/)
+                    extractedMin = minMatch ? parseInt(minMatch[1], 10) : null
+                  }
+                  var nameClean = rawPart
+                    .replace(/^\d+(\+\d+)?'?:?/, '')
+                    .replace(/\s*\d+(\+\d+)?'?$/, '')
+                    .replace(/\s*\(pen\.?\)/i, '')
+                    .trim()
+                  var isOwnGoal = /contra|own\s*goal|o\.?g\.?/i.test(rawPart)
+                  if (isOwnGoal && nameClean.toLowerCase().indexOf('contra') === -1) {
+                    nameClean += ' (contra)'
+                  }
+                  if (nameClean) {
+                    tsdbEvents.push({
+                      type: 'Goal',
+                      detail: isOwnGoal ? 'Own Goal' : 'Normal Goal',
+                      time: { elapsed: extractedMin, extra: extractedExtra },
+                      team: { name: teamName },
+                      player: { name: nameClean },
+                    })
+                  }
+                }
+              }
+
+              var hasGoalsInTl = tsdbEvents.some(function (ev) {
+                var t = (ev.type || '').toLowerCase()
+                return t.indexOf('goal') !== -1
+              })
+
+              if (!hasGoalsInTl) {
+                if (evData.strHomeGoalDetails) {
+                  parseGoalDetailsStr(evData.strHomeGoalDetails, homeTeam, 'home')
+                }
+                if (evData.strAwayGoalDetails) {
+                  parseGoalDetailsStr(evData.strAwayGoalDetails, awayTeam, 'away')
+                }
+              }
+
+              // Ordena eventos cronologicamente
+              tsdbEvents.sort(function (a, b) {
+                return (a.time ? a.time.elapsed || 0 : 0) - (b.time ? b.time.elapsed || 0 : 0)
+              })
 
               result = {
                 provider: 'thesportsdb',
@@ -1026,6 +1098,15 @@ routerAdd(
 
       // Se nenhuma fonte retornou detalhes completos, constrói objeto básico
       if (!result) {
+        var baseHomeScore = null
+        var baseAwayScore = null
+        if (matchingJogoRecord) {
+          var ga = matchingJogoRecord.get('gols_time_a')
+          var gb = matchingJogoRecord.get('gols_time_b')
+          if (ga !== null && ga !== undefined && ga !== '') baseHomeScore = parseInt(ga, 10)
+          if (gb !== null && gb !== undefined && gb !== '') baseAwayScore = parseInt(gb, 10)
+        }
+
         result = {
           provider: 'none',
           fixtureId: fixtureIdParam,
@@ -1035,13 +1116,120 @@ routerAdd(
             home: { name: timeA || 'Mandante', logo: '' },
             away: { name: timeB || 'Visitante', logo: '' },
           },
-          goals: { home: null, away: null },
-          score: { halftime: {}, fulltime: {} },
+          goals: { home: baseHomeScore, away: baseAwayScore },
+          score: { halftime: {}, fulltime: { home: baseHomeScore, away: baseAwayScore } },
           events: [],
           lineups: [],
           statistics: [],
           players: [],
           updatedAt: new Date().toISOString(),
+        }
+      }
+
+      // =============================================================
+      // CONSOLIDAÇÃO AUTOMÁTICA DE GOLS:
+      // Quando events vier sem nenhum gol mas a partida tiver placar com gols
+      // (goals.home/away > 0, ou gols_time_a / gols_time_b no banco, ou marcadores cadastrados),
+      // consolidar automaticamente os marcadores como eventos do tipo 'Goal' no array events.
+      // =============================================================
+      if (result) {
+        var currentEvList = Array.isArray(result.events) ? result.events : []
+        var existingGoals = currentEvList.filter(function (ev) {
+          var t = (ev.type || '').toLowerCase()
+          var d = (ev.detail || '').toLowerCase()
+          return t.indexOf('goal') !== -1 || d.indexOf('goal') !== -1
+        })
+
+        var hScoreCheck =
+          result.goals && result.goals.home !== null && result.goals.home !== undefined
+            ? parseInt(result.goals.home, 10)
+            : matchingJogoRecord &&
+                matchingJogoRecord.get('gols_time_a') !== null &&
+                matchingJogoRecord.get('gols_time_a') !== ''
+              ? parseInt(matchingJogoRecord.get('gols_time_a'), 10)
+              : 0
+
+        var aScoreCheck =
+          result.goals && result.goals.away !== null && result.goals.away !== undefined
+            ? parseInt(result.goals.away, 10)
+            : matchingJogoRecord &&
+                matchingJogoRecord.get('gols_time_b') !== null &&
+                matchingJogoRecord.get('gols_time_b') !== ''
+              ? parseInt(matchingJogoRecord.get('gols_time_b'), 10)
+              : 0
+
+        var totalPlacarGols =
+          (hScoreCheck > 0 ? hScoreCheck : 0) + (aScoreCheck > 0 ? aScoreCheck : 0)
+
+        if (existingGoals.length === 0 && totalPlacarGols > 0) {
+          var hTeamNameStr =
+            (result.teams && result.teams.home && result.teams.home.name) || timeA || 'Mandante'
+          var aTeamNameStr =
+            (result.teams && result.teams.away && result.teams.away.name) || timeB || 'Visitante'
+
+          // 1) Tentar extrair marcadores persistidos em marcadores_confirmados / marcadores do jogo no banco
+          var consolidatedGoals = []
+          if (matchingJogoRecord) {
+            try {
+              var savedMarcadoresRaw =
+                matchingJogoRecord.get('marcadores_confirmados') ||
+                matchingJogoRecord.get('marcadores') ||
+                null
+              var parsedMarcadores = null
+              if (typeof savedMarcadoresRaw === 'string' && savedMarcadoresRaw.trim()) {
+                try {
+                  parsedMarcadores = JSON.parse(savedMarcadoresRaw)
+                } catch (_) {}
+              } else if (Array.isArray(savedMarcadoresRaw)) {
+                parsedMarcadores = savedMarcadoresRaw
+              }
+
+              if (Array.isArray(parsedMarcadores) && parsedMarcadores.length > 0) {
+                for (var pmi = 0; pmi < parsedMarcadores.length; pmi++) {
+                  var pm = parsedMarcadores[pmi]
+                  var pmName = typeof pm === 'string' ? pm : pm.name || pm.player || ''
+                  if (!pmName) continue
+                  var pmTeam = pm.teamSide === 'away' ? aTeamNameStr : hTeamNameStr
+                  if (pm.teamName) pmTeam = pm.teamName
+                  consolidatedGoals.push({
+                    type: 'Goal',
+                    detail: pm.isOwnGoal ? 'Own Goal' : 'Normal Goal',
+                    time: { elapsed: pm.minute || null, extra: null },
+                    team: { name: pmTeam },
+                    player: { name: pmName },
+                  })
+                }
+              }
+            } catch (_) {}
+          }
+
+          // 2) Se não havia marcadores salvos nominais, gerar placeholders de gols pelo placar
+          // garantindo que a lista de gols não fique vazia enquanto o placar indicar gols marcados
+          if (consolidatedGoals.length === 0) {
+            for (var hg = 1; hg <= hScoreCheck; hg++) {
+              consolidatedGoals.push({
+                type: 'Goal',
+                detail: 'Normal Goal',
+                time: { elapsed: null, extra: null },
+                team: { name: hTeamNameStr },
+                player: { name: 'Gol (' + hTeamNameStr + ')' },
+              })
+            }
+            for (var ag = 1; ag <= aScoreCheck; ag++) {
+              consolidatedGoals.push({
+                type: 'Goal',
+                detail: 'Normal Goal',
+                time: { elapsed: null, extra: null },
+                team: { name: aTeamNameStr },
+                player: { name: 'Gol (' + aTeamNameStr + ')' },
+              })
+            }
+          }
+
+          if (consolidatedGoals.length > 0) {
+            // Combina com os demais eventos existentes (cartões, substituições) mantendo tudo
+            result.events = consolidatedGoals.concat(currentEvList)
+          }
         }
       }
 

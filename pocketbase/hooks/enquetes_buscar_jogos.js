@@ -721,6 +721,12 @@ routerAdd(
                 { id: 4501, name: 'Copa Libertadores', cat: 'Copa Libertadores', prio: 8 },
                 { id: 4724, name: 'Copa Sudamericana', cat: 'Copa Sul-Americana', prio: 11 },
                 {
+                  id: 4406,
+                  name: 'Argentinian Primera Division',
+                  cat: 'Campeonato Argentino',
+                  prio: 12,
+                },
+                {
                   id: 4328,
                   name: 'English Premier League',
                   cat: 'Premier League (Inglaterra)',
@@ -785,8 +791,10 @@ routerAdd(
                         region:
                           tLeague.cat.indexOf('Brasileir') !== -1 ||
                           (tLeague.cat.indexOf('Copa') !== -1 &&
-                            tLeague.cat.indexOf('Europa') === -1)
-                            ? 'Brasileirão & Copas'
+                            tLeague.cat.indexOf('Europa') === -1) ||
+                          tLeague.id === 4406 ||
+                          tLeague.cat.indexOf('Argentin') !== -1
+                            ? 'Sul-Americana'
                             : 'Futebol Europeu',
                       },
                       teams: {

@@ -147,29 +147,107 @@ export function MatchDetailsModal({ isOpen, onClose, match }: MatchDetailsModalP
         }
 
         const data = await res.json()
-        const rawEvents: MatchEventItem[] = Array.isArray(data.events) ? data.events : []
+        let rawEvents: MatchEventItem[] = Array.isArray(data.events) ? data.events : []
+
+        // Se a resposta da API externa vier incompleta ou vazia, consolidar com dados locais do PocketBase (jogos.ficha_detalhes)
+        if (
+          rawEvents.length === 0 ||
+          !rawEvents.some((ev) => (ev.type || '').toLowerCase().includes('goal'))
+        ) {
+          try {
+            const pbFilter = fixtureId
+              ? `fixture_id = "${String(fixtureId)}"`
+              : timeA && timeB
+                ? `time_a ~ "${timeA.slice(0, 5)}" && time_b ~ "${timeB.slice(0, 5)}"`
+                : ''
+            if (pbFilter) {
+              const localGames = await pb.collection('jogos').getList(1, 1, {
+                filter: pbFilter,
+                requestKey: null,
+              })
+              if (localGames.items.length > 0) {
+                const lg = localGames.items[0]
+                const fichaRaw = lg.ficha_detalhes
+                if (fichaRaw) {
+                  const fichaObj = typeof fichaRaw === 'string' ? JSON.parse(fichaRaw) : fichaRaw
+                  if (Array.isArray(fichaObj.events) && fichaObj.events.length > 0) {
+                    // Mescla eventos salvos que não estejam presentes
+                    const existingSignatures = new Set(
+                      rawEvents.map(
+                        (e) => `${e.time?.elapsed || ''}_${e.player?.name || ''}_${e.type || ''}`,
+                      ),
+                    )
+                    for (const fe of fichaObj.events) {
+                      const sig = `${fe.time?.elapsed || ''}_${fe.player?.name || ''}_${fe.type || ''}`
+                      if (!existingSignatures.has(sig)) {
+                        rawEvents.push(fe)
+                        existingSignatures.add(sig)
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          } catch {
+            /* intentionally ignored */
+          }
+        }
 
         let resolvedEvents = rawEvents
-        // Se a resposta vier vazia e a partida já tiver scorers embutidos, usa os scorers como fallback
-        if (
-          resolvedEvents.length === 0 &&
-          Array.isArray(currentMatch.scorers) &&
-          currentMatch.scorers.length > 0
-        ) {
-          resolvedEvents = currentMatch.scorers.map((sc) => ({
-            time: { elapsed: sc.minute ?? null, extra: sc.extraMinute ?? null },
-            team: {
-              id: sc.teamId ?? null,
-              name:
-                sc.teamName ??
-                (sc.teamSide === 'home'
-                  ? currentMatch.teams?.home?.name || ''
-                  : currentMatch.teams?.away?.name || ''),
-            },
-            player: { name: sc.name },
-            type: 'Goal',
-            detail: 'Normal Goal',
-          }))
+
+        // Injetar scorers conhecidos (match.scorers) quando events não contiver gols,
+        // garantindo que a lista de gols nunca fique vazia enquanto o placar indicar gols marcados
+        const hasGoalEvents = resolvedEvents.some((ev) => {
+          const t = (ev.type || '').toLowerCase()
+          const d = (ev.detail || '').toLowerCase()
+          return t.includes('goal') || d.includes('goal')
+        })
+
+        const homeGoalsCount = Number(currentMatch.goals?.home ?? 0)
+        const awayGoalsCount = Number(currentMatch.goals?.away ?? 0)
+        const totalPlacar =
+          (homeGoalsCount > 0 ? homeGoalsCount : 0) + (awayGoalsCount > 0 ? awayGoalsCount : 0)
+
+        if (!hasGoalEvents && totalPlacar > 0) {
+          if (Array.isArray(currentMatch.scorers) && currentMatch.scorers.length > 0) {
+            const scorersEvents: MatchEventItem[] = currentMatch.scorers.map((sc) => ({
+              time: { elapsed: sc.minute ?? null, extra: sc.extraMinute ?? null },
+              team: {
+                id: sc.teamId ?? null,
+                name:
+                  sc.teamName ??
+                  (sc.teamSide === 'home'
+                    ? currentMatch.teams?.home?.name || ''
+                    : currentMatch.teams?.away?.name || ''),
+              },
+              player: { name: sc.name },
+              type: 'Goal',
+              detail: 'Normal Goal',
+            }))
+            resolvedEvents = [...scorersEvents, ...resolvedEvents]
+          } else {
+            // Se não há scorers nominais conhecidos, gera representação pelo placar
+            const placeholderGols: MatchEventItem[] = []
+            for (let i = 0; i < homeGoalsCount; i++) {
+              placeholderGols.push({
+                time: { elapsed: null, extra: null },
+                team: { name: currentMatch.teams?.home?.name || 'Mandante' },
+                player: { name: `Gol (${currentMatch.teams?.home?.name || 'Mandante'})` },
+                type: 'Goal',
+                detail: 'Normal Goal',
+              })
+            }
+            for (let i = 0; i < awayGoalsCount; i++) {
+              placeholderGols.push({
+                time: { elapsed: null, extra: null },
+                team: { name: currentMatch.teams?.away?.name || 'Visitante' },
+                player: { name: `Gol (${currentMatch.teams?.away?.name || 'Visitante'})` },
+                type: 'Goal',
+                detail: 'Normal Goal',
+              })
+            }
+            resolvedEvents = [...placeholderGols, ...resolvedEvents]
+          }
         }
 
         setEvents(resolvedEvents)
@@ -227,7 +305,7 @@ export function MatchDetailsModal({ isOpen, onClose, match }: MatchDetailsModalP
       const datePart = rawDate.split('T')[0] || ''
       const fixId = currentMatch.fixture?.id ? String(currentMatch.fixture.id) : undefined
 
-      const res = await fetchGameLineup({
+      let res = await fetchGameLineup({
         jogoId: fixId || 'dia_match',
         fixtureId: fixId,
         timeA: currentMatch.teams?.home?.name || '',
@@ -235,6 +313,48 @@ export function MatchDetailsModal({ isOpen, onClose, match }: MatchDetailsModalP
         data: datePart,
         forceRefresh: force,
       })
+
+      // Se a resposta vier truncada ou indisponível, tenta consolidar com dados já salvos no PocketBase (jogos.escalacoes)
+      const hasFewPlayers =
+        !res ||
+        !Array.isArray(res.teams) ||
+        res.teams.length === 0 ||
+        res.teams.some((t) => (t.starters?.length || 0) < 5)
+
+      if (hasFewPlayers) {
+        try {
+          const pbFilter = fixId
+            ? `fixture_id = "${String(fixId)}"`
+            : currentMatch.teams?.home?.name && currentMatch.teams?.away?.name
+              ? `time_a ~ "${currentMatch.teams.home.name.slice(0, 5)}" && time_b ~ "${currentMatch.teams.away.name.slice(0, 5)}"`
+              : ''
+          if (pbFilter) {
+            const localGames = await pb.collection('jogos').getList(1, 1, {
+              filter: pbFilter,
+              requestKey: null,
+            })
+            if (localGames.items.length > 0) {
+              const savedEscRaw = localGames.items[0].escalacoes
+              if (savedEscRaw) {
+                const savedObj =
+                  typeof savedEscRaw === 'string' ? JSON.parse(savedEscRaw) : savedEscRaw
+                if (
+                  savedObj &&
+                  Array.isArray(savedObj.teams) &&
+                  savedObj.teams.length > 0 &&
+                  (savedObj.teams[0]?.starters?.length || 0) >
+                    (res?.teams?.[0]?.starters?.length || 0)
+                ) {
+                  res = savedObj
+                }
+              }
+            }
+          }
+        } catch {
+          /* intentionally ignored */
+        }
+      }
+
       if (res && Array.isArray(res.teams)) {
         // Assegura PSG oficial nos logos de escalações
         for (const t of res.teams) {
@@ -436,12 +556,6 @@ export function MatchDetailsModal({ isOpen, onClose, match }: MatchDetailsModalP
   }
 
   // Filtragem dos eventos em categorias
-  const golsList = events.filter((ev) => {
-    const t = (ev.type || '').toLowerCase()
-    const d = (ev.detail || '').toLowerCase()
-    return t.includes('goal') || d.includes('goal') || (!t.includes('card') && !t.includes('sub'))
-  })
-
   const cartoesList = events.filter((ev) => {
     const t = (ev.type || '').toLowerCase()
     const d = (ev.detail || '').toLowerCase()
@@ -452,6 +566,16 @@ export function MatchDetailsModal({ isOpen, onClose, match }: MatchDetailsModalP
     const t = (ev.type || '').toLowerCase()
     const d = (ev.detail || '').toLowerCase()
     return t.includes('sub') || d.includes('sub')
+  })
+
+  const golsList = events.filter((ev) => {
+    const t = (ev.type || '').toLowerCase()
+    const d = (ev.detail || '').toLowerCase()
+    // Evento é gol se explicitamente contiver 'goal' ou 'gol', ou se não for cartão nem substituição
+    const isCard =
+      t.includes('card') || d.includes('card') || d.includes('yellow') || d.includes('red')
+    const isSub = t.includes('sub') || d.includes('sub')
+    return t.includes('goal') || d.includes('goal') || t.includes('gol') || (!isCard && !isSub)
   })
 
   return (
