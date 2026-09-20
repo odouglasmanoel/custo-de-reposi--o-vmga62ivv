@@ -701,369 +701,8 @@ routerAdd(
         }
       }
 
-      // 3. FONTE 2: Fallback Football-Data.org (GET /v4/matches/{id} traz lineups quando disponíveis)
-      if (!result && footballDataKey) {
-        try {
-          var fdMatchId = null
-          if (isDirectNumeric) {
-            fdMatchId = fixtureIdParam
-          } else if ((timeA || timeB) && dataParam) {
-            try {
-              var resFdSearch = $http.send({
-                url:
-                  'https://api.football-data.org/v4/matches?dateFrom=' +
-                  encodeURIComponent(dataParam) +
-                  '&dateTo=' +
-                  encodeURIComponent(dataParam),
-                method: 'GET',
-                headers: { 'X-Auth-Token': footballDataKey },
-                timeout: 7,
-              })
-              if (
-                resFdSearch &&
-                resFdSearch.statusCode === 200 &&
-                resFdSearch.json &&
-                Array.isArray(resFdSearch.json.matches)
-              ) {
-                var matchesList = resFdSearch.json.matches
-                var nHome = normalizeStr(timeA)
-                var nAway = normalizeStr(timeB)
-                for (var mi = 0; mi < matchesList.length; mi++) {
-                  var m = matchesList[mi]
-                  var mH = normalizeStr(
-                    (m.homeTeam && (m.homeTeam.name || m.homeTeam.shortName)) || '',
-                  )
-                  var mA = normalizeStr(
-                    (m.awayTeam && (m.awayTeam.name || m.awayTeam.shortName)) || '',
-                  )
-                  var dM =
-                    (mH.indexOf(nHome) !== -1 || nHome.indexOf(mH) !== -1) &&
-                    (mA.indexOf(nAway) !== -1 || nAway.indexOf(mA) !== -1)
-                  var iM =
-                    (mH.indexOf(nAway) !== -1 || nAway.indexOf(mH) !== -1) &&
-                    (mA.indexOf(nHome) !== -1 || nHome.indexOf(mA) !== -1)
-                  if (dM || iM) {
-                    fdMatchId = m.id ? String(m.id) : null
-                    break
-                  }
-                }
-              }
-            } catch (_) {}
-          }
-
-          if (fdMatchId) {
-            var resFdMatch = $http.send({
-              url: 'https://api.football-data.org/v4/matches/' + encodeURIComponent(fdMatchId),
-              method: 'GET',
-              headers: { 'X-Auth-Token': footballDataKey },
-              timeout: 7,
-            })
-
-            if (resFdMatch && resFdMatch.statusCode === 200 && resFdMatch.json) {
-              var fdMatch = resFdMatch.json
-              var fdHome = fdMatch.homeTeam || {}
-              var fdAway = fdMatch.awayTeam || {}
-              var homeLineup = Array.isArray(fdHome.lineup) ? fdHome.lineup : []
-              var awayLineup = Array.isArray(fdAway.lineup) ? fdAway.lineup : []
-              var homeBenchFd = Array.isArray(fdHome.bench) ? fdHome.bench : []
-              var awayBenchFd = Array.isArray(fdAway.bench) ? fdAway.bench : []
-
-              var mapPlayerFd = function (p) {
-                return {
-                  id: p.id ? String(p.id) : '',
-                  name: p.name || p.shortName || '',
-                  number: p.shirtNumber || null,
-                  pos: p.position || '',
-                }
-              }
-
-              if (homeLineup.length > 0 || awayLineup.length > 0) {
-                result = {
-                  status: 'confirmada',
-                  provider: 'football_data',
-                  fixtureId: fixtureIdParam,
-                  teams: [
-                    {
-                      teamId: fdHome.id ? String(fdHome.id) : '',
-                      teamName: fdHome.name || fdHome.shortName || timeA || 'Mandante',
-                      teamLogo: fdHome.crest || '',
-                      formation: fdHome.formation || '',
-                      coach: (fdHome.coach && fdHome.coach.name) || '',
-                      starters: homeLineup.map(mapPlayerFd),
-                      substitutes: homeBenchFd.map(mapPlayerFd),
-                    },
-                    {
-                      teamId: fdAway.id ? String(fdAway.id) : '',
-                      teamName: fdAway.name || fdAway.shortName || timeB || 'Visitante',
-                      teamLogo: fdAway.crest || '',
-                      formation: fdAway.formation || '',
-                      coach: (fdAway.coach && fdAway.coach.name) || '',
-                      starters: awayLineup.map(mapPlayerFd),
-                      substitutes: awayBenchFd.map(mapPlayerFd),
-                    },
-                  ],
-                  updatedAt: new Date().toISOString(),
-                }
-
-                if (matchingJogoRecord) {
-                  try {
-                    matchingJogoRecord.set('escalacoes', result)
-                    $app.save(matchingJogoRecord)
-                  } catch (_) {}
-                }
-              }
-            }
-          }
-        } catch (errFdLineup) {
-          console.log('[Escalacoes] Erro ao buscar Football-Data.org lineups:', errFdLineup)
-        }
-      }
-
-      // 4. FONTE 3: Fallback TheSportsDB lookuplineup.php / eventslineup.php
-      if (!result && (rawTsdbEventId || isTsdbId || isDirectNumeric)) {
-        try {
-          var evId = rawTsdbEventId || fixtureIdParam.replace(/\D/g, '')
-          if (evId) {
-            var tsdbLineupUrls = [
-              'https://www.thesportsdb.com/api/v1/json/' +
-                encodeURIComponent(theSportsDbKey) +
-                '/lookuplineup.php?id=' +
-                encodeURIComponent(evId),
-              'https://www.thesportsdb.com/api/v1/json/' +
-                encodeURIComponent(theSportsDbKey) +
-                '/eventslineup.php?id=' +
-                encodeURIComponent(evId),
-            ]
-
-            var list = null
-            for (var uIdx = 0; uIdx < tsdbLineupUrls.length; uIdx++) {
-              var tsdbLineupUrl = tsdbLineupUrls[uIdx]
-              var resTsdb = $http.send({
-                url: tsdbLineupUrl,
-                method: 'GET',
-                timeout: 7,
-              })
-
-              if (
-                resTsdb &&
-                resTsdb.statusCode === 200 &&
-                resTsdb.json &&
-                Array.isArray(resTsdb.json.lineup) &&
-                resTsdb.json.lineup.length > 0
-              ) {
-                list = resTsdb.json.lineup
-                break
-              }
-            }
-
-            if (list && list.length > 0) {
-              var homeStarters = []
-              var homeBench = []
-              var awayStarters = []
-              var awayBench = []
-              var homeTeamName = timeA
-              var awayTeamName = timeB
-
-              // Determina idTeam ou nomes canônicos de mandante/visitante a partir dos itens do lineup
-              var homeTeamIdDetected = null
-              var awayTeamIdDetected = null
-
-              // Primeiro passo: identificar idTeam ou strTeam correspondente a timeA e timeB
-              for (var di = 0; di < list.length; di++) {
-                var dItem = list[di]
-                var dTeamName = dItem.strTeam || ''
-                var dTeamId = dItem.idTeam ? String(dItem.idTeam) : null
-                var dSide = (dItem.strHome || dItem.strSide || '').toLowerCase()
-
-                if (dTeamId) {
-                  if (timeA && timesCoincidem(dTeamName, timeA)) {
-                    homeTeamIdDetected = dTeamId
-                    if (dTeamName) homeTeamName = dTeamName
-                  } else if (timeB && timesCoincidem(dTeamName, timeB)) {
-                    awayTeamIdDetected = dTeamId
-                    if (dTeamName) awayTeamName = dTeamName
-                  } else if (dSide === 'yes' || dSide === 'home' || dSide === 'h') {
-                    if (!homeTeamIdDetected) homeTeamIdDetected = dTeamId
-                    if (dTeamName && !homeTeamName) homeTeamName = dTeamName
-                  } else if (dSide === 'no' || dSide === 'away' || dSide === 'a') {
-                    if (!awayTeamIdDetected) awayTeamIdDetected = dTeamId
-                    if (dTeamName && !awayTeamName) awayTeamName = dTeamName
-                  }
-                }
-              }
-
-              // Segundo passo: iterar 100% dos jogadores do array lineup, sem cortes
-              for (var li = 0; li < list.length; li++) {
-                var item = list[li]
-                var pName = (item.strPlayer || '').trim()
-                if (!pName) continue
-                var pNum = item.intSquadNumber ? parseInt(item.intSquadNumber, 10) : null
-                var pPos = item.strPosition || ''
-                var isSub =
-                  item.strSubstitute === 'Y' ||
-                  item.strSubstitute === '1' ||
-                  item.strSubstitute === 'true'
-                var playerObj = {
-                  id: item.idPlayer ? String(item.idPlayer) : '',
-                  name: pName,
-                  number: pNum,
-                  pos: pPos,
-                }
-
-                var side = (item.strHome || item.strSide || '').toLowerCase()
-                var itemTeamName = item.strTeam || ''
-                var itemTeamId = item.idTeam ? String(item.idTeam) : null
-
-                // Agrupamento robusto:
-                // 1) idTeam bate com homeTeamIdDetected ou awayTeamIdDetected
-                // 2) Similaridade do nome do time com timeA / timeB (timesCoincidem)
-                // 3) Flag strHome / strSide como desempate
-                var isHome = false
-                if (itemTeamId && homeTeamIdDetected && itemTeamId === homeTeamIdDetected) {
-                  isHome = true
-                } else if (itemTeamId && awayTeamIdDetected && itemTeamId === awayTeamIdDetected) {
-                  isHome = false
-                } else if (itemTeamName && timeA && timesCoincidem(itemTeamName, timeA)) {
-                  isHome = true
-                } else if (itemTeamName && timeB && timesCoincidem(itemTeamName, timeB)) {
-                  isHome = false
-                } else if (side === 'yes' || side === 'home' || side === 'h') {
-                  isHome = true
-                } else if (side === 'no' || side === 'away' || side === 'a') {
-                  isHome = false
-                } else {
-                  // Fallback: se o lado da casa tiver menos titulares, agrupa no mandante
-                  isHome = homeStarters.length <= awayStarters.length
-                }
-
-                if (isHome) {
-                  if (itemTeamName && !homeTeamName) homeTeamName = itemTeamName
-                  if (isSub) homeBench.push(playerObj)
-                  else homeStarters.push(playerObj)
-                } else {
-                  if (itemTeamName && !awayTeamName) awayTeamName = itemTeamName
-                  if (isSub) awayBench.push(playerObj)
-                  else awayStarters.push(playerObj)
-                }
-              }
-
-              if (homeStarters.length > 0 || awayStarters.length > 0) {
-                result = {
-                  status: 'confirmada',
-                  provider: 'thesportsdb',
-                  fixtureId: fixtureIdParam,
-                  teams: [
-                    {
-                      teamName: homeTeamName || timeA || 'Mandante',
-                      starters: homeStarters,
-                      substitutes: homeBench,
-                    },
-                    {
-                      teamName: awayTeamName || timeB || 'Visitante',
-                      starters: awayStarters,
-                      substitutes: awayBench,
-                    },
-                  ],
-                  updatedAt: new Date().toISOString(),
-                }
-
-                if (matchingJogoRecord) {
-                  try {
-                    matchingJogoRecord.set('escalacoes', result)
-                    $app.save(matchingJogoRecord)
-                  } catch (_) {}
-                }
-              }
-            }
-          }
-        } catch (errTsdb) {
-          console.log('[Escalacoes] Erro ao buscar TheSportsDB lineups:', errTsdb)
-        }
-      }
-
-      // 5. FONTE 4: Prováveis / Elenco no TheSportsDB searchplayers.php
-      if (!result && (timeA || timeB)) {
-        try {
-          var teamsSquads = []
-          var teamNamesToFetch = [timeA, timeB].filter(Boolean)
-
-          for (var ti = 0; ti < teamNamesToFetch.length; ti++) {
-            var currentTeam = teamNamesToFetch[ti]
-            var squadUrl =
-              'https://www.thesportsdb.com/api/v1/json/' +
-              encodeURIComponent(theSportsDbKey) +
-              '/searchplayers.php?t=' +
-              encodeURIComponent(currentTeam)
-
-            var resSquad = $http.send({
-              url: squadUrl,
-              method: 'GET',
-              timeout: 6,
-            })
-
-            var startersSquad = []
-            var benchSquad = []
-
-            if (
-              resSquad &&
-              resSquad.statusCode === 200 &&
-              resSquad.json &&
-              Array.isArray(resSquad.json.player)
-            ) {
-              var allPlayers = resSquad.json.player
-              for (var pi = 0; pi < allPlayers.length; pi++) {
-                var pl = allPlayers[pi]
-                var plName = (pl.strPlayer || '').trim()
-                if (!plName) continue
-                var plNum = pl.strNumber ? parseInt(pl.strNumber, 10) : null
-                var plPos = pl.strPosition || ''
-                var itemPlayer = {
-                  id: pl.idPlayer ? String(pl.idPlayer) : '',
-                  name: plName,
-                  number: plNum,
-                  pos: plPos,
-                }
-                if (startersSquad.length < 11) {
-                  startersSquad.push(itemPlayer)
-                } else {
-                  // Sem corte prematuro no banco — preenche todos os reservas disponíveis
-                  benchSquad.push(itemPlayer)
-                }
-              }
-            }
-
-            if (startersSquad.length > 0 || benchSquad.length > 0) {
-              teamsSquads.push({
-                teamName: currentTeam,
-                starters: startersSquad,
-                substitutes: benchSquad,
-              })
-            }
-          }
-
-          if (teamsSquads.length > 0) {
-            result = {
-              status: 'provavel',
-              provider: 'thesportsdb_squad',
-              fixtureId: fixtureIdParam,
-              teams: teamsSquads,
-              updatedAt: new Date().toISOString(),
-            }
-
-            if (matchingJogoRecord) {
-              try {
-                matchingJogoRecord.set('escalacoes', result)
-                $app.save(matchingJogoRecord)
-                console.log(
-                  '[Escalacoes] Elenco provável persistido no jogo id: ' + matchingJogoRecord.id,
-                )
-              } catch (_) {}
-            }
-          }
-        } catch (errSquad) {
-          console.log('[Escalacoes] Erro ao buscar elenco/prováveis:', errSquad)
-        }
-      }
+      // ESPECIFICAÇÃO 2a: Fallbacks TheSportsDB e Football-Data.org removidos.
+      // API-Football é a ÚNICA fonte de escalações.
 
       // 6. Se nenhuma fonte possuir a escalação no momento, retorna indisponível
       if (!result) {
@@ -1094,3 +733,309 @@ routerAdd(
   },
   $apis.requireAuth(),
 )
+
+// =============================================================
+// EDIÇÃO 2b: ROTINA PRÉ-JOGO DE ESCALAÇÕES
+// Para cada jogo pendente do bolão com kickoff a menos de 60 min (ou iniciado),
+// garante fixture_id numérico (resolve se preciso via /v3/fixtures?date= ou match)
+// e busca/salva escalação completa (11 titulares + reservas + formação) em jogos.escalacoes.
+// Persiste imediatamente no banco via $app.save.
+// =============================================================
+var sincronizarEscalacoesPreJogo = function () {
+  try {
+    var agora = Date.now()
+    var cfgRec = null
+    try {
+      cfgRec = $app.findFirstRecordByData('config_integracoes', 'chave', 'placar_ao_vivo')
+    } catch (_) {}
+
+    var apiKey = ''
+    if (cfgRec) {
+      apiKey = (cfgRec.getString('api_key') || '').trim()
+    }
+    if (!apiKey) {
+      if ($secrets && $secrets.has && $secrets.has('API_FOOTBALL_KEY')) {
+        apiKey = $secrets.get('API_FOOTBALL_KEY')
+      } else if ($secrets && $secrets.has && $secrets.has('RAPIDAPI_KEY')) {
+        apiKey = $secrets.get('RAPIDAPI_KEY')
+      } else if ($os && $os.getenv) {
+        apiKey = $os.getenv('API_FOOTBALL_KEY') || $os.getenv('RAPIDAPI_KEY') || ''
+      }
+    }
+    if (!apiKey) return
+
+    var isRapid = apiKey.length > 40
+    var headers = isRapid
+      ? { 'x-rapidapi-key': apiKey, 'x-rapidapi-host': 'api-football-v1.p.rapidapi.com' }
+      : { 'x-apisports-key': apiKey }
+
+    var jogosPendentes = $app.findRecordsByFilter(
+      'jogos',
+      'resultado_finalizado = false',
+      '-data',
+      100,
+      0,
+    )
+    if (!Array.isArray(jogosPendentes) || jogosPendentes.length === 0) return
+
+    for (var ji = 0; ji < jogosPendentes.length; ji++) {
+      var jRec = jogosPendentes[ji]
+      var dtVal = (jRec.getString('data') || '').trim()
+      var hrVal = (jRec.getString('hora') || '').trim()
+      var timeA = (jRec.getString('time_a') || '').trim()
+      var timeB = (jRec.getString('time_b') || '').trim()
+      var fixtureId = (jRec.getString('fixture_id') || '').trim()
+
+      // Calcula kickoff timestamp em ms
+      var kickoffMs = null
+      if (dtVal) {
+        var y = 0,
+          m = 0,
+          d = 0
+        var brM = dtVal.match(/^(\d{2})\/(\d{2})\/(\d{4})/)
+        if (brM) {
+          d = parseInt(brM[1], 10)
+          m = parseInt(brM[2], 10)
+          y = parseInt(brM[3], 10)
+        } else {
+          var isoM = dtVal.match(/^(\d{4})-(\d{2})-(\d{2})/)
+          if (isoM) {
+            y = parseInt(isoM[1], 10)
+            m = parseInt(isoM[2], 10)
+            d = parseInt(isoM[3], 10)
+          }
+        }
+        var hrs = 16,
+          mins = 0
+        if (hrVal) {
+          var hrM = hrVal.match(/^(\d{1,2}):(\d{2})/)
+          if (hrM) {
+            hrs = parseInt(hrM[1], 10)
+            mins = parseInt(hrM[2], 10)
+          }
+        }
+        if (y && m && d) {
+          // Horário de Brasília (UTC-3): soma 3h para obter UTC
+          kickoffMs = Date.UTC(y, m - 1, d, hrs + 3, mins, 0, 0)
+        }
+      }
+
+      // Critério pré-jogo: kickoff a menos de 60 min (ou já iniciado há até 4h)
+      if (!kickoffMs) continue
+      var janelaInicio = kickoffMs - 60 * 60 * 1000
+      var janelaFim = kickoffMs + 4 * 60 * 60 * 1000
+      if (agora < janelaInicio || agora > janelaFim) continue
+
+      // Se já possui escalação confirmada completa persistida, não repete chamada desnecessária
+      var escAtual = jRec.get('escalacoes')
+      if (escAtual) {
+        var objEsc = typeof escAtual === 'string' ? JSON.parse(escAtual) : escAtual
+        if (
+          objEsc &&
+          objEsc.status === 'confirmada' &&
+          Array.isArray(objEsc.teams) &&
+          objEsc.teams.length > 0
+        ) {
+          var temStarters =
+            objEsc.teams[0] &&
+            Array.isArray(objEsc.teams[0].starters) &&
+            objEsc.teams[0].starters.length > 0
+          if (temStarters) continue
+        }
+      }
+
+      // Se o fixture_id não for numérico (tsdb_* ou vazio), tenta resolver via /v3/fixtures?date=
+      var isNumerico = fixtureId && /^\d+$/.test(fixtureId)
+      if (!isNumerico && dtVal) {
+        var isoData = dtVal
+        if (/^\d{2}\/\d{2}\/\d{4}$/.test(dtVal)) {
+          var pBr = dtVal.split('/')
+          isoData = pBr[2] + '-' + pBr[1] + '-' + pBr[0]
+        }
+        try {
+          var resDateUrl = isRapid
+            ? 'https://api-football-v1.p.rapidapi.com/v3/fixtures?date=' +
+              encodeURIComponent(isoData) +
+              '&timezone=America%2FSao_Paulo'
+            : 'https://v3.football.api-sports.io/fixtures?date=' +
+              encodeURIComponent(isoData) +
+              '&timezone=America%2FSao_Paulo'
+          var resFix = $http.send({
+            url: resDateUrl,
+            method: 'GET',
+            headers: headers,
+            timeout: 8,
+          })
+          if (
+            resFix &&
+            resFix.statusCode === 200 &&
+            resFix.json &&
+            Array.isArray(resFix.json.response)
+          ) {
+            var candList = resFix.json.response
+            for (var cli = 0; cli < candList.length; cli++) {
+              var cItem = candList[cli]
+              var cH = (cItem.teams && cItem.teams.home && cItem.teams.home.name) || ''
+              var cA = (cItem.teams && cItem.teams.away && cItem.teams.away.name) || ''
+              if (
+                (timesCoincidem(timeA, cH) && timesCoincidem(timeB, cA)) ||
+                (timesCoincidem(timeA, cA) && timesCoincidem(timeB, cH))
+              ) {
+                if (cItem.fixture && cItem.fixture.id) {
+                  fixtureId = String(cItem.fixture.id)
+                  isNumerico = true
+                  jRec.set('fixture_id', fixtureId)
+                  if (
+                    cItem.teams &&
+                    cItem.teams.home &&
+                    cItem.teams.home.logo &&
+                    !jRec.getString('escudo_time_a')
+                  ) {
+                    jRec.set('escudo_time_a', cItem.teams.home.logo)
+                  }
+                  if (
+                    cItem.teams &&
+                    cItem.teams.away &&
+                    cItem.teams.away.logo &&
+                    !jRec.getString('escudo_time_b')
+                  ) {
+                    jRec.set('escudo_time_b', cItem.teams.away.logo)
+                  }
+                  try {
+                    $app.save(jRec)
+                    console.log(
+                      '[Escalacoes Pré-Jogo] fixture_id numérico ' +
+                        fixtureId +
+                        ' resolvido e persistido para jogo ' +
+                        jRec.id,
+                    )
+                  } catch (errSaveFid) {
+                    console.log('[Escalacoes Pré-Jogo] Erro ao salvar fixture_id:', errSaveFid)
+                  }
+                  break
+                }
+              }
+            }
+          }
+        } catch (errResFix) {
+          console.log('[Escalacoes Pré-Jogo] Erro ao resolver fixture_id por data:', errResFix)
+        }
+      }
+
+      if (!isNumerico) continue
+
+      // Busca escalação na API-Football
+      try {
+        var urlLineups = isRapid
+          ? 'https://api-football-v1.p.rapidapi.com/v3/fixtures/lineups?fixture=' +
+            encodeURIComponent(fixtureId)
+          : 'https://v3.football.api-sports.io/fixtures/lineups?fixture=' +
+            encodeURIComponent(fixtureId)
+        var resLineups = $http.send({
+          url: urlLineups,
+          method: 'GET',
+          headers: headers,
+          timeout: 8,
+        })
+
+        if (
+          resLineups &&
+          resLineups.statusCode === 200 &&
+          resLineups.json &&
+          Array.isArray(resLineups.json.response) &&
+          resLineups.json.response.length > 0
+        ) {
+          var rawLineups = resLineups.json.response
+          var teamsData = []
+          for (var ti = 0; ti < rawLineups.length; ti++) {
+            var tb = rawLineups[ti]
+            var tInfo = tb.team || {}
+            var formation = tb.formation || ''
+            var coach = tb.coach ? tb.coach.name : ''
+            var starters = []
+            if (Array.isArray(tb.startXI)) {
+              for (var si = 0; si < tb.startXI.length; si++) {
+                var sp = tb.startXI[si].player || {}
+                starters.push({
+                  id: sp.id ? String(sp.id) : '',
+                  name: sp.name || '',
+                  number: sp.number || null,
+                  pos: sp.pos || '',
+                  grid: sp.grid || null,
+                })
+              }
+            }
+            var substitutes = []
+            if (Array.isArray(tb.substitutes)) {
+              for (var bi = 0; bi < tb.substitutes.length; bi++) {
+                var bp = tb.substitutes[bi].player || {}
+                substitutes.push({
+                  id: bp.id ? String(bp.id) : '',
+                  name: bp.name || '',
+                  number: bp.number || null,
+                  pos: bp.pos || '',
+                })
+              }
+            }
+
+            var tName = tInfo.name || ''
+            var tLogo = tInfo.logo || ''
+            if (tName.toLowerCase().indexOf('paris') !== -1 || tName.toLowerCase() === 'psg') {
+              tLogo = 'https://media.api-sports.io/football/teams/85.png'
+            }
+
+            teamsData.push({
+              teamId: tInfo.id ? String(tInfo.id) : '',
+              teamName: tName,
+              teamLogo: tLogo,
+              formation: formation,
+              coach: coach,
+              starters: starters,
+              substitutes: substitutes,
+            })
+          }
+
+          if (teamsData.length > 0) {
+            var lineupPayload = {
+              status: 'confirmada',
+              provider: 'api_football',
+              fixtureId: fixtureId,
+              teams: teamsData,
+              updatedAt: new Date().toISOString(),
+            }
+            jRec.set('escalacoes', lineupPayload)
+            try {
+              $app.save(jRec)
+              console.log(
+                '[Escalacoes Pré-Jogo] Escalação confirmada salva com sucesso para jogo ' +
+                  jRec.id +
+                  ' (' +
+                  timeA +
+                  ' x ' +
+                  timeB +
+                  ')',
+              )
+            } catch (errSaveEsc) {
+              console.log(
+                '[Escalacoes Pré-Jogo] Erro ao persistir escalações no jogo ' + jRec.id + ':',
+                errSaveEsc,
+              )
+            }
+          }
+        }
+      } catch (errFetchLineup) {
+        console.log(
+          '[Escalacoes Pré-Jogo] Erro ao buscar lineups para fixture ' + fixtureId + ':',
+          errFetchLineup,
+        )
+      }
+    }
+  } catch (errSync) {
+    console.log('[Escalacoes Pré-Jogo] Erro geral na sincronização:', errSync)
+  }
+}
+
+// Expõe rotina pré-jogo no escopo global para acionamento por cron e disparador
+if (typeof globalThis !== 'undefined') {
+  globalThis.__sincronizarEscalacoesPreJogo = sincronizarEscalacoesPreJogo
+}
