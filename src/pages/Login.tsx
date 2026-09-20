@@ -1,20 +1,21 @@
 import React, { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Mail, Lock, Eye, EyeOff, ShieldCheck, AlertCircle, Loader2 } from 'lucide-react'
+import { User, Lock, Eye, EyeOff, ShieldCheck, AlertCircle, Loader2 } from 'lucide-react'
 import pb from '@/lib/pocketbase/client'
 import { isBolaoName } from '@/context/AuthContext'
+import { normalizarLogin } from '@/lib/loginUtils'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 
 export default function Login() {
   const navigate = useNavigate()
-  const [email, setEmail] = useState('')
+  const [login, setLogin] = useState('')
   const [password, setPassword] = useState('')
   const [showPassword, setShowPassword] = useState(false)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [emailError, setEmailError] = useState<string | null>(null)
+  const [loginError, setLoginError] = useState<string | null>(null)
   const [passwordError, setPasswordError] = useState<string | null>(null)
 
   // Desvio imediato não-bloqueante se o usuário já estiver logado no PocketBase
@@ -32,13 +33,13 @@ export default function Login() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setError(null)
-    setEmailError(null)
+    setLoginError(null)
     setPasswordError(null)
 
     let hasError = false
-    const rawIdentifier = email.trim()
+    const rawIdentifier = login.trim()
     if (!rawIdentifier) {
-      setEmailError('Informe seu e-mail ou usuário')
+      setLoginError('Informe seu login')
       hasError = true
     }
 
@@ -49,10 +50,10 @@ export default function Login() {
 
     if (hasError) return
 
-    // Normaliza para e-mail completo se for digitado apenas o username (sem @)
-    const normalizedIdentifier = rawIdentifier.includes('@')
-      ? rawIdentifier
-      : `${rawIdentifier}@repress.com.br`
+    // Normalização via função utilitária compartilhada:
+    // "brunol" -> "brunol@repress.com.br", "brunox" -> "brunox@repress.com.br"
+    // "douglas.manoel@repress.com.br" -> preservado
+    const normalizedIdentifier = normalizarLogin(rawIdentifier)
 
     setLoading(true)
     try {
@@ -85,7 +86,7 @@ export default function Login() {
       }
     } catch (err: unknown) {
       console.error('Falha na autenticação:', err)
-      setError('E-mail ou senha inválidos')
+      setError('Login ou senha inválidos')
     } finally {
       setLoading(false)
     }
@@ -140,7 +141,7 @@ export default function Login() {
               <h2 className="text-2xl font-bold tracking-tight text-[#0F172A]">
                 Acessar o sistema
               </h2>
-              <p className="mt-1 text-sm text-[#64748B]">Entre com seu e-mail para continuar.</p>
+              <p className="mt-1 text-sm text-[#64748B]">Entre com seu login para continuar.</p>
             </div>
 
             {error && (
@@ -152,22 +153,22 @@ export default function Login() {
 
             <form onSubmit={handleSubmit} noValidate className="space-y-4">
               <div>
-                <Label htmlFor="email" className="text-xs font-semibold text-[#0F172A]">
-                  E-mail institucional
+                <Label htmlFor="login" className="text-xs font-semibold text-[#0F172A]">
+                  Login
                 </Label>
                 <div className="relative mt-1">
-                  <Mail className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#64748B]" />
+                  <User className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#64748B]" />
                   <Input
-                    id="email"
+                    id="login"
                     type="text"
-                    placeholder="seu.email@repress.com.br"
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
+                    placeholder="brunol"
+                    value={login}
+                    onChange={(e) => setLogin(e.target.value)}
                     className="h-11 border-[#CBD5E1] pl-9 text-sm focus-visible:border-[#10B981] focus-visible:ring-[#10B981]"
                     autoComplete="username"
                   />
                 </div>
-                {emailError && <p className="mt-1 text-xs text-red-600">{emailError}</p>}
+                {loginError && <p className="mt-1 text-xs text-red-600">{loginError}</p>}
               </div>
 
               <div>
@@ -211,6 +212,9 @@ export default function Login() {
                 )}
               </Button>
             </form>
+            <p className="mt-4 text-center text-xs text-[#94A3B8]">
+              Acesso restrito a colaboradores autorizados.
+            </p>
           </div>
         </div>
       </div>

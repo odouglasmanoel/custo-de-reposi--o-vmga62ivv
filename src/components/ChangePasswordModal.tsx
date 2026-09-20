@@ -15,6 +15,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { toast } from '@/hooks/use-toast'
 import { extractFieldErrors, getErrorMessage } from '@/lib/pocketbase/errors'
+import { normalizarLogin } from '@/lib/loginUtils'
 
 interface ChangePasswordModalProps {
   open: boolean
@@ -121,12 +122,9 @@ export function ChangePasswordModal({ open, onOpenChange }: ChangePasswordModalP
       }
 
       // 1.1 Opcional: Re-autenticar com senha atual para validação de segurança imediata no client
-      const userEmail =
-        authRecord.email ||
-        user.email ||
-        (authRecord.username?.includes('@')
-          ? authRecord.username
-          : `${authRecord.username || authRecord.name || user.name}@repress.com.br`)
+      const rawUserIdentifier =
+        authRecord.email || user.email || authRecord.username || authRecord.name || user.name || ''
+      const userEmail = normalizarLogin(rawUserIdentifier)
 
       if (userEmail) {
         try {
