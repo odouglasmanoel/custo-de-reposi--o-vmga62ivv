@@ -217,4 +217,46 @@ describe('AdminEditMarcadoresModal - Persistência de Posição', () => {
     expect(parsedUponReopen[0].posicao).toBe('Defensor')
     expect(parsedUponReopen[0].nome).toBe('Cristian Romero')
   })
+
+  it('cenário: palpite com Romero (Defensor) e Richarlison (Atacante) - alterar Richarlison para Son preserva Romero como Defensor', () => {
+    // 1. Palpite inicial vindo do banco
+    const initialScorers = [
+      { nome: 'Cristian Romero', posicao: 'Defensor', quantidade: 1, gol_contra: false },
+      { nome: 'Richarlison', posicao: 'Atacante', quantidade: 1, gol_contra: false },
+    ]
+
+    // 2. parseRawScorerList deve inicializar Romero como 'Defensor' e Richarlison como 'Atacante'
+    const parsed = parseRawScorerList(initialScorers, 2)
+    expect(parsed).toHaveLength(2)
+    expect(parsed[0]).toEqual({
+      nome: 'Cristian Romero',
+      posicao: 'Defensor',
+      gol_contra: false,
+    })
+    expect(parsed[1]).toEqual({
+      nome: 'Richarlison',
+      posicao: 'Atacante',
+      gol_contra: false,
+    })
+
+    // 3. Usuário edita apenas Richarlison -> 'Son Heung-min' (sem mexer em Romero)
+    const updatedState = [parsed[0], { ...parsed[1], nome: 'Son Heung-min' }]
+
+    // 4. formatScorerListPayload deve gerar Romero com posicao 'Defensor' preservada
+    const payload = formatScorerListPayload(updatedState)
+    expect(payload).toEqual([
+      {
+        nome: 'Cristian Romero',
+        posicao: 'Defensor',
+        quantidade: 1,
+        gol_contra: false,
+      },
+      {
+        nome: 'Son Heung-min',
+        posicao: 'Atacante',
+        quantidade: 1,
+        gol_contra: false,
+      },
+    ])
+  })
 })

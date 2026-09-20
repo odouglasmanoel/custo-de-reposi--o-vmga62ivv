@@ -53,7 +53,7 @@ export const formatScorerListPayload = (items: ScorerInputState[]) => {
       return {
         nome: finalName,
         quantidade: 1,
-        posicao: item.gol_contra ? 'Gol Contra' : item.posicao || 'Atacante',
+        posicao: item.gol_contra ? 'Gol Contra' : item.posicao,
         gol_contra: item.gol_contra,
       }
     })
@@ -133,19 +133,24 @@ export function parseRawScorerList(raw: any, count: number): ScorerInputState[] 
 
     const cleanName = (fallbackName || rawString).replace(/\(gol contra\)|\(contra\)/gi, '').trim()
 
-    // Se o item for objeto com posição explícita válida, usar direto a posição
+    // Se o item for objeto com posição explícita válida, usar direto a posição com prioridade absoluta
     let posicao: PersistedPosicao
-    if (itemRaw && typeof itemRaw === 'object' && itemRaw.posicao && !isGolContra) {
-      const posStr = String(itemRaw.posicao).trim().toLowerCase()
+    const rawPosicao =
+      itemRaw && typeof itemRaw === 'object' && !isGolContra && itemRaw.posicao != null
+        ? String(itemRaw.posicao).trim()
+        : null
+
+    if (rawPosicao) {
+      const posStr = rawPosicao.toLowerCase()
       if (
-        posStr === 'defensor' ||
         posStr === 'd' ||
+        posStr === 'defensor' ||
         posStr.includes('defensor') ||
         posStr.includes('zagueiro') ||
         posStr.includes('lateral')
       ) {
         posicao = 'Defensor'
-      } else if (posStr === 'goleiro' || posStr === 'g' || posStr.includes('goleiro')) {
+      } else if (posStr === 'g' || posStr === 'goleiro' || posStr.includes('goleiro')) {
         posicao = 'Goleiro'
       } else {
         posicao = 'Atacante'
@@ -229,7 +234,31 @@ export function AdminEditMarcadoresModal({
           ? (game as any).gols_time_b
           : []
 
-        // Mapeia novas posições informadas pelo Admin
+        // Mapeia novas posições informadas pelo Admin, preservando a posição existente da partida
+        // se já estiver salva como Defensor/Goleiro e o marcador do palpite vier sem posição ou como Atacante
+        const resolvePreservedPosicao = (existingPos: any, matchItem: ScorerInputState): string => {
+          if (matchItem.gol_contra) return 'Gol Contra'
+          const existingStr = String(existingPos || '')
+            .trim()
+            .toLowerCase()
+          const isExistingSpecial =
+            existingStr === 'defensor' ||
+            existingStr === 'd' ||
+            existingStr.includes('defensor') ||
+            existingStr.includes('zagueiro') ||
+            existingStr.includes('lateral') ||
+            existingStr === 'goleiro' ||
+            existingStr === 'g' ||
+            existingStr.includes('goleiro')
+
+          // Se a partida já tem posição especial (Defensor/Goleiro) e o palpite veio como Atacante (ou sem posição), preservar a da partida
+          if (isExistingSpecial && (!matchItem.posicao || matchItem.posicao === 'Atacante')) {
+            return existingPos
+          }
+
+          return matchItem.posicao || existingPos || 'Atacante'
+        }
+
         const newGolsA = existingGolsA.map((g: any) => {
           const matchA = scorersA.find((s) => {
             const sClean = s.nome
@@ -245,7 +274,7 @@ export function AdminEditMarcadoresModal({
           if (!matchA) return g
           return {
             nome: g.nome,
-            posicao: matchA.gol_contra ? 'Gol Contra' : matchA.posicao,
+            posicao: resolvePreservedPosicao(g.posicao, matchA),
             quantidade: g.quantidade || 1,
             gol_contra: matchA.gol_contra,
           }
@@ -266,7 +295,7 @@ export function AdminEditMarcadoresModal({
           if (!matchB) return g
           return {
             nome: g.nome,
-            posicao: matchB.gol_contra ? 'Gol Contra' : matchB.posicao,
+            posicao: resolvePreservedPosicao(g.posicao, matchB),
             quantidade: g.quantidade || 1,
             gol_contra: matchB.gol_contra,
           }
