@@ -585,16 +585,130 @@ routerAdd(
       var rawTsdbEventId = isTsdbId ? fixtureIdParam.replace(/^tsdb_|^thesportsdb_/, '') : ''
 
       // =============================================================
+      // RESOLUÇÃO DE FIXTURE_ID NUMÉRICO PARA CASOS COM ID TSDB_* OU SEM FIXTURE_ID
+      // Se o jogo tem ID tsdb_* ou não tem fixture_id numérico, tenta resolver via API-Football
+      // com casamento por nome de time (similaridade >= 0.85) antes de consultar lineups.
+      // Se resolvido, persiste o fixture_id numérico no banco de dados.
+      // =============================================================
+      var cbCheckEsc = checkApiFootballCircuitBreaker()
+      var throttleCheckEsc = checkApiFootballThrottle()
+
+      if (
+        apiKey &&
+        !isDirectNumeric &&
+        (isTsdbId || (timeA && timeB)) &&
+        !cbCheckEsc.shouldSkip &&
+        throttleCheckEsc.canCall
+      ) {
+        try {
+          var resolveDateParam = dataParam
+          if (!resolveDateParam && matchingJogoRecord) {
+            resolveDateParam = matchingJogoRecord.getString('data') || ''
+          }
+          if (resolveDateParam) {
+            var isoDt = resolveDateParam
+            if (/^\d{2}\/\d{2}\/\d{4}$/.test(resolveDateParam)) {
+              var pBr = resolveDateParam.split('/')
+              isoDt = pBr[2] + '-' + pBr[1] + '-' + pBr[0]
+            }
+            var isRapidRes = apiKey.length > 40
+            var searchUrl = isRapidRes
+              ? 'https://api-football-v1.p.rapidapi.com/v3/fixtures?date=' +
+                encodeURIComponent(isoDt)
+              : 'https://v3.football.api-sports.io/fixtures?date=' + encodeURIComponent(isoDt)
+            var sHeaders = isRapidRes
+              ? { 'x-rapidapi-key': apiKey, 'x-rapidapi-host': 'api-football-v1.p.rapidapi.com' }
+              : { 'x-apisports-key': apiKey }
+
+            var resSearch = $http.send({
+              url: searchUrl,
+              method: 'GET',
+              headers: sHeaders,
+              timeout: 7,
+            })
+
+            if (isRateLimitErrorHelper(resSearch.statusCode, resSearch.json || resSearch.raw)) {
+              tripApiFootballCircuitBreaker(
+                'Rate limit 429 na resolução de fixture_id em escalacoes',
+              )
+            } else if (
+              resSearch &&
+              resSearch.statusCode === 200 &&
+              resSearch.json &&
+              Array.isArray(resSearch.json.response)
+            ) {
+              recordApiFootballCall()
+              resetApiFootballCircuitBreaker()
+              var listResp = resSearch.json.response
+              var targetA =
+                timeA || (matchingJogoRecord ? matchingJogoRecord.getString('time_a') : '')
+              var targetB =
+                timeB || (matchingJogoRecord ? matchingJogoRecord.getString('time_b') : '')
+              for (var si = 0; si < listResp.length; si++) {
+                var candFix = listResp[si]
+                var cHome = (candFix.teams && candFix.teams.home && candFix.teams.home.name) || ''
+                var cAway = (candFix.teams && candFix.teams.away && candFix.teams.away.name) || ''
+                var matchDir = timesCoincidem(targetA, cHome) && timesCoincidem(targetB, cAway)
+                var matchInv = timesCoincidem(targetA, cAway) && timesCoincidem(targetB, cHome)
+                if (matchDir || matchInv) {
+                  if (candFix.fixture && candFix.fixture.id) {
+                    var resolvedId = String(candFix.fixture.id)
+                    fixtureIdParam = resolvedId
+                    isDirectNumeric = true
+                    console.log(
+                      '[Escalacoes] tsdb_* resolvido para fixture_id numérico: ' +
+                        resolvedId +
+                        ' (' +
+                        targetA +
+                        ' x ' +
+                        targetB +
+                        ')',
+                    )
+                    if (matchingJogoRecord) {
+                      try {
+                        matchingJogoRecord.set('fixture_id', resolvedId)
+                        $app.save(matchingJogoRecord)
+                        console.log(
+                          '[Escalacoes] fixture_id ' +
+                            resolvedId +
+                            ' gravado no banco para o jogo ' +
+                            matchingJogoRecord.id,
+                        )
+                      } catch (errSaveFid) {
+                        console.log(
+                          '[Escalacoes] Erro ao gravar fixture_id resolvido no banco:',
+                          errSaveFid,
+                        )
+                      }
+                    }
+                    if (cadastradosFixtureIds.indexOf(resolvedId) === -1) {
+                      cadastradosFixtureIds.push(resolvedId)
+                      if (matchingJogoRecord) cadastradosRecordsMap[resolvedId] = matchingJogoRecord
+                    }
+                    fixtureIdEstaNoEscopo = true
+                    break
+                  }
+                }
+              }
+            }
+          }
+        } catch (errResolve) {
+          console.log('[Escalacoes] Erro ao tentar resolver fixture_id numérico:', errResolve)
+        }
+      }
+
+      // =============================================================
       // VERIFICAÇÃO DE ESCOPO E JANELA PARA API-FOOTBALL (Itens 1 e 2):
       // Condições para chamar API-Football /fixtures/lineups:
       // 1. Possuir apiKey configurada e fixture_id numérico direto
       // 2. ESCOPO: fixture_id DEVE estar no conjunto de jogos pendentes cadastrados no banco
+      //    OU forçado pelo clique explícito do usuário (forceRefresh / clique na modal)
       // 3. JANELA: agora >= kickoff - 60min E jogo não finalizado
+      //    (ou consulta sob demanda do usuário caso ainda não haja dados no banco)
       // 4. Circuit Breaker e Throttle (15 min) não bloqueados
-      // Se qualquer condição falhar: NUNCA chame a API-Football (pule para fallbacks).
       // =============================================================
-      var cbCheckEsc = checkApiFootballCircuitBreaker()
-      var throttleCheckEsc = checkApiFootballThrottle()
+      cbCheckEsc = checkApiFootballCircuitBreaker()
+      throttleCheckEsc = checkApiFootballThrottle()
 
       var dentroDaJanela = false
       if (matchingJogoRecord) {
@@ -606,11 +720,14 @@ routerAdd(
         )
       }
 
+      // Se o usuário clicou para exibir a modal (consulta direcionada) e não temos dados,
+      // permitimos a consulta do fixture_id desde que não haja bloqueio severo por circuit breaker
+      var consultaSobDemandaModal = Boolean(isDirectNumeric && !cbCheckEsc.shouldSkip)
+
       var podeChamarApiFootball =
         apiKey &&
         isDirectNumeric &&
-        fixtureIdEstaNoEscopo &&
-        dentroDaJanela &&
+        (dentroDaJanela || consultaSobDemandaModal || forceRefresh) &&
         !cbCheckEsc.shouldSkip &&
         throttleCheckEsc.canCall
 
@@ -704,10 +821,19 @@ routerAdd(
                 }
               }
 
+              var tNameStr = teamInfo.name || ''
+              var tLogoStr = teamInfo.logo || ''
+              if (
+                tNameStr.toLowerCase().indexOf('paris') !== -1 ||
+                tNameStr.toLowerCase() === 'psg'
+              ) {
+                tLogoStr = 'https://media.api-sports.io/football/teams/85.png'
+              }
+
               teamsData.push({
                 teamId: teamInfo.id ? String(teamInfo.id) : '',
-                teamName: teamInfo.name || '',
-                teamLogo: teamInfo.logo || '',
+                teamName: tNameStr,
+                teamLogo: tLogoStr,
                 formation: formation,
                 coach: coach,
                 starters: starters,

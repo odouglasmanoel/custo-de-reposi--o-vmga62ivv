@@ -163,6 +163,7 @@ export async function fetchGameLineup(params: {
   if (timeA) queryParams.set('time_a', timeA)
   if (timeB) queryParams.set('time_b', timeB)
   if (data) queryParams.set('data', data)
+  if (forceRefresh) queryParams.set('refresh', '1')
 
   const fetchPromise = (async (): Promise<LineupResponse> => {
     try {

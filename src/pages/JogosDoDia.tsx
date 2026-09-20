@@ -780,15 +780,11 @@ export default function JogosDoDia() {
         for (const item of mergedFixtures) {
           const hName = item.teams?.home?.name
           if (hName) {
-            // Se for PSG com logo contaminado (Köln 192), purga e atribui o logo oficial
-            if (
-              (hName.toLowerCase().includes('paris') || hName.toLowerCase() === 'psg') &&
-              item.teams.home.logo &&
-              (item.teams.home.logo.includes('192.') ||
-                item.teams.home.logo.includes('koln') ||
-                item.teams.home.logo.includes('cologne'))
-            ) {
-              item.teams.home.logo = 'https://media.api-sports.io/football/teams/85.png'
+            // Se for PSG, FORÇA a URL oficial definitiva da API-Football (team_id 85)
+            if (hName.toLowerCase().includes('paris') || hName.toLowerCase() === 'psg') {
+              if (item.teams?.home) {
+                item.teams.home.logo = 'https://media.api-sports.io/football/teams/85.png'
+              }
             }
 
             if (!item.teams.home.logo) {
@@ -813,14 +809,11 @@ export default function JogosDoDia() {
           }
           const aName = item.teams?.away?.name
           if (aName) {
-            if (
-              (aName.toLowerCase().includes('paris') || aName.toLowerCase() === 'psg') &&
-              item.teams.away.logo &&
-              (item.teams.away.logo.includes('192.') ||
-                item.teams.away.logo.includes('koln') ||
-                item.teams.away.logo.includes('cologne'))
-            ) {
-              item.teams.away.logo = 'https://media.api-sports.io/football/teams/85.png'
+            // Se for PSG, FORÇA a URL oficial definitiva da API-Football (team_id 85)
+            if (aName.toLowerCase().includes('paris') || aName.toLowerCase() === 'psg') {
+              if (item.teams?.away) {
+                item.teams.away.logo = 'https://media.api-sports.io/football/teams/85.png'
+              }
             }
 
             if (!item.teams.away.logo) {

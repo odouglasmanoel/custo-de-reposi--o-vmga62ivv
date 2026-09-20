@@ -84,6 +84,28 @@ export function purgeObsoleteCaches(): void {
       }
     }
 
+    // Purga definitiva de caches e resíduos associados ao PSG com escudo incorreto
+    try {
+      const psgOfficial = 'https://media.api-sports.io/football/teams/85.png'
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i)
+        if (!k) continue
+        if (k.toLowerCase().includes('paris') || k.toLowerCase().includes('psg')) {
+          const val = localStorage.getItem(k) || ''
+          if (
+            val.includes('192.') ||
+            val.includes('koln') ||
+            val.includes('cologne') ||
+            (k.startsWith('escudo_cache_') && val !== psgOfficial)
+          ) {
+            localStorage.setItem(k, psgOfficial)
+          }
+        }
+      }
+    } catch {
+      /* ignore */
+    }
+
     // Limpa também sessionStorage de resíduos temporários
     if (window.sessionStorage) {
       const sessionKeysToRemove: string[] = []

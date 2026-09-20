@@ -235,6 +235,17 @@ export function MatchDetailsModal({ isOpen, onClose, match }: MatchDetailsModalP
         data: datePart,
         forceRefresh: force,
       })
+      if (res && Array.isArray(res.teams)) {
+        // Assegura PSG oficial nos logos de escalações
+        for (const t of res.teams) {
+          if (t && t.teamName) {
+            const tLower = t.teamName.toLowerCase()
+            if (tLower.includes('paris') || tLower === 'psg') {
+              t.teamLogo = 'https://media.api-sports.io/football/teams/85.png'
+            }
+          }
+        }
+      }
       setLineup(res)
     } catch (e) {
       console.warn('Erro ao carregar escalação no modal:', e)
@@ -312,6 +323,17 @@ export function MatchDetailsModal({ isOpen, onClose, match }: MatchDetailsModalP
     (match.fixture?.status?.short || '').toUpperCase(),
   )
   const isLive = Boolean(match.isLive)
+
+  // Resolução definitiva de escudo do PSG na modal
+  const resolveTeamLogo = (teamName: string, originalLogo?: string | null): string => {
+    const t = (teamName || '').toLowerCase()
+    if (t.includes('paris') || t === 'psg') {
+      return 'https://media.api-sports.io/football/teams/85.png'
+    }
+    return originalLogo || ''
+  }
+  const homeLogo = resolveTeamLogo(homeName, match.teams?.home?.logo)
+  const awayLogo = resolveTeamLogo(awayName, match.teams?.away?.logo)
 
   // Separar e formatar os eventos
   const renderEventItem = (ev: MatchEventItem, idx: number) => {
@@ -469,9 +491,9 @@ export function MatchDetailsModal({ isOpen, onClose, match }: MatchDetailsModalP
           <div className="flex items-center justify-between gap-3 pt-1">
             {/* Home */}
             <div className="flex-1 flex flex-col items-center text-center">
-              {match.teams?.home?.logo ? (
+              {homeLogo ? (
                 <img
-                  src={match.teams.home.logo}
+                  src={homeLogo}
                   alt={homeName}
                   className="h-12 w-12 object-contain mb-1.5"
                   onError={(e) => {
@@ -502,9 +524,9 @@ export function MatchDetailsModal({ isOpen, onClose, match }: MatchDetailsModalP
 
             {/* Away */}
             <div className="flex-1 flex flex-col items-center text-center">
-              {match.teams?.away?.logo ? (
+              {awayLogo ? (
                 <img
-                  src={match.teams.away.logo}
+                  src={awayLogo}
                   alt={awayName}
                   className="h-12 w-12 object-contain mb-1.5"
                   onError={(e) => {
