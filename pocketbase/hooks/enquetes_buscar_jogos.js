@@ -1160,13 +1160,13 @@ routerAdd(
       }
     }
 
-    var API_FOOTBALL_BACKOFF_DURATION_MS = 60 * 60 * 1000 // 1 HORA
+    var BADGE_BACKOFF_DURATION_MS = 60 * 60 * 1000 // 1 HORA PARA ESCUDOS
 
-    var checkApiFootballCircuitBreaker = function () {
-      if (typeof globalThis === 'undefined' || !globalThis.__apiFootballCircuitBreaker) {
+    var checkBadgeCircuitBreaker = function () {
+      if (typeof globalThis === 'undefined' || !globalThis.__badgeCircuitBreaker) {
         return { shouldSkip: false, isProbe: false }
       }
-      var cb = globalThis.__apiFootballCircuitBreaker
+      var cb = globalThis.__badgeCircuitBreaker
       if (!cb.isBlocked) {
         return { shouldSkip: false, isProbe: false }
       }
@@ -1174,44 +1174,44 @@ routerAdd(
       if (now < cb.blockedUntil) {
         return {
           shouldSkip: true,
-          reason: cb.reason || 'Cota da API-Football esgotada (Circuit Breaker ativo)',
+          reason: cb.reason || 'Cota de escudos da API-Football esgotada (Badge Breaker ativo)',
         }
       }
       if (!cb.probing) {
         cb.probing = true
         return { shouldSkip: false, isProbe: true }
       }
-      return { shouldSkip: true, reason: 'Circuit Breaker em sondagem por outra requisição' }
+      return { shouldSkip: true, reason: 'Badge Circuit Breaker em sondagem por outra requisição' }
     }
 
-    var tripApiFootballCircuitBreaker = function (reason) {
+    var tripBadgeCircuitBreaker = function (reason) {
       if (typeof globalThis === 'undefined') return
-      if (!globalThis.__apiFootballCircuitBreaker) {
-        globalThis.__apiFootballCircuitBreaker = {
+      if (!globalThis.__badgeCircuitBreaker) {
+        globalThis.__badgeCircuitBreaker = {
           isBlocked: false,
           blockedUntil: 0,
           probing: false,
           reason: '',
         }
       }
-      var cb = globalThis.__apiFootballCircuitBreaker
+      var cb = globalThis.__badgeCircuitBreaker
       cb.isBlocked = true
-      cb.blockedUntil = Date.now() + API_FOOTBALL_BACKOFF_DURATION_MS
+      cb.blockedUntil = Date.now() + BADGE_BACKOFF_DURATION_MS
       cb.probing = false
-      cb.reason = reason || 'Rate limit / quota exceeded (429)'
+      cb.reason = reason || 'Rate limit / quota exceeded em escudos (429)'
       console.log(
-        '[CircuitBreaker API-Football] TRIP ATIVADO por 60 minutos até ' +
+        '[CircuitBreaker Escudos] TRIP ATIVADO por 60 minutos até ' +
           new Date(cb.blockedUntil).toISOString() +
           '. Motivo: ' +
           cb.reason,
       )
     }
 
-    var resetApiFootballCircuitBreaker = function () {
-      if (typeof globalThis === 'undefined' || !globalThis.__apiFootballCircuitBreaker) return
-      var cb = globalThis.__apiFootballCircuitBreaker
+    var resetBadgeCircuitBreaker = function () {
+      if (typeof globalThis === 'undefined' || !globalThis.__badgeCircuitBreaker) return
+      var cb = globalThis.__badgeCircuitBreaker
       if (cb.isBlocked || cb.probing) {
-        console.log('[CircuitBreaker API-Football] RESET: Conexão normalizada com resposta 200.')
+        console.log('[CircuitBreaker Escudos] RESET: Conexão normalizada com resposta 200.')
       }
       cb.isBlocked = false
       cb.probing = false
@@ -1245,23 +1245,19 @@ routerAdd(
       )
     }
 
-    try {
-      const authRecord = e.auth
-      if (!authRecord) {
-        return e.unauthorizedError('Usuário não autenticado')
-      }
-
-      var teamName = (e.requestInfo().query.team || '').trim()
-      if (!teamName) {
-        return e.badRequestError('Parâmetro "team" é obrigatório.')
-      }
-
+    // Helper unificado de busca de escudo respeitando a ordem:
+    // 1) cache em memória (globalThis.__tsdbBadgeCache)
+    // 2) TheSportsDB (strTeamBadge, gratuito)
+    // 3) Football-Data.org (crest)
+    // 4) API-Football só como último recurso (com breaker exclusivo de escudos)
+    var fetchTeamBadgeOrdered = function (teamName) {
+      if (!teamName) return ''
       var cleanKey = teamName.toLowerCase().trim()
       try {
         cleanKey = cleanKey.normalize('NFD').replace(/[\u0300-\u036f]/g, '')
       } catch (_) {}
 
-      // Cache em memória compartilhado
+      // 1) Cache em memória
       if (typeof globalThis !== 'undefined' && !globalThis.__tsdbBadgeCache) {
         globalThis.__tsdbBadgeCache = {}
       }
@@ -1270,14 +1266,12 @@ routerAdd(
         globalThis.__tsdbBadgeCache &&
         globalThis.__tsdbBadgeCache[cleanKey] !== undefined
       ) {
-        return e.json(200, {
-          team: teamName,
-          badgeUrl: globalThis.__tsdbBadgeCache[cleanKey] || '',
-          cached: true,
-        })
+        return globalThis.__tsdbBadgeCache[cleanKey] || ''
       }
 
-      // Lê chaves de integração
+      var badgeFound = ''
+
+      // 2) TheSportsDB (gratuito)
       var tsdbKey = ''
       try {
         var tsdbRec = $app.findFirstRecordByData(
@@ -1302,9 +1296,6 @@ routerAdd(
         tsdbKey = '3'
       }
 
-      var badgeFound = ''
-
-      // 1. Consulta TheSportsDB searchteams.php (timeout curto de 4s)
       try {
         var resTsdb = $http.send({
           url:
@@ -1323,88 +1314,153 @@ routerAdd(
           resTsdb.json.teams.length > 0
         ) {
           var tObj = resTsdb.json.teams[0]
-          badgeFound = (tObj.strBadge || tObj.strTeamBadge || tObj.strLogo || '').trim()
+          badgeFound = (tObj.strTeamBadge || tObj.strBadge || tObj.strLogo || '').trim()
         }
       } catch (errTsdb) {
-        console.log('[TSDB Escudo Enquete endpoint] Erro na busca por ' + teamName + ':', errTsdb)
+        console.log('[TSDB Escudo] Erro na busca por ' + teamName + ':', errTsdb)
       }
 
-      // 2. Se não encontrou no TheSportsDB, tenta API-Football se disponível
+      // 3) Football-Data.org (crest)
       if (!badgeFound) {
-        var afKey = ''
-        var isRapid = false
+        var fdKey = ''
         try {
-          var cfg = $app.findFirstRecordByData('config_integracoes', 'chave', 'placar_ao_vivo')
-          if (cfg) {
-            afKey = (cfg.getString('api_key') || '').trim()
+          var fdRec = $app.findFirstRecordByData(
+            'config_integracoes',
+            'chave',
+            'football_data_fallback',
+          )
+          if (fdRec) {
+            fdKey = (fdRec.getString('api_key') || '').trim()
           }
         } catch (_) {}
-        if (!afKey) {
+        if (!fdKey) {
           try {
-            if ($secrets && $secrets.has && $secrets.has('API_FOOTBALL_KEY')) {
-              afKey = $secrets.get('API_FOOTBALL_KEY')
-            } else if ($secrets && $secrets.has && $secrets.has('RAPIDAPI_KEY')) {
-              afKey = $secrets.get('RAPIDAPI_KEY')
-              isRapid = true
+            if ($secrets && $secrets.has && $secrets.has('FOOTBALL_DATA_KEY')) {
+              fdKey = ($secrets.get('FOOTBALL_DATA_KEY') || '').trim()
             } else if ($os && $os.getenv) {
-              afKey = $os.getenv('API_FOOTBALL_KEY') || $os.getenv('RAPIDAPI_KEY') || ''
-              if ($os.getenv('RAPIDAPI_KEY')) isRapid = true
+              fdKey = ($os.getenv('FOOTBALL_DATA_KEY') || '').trim()
             }
           } catch (_) {}
         }
-        if (afKey.length > 40) isRapid = true
 
-        var cbCheckBadge = checkApiFootballCircuitBreaker()
-        var throttleCheckBadge = checkApiFootballThrottle()
-        if (afKey && !cbCheckBadge.shouldSkip && throttleCheckBadge.canCall) {
+        if (fdKey) {
           try {
-            var urlAF = isRapid
-              ? 'https://api-football-v1.p.rapidapi.com/v3/teams?search=' +
-                encodeURIComponent(teamName)
-              : 'https://v3.football.api-sports.io/teams?search=' + encodeURIComponent(teamName)
-            var hdrs = isRapid
-              ? { 'x-rapidapi-key': afKey, 'x-rapidapi-host': 'api-football-v1.p.rapidapi.com' }
-              : { 'x-apisports-key': afKey }
-
-            var resAF = $http.send({
-              url: urlAF,
+            var resFD = $http.send({
+              url: 'https://api.football-data.org/v4/teams?name=' + encodeURIComponent(teamName),
               method: 'GET',
-              headers: hdrs,
+              headers: { 'X-Auth-Token': fdKey },
               timeout: 4,
             })
-
-            if (isRateLimitErrorHelper(resAF.statusCode, resAF.json || resAF.raw)) {
-              tripApiFootballCircuitBreaker('Rate limit 429 ao buscar escudo de time ' + teamName)
-            } else if (
-              resAF.statusCode === 200 &&
-              resAF.json &&
-              Array.isArray(resAF.json.response) &&
-              resAF.json.response.length > 0
+            if (
+              resFD.statusCode === 200 &&
+              resFD.json &&
+              Array.isArray(resFD.json.teams) &&
+              resFD.json.teams.length > 0
             ) {
-              recordApiFootballCall()
-              resetApiFootballCircuitBreaker()
-              var tAfObj = resAF.json.response[0]
-              if (tAfObj && tAfObj.team && tAfObj.team.logo) {
-                badgeFound = String(tAfObj.team.logo).trim()
+              var fdTeamObj = resFD.json.teams[0]
+              if (fdTeamObj && fdTeamObj.crest) {
+                badgeFound = String(fdTeamObj.crest).trim()
               }
             }
-          } catch (errAF) {
-            console.log(
-              '[API-Football Escudo Enquete endpoint] Erro na busca por ' + teamName + ':',
-              errAF,
-            )
+          } catch (errFD) {
+            console.log('[Football-Data Escudo] Erro na busca por ' + teamName + ':', errFD)
           }
         }
       }
 
-      // Armazena no cache se globalThis estiver disponível
+      // 4) API-Football só como último recurso (com breaker exclusivo de escudos)
+      if (!badgeFound) {
+        var badgeBreakerStatus = checkBadgeCircuitBreaker()
+        if (!badgeBreakerStatus.shouldSkip) {
+          var afKey = ''
+          var isRapid = false
+          try {
+            var cfg = $app.findFirstRecordByData('config_integracoes', 'chave', 'placar_ao_vivo')
+            if (cfg) {
+              afKey = (cfg.getString('api_key') || '').trim()
+            }
+          } catch (_) {}
+          if (!afKey) {
+            try {
+              if ($secrets && $secrets.has && $secrets.has('API_FOOTBALL_KEY')) {
+                afKey = $secrets.get('API_FOOTBALL_KEY')
+              } else if ($secrets && $secrets.has && $secrets.has('RAPIDAPI_KEY')) {
+                afKey = $secrets.get('RAPIDAPI_KEY')
+                isRapid = true
+              } else if ($os && $os.getenv) {
+                afKey = $os.getenv('API_FOOTBALL_KEY') || $os.getenv('RAPIDAPI_KEY') || ''
+                if ($os.getenv('RAPIDAPI_KEY')) isRapid = true
+              }
+            } catch (_) {}
+          }
+          if (afKey.length > 40) isRapid = true
+
+          if (afKey) {
+            try {
+              var urlAF = isRapid
+                ? 'https://api-football-v1.p.rapidapi.com/v3/teams?search=' +
+                  encodeURIComponent(teamName)
+                : 'https://v3.football.api-sports.io/teams?search=' + encodeURIComponent(teamName)
+              var hdrs = isRapid
+                ? { 'x-rapidapi-key': afKey, 'x-rapidapi-host': 'api-football-v1.p.rapidapi.com' }
+                : { 'x-apisports-key': afKey }
+
+              var resAF = $http.send({
+                url: urlAF,
+                method: 'GET',
+                headers: hdrs,
+                timeout: 4,
+              })
+
+              if (isRateLimitErrorHelper(resAF.statusCode, resAF.json || resAF.raw)) {
+                tripBadgeCircuitBreaker('Rate limit 429 ao buscar escudo de time ' + teamName)
+              } else if (
+                resAF.statusCode === 200 &&
+                resAF.json &&
+                Array.isArray(resAF.json.response) &&
+                resAF.json.response.length > 0
+              ) {
+                resetBadgeCircuitBreaker()
+                var tAfObj = resAF.json.response[0]
+                if (tAfObj && tAfObj.team && tAfObj.team.logo) {
+                  badgeFound = String(tAfObj.team.logo).trim()
+                }
+              }
+            } catch (errAF) {
+              console.log(
+                '[API-Football Escudo endpoint] Erro na busca por ' + teamName + ':',
+                errAF,
+              )
+            }
+          }
+        } else {
+          console.log('[Escudo] Pulando API-Football pois badgeCircuitBreaker está ativo.')
+        }
+      }
+
       if (typeof globalThis !== 'undefined' && globalThis.__tsdbBadgeCache) {
         globalThis.__tsdbBadgeCache[cleanKey] = badgeFound
       }
 
+      return badgeFound
+    }
+
+    try {
+      const authRecord = e.auth
+      if (!authRecord) {
+        return e.unauthorizedError('Usuário não autenticado')
+      }
+
+      var teamName = (e.requestInfo().query.team || '').trim()
+      if (!teamName) {
+        return e.badRequestError('Parâmetro "team" é obrigatório.')
+      }
+
+      var badgeResult = fetchTeamBadgeOrdered(teamName)
+
       return e.json(200, {
         team: teamName,
-        badgeUrl: badgeFound,
+        badgeUrl: badgeResult,
         cached: false,
       })
     } catch (err) {
@@ -1421,7 +1477,7 @@ routerAdd(
 
 // -------------------------------------------------------------
 // Hooks do Ciclo de Vida de Jogos da Enquete (enquete_jogos):
-// Busca automática de escudos via TheSportsDB / API-Football
+// Busca automática de escudos via cache -> TheSportsDB -> Football-Data.org -> API-Football
 // quando logo_casa / logo_visitante estiverem vazios na criação ou edição.
 // -------------------------------------------------------------
 
@@ -1434,145 +1490,15 @@ onRecordCreate((e) => {
     var timeVis = (rec.getString('time_b') || '').trim()
 
     if (!logoCasa || !logoVis) {
-      if (typeof globalThis !== 'undefined' && !globalThis.__tsdbBadgeCache) {
-        globalThis.__tsdbBadgeCache = {}
-      }
-
-      var tsdbKey = ''
-      try {
-        var cRec = $app.findFirstRecordByData('config_integracoes', 'chave', 'thesportsdb_fallback')
-        if (cRec) {
-          tsdbKey = (cRec.getString('api_key') || '').trim()
-        }
-      } catch (_) {}
-
-      if (!tsdbKey) {
-        try {
-          if ($secrets && $secrets.has && $secrets.has('THESPORTSDB_KEY')) {
-            tsdbKey = ($secrets.get('THESPORTSDB_KEY') || '').trim()
-          } else if ($os && $os.getenv) {
-            tsdbKey = ($os.getenv('THESPORTSDB_KEY') || '').trim()
-          }
-        } catch (_) {}
-      }
-      if (!tsdbKey) {
-        tsdbKey = '3'
-      }
-
-      var fetchBadgeInline = function (teamName) {
-        if (!teamName) return ''
-        var cleanKey = teamName.toLowerCase().trim()
-        try {
-          cleanKey = cleanKey.normalize('NFD').replace(/[\u0300-\u036f]/g, '')
-        } catch (_) {}
-
-        if (
-          typeof globalThis !== 'undefined' &&
-          globalThis.__tsdbBadgeCache &&
-          globalThis.__tsdbBadgeCache[cleanKey] !== undefined
-        ) {
-          return globalThis.__tsdbBadgeCache[cleanKey] || ''
-        }
-
-        var found = ''
-        // 1. TheSportsDB
-        try {
-          var res = $http.send({
-            url:
-              'https://www.thesportsdb.com/api/v1/json/' +
-              encodeURIComponent(tsdbKey) +
-              '/searchteams.php?t=' +
-              encodeURIComponent(teamName),
-            method: 'GET',
-            timeout: 4,
-          })
-
-          if (
-            res.statusCode === 200 &&
-            res.json &&
-            Array.isArray(res.json.teams) &&
-            res.json.teams.length > 0
-          ) {
-            var teamObj = res.json.teams[0]
-            found = (teamObj.strBadge || teamObj.strTeamBadge || teamObj.strLogo || '').trim()
-          }
-        } catch (errSearch) {
-          console.log('[TSDB Escudo enquete_jogos] Erro na busca por ' + teamName + ':', errSearch)
-        }
-
-        // 2. Fallback API-Football se vazio
-        if (!found) {
-          try {
-            var afKey = ''
-            var isRapid = false
-            try {
-              var cfg = $app.findFirstRecordByData('config_integracoes', 'chave', 'placar_ao_vivo')
-              if (cfg) afKey = (cfg.getString('api_key') || '').trim()
-            } catch (_) {}
-            if (!afKey) {
-              if ($secrets && $secrets.has && $secrets.has('API_FOOTBALL_KEY')) {
-                afKey = $secrets.get('API_FOOTBALL_KEY')
-              } else if ($secrets && $secrets.has && $secrets.has('RAPIDAPI_KEY')) {
-                afKey = $secrets.get('RAPIDAPI_KEY')
-                isRapid = true
-              } else if ($os && $os.getenv) {
-                afKey = $os.getenv('API_FOOTBALL_KEY') || $os.getenv('RAPIDAPI_KEY') || ''
-                if ($os.getenv('RAPIDAPI_KEY')) isRapid = true
-              }
-            }
-            if (afKey.length > 40) isRapid = true
-
-            if (afKey) {
-              var urlAF = isRapid
-                ? 'https://api-football-v1.p.rapidapi.com/v3/teams?search=' +
-                  encodeURIComponent(teamName)
-                : 'https://v3.football.api-sports.io/teams?search=' + encodeURIComponent(teamName)
-              var hdrs = isRapid
-                ? { 'x-rapidapi-key': afKey, 'x-rapidapi-host': 'api-football-v1.p.rapidapi.com' }
-                : { 'x-apisports-key': afKey }
-
-              var resAF = $http.send({
-                url: urlAF,
-                method: 'GET',
-                headers: hdrs,
-                timeout: 4,
-              })
-
-              if (
-                resAF.statusCode === 200 &&
-                resAF.json &&
-                Array.isArray(resAF.json.response) &&
-                resAF.json.response.length > 0
-              ) {
-                var tAfObj = resAF.json.response[0]
-                if (tAfObj && tAfObj.team && tAfObj.team.logo) {
-                  found = String(tAfObj.team.logo).trim()
-                }
-              }
-            }
-          } catch (errAF) {
-            console.log(
-              '[API-Football Escudo enquete_jogos] Erro na busca por ' + teamName + ':',
-              errAF,
-            )
-          }
-        }
-
-        if (typeof globalThis !== 'undefined' && globalThis.__tsdbBadgeCache) {
-          globalThis.__tsdbBadgeCache[cleanKey] = found
-        }
-        return found
-      }
-
       if (!logoCasa && timeCasa) {
-        var foundCasa = fetchBadgeInline(timeCasa)
+        var foundCasa = fetchTeamBadgeOrdered(timeCasa)
         if (foundCasa) {
           rec.set('logo_casa', foundCasa)
         }
       }
 
       if (!logoVis && timeVis) {
-        var foundVis = fetchBadgeInline(timeVis)
+        var foundVis = fetchTeamBadgeOrdered(timeVis)
         if (foundVis) {
           rec.set('logo_visitante', foundVis)
         }
@@ -1594,148 +1520,15 @@ onRecordUpdate((e) => {
     var timeVis = (rec.getString('time_b') || '').trim()
 
     if (!logoCasa || !logoVis) {
-      if (typeof globalThis !== 'undefined' && !globalThis.__tsdbBadgeCache) {
-        globalThis.__tsdbBadgeCache = {}
-      }
-
-      var tsdbKey = ''
-      try {
-        var cRec = $app.findFirstRecordByData('config_integracoes', 'chave', 'thesportsdb_fallback')
-        if (cRec) {
-          tsdbKey = (cRec.getString('api_key') || '').trim()
-        }
-      } catch (_) {}
-
-      if (!tsdbKey) {
-        try {
-          if ($secrets && $secrets.has && $secrets.has('THESPORTSDB_KEY')) {
-            tsdbKey = ($secrets.get('THESPORTSDB_KEY') || '').trim()
-          } else if ($os && $os.getenv) {
-            tsdbKey = ($os.getenv('THESPORTSDB_KEY') || '').trim()
-          }
-        } catch (_) {}
-      }
-      if (!tsdbKey) {
-        tsdbKey = '3'
-      }
-
-      var fetchBadgeInline = function (teamName) {
-        if (!teamName) return ''
-        var cleanKey = teamName.toLowerCase().trim()
-        try {
-          cleanKey = cleanKey.normalize('NFD').replace(/[\u0300-\u036f]/g, '')
-        } catch (_) {}
-
-        if (
-          typeof globalThis !== 'undefined' &&
-          globalThis.__tsdbBadgeCache &&
-          globalThis.__tsdbBadgeCache[cleanKey] !== undefined
-        ) {
-          return globalThis.__tsdbBadgeCache[cleanKey] || ''
-        }
-
-        var found = ''
-        // 1. TheSportsDB
-        try {
-          var res = $http.send({
-            url:
-              'https://www.thesportsdb.com/api/v1/json/' +
-              encodeURIComponent(tsdbKey) +
-              '/searchteams.php?t=' +
-              encodeURIComponent(teamName),
-            method: 'GET',
-            timeout: 4,
-          })
-
-          if (
-            res.statusCode === 200 &&
-            res.json &&
-            Array.isArray(res.json.teams) &&
-            res.json.teams.length > 0
-          ) {
-            var teamObj = res.json.teams[0]
-            found = (teamObj.strBadge || teamObj.strTeamBadge || teamObj.strLogo || '').trim()
-          }
-        } catch (errSearch) {
-          console.log(
-            '[TSDB Escudo enquete_jogos update] Erro na busca por ' + teamName + ':',
-            errSearch,
-          )
-        }
-
-        // 2. Fallback API-Football se vazio
-        if (!found) {
-          try {
-            var afKey = ''
-            var isRapid = false
-            try {
-              var cfg = $app.findFirstRecordByData('config_integracoes', 'chave', 'placar_ao_vivo')
-              if (cfg) afKey = (cfg.getString('api_key') || '').trim()
-            } catch (_) {}
-            if (!afKey) {
-              if ($secrets && $secrets.has && $secrets.has('API_FOOTBALL_KEY')) {
-                afKey = $secrets.get('API_FOOTBALL_KEY')
-              } else if ($secrets && $secrets.has && $secrets.has('RAPIDAPI_KEY')) {
-                afKey = $secrets.get('RAPIDAPI_KEY')
-                isRapid = true
-              } else if ($os && $os.getenv) {
-                afKey = $os.getenv('API_FOOTBALL_KEY') || $os.getenv('RAPIDAPI_KEY') || ''
-                if ($os.getenv('RAPIDAPI_KEY')) isRapid = true
-              }
-            }
-            if (afKey.length > 40) isRapid = true
-
-            if (afKey) {
-              var urlAF = isRapid
-                ? 'https://api-football-v1.p.rapidapi.com/v3/teams?search=' +
-                  encodeURIComponent(teamName)
-                : 'https://v3.football.api-sports.io/teams?search=' + encodeURIComponent(teamName)
-              var hdrs = isRapid
-                ? { 'x-rapidapi-key': afKey, 'x-rapidapi-host': 'api-football-v1.p.rapidapi.com' }
-                : { 'x-apisports-key': afKey }
-
-              var resAF = $http.send({
-                url: urlAF,
-                method: 'GET',
-                headers: hdrs,
-                timeout: 4,
-              })
-
-              if (
-                resAF.statusCode === 200 &&
-                resAF.json &&
-                Array.isArray(resAF.json.response) &&
-                resAF.json.response.length > 0
-              ) {
-                var tAfObj = resAF.json.response[0]
-                if (tAfObj && tAfObj.team && tAfObj.team.logo) {
-                  found = String(tAfObj.team.logo).trim()
-                }
-              }
-            }
-          } catch (errAF) {
-            console.log(
-              '[API-Football Escudo enquete_jogos update] Erro na busca por ' + teamName + ':',
-              errAF,
-            )
-          }
-        }
-
-        if (typeof globalThis !== 'undefined' && globalThis.__tsdbBadgeCache) {
-          globalThis.__tsdbBadgeCache[cleanKey] = found
-        }
-        return found
-      }
-
       if (!logoCasa && timeCasa) {
-        var foundCasa = fetchBadgeInline(timeCasa)
+        var foundCasa = fetchTeamBadgeOrdered(timeCasa)
         if (foundCasa) {
           rec.set('logo_casa', foundCasa)
         }
       }
 
       if (!logoVis && timeVis) {
-        var foundVis = fetchBadgeInline(timeVis)
+        var foundVis = fetchTeamBadgeOrdered(timeVis)
         if (foundVis) {
           rec.set('logo_visitante', foundVis)
         }

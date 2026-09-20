@@ -1766,6 +1766,72 @@ routerAdd('GET', '/backend/v1/placar-ao-vivo', (e) => {
       return nowMs >= inicioJanela
     }
 
+    // Funções de matching por nome para resolução de IDs tsdb_*
+    var normalizarNomeTime = function (nome) {
+      if (!nome) return ''
+      var s = String(nome).toLowerCase().trim()
+      try {
+        s = s.normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+      } catch (_) {}
+      s = s.replace(/[^a-z0-9\s]/g, ' ')
+      var tokens = s.split(/\s+/).filter(function (t) {
+        return (
+          t &&
+          [
+            'fc',
+            'cf',
+            'club',
+            'clube',
+            'ec',
+            'cr',
+            'se',
+            'sc',
+            'de',
+            'da',
+            'do',
+            'del',
+            'futebol',
+            'futbol',
+            'sport',
+            'afc',
+          ].indexOf(t) === -1
+        )
+      })
+      if (tokens.length === 0) {
+        return s.replace(/[^a-z0-9]/g, '').trim()
+      }
+      return tokens.join(' ').trim()
+    }
+
+    var sinonimosConhecidosTimes = {
+      'paris saint germain': 'psg',
+      psg: 'paris saint germain',
+      'atletico madrid': 'atletico de madrid',
+      'atletico de madrid': 'atletico madrid',
+      internazionale: 'inter milan',
+      'inter milan': 'internazionale',
+      'inter de milao': 'inter milan',
+      'sporting cp': 'sporting lisbon',
+      'sporting lisbon': 'sporting cp',
+      'athletic club': 'athletic bilbao',
+      'athletic bilbao': 'athletic club',
+    }
+
+    var timesCoincidem = function (a, b) {
+      var normA = normalizarNomeTime(a)
+      var normB = normalizarNomeTime(b)
+      if (!normA || !normB) return false
+      if (normA === normB) return true
+      if (normA.indexOf(normB) !== -1 || normB.indexOf(normA) !== -1) return true
+      var sinA = sinonimosConhecidosTimes[normA]
+      if (sinA && (sinA === normB || sinA.indexOf(normB) !== -1 || normB.indexOf(sinA) !== -1))
+        return true
+      var sinB = sinonimosConhecidosTimes[normB]
+      if (sinB && (sinB === normA || sinB.indexOf(normA) !== -1 || normA.indexOf(sinB) !== -1))
+        return true
+      return false
+    }
+
     // =============================================================
     // ESCOPO RESTRITO & JANELA DE POLLING (Itens 1 e 2 do pedido):
     // 1. Carrega registros da collection jogos (apenas não finalizados)
@@ -1776,6 +1842,7 @@ routerAdd('GET', '/backend/v1/placar-ao-vivo', (e) => {
     var cadastradosFixtureIds = []
     var cadastradosRecordsMap = {}
     var fixturesDentroJanela = []
+    var jogosTsdbNaJanela = []
 
     try {
       var jogosNaoFinalizados = $app.findRecordsByFilter(
@@ -1792,8 +1859,12 @@ routerAdd('GET', '/backend/v1/placar-ao-vivo', (e) => {
           if (scFid) {
             cadastradosFixtureIds.push(scFid)
             cadastradosRecordsMap[scFid] = scRec
-            if (isDentroJanelaPolling(scRec, Date.now())) {
+            var estaNaJanela = isDentroJanelaPolling(scRec, Date.now())
+            if (estaNaJanela) {
               fixturesDentroJanela.push(scFid)
+            }
+            if (scFid.indexOf('tsdb_') === 0 && estaNaJanela) {
+              jogosTsdbNaJanela.push({ fid: scFid, rec: scRec })
             }
           }
         }
@@ -1809,7 +1880,8 @@ routerAdd('GET', '/backend/v1/placar-ao-vivo', (e) => {
         cadastradosFixtureIds.join(', ') +
         ']. Dentro da janela (kickoff - 60min até fim): [' +
         fixturesDentroJanela.join(', ') +
-        '].',
+        ']. Jogos TSDB na janela aguardando resolução: ' +
+        jogosTsdbNaJanela.length,
     )
 
     // Filtra directFixtureIds: APENAS aqueles que estão cadastrados no banco
@@ -1938,14 +2010,67 @@ routerAdd('GET', '/backend/v1/placar-ao-vivo', (e) => {
           recordApiFootballCall()
           resetApiFootballCircuitBreaker()
           if (resLive.json && Array.isArray(resLive.json.response)) {
-            // Filtra partidas ao vivo pelo escopo restrito de fixtures cadastradas
+            // Filtra partidas ao vivo pelo escopo restrito de fixtures cadastradas ou match por nome
             for (var lvi = 0; lvi < resLive.json.response.length; lvi++) {
               var liveItem = resLive.json.response[lvi]
               var lFid =
                 liveItem && liveItem.fixture && liveItem.fixture.id
                   ? String(liveItem.fixture.id)
                   : ''
-              if (lFid && cadastradosFixtureIds.indexOf(lFid) !== -1) {
+              if (!lFid) continue
+
+              var liveAceito = false
+              if (cadastradosFixtureIds.indexOf(lFid) !== -1) {
+                liveAceito = true
+              } else if (jogosTsdbNaJanela.length > 0) {
+                var lHome =
+                  (liveItem.teams && liveItem.teams.home && liveItem.teams.home.name) || ''
+                var lAway =
+                  (liveItem.teams && liveItem.teams.away && liveItem.teams.away.name) || ''
+                for (var lIdx = 0; lIdx < jogosTsdbNaJanela.length; lIdx++) {
+                  var lTsdbCand = jogosTsdbNaJanela[lIdx]
+                  var lCandRec = lTsdbCand.rec
+                  var lTimeA = (lCandRec.getString('time_a') || '').trim()
+                  var lTimeB = (lCandRec.getString('time_b') || '').trim()
+
+                  var lMatchDireto = timesCoincidem(lTimeA, lHome) && timesCoincidem(lTimeB, lAway)
+                  var lMatchInvertido =
+                    timesCoincidem(lTimeA, lAway) && timesCoincidem(lTimeB, lHome)
+                  if (lMatchDireto || lMatchInvertido) {
+                    if (!lCandRec.getBool('resultado_finalizado')) {
+                      lCandRec.set('fixture_id', lFid)
+                      try {
+                        $app.save(lCandRec)
+                        console.log(
+                          '[placar-ao-vivo] MATCH POR NOME: jogo ' +
+                            lCandRec.id +
+                            ' (' +
+                            lTimeA +
+                            ' x ' +
+                            lTimeB +
+                            ') => fixture API-Football ' +
+                            lFid +
+                            '. fixture_id atualizado no banco.',
+                        )
+                        cadastradosFixtureIds.push(lFid)
+                        cadastradosRecordsMap[lFid] = lCandRec
+                        jogosTsdbNaJanela.splice(lIdx, 1)
+                        liveAceito = true
+                        break
+                      } catch (errSaveLiveTsdb) {
+                        console.log(
+                          '[placar-ao-vivo] Erro ao atualizar fixture_id do jogo TSDB ' +
+                            lCandRec.id +
+                            ':',
+                          errSaveLiveTsdb,
+                        )
+                      }
+                    }
+                  }
+                }
+              }
+
+              if (liveAceito) {
                 liveFixtures.push(mapApiFootballItem(liveItem))
               }
             }
@@ -1991,8 +2116,58 @@ routerAdd('GET', '/backend/v1/placar-ao-vivo', (e) => {
             for (var rj = 0; rj < dateResponseList.length; rj++) {
               var dItem = dateResponseList[rj]
               var dFid = dItem && dItem.fixture && dItem.fixture.id ? String(dItem.fixture.id) : ''
-              // Escopo restrito: aceita na resposta apenas os fixture_ids cadastrados no banco
-              if (dFid && cadastradosFixtureIds.indexOf(dFid) !== -1) {
+              if (!dFid) continue
+
+              var dateAceito = false
+              if (cadastradosFixtureIds.indexOf(dFid) !== -1) {
+                dateAceito = true
+              } else if (jogosTsdbNaJanela.length > 0) {
+                var dHome = (dItem.teams && dItem.teams.home && dItem.teams.home.name) || ''
+                var dAway = (dItem.teams && dItem.teams.away && dItem.teams.away.name) || ''
+                for (var dIdx = 0; dIdx < jogosTsdbNaJanela.length; dIdx++) {
+                  var dTsdbCand = jogosTsdbNaJanela[dIdx]
+                  var dCandRec = dTsdbCand.rec
+                  var dTimeA = (dCandRec.getString('time_a') || '').trim()
+                  var dTimeB = (dCandRec.getString('time_b') || '').trim()
+
+                  var dMatchDireto = timesCoincidem(dTimeA, dHome) && timesCoincidem(dTimeB, dAway)
+                  var dMatchInvertido =
+                    timesCoincidem(dTimeA, dAway) && timesCoincidem(dTimeB, dHome)
+                  if (dMatchDireto || dMatchInvertido) {
+                    if (!dCandRec.getBool('resultado_finalizado')) {
+                      dCandRec.set('fixture_id', dFid)
+                      try {
+                        $app.save(dCandRec)
+                        console.log(
+                          '[placar-ao-vivo] MATCH POR NOME: jogo ' +
+                            dCandRec.id +
+                            ' (' +
+                            dTimeA +
+                            ' x ' +
+                            dTimeB +
+                            ') => fixture API-Football ' +
+                            dFid +
+                            '. fixture_id atualizado no banco.',
+                        )
+                        cadastradosFixtureIds.push(dFid)
+                        cadastradosRecordsMap[dFid] = dCandRec
+                        jogosTsdbNaJanela.splice(dIdx, 1)
+                        dateAceito = true
+                        break
+                      } catch (errSaveDateTsdb) {
+                        console.log(
+                          '[placar-ao-vivo] Erro ao atualizar fixture_id do jogo TSDB ' +
+                            dCandRec.id +
+                            ':',
+                          errSaveDateTsdb,
+                        )
+                      }
+                    }
+                  }
+                }
+              }
+
+              if (dateAceito) {
                 dateFixtures.push(mapApiFootballItem(dItem))
               }
             }
@@ -2243,8 +2418,8 @@ routerAdd('GET', '/backend/v1/placar-ao-vivo', (e) => {
 
         // Regra antifalha: se a API retornar null ou indefinido, não força 0x0
         if (homeGoals !== null && awayGoals !== null) {
-          matchedJogo.set('gols_time_a', homeGoals)
-          matchedJogo.set('gols_time_b', awayGoals)
+          matchedJogo.set('placar_a', homeGoals)
+          matchedJogo.set('placar_b', awayGoals)
         }
 
         // Se os eventos ou scorers contêm marcadores, organiza para persistir em goleadores_a e goleadores_b
