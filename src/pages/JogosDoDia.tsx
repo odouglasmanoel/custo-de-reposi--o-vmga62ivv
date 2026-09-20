@@ -1026,10 +1026,8 @@ export default function JogosDoDia() {
       return
     }
 
-    const timer = setInterval(() => {
-      fetchJogos(selectedDate, false)
-    }, 900_000) // 15 minutos (900.000ms) durante partidas ao vivo
-    return () => clearInterval(timer)
+    // Sincronização periódica realizada exclusivamente pelo cron backend placar_ao_vivo_sync.
+    // O frontend não realiza polling automático via setInterval para poupar cota da API.
   }, [relevantFixtures, isRateLimited, selectedDate, fetchJogos])
 
   // Lista de competições 100% dinâmica derivada dos jogos do dia

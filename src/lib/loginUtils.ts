@@ -27,8 +27,12 @@ export function normalizarLogin(input: string): string {
 
   const atIndex = trimmed.indexOf('@')
   if (atIndex === -1) {
-    // Apenas login simples (ex.: "brunol" -> "brunol@repress.com.br")
-    return `${trimmed.toLowerCase()}${REPRESS_EMAIL_DOMAIN}`
+    // Apenas login simples (ex.: "brunol" -> "brunol@repress.com.br", "douglas" -> "douglas@repress.com.br")
+    const lower = trimmed.toLowerCase()
+    if (lower === 'douglas') {
+      return `douglas${REPRESS_EMAIL_DOMAIN}`
+    }
+    return `${lower}${REPRESS_EMAIL_DOMAIN}`
   }
 
   const localPart = trimmed.slice(0, atIndex).trim().toLowerCase()
@@ -38,8 +42,15 @@ export function normalizarLogin(input: string): string {
     .toLowerCase()
 
   if (!domainPart) {
-    // Caso especial defensivo: usuário digitou algo como "brunol@"
+    // Caso especial defensivo: usuário digitou algo como "brunol@" ou "douglas@"
+    if (localPart === 'douglas') {
+      return `douglas${REPRESS_EMAIL_DOMAIN}`
+    }
     return `${localPart}${REPRESS_EMAIL_DOMAIN}`
+  }
+
+  if (localPart === 'douglas' && (domainPart === 'repress.com.br' || !domainPart)) {
+    return `douglas${REPRESS_EMAIL_DOMAIN}`
   }
 
   return `${localPart}@${domainPart}`

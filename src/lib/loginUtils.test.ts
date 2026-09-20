@@ -7,6 +7,7 @@ describe('normalizarLogin', () => {
     expect(normalizarLogin('brunox')).toBe('brunox@repress.com.br')
     expect(normalizarLogin('gabriel')).toBe('gabriel@repress.com.br')
     expect(normalizarLogin('davi')).toBe('davi@repress.com.br')
+    expect(normalizarLogin('douglas')).toBe('douglas@repress.com.br')
   })
 
   it('normaliza com trim() e lowercase() para entradas com espaços e maiúsculas', () => {
@@ -14,14 +15,13 @@ describe('normalizarLogin', () => {
     expect(normalizarLogin('  BrunoX  ')).toBe('brunox@repress.com.br')
     expect(normalizarLogin('  GABRIEL')).toBe('gabriel@repress.com.br')
     expect(normalizarLogin('Davi ')).toBe('davi@repress.com.br')
+    expect(normalizarLogin('  Douglas ')).toBe('douglas@repress.com.br')
   })
 
-  it('mantém e-mails completos com @ intactos/normalizados (ex.: Douglas)', () => {
-    expect(normalizarLogin('douglas.manoel@repress.com.br')).toBe('douglas.manoel@repress.com.br')
-    expect(normalizarLogin('  DOUGLAS.MANOEL@repress.com.br  ')).toBe(
-      'douglas.manoel@repress.com.br',
-    )
-    expect(normalizarLogin('Douglas.Manoel@Repress.com.br')).toBe('douglas.manoel@repress.com.br')
+  it('mantém e-mails completos com @ normalizados (douglas -> douglas@repress.com.br)', () => {
+    expect(normalizarLogin('douglas@repress.com.br')).toBe('douglas@repress.com.br')
+    expect(normalizarLogin('  DOUGLAS@repress.com.br  ')).toBe('douglas@repress.com.br')
+    expect(normalizarLogin('Douglas@Repress.com.br')).toBe('douglas@repress.com.br')
   })
 
   it('trata entradas vazias ou em branco retornando string vazia', () => {

@@ -161,7 +161,7 @@ export default function Login() {
                   <Input
                     id="login"
                     type="text"
-                    placeholder="brunol"
+                    placeholder="usuario"
                     value={login}
                     onChange={(e) => setLogin(e.target.value)}
                     className="h-11 border-[#CBD5E1] pl-9 text-sm focus-visible:border-[#10B981] focus-visible:ring-[#10B981]"

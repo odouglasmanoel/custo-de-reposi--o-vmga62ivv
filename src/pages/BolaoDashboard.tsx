@@ -1324,9 +1324,8 @@ export default function BolaoDashboard() {
       return
     }
 
-    // Polling estrito de 12 minutos (720_000 ms) durante partidas ao vivo
-    const interval = setInterval(fetchLiveScores, 720_000)
-    return () => clearInterval(interval)
+    // Sincronização periódica realizada exclusivamente pelo cron backend placar_ao_vivo_sync.
+    // O frontend não realiza polling automático via setInterval para poupar cota da API.
   }, [isGeral, allJogos, jogos, apiFixtures, isRateLimited, fetchLiveScores])
 
   // Carregamento de escudos para os times dos Jogos de Hoje / Jogos Liberados

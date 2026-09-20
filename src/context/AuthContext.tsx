@@ -9,12 +9,18 @@ export function isBolaoName(name?: string | null): boolean {
   if (!name) return false
   const trimmed = name.trim().toLowerCase()
   if (trimmed === 'bruno') return true
+  if (trimmed === 'douglas' || trimmed === 'douglas@repress.com.br') return true
   return BOLAO_MEMBERS.some((m) => m.toLowerCase() === trimmed)
 }
 
 export function isAdminName(name?: string | null): boolean {
   if (!name) return false
-  return name.trim().toLowerCase() === ADMIN_MEMBER.toLowerCase()
+  const trimmed = name.trim().toLowerCase()
+  return (
+    trimmed === ADMIN_MEMBER.toLowerCase() ||
+    trimmed === 'douglas' ||
+    trimmed === 'douglas@repress.com.br'
+  )
 }
 
 interface AuthContextType {
