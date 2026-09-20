@@ -780,8 +780,8 @@ describe('statsCalculator', () => {
     const douglasStats = stats.tabela.find((t) => t.nome === 'Douglas')
     expect(douglasStats?.pontosGrandesJogos).toBe(8)
 
-    // Bruno deve ter 0 pontos em Grandes Jogos (jogo 1 é da fase de grupos e não é clássico)
-    const brunoStats = stats.tabela.find((t) => t.nome === 'Bruno')
+    // Bruno (Bruno Lopes) deve ter 0 pontos em Grandes Jogos (jogo 1 é da fase de grupos e não é clássico)
+    const brunoStats = stats.tabela.find((t) => t.nome === 'Bruno Lopes')
     expect(brunoStats?.pontosGrandesJogos).toBe(0)
 
     // O troféu Mito dos Grandes Jogos deve ter Douglas como vencedor com 8 pontos

@@ -405,19 +405,16 @@ export default function AdminJogos() {
         ativo: novoBolaoAtivo,
       })
 
-      // Seed 4 standard participants with 0 points
+      // Seed standard participants with 0 points
       const defaultMembers = ['Douglas', 'Gabriel', 'Bruno Lopes', 'Bruno Xavier', 'Davi']
       for (const m of defaultMembers) {
-        if (!existingNames.has(m.toLowerCase())) {
-          await pb.collection('participantes').create({
-            bolao: selectedBolaoId,
-            nome: m,
-            pontos_importados: 0,
-            pontuacao_total: 0,
-          })
-          createdCount++
-        }
-      }      }
+        await pb.collection('participantes').create({
+          bolao: created.id,
+          nome: m,
+          pontos_importados: 0,
+          pontuacao_total: 0,
+        })
+      }
 
       toast({
         title: 'Bolão criado com sucesso!',
