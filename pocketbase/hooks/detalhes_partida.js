@@ -1167,42 +1167,122 @@ routerAdd(
           var aTeamNameStr =
             (result.teams && result.teams.away && result.teams.away.name) || timeB || 'Visitante'
 
-          // 1) Tentar extrair marcadores persistidos em marcadores_confirmados / marcadores do jogo no banco
           var consolidatedGoals = []
-          if (matchingJogoRecord) {
+
+          // 1) Tentar extrair de strHomeGoalDetails e strAwayGoalDetails (se disponíveis no evento bruto/ficha do TSDB)
+          var parseGoalDetailsStrLocal = function (goalStr, teamNameStr) {
+            if (typeof goalStr !== 'string' || !goalStr.trim()) return
+            var parts = goalStr.split(';')
+            for (var pi = 0; pi < parts.length; pi++) {
+              var rawPart = parts[pi].trim()
+              if (!rawPart) continue
+              var plusMatch = rawPart.match(/(\d+)\s*\+\s*(\d+)/)
+              var extractedMin = null
+              var extractedExtra = null
+              if (plusMatch) {
+                extractedMin = parseInt(plusMatch[1], 10)
+                extractedExtra = parseInt(plusMatch[2], 10)
+              } else {
+                var minMatch = rawPart.match(/(\d+)'?/)
+                extractedMin = minMatch ? parseInt(minMatch[1], 10) : null
+              }
+              var nameClean = rawPart
+                .replace(/^\d+(\+\d+)?'?:?/, '')
+                .replace(/\s*\d+(\+\d+)?'?$/, '')
+                .replace(/\s*\(pen\.?\)/i, '')
+                .trim()
+              var isOwnGoal = /contra|own\s*goal|o\.?g\.?/i.test(rawPart)
+              if (isOwnGoal && nameClean.toLowerCase().indexOf('contra') === -1) {
+                nameClean += ' (contra)'
+              }
+              if (nameClean) {
+                consolidatedGoals.push({
+                  type: 'Goal',
+                  detail: isOwnGoal ? 'Own Goal' : 'Normal Goal',
+                  time: { elapsed: extractedMin, extra: extractedExtra },
+                  team: { name: teamNameStr },
+                  player: { name: nameClean },
+                })
+              }
+            }
+          }
+
+          if (result.strHomeGoalDetails) {
+            parseGoalDetailsStrLocal(result.strHomeGoalDetails, hTeamNameStr)
+          }
+          if (result.strAwayGoalDetails) {
+            parseGoalDetailsStrLocal(result.strAwayGoalDetails, aTeamNameStr)
+          }
+
+          // 2) Tentar extrair dos campos do banco: goleadores_a / goleadores_b, marcadores_confirmados ou marcadores
+          if (consolidatedGoals.length === 0 && matchingJogoRecord) {
             try {
-              var savedMarcadoresRaw =
-                matchingJogoRecord.get('marcadores_confirmados') ||
-                matchingJogoRecord.get('marcadores') ||
-                null
-              var parsedMarcadores = null
-              if (typeof savedMarcadoresRaw === 'string' && savedMarcadoresRaw.trim()) {
-                try {
-                  parsedMarcadores = JSON.parse(savedMarcadoresRaw)
-                } catch (_) {}
-              } else if (Array.isArray(savedMarcadoresRaw)) {
-                parsedMarcadores = savedMarcadoresRaw
+              var parseGoleadoresString = function (golStr, targetTeamName) {
+                if (!golStr || typeof golStr !== 'string') return
+                var itens = golStr.split(/[;,]/)
+                for (var gi = 0; gi < itens.length; gi++) {
+                  var item = itens[gi].trim()
+                  if (!item) continue
+                  // Formato: "Nome (min')" ou "Nome" ou "2x Nome"
+                  var minG = null
+                  var minMatchG = item.match(/(\d+)'/)
+                  if (minMatchG) minG = parseInt(minMatchG[1], 10)
+                  var cleanGName = item
+                    .replace(/\(.*\)/, '')
+                    .replace(/^\d+x\s*/i, '')
+                    .trim()
+                  if (cleanGName) {
+                    consolidatedGoals.push({
+                      type: 'Goal',
+                      detail: 'Normal Goal',
+                      time: { elapsed: minG, extra: null },
+                      team: { name: targetTeamName },
+                      player: { name: cleanGName },
+                    })
+                  }
+                }
               }
 
-              if (Array.isArray(parsedMarcadores) && parsedMarcadores.length > 0) {
-                for (var pmi = 0; pmi < parsedMarcadores.length; pmi++) {
-                  var pm = parsedMarcadores[pmi]
-                  var pmName = typeof pm === 'string' ? pm : pm.name || pm.player || ''
-                  if (!pmName) continue
-                  var pmTeam = pm.teamSide === 'away' ? aTeamNameStr : hTeamNameStr
-                  if (pm.teamName) pmTeam = pm.teamName
-                  consolidatedGoals.push({
-                    type: 'Goal',
-                    detail: pm.isOwnGoal ? 'Own Goal' : 'Normal Goal',
-                    time: { elapsed: pm.minute || null, extra: null },
-                    team: { name: pmTeam },
-                    player: { name: pmName },
-                  })
+              var gA =
+                matchingJogoRecord.get('goleadores_a') || matchingJogoRecord.get('gols_a') || ''
+              var gB =
+                matchingJogoRecord.get('goleadores_b') || matchingJogoRecord.get('gols_b') || ''
+              if (gA) parseGoleadoresString(gA, hTeamNameStr)
+              if (gB) parseGoleadoresString(gB, aTeamNameStr)
+
+              if (consolidatedGoals.length === 0) {
+                var savedMarcadoresRaw =
+                  matchingJogoRecord.get('marcadores_confirmados') ||
+                  matchingJogoRecord.get('marcadores') ||
+                  null
+                var parsedMarcadores = null
+                if (typeof savedMarcadoresRaw === 'string' && savedMarcadoresRaw.trim()) {
+                  try {
+                    parsedMarcadores = JSON.parse(savedMarcadoresRaw)
+                  } catch (_) {}
+                } else if (Array.isArray(savedMarcadoresRaw)) {
+                  parsedMarcadores = savedMarcadoresRaw
+                }
+
+                if (Array.isArray(parsedMarcadores) && parsedMarcadores.length > 0) {
+                  for (var pmi = 0; pmi < parsedMarcadores.length; pmi++) {
+                    var pm = parsedMarcadores[pmi]
+                    var pmName = typeof pm === 'string' ? pm : pm.name || pm.player || ''
+                    if (!pmName) continue
+                    var pmTeam = pm.teamSide === 'away' ? aTeamNameStr : hTeamNameStr
+                    if (pm.teamName) pmTeam = pm.teamName
+                    consolidatedGoals.push({
+                      type: 'Goal',
+                      detail: pm.isOwnGoal ? 'Own Goal' : 'Normal Goal',
+                      time: { elapsed: pm.minute || null, extra: null },
+                      team: { name: pmTeam },
+                      player: { name: pmName },
+                    })
+                  }
                 }
               }
             } catch (_) {}
           }
-
           // 2) Se não havia marcadores salvos nominais, gerar placeholders de gols pelo placar
           // garantindo que a lista de gols não fique vazia enquanto o placar indicar gols marcados
           if (consolidatedGoals.length === 0) {

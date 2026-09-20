@@ -19,9 +19,9 @@ cronAdd('placar_ao_vivo_sync', '*/15 * * * *', () => {
     if (!siteUrl) {
       siteUrl = ($os.getenv('PB_INSTANCE_URL') || '').trim()
     }
+    // Fallback garantido para ambiente interno do PocketBase (execução incondicional)
     if (!siteUrl) {
-      console.log('[cron placar-ao-vivo] ERRO: SITE_URL ou PB_INSTANCE_URL não definidos.')
-      return
+      siteUrl = 'http://127.0.0.1:8090'
     }
 
     siteUrl = siteUrl.replace(/\/+$/, '')

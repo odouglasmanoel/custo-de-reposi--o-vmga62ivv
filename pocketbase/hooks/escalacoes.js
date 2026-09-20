@@ -1049,6 +1049,16 @@ routerAdd(
               teams: teamsSquads,
               updatedAt: new Date().toISOString(),
             }
+
+            if (matchingJogoRecord) {
+              try {
+                matchingJogoRecord.set('escalacoes', result)
+                $app.save(matchingJogoRecord)
+                console.log(
+                  '[Escalacoes] Elenco provável persistido no jogo id: ' + matchingJogoRecord.id,
+                )
+              } catch (_) {}
+            }
           }
         } catch (errSquad) {
           console.log('[Escalacoes] Erro ao buscar elenco/prováveis:', errSquad)

@@ -1917,6 +1917,7 @@ routerAdd('GET', '/backend/v1/placar-ao-vivo', (e) => {
     var cadastradosRecordsMap = {}
     var fixturesDentroJanela = []
     var jogosTsdbNaJanela = []
+    var jogosSemFixtureId = []
 
     try {
       var jogosNaoFinalizados = $app.findRecordsByFilter(
@@ -1930,21 +1931,192 @@ routerAdd('GET', '/backend/v1/placar-ao-vivo', (e) => {
         for (var scIdx = 0; scIdx < jogosNaoFinalizados.length; scIdx++) {
           var scRec = jogosNaoFinalizados[scIdx]
           var scFid = (scRec.getString('fixture_id') || '').trim()
+          var estaNaJanela = isDentroJanelaPolling(scRec, Date.now())
           if (scFid) {
             cadastradosFixtureIds.push(scFid)
             cadastradosRecordsMap[scFid] = scRec
-            var estaNaJanela = isDentroJanelaPolling(scRec, Date.now())
             if (estaNaJanela) {
               fixturesDentroJanela.push(scFid)
             }
             if (scFid.indexOf('tsdb_') === 0 && estaNaJanela) {
               jogosTsdbNaJanela.push({ fid: scFid, rec: scRec })
             }
+          } else {
+            // Jogos do bolão sem fixture_id (vazio)
+            jogosSemFixtureId.push({ rec: scRec, naJanela: estaNaJanela })
           }
         }
       }
     } catch (errEscopoPlacar) {
       console.log('[placar-ao-vivo] Erro ao carregar escopo de jogos cadastrados:', errEscopoPlacar)
+    }
+
+    // RESOLUÇÃO DE FIXTURE_ID VIA API-FOOTBALL (/v3/fixtures?date=) PARA JOGOS DO BOLÃO COM FIXTURE_ID VAZIO OU TSDB_*
+    // Similaridade de nome >= 0.85 (com normalização de partículas/acentos/PSG). Persiste fixture_id na collection jogos.
+    if (
+      apiKey &&
+      provedor === 'api_football' &&
+      (jogosSemFixtureId.length > 0 || jogosTsdbNaJanela.length > 0)
+    ) {
+      try {
+        var cbResCheck = checkApiFootballCircuitBreaker()
+        if (!cbResCheck.shouldSkip) {
+          var datasParaResolver = {}
+          for (var rsi = 0; rsi < jogosSemFixtureId.length; rsi++) {
+            var rawDateR = (jogosSemFixtureId[rsi].rec.getString('data') || '').trim()
+            if (rawDateR) {
+              var isoR = rawDateR
+              if (/^\d{2}\/\d{2}\/\d{4}$/.test(rawDateR)) {
+                var pBrR = rawDateR.split('/')
+                isoR = pBrR[2] + '-' + pBrR[1] + '-' + pBrR[0]
+              }
+              if (/^\d{4}-\d{2}-\d{2}$/.test(isoR)) {
+                datasParaResolver[isoR] = true
+              }
+            }
+          }
+          // Inclui dataQuery atual também
+          if (dateQuery && /^\d{4}-\d{2}-\d{2}$/.test(dateQuery)) {
+            datasParaResolver[dateQuery] = true
+          }
+
+          var listaDatasResolve = Object.keys(datasParaResolver)
+          for (var ldi = 0; ldi < listaDatasResolve.length; ldi++) {
+            var targetIsoDate = listaDatasResolve[ldi]
+            var isRapidR = apiKey.length > 40
+            var resUrlR = isRapidR
+              ? 'https://api-football-v1.p.rapidapi.com/v3/fixtures?date=' +
+                encodeURIComponent(targetIsoDate) +
+                '&timezone=America%2FSao_Paulo'
+              : 'https://v3.football.api-sports.io/fixtures?date=' +
+                encodeURIComponent(targetIsoDate) +
+                '&timezone=America%2FSao_Paulo'
+            var rHeaders = isRapidR
+              ? { 'x-rapidapi-key': apiKey, 'x-rapidapi-host': 'api-football-v1.p.rapidapi.com' }
+              : { 'x-apisports-key': apiKey }
+
+            var resFixturesDate = $http.send({
+              url: resUrlR,
+              method: 'GET',
+              headers: rHeaders,
+              timeout: 8,
+            })
+
+            if (
+              isRateLimitError(
+                resFixturesDate.statusCode,
+                resFixturesDate.json || resFixturesDate.raw,
+              )
+            ) {
+              tripApiFootballCircuitBreaker('Rate limit 429 na resolução de fixture_id por data')
+              break
+            } else if (
+              resFixturesDate &&
+              resFixturesDate.statusCode === 200 &&
+              resFixturesDate.json &&
+              Array.isArray(resFixturesDate.json.response)
+            ) {
+              resetApiFootballCircuitBreaker()
+              var fixCandidates = resFixturesDate.json.response
+
+              // Cruza com jogosSemFixtureId
+              for (var jsi = jogosSemFixtureId.length - 1; jsi >= 0; jsi--) {
+                var jSem = jogosSemFixtureId[jsi]
+                var jRec = jSem.rec
+                var tA = (jRec.getString('time_a') || '').trim()
+                var tB = (jRec.getString('time_b') || '').trim()
+
+                for (var fci = 0; fci < fixCandidates.length; fci++) {
+                  var fc = fixCandidates[fci]
+                  var fcHome = (fc.teams && fc.teams.home && fc.teams.home.name) || ''
+                  var fcAway = (fc.teams && fc.teams.away && fc.teams.away.name) || ''
+                  var mDir = timesCoincidem(tA, fcHome) && timesCoincidem(tB, fcAway)
+                  var mInv = timesCoincidem(tA, fcAway) && timesCoincidem(tB, fcHome)
+
+                  if (mDir || mInv) {
+                    var newFid = fc.fixture && fc.fixture.id ? String(fc.fixture.id) : ''
+                    if (newFid) {
+                      jRec.set('fixture_id', newFid)
+                      try {
+                        $app.save(jRec)
+                        console.log(
+                          '[placar-ao-vivo] Fixture_id ' +
+                            newFid +
+                            ' resolvido e PERSISTIDO para jogo ' +
+                            jRec.id +
+                            ' (' +
+                            tA +
+                            ' x ' +
+                            tB +
+                            ')',
+                        )
+                        cadastradosFixtureIds.push(newFid)
+                        cadastradosRecordsMap[newFid] = jRec
+                        if (jSem.naJanela && fixturesDentroJanela.indexOf(newFid) === -1) {
+                          fixturesDentroJanela.push(newFid)
+                        }
+                        jogosSemFixtureId.splice(jsi, 1)
+                        break
+                      } catch (errSaveFidJ) {
+                        console.log(
+                          '[placar-ao-vivo] Erro ao persistir fixture_id no jogo ' + jRec.id + ':',
+                          errSaveFidJ,
+                        )
+                      }
+                    }
+                  }
+                }
+              }
+
+              // Cruza também com jogosTsdbNaJanela
+              for (var tsi = jogosTsdbNaJanela.length - 1; tsi >= 0; tsi--) {
+                var jTsdb = jogosTsdbNaJanela[tsi]
+                var jTsdbRec = jTsdb.rec
+                var tTsdbA = (jTsdbRec.getString('time_a') || '').trim()
+                var tTsdbB = (jTsdbRec.getString('time_b') || '').trim()
+
+                for (var fci2 = 0; fci2 < fixCandidates.length; fci2++) {
+                  var fc2 = fixCandidates[fci2]
+                  var fc2Home = (fc2.teams && fc2.teams.home && fc2.teams.home.name) || ''
+                  var fc2Away = (fc2.teams && fc2.teams.away && fc2.teams.away.name) || ''
+                  var m2Dir = timesCoincidem(tTsdbA, fc2Home) && timesCoincidem(tTsdbB, fc2Away)
+                  var m2Inv = timesCoincidem(tTsdbA, fc2Away) && timesCoincidem(tTsdbB, fc2Home)
+
+                  if (m2Dir || m2Inv) {
+                    var newTsdbFid = fc2.fixture && fc2.fixture.id ? String(fc2.fixture.id) : ''
+                    if (newTsdbFid) {
+                      jTsdbRec.set('fixture_id', newTsdbFid)
+                      try {
+                        $app.save(jTsdbRec)
+                        console.log(
+                          '[placar-ao-vivo] Fixture_id ' +
+                            newTsdbFid +
+                            ' resolvido e substituído de tsdb para jogo ' +
+                            jTsdbRec.id,
+                        )
+                        cadastradosFixtureIds.push(newTsdbFid)
+                        cadastradosRecordsMap[newTsdbFid] = jTsdbRec
+                        if (fixturesDentroJanela.indexOf(newTsdbFid) === -1) {
+                          fixturesDentroJanela.push(newTsdbFid)
+                        }
+                        jogosTsdbNaJanela.splice(tsi, 1)
+                        break
+                      } catch (errSaveFidTsdb) {
+                        console.log(
+                          '[placar-ao-vivo] Erro ao atualizar tsdb fixture_id:',
+                          errSaveFidTsdb,
+                        )
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      } catch (errResFixtures) {
+        console.log('[placar-ao-vivo] Erro ao resolver fixture_id por data:', errResFixtures)
+      }
     }
 
     console.log(
