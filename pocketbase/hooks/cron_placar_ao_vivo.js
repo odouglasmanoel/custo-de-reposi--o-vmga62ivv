@@ -9,6 +9,115 @@ onBootstrap((e) => {
   e.next()
   try {
     console.log('[bootstrap placar-ao-vivo] Instância inicializada e pronta.')
+
+    // =============================================================
+    // TESTE IMEDIATO DE REQUISIÇÃO REAL COM A CHAVE ATUALIZADA
+    // Header: x-apisports-key
+    // 1. GET https://v3.football.api-sports.io/status
+    // 2. GET https://v3.football.api-sports.io/fixtures?id=1492382
+    // 3. GET https://v3.football.api-sports.io/fixtures?live=all
+    // =============================================================
+    let currentApiKey = ''
+    try {
+      const cfgRec = $app.findFirstRecordByData('config_integracoes', 'chave', 'placar_ao_vivo')
+      if (cfgRec) {
+        currentApiKey = (cfgRec.getString('api_key') || '').trim()
+      }
+    } catch (_) {}
+
+    if (!currentApiKey) {
+      console.log('[bootstrap placar-ao-vivo] Chave não encontrada no banco.')
+      return
+    }
+
+    const masked =
+      currentApiKey.length > 8 ? currentApiKey.slice(0, 4) + '...' + currentApiKey.slice(-4) : '...'
+    console.log(
+      '[bootstrap placar-ao-vivo] Iniciando teste de conexão real com a API-Football (chave ' +
+        masked +
+        ')...',
+    )
+
+    const testHeaders = {
+      'x-apisports-key': currentApiKey,
+    }
+
+    // 1. Teste no endpoint /status
+    try {
+      console.log(
+        '[bootstrap placar-ao-vivo] Disparando GET https://v3.football.api-sports.io/status',
+      )
+      const resStatus = $http.send({
+        url: 'https://v3.football.api-sports.io/status',
+        method: 'GET',
+        headers: testHeaders,
+        timeout: 10,
+      })
+      console.log(
+        '[bootstrap placar-ao-vivo] Resposta /status: HTTP ' +
+          (resStatus ? resStatus.statusCode : 'sem resposta'),
+      )
+      if (resStatus && resStatus.json) {
+        console.log(
+          '[bootstrap placar-ao-vivo] Detalhes /status: ' + JSON.stringify(resStatus.json),
+        )
+      }
+    } catch (errStatus) {
+      console.log('[bootstrap placar-ao-vivo] Erro ao chamar /status:', errStatus)
+    }
+
+    // 2. Teste no fixture ativo do bolão (ex: 1492382)
+    try {
+      console.log(
+        '[bootstrap placar-ao-vivo] Disparando GET https://v3.football.api-sports.io/fixtures?id=1492382&timezone=America%2FSao_Paulo',
+      )
+      const resFixture = $http.send({
+        url: 'https://v3.football.api-sports.io/fixtures?id=1492382&timezone=America%2FSao_Paulo',
+        method: 'GET',
+        headers: testHeaders,
+        timeout: 10,
+      })
+      console.log(
+        '[bootstrap placar-ao-vivo] Resposta /fixtures?id=1492382: HTTP ' +
+          (resFixture ? resFixture.statusCode : 'sem resposta'),
+      )
+      if (resFixture && resFixture.json) {
+        console.log(
+          '[bootstrap placar-ao-vivo] Detalhes /fixtures?id=1492382: ' +
+            JSON.stringify(resFixture.json),
+        )
+      }
+    } catch (errFix) {
+      console.log('[bootstrap placar-ao-vivo] Erro ao chamar /fixtures?id=1492382:', errFix)
+    }
+
+    // 3. Teste no live=all
+    try {
+      console.log(
+        '[bootstrap placar-ao-vivo] Disparando GET https://v3.football.api-sports.io/fixtures?live=all&timezone=America%2FSao_Paulo',
+      )
+      const resLive = $http.send({
+        url: 'https://v3.football.api-sports.io/fixtures?live=all&timezone=America%2FSao_Paulo',
+        method: 'GET',
+        headers: testHeaders,
+        timeout: 10,
+      })
+      console.log(
+        '[bootstrap placar-ao-vivo] Resposta /fixtures?live=all: HTTP ' +
+          (resLive ? resLive.statusCode : 'sem resposta'),
+      )
+      if (resLive && resLive.json) {
+        const liveCount = Array.isArray(resLive.json.response) ? resLive.json.response.length : 0
+        console.log(
+          '[bootstrap placar-ao-vivo] Resposta /fixtures?live=all: ' +
+            liveCount +
+            ' jogos ao vivo. Erros: ' +
+            JSON.stringify(resLive.json.errors || {}),
+        )
+      }
+    } catch (errLive) {
+      console.log('[bootstrap placar-ao-vivo] Erro ao chamar /fixtures?live=all:', errLive)
+    }
   } catch (errBoot) {
     console.log('[bootstrap placar-ao-vivo] Erro no bootstrap:', errBoot)
   }
