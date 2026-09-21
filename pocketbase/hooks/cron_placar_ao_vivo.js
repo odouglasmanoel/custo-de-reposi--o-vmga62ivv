@@ -92,6 +92,7 @@ onBootstrap((e) => {
     }
 
     // 3. Teste no live=all
+    var liveFixturesData = []
     try {
       console.log(
         '[bootstrap placar-ao-vivo] Disparando GET https://v3.football.api-sports.io/fixtures?live=all&timezone=America%2FSao_Paulo',
@@ -107,16 +108,51 @@ onBootstrap((e) => {
           (resLive ? resLive.statusCode : 'sem resposta'),
       )
       if (resLive && resLive.json) {
-        const liveCount = Array.isArray(resLive.json.response) ? resLive.json.response.length : 0
+        liveFixturesData = Array.isArray(resLive.json.response) ? resLive.json.response : []
         console.log(
           '[bootstrap placar-ao-vivo] Resposta /fixtures?live=all: ' +
-            liveCount +
-            ' jogos ao vivo. Erros: ' +
+            liveFixturesData.length +
+            ' jogos ao vivo retornados com sucesso. Erros da API: ' +
             JSON.stringify(resLive.json.errors || {}),
         )
+        if (liveFixturesData.length > 0) {
+          var sampleFix = liveFixturesData[0]
+          var sHome = (sampleFix.teams && sampleFix.teams.home && sampleFix.teams.home.name) || ''
+          var sAway = (sampleFix.teams && sampleFix.teams.away && sampleFix.teams.away.name) || ''
+          var sGoalsH = sampleFix.goals ? sampleFix.goals.home : 0
+          var sGoalsA = sampleFix.goals ? sampleFix.goals.away : 0
+          console.log(
+            '[bootstrap placar-ao-vivo] Amostra de jogo ao vivo capturado: ' +
+              sHome +
+              ' ' +
+              sGoalsH +
+              'x' +
+              sGoalsA +
+              ' ' +
+              sAway +
+              ' (fixture id: ' +
+              (sampleFix.fixture ? sampleFix.fixture.id : '') +
+              ')',
+          )
+        }
       }
     } catch (errLive) {
       console.log('[bootstrap placar-ao-vivo] Erro ao chamar /fixtures?live=all:', errLive)
+    }
+
+    // 4. Executa resolução/sincronização imediata de jogos e escalações no bootstrap
+    try {
+      console.log(
+        '[bootstrap placar-ao-vivo] Disparando sincronização inicial de jogos e escalações...',
+      )
+      if (
+        typeof globalThis !== 'undefined' &&
+        typeof globalThis.__sincronizarEscalacoesPreJogo === 'function'
+      ) {
+        globalThis.__sincronizarEscalacoesPreJogo()
+      }
+    } catch (errSyncBoot) {
+      console.log('[bootstrap placar-ao-vivo] Aviso na sincronização inicial:', errSyncBoot)
     }
   } catch (errBoot) {
     console.log('[bootstrap placar-ao-vivo] Erro no bootstrap:', errBoot)
