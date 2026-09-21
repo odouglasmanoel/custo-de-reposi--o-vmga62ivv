@@ -1,5 +1,5 @@
 import React, { useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useLocation } from 'react-router-dom'
 import { User, Lock, Eye, EyeOff, ShieldCheck, AlertCircle, Loader2 } from 'lucide-react'
 import pb from '@/lib/pocketbase/client'
 import { isBolaoName } from '@/context/AuthContext'
@@ -10,6 +10,7 @@ import { Label } from '@/components/ui/label'
 
 export default function Login() {
   const navigate = useNavigate()
+  const location = useLocation()
   const [login, setLogin] = useState('')
   const [password, setPassword] = useState('')
   const [showPassword, setShowPassword] = useState(false)
@@ -21,14 +22,23 @@ export default function Login() {
   // Desvio imediato não-bloqueante se o usuário já estiver logado no PocketBase
   React.useEffect(() => {
     if (pb.authStore.isValid && pb.authStore.record) {
+      const stateFrom = (
+        location.state as { from?: { pathname?: string; search?: string } } | undefined
+      )?.from
+      const targetPath = stateFrom?.pathname
+        ? `${stateFrom.pathname}${stateFrom.search || ''}`
+        : null
+
       const userName = pb.authStore.record.name || ''
-      if (isBolaoName(userName)) {
+      if (targetPath && targetPath !== '/login') {
+        navigate(targetPath, { replace: true })
+      } else if (isBolaoName(userName)) {
         navigate('/inicio', { replace: true })
       } else {
         navigate('/', { replace: true })
       }
     }
-  }, [navigate])
+  }, [navigate, location.state])
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -79,7 +89,16 @@ export default function Login() {
       const userName = authData.record?.name || ''
 
       // Check post-login redirect logic
-      if (isBolaoName(userName)) {
+      const stateFrom = (
+        location.state as { from?: { pathname?: string; search?: string } } | undefined
+      )?.from
+      const targetPath = stateFrom?.pathname
+        ? `${stateFrom.pathname}${stateFrom.search || ''}`
+        : null
+
+      if (targetPath && targetPath !== '/login') {
+        navigate(targetPath, { replace: true })
+      } else if (isBolaoName(userName)) {
         navigate('/inicio', { replace: true })
       } else {
         navigate('/', { replace: true })

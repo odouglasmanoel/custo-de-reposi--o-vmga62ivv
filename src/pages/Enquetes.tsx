@@ -23,6 +23,7 @@ import {
   ExternalLink,
   ChevronDown,
   ChevronUp,
+  Share2,
 } from 'lucide-react'
 import pb from '@/lib/pocketbase/client'
 import { useAuth } from '@/context/AuthContext'
@@ -74,13 +75,38 @@ import {
   readEnqueteDetalhesCache,
 } from '@/services/enquetes'
 
+function WhatsAppIcon({ className = 'h-4 w-4 shrink-0' }: { className?: string }) {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      viewBox="0 0 24 24"
+      fill="currentColor"
+      className={className}
+      aria-hidden="true"
+    >
+      <path d="M12.031 6.172c-3.181 0-5.767 2.586-5.768 5.766-.001 1.298.38 2.27 1.019 3.287l-.711 2.598 2.664-.698c.969.585 1.761.884 2.802.884l.006-.001c3.179 0 5.767-2.587 5.768-5.766.001-3.18-2.585-5.77-5.78-5.77zm3.385 8.163c-.144.405-.837.774-1.17.822-.312.043-.683.078-2.208-.553-1.849-.766-3.031-2.64-3.125-2.764-.094-.124-.748-.996-.748-1.9 0-.903.473-1.348.641-1.52.169-.172.368-.215.49-.215.124 0 .248.001.357.006.115.006.269-.043.421.321.157.376.536 1.309.583 1.405.047.095.078.207.016.331-.063.124-.094.202-.187.311-.093.11-.197.246-.282.33-.095.095-.194.198-.083.39.112.191.498.822 1.07 1.332.738.656 1.36.858 1.552.953.193.095.305.083.419-.048.113-.131.488-.567.618-.761.13-.194.26-.162.438-.096.178.066 1.13.533 1.325.63.195.097.325.144.372.226.048.082.048.477-.096.882zM12 2C6.477 2 2 6.477 2 12c0 1.89.525 3.66 1.438 5.168L2 22l4.987-1.308C8.423 21.547 10.155 22 12 22c5.523 0 10-4.477 10-10S17.523 2 12 2zm0 18.2c-1.636 0-3.161-.489-4.444-1.332l-.319-.209-2.956.775.789-2.882-.228-.363A8.15 8.15 0 0 1 3.8 12c0-4.521 3.679-8.2 8.2-8.2 4.522 0 8.2 3.679 8.2 8.2 0 4.522-3.678 8.2-8.2 8.2z" />
+    </svg>
+  )
+}
+
 export default function Enquetes() {
   const { user, isAdmin, participantName } = useAuth()
   const { toast } = useToast()
 
-  // Inicialização instantânea a partir do cache (dois níveis)
+  // Inicialização instantânea a partir do cache (dois níveis) e parâmetro da URL
   const initialListaCached = useMemo(() => readListaEnquetesCache() || [], [])
   const initialEnqueteId = useMemo(() => {
+    if (typeof window !== 'undefined') {
+      const urlParams = new URLSearchParams(window.location.search)
+      const idFromUrl = urlParams.get('id')
+      if (idFromUrl) {
+        if (initialListaCached.length > 0) {
+          const match = initialListaCached.find((e) => e.id === idFromUrl)
+          if (match) return match.id
+        }
+        return idFromUrl
+      }
+    }
     if (initialListaCached.length > 0) {
       const aberta = initialListaCached.find((e) => e.status === 'aberta') || initialListaCached[0]
       return aberta.id
@@ -235,9 +261,15 @@ export default function Enquetes() {
         setEnquetes(lista)
         if (lista.length > 0) {
           if (selectFirst || !enqueteAtivaId) {
-            // Seleciona a primeira aberta ou mais recente
-            const aberta = lista.find((e) => e.status === 'aberta') || lista[0]
-            setEnqueteAtivaId(aberta.id)
+            // Verifica se há enquete indicada na URL
+            const urlParams = new URLSearchParams(window.location.search)
+            const idFromUrl = urlParams.get('id')
+            const correspondenteUrl = idFromUrl ? lista.find((e) => e.id === idFromUrl) : null
+
+            // Seleciona a enquete da URL, a primeira aberta ou a mais recente
+            const selecionada =
+              correspondenteUrl || lista.find((e) => e.status === 'aberta') || lista[0]
+            setEnqueteAtivaId(selecionada.id)
           }
         } else {
           setEnqueteAtivaId('')
@@ -305,6 +337,14 @@ export default function Enquetes() {
     if (enqueteAtivaId) {
       setFiltroCategoria('todos')
       carregarDetalhesEnquete(enqueteAtivaId, true)
+
+      if (typeof window !== 'undefined') {
+        const url = new URL(window.location.href)
+        if (url.searchParams.get('id') !== enqueteAtivaId) {
+          url.searchParams.set('id', enqueteAtivaId)
+          window.history.replaceState({}, '', url.toString())
+        }
+      }
     }
   }, [enqueteAtivaId, carregarDetalhesEnquete])
 
@@ -391,6 +431,27 @@ export default function Enquetes() {
   const jogosVisiveis = useMemo(() => {
     return jogosFiltradosVotacao.slice(0, visibleCount)
   }, [jogosFiltradosVotacao, visibleCount])
+
+  // Ação: Compartilhar Enquete Aberta no WhatsApp
+  const handleCompartilharWhatsApp = useCallback(() => {
+    if (typeof window === 'undefined') return
+
+    // Monta link absoluto dinâmico garantindo apontamento para a tela da enquete ativa
+    const urlObj = new URL(window.location.href)
+    urlObj.pathname = '/bolao/enquetes'
+    if (enqueteAtivaId) {
+      urlObj.searchParams.set('id', enqueteAtivaId)
+    }
+    const linkPagina = urlObj.toString()
+
+    const mensagem =
+      `🗳️ *Votação Aberta no Bolão do Grupo!*\n\n` +
+      `Pessoal, a enquete da rodada já está aberta para escolha dos jogos! Entrem para registrar seus votos antes do encerramento.\n\n` +
+      `👉 Acesse e vote agora: ${linkPagina}`
+
+    const whatsappUrl = `https://api.whatsapp.com/send?text=${encodeURIComponent(mensagem)}`
+    window.open(whatsappUrl, '_blank', 'noopener,noreferrer')
+  }, [enqueteAtivaId])
 
   // Ação: Votar / Desmarcar Jogo
   const handleToggleVoto = async (jogoId: string) => {
@@ -1568,7 +1629,19 @@ export default function Enquetes() {
               <select
                 id="select-enquete"
                 value={enqueteAtivaId}
-                onChange={(e) => setEnqueteAtivaId(e.target.value)}
+                onChange={(e) => {
+                  const newId = e.target.value
+                  setEnqueteAtivaId(newId)
+                  if (typeof window !== 'undefined') {
+                    const url = new URL(window.location.href)
+                    if (newId) {
+                      url.searchParams.set('id', newId)
+                    } else {
+                      url.searchParams.delete('id')
+                    }
+                    window.history.replaceState({}, '', url.toString())
+                  }
+                }}
                 className="h-9 rounded-md border border-slate-200 bg-white px-2.5 text-xs font-semibold text-slate-800 shadow-xs focus:border-emerald-500 focus:outline-none"
               >
                 {enquetes.map((enq) => (
