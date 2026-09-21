@@ -439,8 +439,12 @@ export default function Enquetes() {
     // Monta link absoluto dinâmico garantindo apontamento para a tela da enquete ativa
     const urlObj = new URL(window.location.href)
     urlObj.pathname = '/bolao/enquetes'
+    // Limpa parâmetros residuais de busca
+    urlObj.search = ''
     if (enqueteAtivaId) {
       urlObj.searchParams.set('id', enqueteAtivaId)
+    } else if (enqueteAtiva?.id) {
+      urlObj.searchParams.set('id', enqueteAtiva.id)
     }
     const linkPagina = urlObj.toString()
 
@@ -451,7 +455,7 @@ export default function Enquetes() {
 
     const whatsappUrl = `https://api.whatsapp.com/send?text=${encodeURIComponent(mensagem)}`
     window.open(whatsappUrl, '_blank', 'noopener,noreferrer')
-  }, [enqueteAtivaId])
+  }, [enqueteAtivaId, enqueteAtiva?.id])
 
   // Ação: Votar / Desmarcar Jogo
   const handleToggleVoto = async (jogoId: string) => {
@@ -1659,6 +1663,18 @@ export default function Enquetes() {
             </div>
           )}
 
+          {/* Botão de Compartilhar no WhatsApp */}
+          <Button
+            type="button"
+            onClick={handleCompartilharWhatsApp}
+            size="sm"
+            className="z-10 inline-flex items-center gap-1.5 bg-[#25D366] px-3 font-bold text-white shadow-xs hover:bg-[#20bd5a] focus:ring-2 focus:ring-[#25D366]/40 focus:outline-none"
+            title="Compartilhar enquete no WhatsApp"
+          >
+            <WhatsAppIcon className="h-4 w-4 shrink-0" />
+            <span>Compartilhar no WhatsApp</span>
+          </Button>
+
           {/* Botão Admin: Nova Enquete */}
           {isAdmin && (
             <Button
@@ -1760,9 +1776,22 @@ export default function Enquetes() {
           <Card className="border-slate-200 bg-white shadow-xs">
             <CardContent className="flex items-center justify-between p-4">
               <div>
-                <span className="text-xs font-semibold uppercase tracking-wider text-slate-500">
-                  Status da Votação
-                </span>
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-xs font-semibold uppercase tracking-wider text-slate-500">
+                    Status da Votação
+                  </span>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={handleCompartilharWhatsApp}
+                    className="h-6 px-2 text-[11px] font-bold text-emerald-700 hover:bg-emerald-50 hover:text-emerald-800"
+                    title="Compartilhar no WhatsApp"
+                  >
+                    <WhatsAppIcon className="mr-1 h-3.5 w-3.5 text-[#25D366]" />
+                    WhatsApp
+                  </Button>
+                </div>
                 <div className="mt-1 flex items-center gap-2">
                   <span
                     className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-bold ${
