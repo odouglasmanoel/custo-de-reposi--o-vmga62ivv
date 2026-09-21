@@ -13,6 +13,7 @@ import BolaoDashboard from './pages/BolaoDashboard'
 import AdminJogos from './pages/AdminJogos'
 import AdminResultado from './pages/AdminResultado'
 import AdminConfiguracoes from './pages/AdminConfiguracoes'
+import JogosDoDia from './pages/JogosDoDia'
 import Palpites from './pages/Palpites'
 import Historico from './pages/Historico'
 import Estatisticas from './pages/Estatisticas'
@@ -102,9 +103,16 @@ const App = () => (
               }
             />
 
-            {/* Redirecionamento de rotas legadas de Jogos do Dia para a Central do Bolão */}
-            <Route path="/bolao/jogos-do-dia" element={<Navigate to="/bolao" replace />} />
-            <Route path="/jogos-do-dia" element={<Navigate to="/bolao" replace />} />
+            {/* Aba Jogos do Dia restaurada e alimentada exclusivamente pela tabela local do banco via cron */}
+            <Route
+              path="/bolao/jogos-do-dia"
+              element={
+                <BolaoRoute>
+                  <JogosDoDia />
+                </BolaoRoute>
+              }
+            />
+            <Route path="/jogos-do-dia" element={<Navigate to="/bolao/jogos-do-dia" replace />} />
 
             <Route
               path="/bolao/historico"

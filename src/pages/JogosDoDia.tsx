@@ -507,390 +507,88 @@ export default function JogosDoDia() {
         }
 
         // ====================================================================
-        // PARIDADE ENQUETES ↔ JOGOS DO DIA:
-        // Consome buscarJogosIntervalo(dateStr, dateStr, true) com toda matriz de 40+
-        // competições (Libertadores com Flamengo, Sul-Americana, Copa do Brasil, etc.)
-        // em paralelo com /backend/v1/jogos-do-dia (camada de placar ao vivo/eventos).
+        // REGRA DE OURO DO USUÁRIO:
+        // Não fazer requisições diretas à API externa no clique ou carregamento da tela!
+        // A tela lê EXCLUSIVAMENTE a tabela local `jogos_do_dia` gravada pelo cron matinal.
+        // Se a tabela estiver vazia para a data, avisa amigavelmente sem disparar requisições.
         // ====================================================================
-        const urlJogosDoDia = `${import.meta.env.VITE_POCKETBASE_URL}/backend/v1/jogos-do-dia?date=${encodeURIComponent(
-          dateStr,
-        )}${force ? '&refresh=1' : ''}`
+        const localRecords = await pb.collection('jogos_do_dia').getFullList({
+          filter: `data = '${dateStr}'`,
+          sort: 'campeonato,horario',
+          requestKey: `jogos_do_dia_${dateStr}`,
+        })
 
-        // Timeout seguro de 12s no client
-        const timeoutId = setTimeout(() => controller.abort(), 12000)
+        // Converte registros da collection local `jogos_do_dia` para DayFixture
+        const convertedFixtures: DayFixture[] = (localRecords || []).map((rec: any) => {
+          const rawPayload = rec.raw_payload || {}
+          const stShort = rec.status_short || 'NS'
+          const stLong = rec.status_long || 'Agendado'
+          const isLive = ['1H', 'HT', '2H', 'ET', 'BT', 'P', 'LIVE'].includes(stShort.toUpperCase())
 
-        let resLive: Response | null = null
-        let enquetesMatches: JogoBuscado[] = []
-        let localJogosMatches: Jogo[] = []
-
-        try {
-          const [livePromise, enquetesPromise, localJogosPromise] = await Promise.allSettled([
-            fetch(urlJogosDoDia, { headers, signal: controller.signal }),
-            buscarJogosIntervalo(dateStr, dateStr, true),
-            pb.collection('jogos').getFullList<Jogo>({
-              sort: 'data,hora',
-              fields:
-                'id,bolao,time_a,time_b,data,hora,placar_a,placar_b,resultado_finalizado,gols_time_a,gols_time_b,tem_penaltis,vencedor_penaltis,competicao,fixture_id',
-            }),
-          ])
-
-          if (livePromise.status === 'fulfilled') {
-            resLive = livePromise.value
-          }
-          if (enquetesPromise.status === 'fulfilled' && Array.isArray(enquetesPromise.value)) {
-            enquetesMatches = enquetesPromise.value
-          }
-          if (localJogosPromise.status === 'fulfilled' && Array.isArray(localJogosPromise.value)) {
-            localJogosMatches = localJogosPromise.value.filter((j) => {
-              const norm = normalizeDataISO(j.data)
-              return norm === dateStr || (j.data && j.data.startsWith(dateStr))
-            })
-          }
-        } finally {
-          clearTimeout(timeoutId)
-        }
-
-        let liveData: ApiResponse | null = null
-        if (resLive && resLive.ok) {
-          try {
-            liveData = await resLive.json()
-          } catch {
-            /* ignore */
-          }
-        } else if (resLive && resLive.status === 429) {
-          setIsRateLimited(true)
-        }
-
-        const rawLiveFixtures: DayFixture[] =
-          liveData && Array.isArray(liveData.fixtures) ? liveData.fixtures : []
-
-        setActiveProvider(liveData?.provider || 'api_football')
-        setIsCached(Boolean(liveData?.cached))
-        setCacheAge(liveData?.cacheAgeSeconds || 0)
-        setTtlRemaining(liveData?.ttlRemainingSeconds ?? 0)
-        const isRateLim = Boolean(liveData?.rate_limited || (resLive && resLive.status === 429))
-        setIsRateLimited(isRateLim)
-
-        // Helper de confronto para merge
-        const areTeamsSameConfrontation = (
-          hA: string,
-          aA: string,
-          hB: string,
-          aB: string,
-        ): boolean => {
-          if (!hA || !aA || !hB || !aB) return false
-          const cHA = cleanTeamName(hA).toLowerCase()
-          const cAA = cleanTeamName(aA).toLowerCase()
-          const cHB = cleanTeamName(hB).toLowerCase()
-          const cAB = cleanTeamName(aB).toLowerCase()
-
-          const direct =
-            (cHA === cHB ||
-              cHA.includes(cHB) ||
-              cHB.includes(cHA) ||
-              stringSimilarity(hA, hB) >= 0.6) &&
-            (cAA === cAB ||
-              cAA.includes(cAB) ||
-              cAB.includes(cAA) ||
-              stringSimilarity(aA, aB) >= 0.6)
-          const inverted =
-            (cHA === cAB ||
-              cHA.includes(cAB) ||
-              cAB.includes(cHA) ||
-              stringSimilarity(hA, aB) >= 0.6) &&
-            (cAA === cHB ||
-              cAA.includes(cHB) ||
-              cHB.includes(cAA) ||
-              stringSimilarity(aA, hB) >= 0.6)
-
-          return direct || inverted
-        }
-
-        // ====================================================================
-        // MERGE: Base de partidas completas de Enquetes + Enriquecimento em Tempo Real
-        // ====================================================================
-        const mergedFixtures: DayFixture[] = []
-        const matchedLiveIndices = new Set<number>()
-
-        // 1. Converte e enriquece todas as partidas buscadas pelo serviço das Enquetes
-        for (const ej of enquetesMatches) {
-          const ejHome = ej.time_a || ''
-          const ejAway = ej.time_b || ''
-          const ejDate = ej.data || dateStr
-          const ejTime = ej.horario || '16:00'
-          const isoDate = `${ejDate}T${ejTime.length === 5 ? ejTime + ':00' : ejTime}-03:00`
-
-          // Busca correspondência na resposta ao vivo de /backend/v1/jogos-do-dia
-          let matchingLiveFixture: DayFixture | null = null
-          for (let li = 0; li < rawLiveFixtures.length; li++) {
-            const lf = rawLiveFixtures[li]
-            const lfHome = lf.teams?.home?.name || ''
-            const lfAway = lf.teams?.away?.name || ''
-            if (areTeamsSameConfrontation(ejHome, ejAway, lfHome, lfAway)) {
-              matchingLiveFixture = lf
-              matchedLiveIndices.add(li)
-              break
-            }
-          }
-
-          if (matchingLiveFixture) {
-            // Se encontrou ao vivo, usa os dados ao vivo preservando dados completos de campeonato/logos
-            // e propagando explicitamente events e scorers para evitar perda de dados dos marcadores
-            const combined: DayFixture = {
-              ...matchingLiveFixture,
-              league: {
-                ...matchingLiveFixture.league,
-                name: matchingLiveFixture.league.name || ej.campeonato,
-                logo: ej.campeonato_logo || matchingLiveFixture.league.logo,
-                region: (ej.regiao as any) || matchingLiveFixture.league.region,
+          return {
+            fixture: {
+              id: rec.fixture_id,
+              date: rec.data_hora_iso || `${rec.data}T${rec.horario || '16:00'}:00-03:00`,
+              status: {
+                short: stShort,
+                long: stLong,
+                elapsed: rec.status_elapsed != null ? rec.status_elapsed : null,
               },
-              teams: {
-                home: {
-                  ...matchingLiveFixture.teams.home,
-                  logo: matchingLiveFixture.teams.home.logo || ej.logo_casa || '',
-                },
-                away: {
-                  ...matchingLiveFixture.teams.away,
-                  logo: matchingLiveFixture.teams.away.logo || ej.logo_visitante || '',
-                },
+            },
+            league: {
+              id: rec.league_id || 0,
+              name: rec.campeonato || 'Futebol',
+              country: rec.pais || 'Brasil',
+              logo: rec.campeonato_logo || '',
+              round: rec.round || '',
+              region: rec.regiao || 'Brasileirão & Copas',
+            },
+            teams: {
+              home: {
+                id: rawPayload.teams?.home?.id || 0,
+                name: rec.time_casa,
+                logo: rec.logo_casa || '',
               },
-              events: matchingLiveFixture.events || [],
-              scorers: matchingLiveFixture.scorers || [],
-            }
-            mergedFixtures.push(combined)
-          } else {
-            // Se não estava no placar ao vivo ainda, cria estrutura padrão agendada
-            const defaultDayFixture: DayFixture = {
-              fixture: {
-                id: ej.fixture_id || ej.id || `enquete_${mergedFixtures.length}`,
-                date: isoDate,
-                status: {
-                  short: 'NS',
-                  long: 'Agendado',
-                  elapsed: null,
-                },
+              away: {
+                id: rawPayload.teams?.away?.id || 0,
+                name: rec.time_visitante,
+                logo: rec.logo_visitante || '',
               },
-              league: {
-                id: ej.campeonato.toLowerCase().includes('libertadores')
-                  ? 13
-                  : ej.campeonato.toLowerCase().includes('brasileir')
-                    ? 71
-                    : 9999,
-                name: ej.campeonato || 'Futebol',
-                country: 'América do Sul',
-                logo: ej.campeonato_logo || '',
-                region: (ej.regiao as any) || 'Brasileirão & Copas',
-              },
-              teams: {
-                home: {
-                  id: 0,
-                  name: ejHome,
-                  logo: ej.logo_casa || '',
-                },
-                away: {
-                  id: 0,
-                  name: ejAway,
-                  logo: ej.logo_visitante || '',
-                },
-              },
-              goals: {
-                home: null,
-                away: null,
-              },
-              scorers: [],
-              isLive: false,
-            }
-            mergedFixtures.push(defaultDayFixture)
+            },
+            goals: {
+              home: rec.placar_casa != null ? Number(rec.placar_casa) : null,
+              away: rec.placar_visitante != null ? Number(rec.placar_visitante) : null,
+            },
+            events: rec.events || rawPayload.events || [],
+            scorers: rec.scorers || [],
+            isLive: isLive,
           }
-        }
+        })
 
-        // 2. Inclui quaisquer outras partidas do liveFixtures que não estavam nas enquetes
-        for (let li = 0; li < rawLiveFixtures.length; li++) {
-          if (!matchedLiveIndices.has(li)) {
-            mergedFixtures.push(rawLiveFixtures[li])
-          }
-        }
+        setActiveProvider('api_football')
+        setIsCached(true)
+        setCacheAge(0)
+        setTtlRemaining(0)
+        setIsRateLimited(false)
 
-        // 3. Fallback de jogos cadastrados na collection local 'jogos' para a data
-        if (localJogosMatches.length > 0) {
-          for (const lj of localJogosMatches) {
-            const hName = lj.time_a || ''
-            const aName = lj.time_b || ''
-            const alreadyExists = mergedFixtures.some((mf) =>
-              areTeamsSameConfrontation(
-                hName,
-                aName,
-                mf.teams?.home?.name || '',
-                mf.teams?.away?.name || '',
-              ),
-            )
-            if (!alreadyExists) {
-              const jDate = normalizeDataISO(lj.data) || dateStr
-              const jTime = lj.hora || '16:00'
-              const isoD = `${jDate}T${jTime.length === 5 ? jTime + ':00' : jTime}-03:00`
-              const isFin = Boolean(lj.resultado_finalizado)
-              const localFixture: DayFixture = {
-                fixture: {
-                  id: lj.fixture_id || lj.id,
-                  date: isoD,
-                  status: {
-                    short: isFin ? 'FT' : 'NS',
-                    long: isFin ? 'Finalizado' : 'Agendado',
-                    elapsed: isFin ? 90 : null,
-                  },
-                },
-                league: {
-                  id: 9998,
-                  name: lj.competicao || 'Bolão',
-                  country: 'Brasil',
-                  logo: '',
-                  region: 'Brasileirão & Copas',
-                },
-                teams: {
-                  home: {
-                    id: 0,
-                    name: hName,
-                    logo: '',
-                  },
-                  away: {
-                    id: 0,
-                    name: aName,
-                    logo: '',
-                  },
-                },
-                goals: {
-                  home: lj.placar_a != null ? Number(lj.placar_a) : null,
-                  away: lj.placar_b != null ? Number(lj.placar_b) : null,
-                },
-                score: {
-                  fulltime: {
-                    home: lj.placar_a != null ? Number(lj.placar_a) : null,
-                    away: lj.placar_b != null ? Number(lj.placar_b) : null,
-                  },
-                },
-                scorers: [],
-                isLive: false,
-              }
-              mergedFixtures.push(localFixture)
-            }
-          }
-        }
+        const finalFixturesList = convertedFixtures
+        setFixtures(finalFixturesList)
+        setIsConfigured(true)
 
-        // Preenchimento de escudos faltantes priorizando team.logo e resolvendo times sem logo (Bournemouth, Liverpool, Atlético Madrid, Marseille)
-        for (const item of mergedFixtures) {
-          const hName = item.teams?.home?.name
-          if (hName) {
-            // Se for PSG, FORÇA a URL oficial definitiva da API-Football (team_id 85)
-            if (hName.toLowerCase().includes('paris') || hName.toLowerCase() === 'psg') {
-              if (item.teams?.home) {
-                item.teams.home.logo = 'https://media.api-sports.io/football/teams/85.png'
-              }
-            }
-
-            if (!item.teams.home.logo) {
-              const fromCache = readEscudoCache(hName)
-              if (fromCache) {
-                item.teams.home.logo = fromCache
-              } else {
-                // Dispara busca assíncrona para hidratar
-                buscarEscudoTime(hName).then((badge) => {
-                  if (badge) {
-                    setFixtures((prev) =>
-                      prev.map((f) =>
-                        f.teams?.home?.name === hName && !f.teams.home.logo
-                          ? { ...f, teams: { ...f.teams, home: { ...f.teams.home, logo: badge } } }
-                          : f,
-                      ),
-                    )
-                  }
-                })
-              }
-            }
-          }
-          const aName = item.teams?.away?.name
-          if (aName) {
-            // Se for PSG, FORÇA a URL oficial definitiva da API-Football (team_id 85)
-            if (aName.toLowerCase().includes('paris') || aName.toLowerCase() === 'psg') {
-              if (item.teams?.away) {
-                item.teams.away.logo = 'https://media.api-sports.io/football/teams/85.png'
-              }
-            }
-
-            if (!item.teams.away.logo) {
-              const fromCache = readEscudoCache(aName)
-              if (fromCache) {
-                item.teams.away.logo = fromCache
-              } else {
-                // Dispara busca assíncrona para hidratar
-                buscarEscudoTime(aName).then((badge) => {
-                  if (badge) {
-                    setFixtures((prev) =>
-                      prev.map((f) =>
-                        f.teams?.away?.name === aName && !f.teams.away.logo
-                          ? { ...f, teams: { ...f.teams, away: { ...f.teams.away, logo: badge } } }
-                          : f,
-                      ),
-                    )
-                  }
-                })
-              }
-            }
-          }
-        }
-
-        // Se ainda assim mergedFixtures estiver vazio, lê o cache antes de zerar o estado
-        let resolvedFixtures = mergedFixtures.length > 0 ? mergedFixtures : rawLiveFixtures
-        if (resolvedFixtures.length === 0) {
-          const cachedFallback = readJogosDiaCache(dateStr)
-          if (cachedFallback && cachedFallback.fixtures.length > 0) {
-            resolvedFixtures = cachedFallback.fixtures
-          }
-        }
-
-        // Se a busca falhou ou retornou vazia mas estamos com rate limit, preserva a lista que já estava na tela se ela existir
-        let finalFixturesList = resolvedFixtures
-        if (finalFixturesList.length === 0 && isRateLim) {
-          setFixtures((prev) => {
-            if (prev && prev.length > 0) {
-              finalFixturesList = prev
-              return prev
-            }
-            return prev
-          })
-        } else {
-          setFixtures(finalFixturesList)
-        }
-
-        // Se obtivemos dados com sucesso (seja via placar ao vivo, fallback ou cache),
-        // NÃO exibir banner de não configurado. Exibir apenas se realmente não houver dados e API não configurada.
-        const effectiveConfigured =
-          finalFixturesList.length > 0 ? true : liveData ? Boolean(liveData.configured) : true
-        setIsConfigured(effectiveConfigured)
-
-        const updatedTimestamp = liveData?.updatedAt || new Date().toISOString()
+        const updatedTimestamp = new Date().toISOString()
         setLastUpdated(updatedTimestamp)
 
-        // Grava no cache de dois níveis
         writeJogosDiaCache(dateStr, {
           fixtures: finalFixturesList,
-          provider: liveData?.provider || 'api_football',
-          configured: effectiveConfigured,
+          provider: 'api_football',
+          configured: true,
           updatedAt: updatedTimestamp,
         })
 
-        // Tratamento de mensagens e erros
-        if (liveData?.rate_limited) {
-          if (finalFixturesList.length === 0) {
-            setErrorMessage(
-              'Dados ao vivo temporariamente indisponíveis (limite de requisições excedido). Tente novamente mais tarde.',
-            )
-          } else {
-            setErrorMessage(null)
-          }
-        } else if (liveData?.error && finalFixturesList.length === 0) {
-          setErrorMessage(liveData.error)
-        } else if (liveData?.message && !liveData?.configured && finalFixturesList.length === 0) {
-          setErrorMessage(liveData.message)
+        if (finalFixturesList.length === 0) {
+          setErrorMessage(
+            'Os jogos de hoje ainda não foram sincronizados pelo cron matinal — volte mais tarde.',
+          )
         } else {
           setErrorMessage(null)
         }
@@ -1003,99 +701,9 @@ export default function JogosDoDia() {
     return { total: relevantFixtures.length, live, scheduled, finished }
   }, [relevantFixtures])
 
-  // Regras estritas de economia de cota pedidas pelo administrador:
-  // 1. Partidas ainda não iniciadas ("Em Breve"/agendadas): NENHUM polling contínuo.
-  // 2. No exato momento do kickoff ("rola a bola"), dispara 1 única busca pela partida.
-  // 3. Durante o jogo (status "Ao Vivo"): APENAS se houver jogos efetivamente ao vivo gera polling periódico (~60s).
-
-  // Kickoff timers: Dispara UMA única busca no exato momento que o jogo começar
-  useEffect(() => {
-    const timers: NodeJS.Timeout[] = []
-    const now = Date.now()
-
-    for (const f of relevantFixtures) {
-      const st = (f.fixture?.status?.short || '').toUpperCase().trim()
-      const long = (f.fixture?.status?.long || '').toUpperCase().trim()
-      const isLive = ['1H', 'HT', '2H', 'ET', 'BT', 'P', 'LIVE'].includes(st)
-      const isFinished = ['FT', 'AET', 'PEN'].includes(st)
-      const isPostponedOrCancelled = isFixturePostponed(st, long) || isFixtureCancelled(st, long)
-
-      if (!isLive && !isFinished && !isPostponedOrCancelled && f.fixture?.date) {
-        const kickoffTime = new Date(f.fixture.date).getTime()
-        if (!isNaN(kickoffTime)) {
-          const delay = kickoffTime - now
-
-          // Se o kickoff for no futuro próximo (até 24 horas), agenda disparo exato uma única vez
-          if (delay > 0 && delay <= 24 * 60 * 60 * 1000) {
-            const t = setTimeout(() => {
-              // Dispara UMA única verificação pontual ao rolar a bola
-              fetchJogos(selectedDate, false)
-            }, delay + 1000) // +1s após o horário para garantir que a partida iniciou
-            timers.push(t)
-          }
-        }
-      }
-    }
-
-    return () => {
-      timers.forEach((t) => clearTimeout(t))
-    }
-  }, [relevantFixtures, selectedDate, fetchJogos])
-
-  // Polling periódico APENAS quando há jogos realmente em andamento (ao vivo)
-  // Requisitos estritos para habilitar polling:
-  // - Horário atual entre kickoff e kickoff + 150 min
-  // - Status não terminal (não é FT/AET/PEN/CANC/PST/ABD/FINISHED)
-  // Intervalo elevado de 2 min para 12 min (720_000 ms) para proteger cota da API-Football.
-  // Jogos futuros e encerrados = polling desativado (clearInterval), consulta única no carregamento via cache local/banco.
-  useEffect(() => {
-    if (isRateLimited) {
-      return
-    }
-
-    const TERMINAL_STATUSES = new Set([
-      'FT',
-      'AET',
-      'PEN',
-      'CANC',
-      'CANCELLED',
-      'PST',
-      'POSTPONED',
-      'ABD',
-      'ABANDONED',
-      'FINISHED',
-    ])
-
-    const now = Date.now()
-    const hasLiveMatchNow = relevantFixtures.some((f) => {
-      const st = (f.fixture?.status?.short || '').trim().toUpperCase()
-      const long = (f.fixture?.status?.long || '').trim().toUpperCase()
-      if (TERMINAL_STATUSES.has(st) || TERMINAL_STATUSES.has(long)) {
-        return false
-      }
-
-      // Verifica janela de kickoff (kickoff <= now <= kickoff + 150 min)
-      const rawDate = f.fixture?.date
-      if (rawDate) {
-        const kickoff = new Date(rawDate).getTime()
-        if (!isNaN(kickoff)) {
-          if (now < kickoff || now > kickoff + 150 * 60 * 1000) {
-            return false
-          }
-        }
-      }
-
-      return ['1H', 'HT', '2H', 'ET', 'BT', 'P', 'LIVE'].includes(st)
-    })
-
-    if (!hasLiveMatchNow) {
-      // Jogos futuros e encerrados = polling desativado
-      return
-    }
-
-    // Sincronização periódica realizada exclusivamente pelo cron backend placar_ao_vivo_sync.
-    // O frontend não realiza polling automático via setInterval para poupar cota da API.
-  }, [relevantFixtures, isRateLimited, selectedDate, fetchJogos])
+  // Regra de ouro da arquitetura:
+  // Zero polling pelo frontend! A tela lê exclusivamente a tabela local do banco.
+  // Nenhuma requisição à API externa é disparada no cliente por timers ou kickoffs.
 
   // Lista de competições 100% dinâmica derivada dos jogos do dia
   const availableCompetitions = useMemo(() => {
@@ -1833,23 +1441,19 @@ export default function JogosDoDia() {
         </div>
       )}
 
-      {/* Alerta de cache e cota */}
+      {/* Indicador de leitura de tabela local */}
       {isCached && (
-        <div className="flex items-center justify-between rounded-lg border border-blue-200 bg-blue-50/60 px-4 py-2 text-[11px] text-blue-900">
+        <div className="flex items-center justify-between rounded-lg border border-emerald-200 bg-emerald-50/70 px-4 py-2 text-[11px] text-emerald-900">
           <div className="flex items-center gap-1.5">
-            <Globe2 className="h-3.5 w-3.5 text-blue-600" />
+            <Globe2 className="h-3.5 w-3.5 text-emerald-600" />
             <span>
-              Servido do cache do servidor (atualizado há{' '}
-              {cacheAge < 60 ? `${cacheAge}s` : `${Math.round(cacheAge / 60)} min`}
-              ).{' '}
-              {counts.live > 0
-                ? 'Atualização automática ativa a cada 2 minutos enquanto houver jogos ao vivo.'
-                : 'Placares sincronizados via cache local (sem consumo desnecessário da API).'}
+              Jogos sincronizados com a tabela local do Bolão via rotina diária matinal (sem
+              chamadas externas no clique).
             </span>
           </div>
           {lastUpdated && (
-            <span className="text-[10px] text-blue-700 font-medium">
-              Último sync: {new Date(lastUpdated).toLocaleTimeString('pt-BR')}
+            <span className="text-[10px] text-emerald-700 font-medium">
+              Leitura local: {new Date(lastUpdated).toLocaleTimeString('pt-BR')}
             </span>
           )}
         </div>

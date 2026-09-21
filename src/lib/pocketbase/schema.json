@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-09-21T15:21:28.894Z",
+  "generatedAt": "2026-09-21T15:36:00.914Z",
   "collections": [
     {
       "name": "users",
@@ -884,6 +884,183 @@
         "CREATE INDEX idx_enquete_votos_enquete ON enquete_votos (enquete)",
         "CREATE INDEX idx_enquete_votos_jogo ON enquete_votos (jogo)",
         "CREATE INDEX idx_enquete_votos_user ON enquete_votos (user)"
+      ]
+    },
+    {
+      "name": "jogos_do_dia",
+      "type": "base",
+      "apiRules": {
+        "list": "@request.auth.id != ''",
+        "view": "@request.auth.id != ''",
+        "create": "@request.auth.id != ''",
+        "update": "@request.auth.id != ''",
+        "delete": "@request.auth.id != ''"
+      },
+      "fields": [
+        {
+          "name": "fixture_id",
+          "type": "text",
+          "required": true,
+          "system": false
+        },
+        {
+          "name": "data",
+          "type": "text",
+          "required": true,
+          "system": false
+        },
+        {
+          "name": "horario",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "data_hora_iso",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "campeonato",
+          "type": "text",
+          "required": true,
+          "system": false
+        },
+        {
+          "name": "campeonato_logo",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "league_id",
+          "type": "number",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "round",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "regiao",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "pais",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "time_casa",
+          "type": "text",
+          "required": true,
+          "system": false
+        },
+        {
+          "name": "time_visitante",
+          "type": "text",
+          "required": true,
+          "system": false
+        },
+        {
+          "name": "logo_casa",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "logo_visitante",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "placar_casa",
+          "type": "number",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "placar_visitante",
+          "type": "number",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "status_short",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "status_long",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "status_elapsed",
+          "type": "number",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "gols_casa",
+          "type": "json",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "gols_visitante",
+          "type": "json",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "scorers",
+          "type": "json",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "events",
+          "type": "json",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "raw_payload",
+          "type": "json",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "created",
+          "type": "autodate",
+          "required": false,
+          "system": false,
+          "autodateTriggers": ["onCreate"]
+        },
+        {
+          "name": "updated",
+          "type": "autodate",
+          "required": false,
+          "system": false,
+          "autodateTriggers": ["onCreate", "onUpdate"]
+        }
+      ],
+      "indexes": [
+        "CREATE UNIQUE INDEX idx_jogos_do_dia_data_fixture ON jogos_do_dia (data, fixture_id)",
+        "CREATE INDEX idx_jogos_do_dia_data ON jogos_do_dia (data)",
+        "CREATE INDEX idx_jogos_do_dia_campeonato ON jogos_do_dia (campeonato)",
+        "CREATE INDEX idx_jogos_do_dia_status ON jogos_do_dia (status_short)"
       ]
     }
   ]
