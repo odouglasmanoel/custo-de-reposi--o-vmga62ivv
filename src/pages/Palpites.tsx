@@ -44,7 +44,11 @@ import {
   sortJogosDecrescente,
 } from '@/lib/dateUtils'
 import { getScoreBreakdownBadges } from '@/lib/scoreBadgeUtils'
-import { formatPalpiteMarcadoresSummary, getPalpiteMarcadoresPorTime } from '@/lib/scorerUtils'
+import {
+  formatPalpiteMarcadoresSummary,
+  getPalpiteMarcadoresPorTime,
+  formatScorersDisplayText,
+} from '@/lib/scorerUtils'
 import { buscarEscudoTime, readEscudoCache } from '@/services/enquetes'
 import { GameLineupAccordion } from '@/components/GameLineupAccordion'
 import { checkPlayerInLineup, LineupResponse } from '@/services/escalacoes'
@@ -1705,10 +1709,7 @@ export default function Palpites() {
                               Goleadores indicados ({jogo.time_a}):
                             </span>
                             <p className="font-medium text-slate-800">
-                              {Array.isArray(activeSelectedBet.goleadores_a) &&
-                              activeSelectedBet.goleadores_a.length > 0
-                                ? activeSelectedBet.goleadores_a.join(', ')
-                                : 'Nenhum'}
+                              {formatScorersDisplayText(activeSelectedBet.goleadores_a)}
                             </p>
                           </div>
                           <div className="rounded bg-white p-2 border border-slate-200">
@@ -1716,10 +1717,7 @@ export default function Palpites() {
                               Goleadores indicados ({jogo.time_b}):
                             </span>
                             <p className="font-medium text-slate-800">
-                              {Array.isArray(activeSelectedBet.goleadores_b) &&
-                              activeSelectedBet.goleadores_b.length > 0
-                                ? activeSelectedBet.goleadores_b.join(', ')
-                                : 'Nenhum'}
+                              {formatScorersDisplayText(activeSelectedBet.goleadores_b)}
                             </p>
                           </div>
                         </div>

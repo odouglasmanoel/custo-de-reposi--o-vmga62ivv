@@ -2087,7 +2087,7 @@ export default function BolaoDashboard() {
                 const marcadoresBanco =
                   Array.isArray(jogo.marcadores) && jogo.marcadores.length > 0
                     ? jogo.marcadores
-                        .map((m) => (typeof m === 'string' ? m : m.nome))
+                        .map((m) => (typeof m === 'string' ? m : m.nome || m.name || ''))
                         .filter(Boolean)
                         .join(', ')
                     : ''

@@ -36,7 +36,7 @@ export function extractScorerNames(raw: any): string[] {
           return item.trim()
         }
         if (item && typeof item === 'object') {
-          const nome = String(item.nome || '').trim()
+          const nome = String(item.nome || item.name || '').trim()
           if (!nome) return ''
           if (item.gol_contra || item.posicao === 'Gol Contra') {
             return `${nome} (gol contra)`
@@ -64,6 +64,50 @@ export function extractScorerNames(raw: any): string[] {
     }
   }
   return []
+}
+
+/**
+ * Formata lista de goleadores para exibição amigável em texto puro.
+ * Retorna 'Nenhum' se vazio/nulo.
+ * Aceita array de objetos ({nome, posicao, ...}), array de strings, ou string JSON/CSV.
+ */
+export function formatScorersDisplayText(goleadores: any): string {
+  if (!goleadores) return 'Nenhum'
+
+  let list: any[] = []
+
+  if (Array.isArray(goleadores)) {
+    list = goleadores
+  } else if (typeof goleadores === 'string') {
+    const trimmed = goleadores.trim()
+    if (!trimmed) return 'Nenhum'
+    try {
+      const parsed = JSON.parse(trimmed)
+      if (Array.isArray(parsed)) {
+        list = parsed
+      } else {
+        list = [parsed]
+      }
+    } catch {
+      list = trimmed.split(',')
+    }
+  } else if (typeof goleadores === 'object') {
+    list = [goleadores]
+  }
+
+  const names = list
+    .map((item) => {
+      if (!item) return ''
+      if (typeof item === 'object') {
+        return String(item.nome || item.name || JSON.stringify(item)).trim()
+      }
+      return String(item).trim()
+    })
+    .filter((n) => n.length > 0)
+
+  if (names.length === 0) return 'Nenhum'
+
+  return names.join(', ')
 }
 
 /**

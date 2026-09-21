@@ -60,7 +60,7 @@ function resolveScorerItem(
   if (typeof rawItem === 'string') {
     rawStr = rawItem.trim()
   } else if (rawItem && typeof rawItem === 'object') {
-    rawStr = String(rawItem.nome || '').trim()
+    rawStr = String(rawItem.nome || rawItem.name || '').trim()
     explicitPos = rawItem.posicao ? String(rawItem.posicao) : undefined
     explicitGolContra = Boolean(rawItem.gol_contra)
   }

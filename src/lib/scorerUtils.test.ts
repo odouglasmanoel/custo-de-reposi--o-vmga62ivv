@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   extractScorerNames,
+  formatScorersDisplayText,
   formatPalpiteMarcadoresSummary,
   formatScorersGroupedByPlayer,
   getPalpiteMarcadoresPorTime,
@@ -450,6 +451,62 @@ describe('scorerUtils', () => {
           (item) => item.includes("Raphinha 22', 52', 69'") && item.includes('+3 pts'),
         ),
       ).toBe(true)
+    })
+  })
+
+  describe('formatScorersDisplayText', () => {
+    it('retorna "Nenhum" para nulo, indefinido, vazio ou array vazio', () => {
+      expect(formatScorersDisplayText(null)).toBe('Nenhum')
+      expect(formatScorersDisplayText(undefined)).toBe('Nenhum')
+      expect(formatScorersDisplayText('')).toBe('Nenhum')
+      expect(formatScorersDisplayText([])).toBe('Nenhum')
+      expect(formatScorersDisplayText('   ')).toBe('Nenhum')
+    })
+
+    it('formata array de objetos contendo nome ou name', () => {
+      const goleadores = [
+        { nome: 'Yuri Alberto', posicao: 'Atacante' },
+        { name: 'Romero', posicao: 'Atacante' },
+      ]
+      expect(formatScorersDisplayText(goleadores)).toBe('Yuri Alberto, Romero')
+    })
+
+    it('formata array de strings simples', () => {
+      expect(formatScorersDisplayText(['Yuri Alberto', 'Romero'])).toBe('Yuri Alberto, Romero')
+    })
+
+    it('formata string JSON com array de objetos ou strings', () => {
+      const jsonStr = JSON.stringify([{ nome: 'Veiga' }, { nome: 'Flaco López' }])
+      expect(formatScorersDisplayText(jsonStr)).toBe('Veiga, Flaco López')
+
+      const jsonStrStrings = JSON.stringify(['Veiga', 'Flaco López'])
+      expect(formatScorersDisplayText(jsonStrStrings)).toBe('Veiga, Flaco López')
+    })
+
+    it('formata string CSV separada por vírgula', () => {
+      expect(formatScorersDisplayText('Veiga, Flaco López')).toBe('Veiga, Flaco López')
+    })
+
+    it('descarta itens vazios e retorna "Nenhum" se todos forem vazios', () => {
+      expect(formatScorersDisplayText([{ nome: '' }, { nome: '   ' }])).toBe('Nenhum')
+      expect(formatScorersDisplayText(['', '   '])).toBe('Nenhum')
+    })
+  })
+
+  describe('extractScorerNames com item.name', () => {
+    it('aceita item.name além de item.nome para objetos', () => {
+      const items = [
+        { nome: 'Yuri Alberto' },
+        { name: 'Garro' },
+        { name: 'Hugo', gol_contra: true },
+        { name: 'Félix Torres', posicao: 'Gol Contra' },
+      ]
+      expect(extractScorerNames(items)).toEqual([
+        'Yuri Alberto',
+        'Garro',
+        'Hugo (gol contra)',
+        'Félix Torres (gol contra)',
+      ])
     })
   })
 })
