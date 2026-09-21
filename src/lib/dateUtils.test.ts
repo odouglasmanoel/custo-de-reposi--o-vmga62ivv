@@ -18,6 +18,7 @@ import {
   sortJogosDecrescente,
   formatDataHoraSaoPaulo,
   satisfiesEnqueteMinTimeMargin,
+  formatEnqueteTituloDinamico,
 } from './dateUtils'
 
 describe('dateUtils - Jogos de Hoje e Fuso de Brasília', () => {
@@ -439,6 +440,126 @@ describe('dateUtils - Jogos de Hoje e Fuso de Brasília', () => {
 
       const ascMesmoDia = ordenarJogos(listaMesmoDia, 'crescente')
       expect(ascMesmoDia.map((j) => j.id)).toEqual(['jogo_manha', 'jogo_tarde', 'jogo_noite'])
+    })
+  })
+
+  describe('formatEnqueteTituloDinamico (Nomenclatura Dinâmica da Enquete)', () => {
+    it('calcula o título a partir da menor e maior data dos jogos no fuso de SP', () => {
+      const jogos = [
+        { data: '2026-09-24', horario: '15:45' },
+        { data: '2026-09-23', horario: '17:00' },
+        { data: '2026-09-26', horario: '15:45' },
+        { data: '2026-09-25', horario: '20:00' },
+      ]
+
+      const tituloSemStatus = formatEnqueteTituloDinamico({
+        titulo: 'Enquete Copa Coni',
+        jogos,
+        data_inicio: '2026-09-22',
+        data_fim: '2026-10-06',
+        status: 'aberta',
+      })
+
+      expect(tituloSemStatus).toBe('Enquete Copa Coni — 23/09/2026 a 26/09/2026')
+
+      const tituloComStatus = formatEnqueteTituloDinamico({
+        titulo: 'Enquete Copa Coni',
+        jogos,
+        data_inicio: '2026-09-22',
+        data_fim: '2026-10-06',
+        status: 'aberta',
+        incluirStatus: true,
+      })
+
+      expect(tituloComStatus).toBe('Enquete Copa Coni — 23/09/2026 a 26/09/2026 (Aberta)')
+    })
+
+    it('formata o status corretamente entre Aberta, Encerrada e Cadastrada', () => {
+      const jogos = [
+        { data: '2026-09-23', horario: '17:00' },
+        { data: '2026-09-26', horario: '15:45' },
+      ]
+
+      expect(
+        formatEnqueteTituloDinamico({
+          status: 'cadastrada',
+          jogos,
+          incluirStatus: true,
+        }),
+      ).toBe('Enquete Copa Coni — 23/09/2026 a 26/09/2026 (Cadastrada)')
+
+      expect(
+        formatEnqueteTituloDinamico({
+          status: 'encerrada',
+          jogos,
+          incluirStatus: true,
+        }),
+      ).toBe('Enquete Copa Coni — 23/09/2026 a 26/09/2026 (Encerrada)')
+
+      expect(
+        formatEnqueteTituloDinamico({
+          status: 'aberta',
+          jogos,
+          incluirStatus: true,
+        }),
+      ).toBe('Enquete Copa Coni — 23/09/2026 a 26/09/2026 (Aberta)')
+    })
+
+    it('fallback seguro: quando a enquete não possui jogos cadastrados usa data_inicio a data_fim sem quebrar', () => {
+      const semJogos = formatEnqueteTituloDinamico({
+        titulo: 'Enquete Copa Coni',
+        data_inicio: '2026-09-22',
+        data_fim: '2026-10-06',
+        status: 'aberta',
+        jogos: [],
+        incluirStatus: true,
+      })
+
+      expect(semJogos).toBe('Enquete Copa Coni — 22/09/2026 a 06/10/2026 (Aberta)')
+    })
+
+    it('suporta formatos de data heterogêneos (ISO UTC, DD/MM/YYYY, Date object) e campo hora/horario', () => {
+      const jogosHeterogeneos = [
+        { data: '23/09/2026', hora: '19:00' },
+        { data: '2026-09-26T18:45:00.000Z', horario: '15:45' },
+        { data: new Date('2026-09-24T12:00:00.000Z'), horario: '12:00' },
+      ]
+
+      const resultado = formatEnqueteTituloDinamico({
+        titulo: 'Enquete Copa Coni',
+        jogos: jogosHeterogeneos,
+        data_inicio: '2026-09-20',
+        data_fim: '2026-09-30',
+        status: 'aberta',
+      })
+
+      expect(resultado).toBe('Enquete Copa Coni — 23/09/2026 a 26/09/2026')
+    })
+
+    it('preserva nomes de copas/competições customizadas no prefixo do título', () => {
+      const jogos = [
+        { data: '2026-09-23', horario: '17:00' },
+        { data: '2026-09-26', horario: '15:45' },
+      ]
+
+      const resultado = formatEnqueteTituloDinamico({
+        titulo: 'Enquete Champions Coni — 01/01/2026 a 02/01/2026',
+        jogos,
+        status: 'aberta',
+        incluirStatus: true,
+      })
+
+      expect(resultado).toBe('Enquete Champions Coni — 23/09/2026 a 26/09/2026 (Aberta)')
+    })
+
+    it('se houver apenas um único jogo cadastrado, exibe data única ou mesmo início e fim', () => {
+      const jogoUnico = [{ data: '2026-09-23', horario: '17:00' }]
+      const resultado = formatEnqueteTituloDinamico({
+        titulo: 'Enquete Copa Coni',
+        jogos: jogoUnico,
+      })
+
+      expect(resultado).toBe('Enquete Copa Coni — 23/09/2026 a 23/09/2026')
     })
   })
 })

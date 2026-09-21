@@ -611,3 +611,131 @@ export function formatEnquetePrazoLimiteBR(
 
   return formatDataBR(target)
 }
+
+/**
+ * Interface mínima de um confronto da enquete para cálculo do título dinâmico.
+ */
+export interface EnqueteJogoItemLike {
+  data?: string | Date | null
+  horario?: string | null
+  hora?: string | null
+}
+
+/**
+ * Interface mínima de uma enquete para cálculo do título dinâmico.
+ */
+export interface EnqueteTituloOptions {
+  titulo?: string | null
+  data_inicio?: string | Date | null
+  data_fim?: string | Date | null
+  status?: string | null
+  jogos?: EnqueteJogoItemLike[] | null
+  incluirStatus?: boolean
+}
+
+/**
+ * Normaliza e formata o status da enquete para o sufixo:
+ * "Aberta" | "Encerrada" | "Cadastrada"
+ */
+export function formatEnqueteStatusLabel(status?: string | null): string {
+  const s = (status || '').trim().toLowerCase()
+  if (s === 'cadastrada') return 'Cadastrada'
+  if (s === 'encerrada') return 'Encerrada'
+  return 'Aberta'
+}
+
+/**
+ * Extrai o nome da competição/copa a partir do título existente ou padrão.
+ * Padrão: "Copa Coni"
+ */
+export function extrairNomeCopaEnquete(titulo?: string | null, fallback = 'Copa Coni'): string {
+  if (!titulo) return fallback
+  const trimmed = titulo.trim()
+  if (!trimmed) return fallback
+
+  // Ex.: "Enquete Copa Coni — 23/09/2026 a 26/09/2026 (Aberta)"
+  // ou "Copa Coni - 23/09/2026 a 26/09/2026"
+  const matchPrefixo = trimmed.match(/^(?:Enquete\s+)?([^\-—–]+)/i)
+  if (matchPrefixo && matchPrefixo[1].trim()) {
+    const parsed = matchPrefixo[1].trim()
+    if (!/\d/.test(parsed)) {
+      const semEnquete = parsed.replace(/^Enquete\s+/i, '').trim()
+      if (semEnquete) return semEnquete
+    }
+  }
+
+  return fallback
+}
+
+/**
+ * Monta dinamicamente o título de uma enquete a partir dos jogos cadastrados:
+ * - Menor data/hora e maior data/hora dos jogos no fuso America/Sao_Paulo (UTC-3).
+ * - Formato: "Enquete [Nome da Copa] — DD/MM/AAAA a DD/MM/AAAA" (ou " - " / " — ")
+ * - Se incluirStatus = true: adiciona " (Status)" no final: "Enquete [Nome] — DD/MM/AAAA a DD/MM/AAAA (Aberta)"
+ * - Fallback: Se não houver jogos cadastrados, usa o intervalo fixo predefinido (data_inicio a data_fim).
+ */
+export function formatEnqueteTituloDinamico(options: EnqueteTituloOptions): string {
+  const nomeCopa = extrairNomeCopaEnquete(options.titulo, 'Copa Coni')
+  const statusLabel = formatEnqueteStatusLabel(options.status)
+  const incluirStatus = Boolean(options.incluirStatus)
+
+  const jogosValidos: Array<{ timestamp: number; dataSP: string }> = []
+  if (Array.isArray(options.jogos) && options.jogos.length > 0) {
+    for (const j of options.jogos) {
+      if (!j) continue
+      const rawData = j.data
+      const rawHora = j.horario || j.hora || '16:00'
+      if (!rawData) continue
+
+      const sp = formatDataHoraSaoPaulo(rawData, rawHora)
+      const dataSP = sp.data || normalizeDataISO(rawData)
+      if (!dataSP) continue
+
+      const ts = getJogoSortTimestamp(dataSP, sp.horario || rawHora)
+      jogosValidos.push({ timestamp: ts, dataSP })
+    }
+  }
+
+  let dMinBR = ''
+  let dMaxBR = ''
+
+  if (jogosValidos.length > 0) {
+    jogosValidos.sort((a, b) => a.timestamp - b.timestamp)
+    const menor = jogosValidos[0]
+    const maior = jogosValidos[jogosValidos.length - 1]
+    dMinBR = formatDataBR(menor.dataSP)
+    dMaxBR = formatDataBR(maior.dataSP)
+  } else {
+    // Fallback: intervalo fixo pré-definido da enquete (data_inicio e data_fim)
+    const spInicio = options.data_inicio
+      ? formatDataHoraSaoPaulo(options.data_inicio).data || options.data_inicio
+      : ''
+    const spFim = options.data_fim
+      ? formatDataHoraSaoPaulo(options.data_fim).data || options.data_fim
+      : ''
+    dMinBR = formatDataBR(spInicio)
+    dMaxBR = formatDataBR(spFim)
+  }
+
+  let intervaloTexto = ''
+  if (dMinBR && dMinBR !== '—' && dMaxBR && dMaxBR !== '—') {
+    intervaloTexto = `${dMinBR} a ${dMaxBR}`
+  } else if (dMinBR && dMinBR !== '—') {
+    intervaloTexto = dMinBR
+  } else if (dMaxBR && dMaxBR !== '—') {
+    intervaloTexto = dMaxBR
+  }
+
+  let baseTitulo = ''
+  if (intervaloTexto) {
+    baseTitulo = `Enquete ${nomeCopa} — ${intervaloTexto}`
+  } else {
+    baseTitulo = `Enquete ${nomeCopa}`
+  }
+
+  if (incluirStatus) {
+    return `${baseTitulo} (${statusLabel})`
+  }
+
+  return baseTitulo
+}

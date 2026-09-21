@@ -51,6 +51,7 @@ import {
   satisfiesEnqueteMinTimeMargin,
   isEnqueteExpirada,
   formatEnquetePrazoLimiteBR,
+  formatEnqueteTituloDinamico,
 } from '@/lib/dateUtils'
 import { Skeleton } from '@/components/ui/skeleton'
 import {
@@ -175,6 +176,19 @@ export default function Enquetes() {
   const [manualHorario, setManualHorario] = useState('16:00')
   const [manualAvisoMargem, setManualAvisoMargem] = useState<string | null>(null)
   const [manualAvisoDuplicado, setManualAvisoDuplicado] = useState<string | null>(null)
+
+  // Título dinâmico da enquete ativa calculado em tempo real com base nos jogos carregados
+  const tituloEnqueteAtiva = useMemo(() => {
+    if (!enqueteAtiva) return ''
+    return formatEnqueteTituloDinamico({
+      titulo: enqueteAtiva.titulo,
+      data_inicio: enqueteAtiva.data_inicio,
+      data_fim: enqueteAtiva.data_fim,
+      status: enqueteAtiva.status,
+      jogos: jogosEnquete,
+      incluirStatus: false,
+    })
+  }, [enqueteAtiva, jogosEnquete])
 
   // Diálogo para Reabrir Votação com nova data limite
   const [dialogReabrirOpen, setDialogReabrirOpen] = useState(false)
@@ -319,6 +333,24 @@ export default function Enquetes() {
 
         setJogosEnquete(jogosNormalizados)
         setMeusVotosIds(dados.meusVotosIds)
+
+        // Se o título dinâmico calculado com base nos jogos for diferente do armazenado localmente na lista,
+        // sincroniza o item na lista do dropdown para refletir de imediato o intervalo real dos confrontos
+        if (dados.enquete && jogosNormalizados.length > 0) {
+          const tituloDinamicoCalculado = formatEnqueteTituloDinamico({
+            titulo: dados.enquete.titulo,
+            data_inicio: dados.enquete.data_inicio,
+            data_fim: dados.enquete.data_fim,
+            status: dados.enquete.status,
+            jogos: jogosNormalizados,
+            incluirStatus: false,
+          })
+          if (tituloDinamicoCalculado && tituloDinamicoCalculado !== dados.enquete.titulo) {
+            setEnquetes((prev) =>
+              prev.map((e) => (e.id === enqueteId ? { ...e, titulo: tituloDinamicoCalculado } : e)),
+            )
+          }
+        }
       } catch (err) {
         console.error('Erro ao obter detalhes da enquete:', err)
       } finally {
@@ -448,8 +480,21 @@ export default function Enquetes() {
     }
     const linkPagina = urlObj.toString()
 
+    const tituloMsg =
+      tituloEnqueteAtiva ||
+      (enqueteAtiva
+        ? formatEnqueteTituloDinamico({
+            titulo: enqueteAtiva.titulo,
+            data_inicio: enqueteAtiva.data_inicio,
+            data_fim: enqueteAtiva.data_fim,
+            status: enqueteAtiva.status,
+            jogos: jogosEnquete,
+            incluirStatus: false,
+          })
+        : 'Enquete Copa Coni')
+
     const mensagem =
-      `🗳️ *Votação Aberta no Bolão do Grupo!*\n\n` +
+      `🗳️ *Votação Aberta: ${tituloMsg}*\n\n` +
       `Pessoal, a enquete da rodada já está aberta para escolha dos jogos! Entrem para registrar seus votos antes do encerramento.\n\n` +
       `👉 Acesse e vote agora: ${linkPagina}`
 
@@ -574,7 +619,13 @@ export default function Enquetes() {
         )
       } else if (!tituloEnquete) {
         setTituloEnquete(
-          `Enquete Copa Coni — ${formatDataBR(dataInicio)} a ${formatDataBR(dataFim)}`,
+          formatEnqueteTituloDinamico({
+            titulo: 'Enquete Copa Coni',
+            data_inicio: dataInicio,
+            data_fim: dataFim,
+            jogos: normalizedFixtures,
+            incluirStatus: false,
+          }),
         )
       }
     } catch (err: unknown) {
@@ -720,9 +771,17 @@ export default function Enquetes() {
     setJogosEncontrados((prev) => [novoJogoManual, ...prev])
     setJogosPreSelecionados((prev) => new Set(prev).add(novoJogoManual.id))
 
-    // Se o título ainda não foi preenchido, sugere
-    if (!tituloEnquete) {
-      setTituloEnquete(`Enquete Copa Coni — ${formatDataBR(dataInicio)} a ${formatDataBR(dataFim)}`)
+    // Atualiza ou sugere título recalculando dinamicamente com o novo jogo incluído
+    if (!tituloEnquete || tituloEnquete.startsWith('Enquete Copa Coni')) {
+      setTituloEnquete(
+        formatEnqueteTituloDinamico({
+          titulo: tituloEnquete || 'Enquete Copa Coni',
+          data_inicio: dataInicio,
+          data_fim: dataFim,
+          jogos: [novoJogoManual, ...jogosEncontrados],
+          incluirStatus: false,
+        }),
+      )
     }
 
     toast({
@@ -739,12 +798,24 @@ export default function Enquetes() {
 
   // Admin: Remover jogo da lista de criação (seja manual ou api)
   const handleRemoverJogoCriacao = (jogoId: string) => {
-    setJogosEncontrados((prev) => prev.filter((j) => j.id !== jogoId))
+    const restantes = jogosEncontrados.filter((j) => j.id !== jogoId)
+    setJogosEncontrados(restantes)
     setJogosPreSelecionados((prev) => {
       const next = new Set(prev)
       next.delete(jogoId)
       return next
     })
+    if (restantes.length > 0 && (!tituloEnquete || tituloEnquete.startsWith('Enquete Copa Coni'))) {
+      setTituloEnquete(
+        formatEnqueteTituloDinamico({
+          titulo: tituloEnquete || 'Enquete Copa Coni',
+          data_inicio: dataInicio,
+          data_fim: dataFim,
+          jogos: restantes,
+          incluirStatus: false,
+        }),
+      )
+    }
   }
 
   // Admin: Publicar Nova Enquete
@@ -1600,7 +1671,7 @@ export default function Enquetes() {
             <div>
               <div className="flex flex-wrap items-center gap-2">
                 <h1 className="text-2xl font-bold tracking-tight text-[#0F172A]">
-                  Enquetes da Copa Coni
+                  {tituloEnqueteAtiva || 'Enquetes da Copa Coni'}
                 </h1>
                 <Badge
                   variant="secondary"
@@ -1616,8 +1687,9 @@ export default function Enquetes() {
                 )}
               </div>
               <p className="text-xs text-[#64748B]">
-                Votação colaborativa do grupo para escolher as partidas aleatórias que entrarão na
-                rodada.
+                {tituloEnqueteAtiva
+                  ? 'Votação colaborativa do grupo para escolher as partidas que entrarão na Copa Coni.'
+                  : 'Votação colaborativa do grupo para escolher as partidas aleatórias que entrarão na rodada.'}
               </p>
             </div>
           </div>
@@ -1648,17 +1720,23 @@ export default function Enquetes() {
                 }}
                 className="h-9 rounded-md border border-slate-200 bg-white px-2.5 text-xs font-semibold text-slate-800 shadow-xs focus:border-emerald-500 focus:outline-none"
               >
-                {enquetes.map((enq) => (
-                  <option key={enq.id} value={enq.id}>
-                    {enq.titulo} (
-                    {enq.status === 'aberta'
-                      ? 'Aberta'
-                      : enq.status === 'cadastrada'
-                        ? 'Cadastrada'
-                        : 'Encerrada'}
-                    )
-                  </option>
-                ))}
+                {enquetes.map((enq) => {
+                  // Se for a enquete ativa atualmente carregada na tela, usa seus jogos em tempo real
+                  const jogosParaEnq = enq.id === enqueteAtivaId ? jogosEnquete : null
+                  const labelCompleto = formatEnqueteTituloDinamico({
+                    titulo: enq.titulo,
+                    data_inicio: enq.data_inicio,
+                    data_fim: enq.data_fim,
+                    status: enq.status,
+                    jogos: jogosParaEnq,
+                    incluirStatus: true,
+                  })
+                  return (
+                    <option key={enq.id} value={enq.id}>
+                      {labelCompleto}
+                    </option>
+                  )
+                })}
               </select>
             </div>
           )}
@@ -3015,8 +3093,9 @@ export default function Enquetes() {
               Adicionar Jogo Manual na Enquete Ativa
             </DialogTitle>
             <DialogDescription className="text-xs text-slate-600">
-              Inclua manualmente um confronto em <strong>"{enqueteAtiva?.titulo}"</strong>. O jogo
-              ficará disponível imediatamente para votação sem afetar os votos já existentes.
+              Inclua manualmente um confronto em{' '}
+              <strong>"{tituloEnqueteAtiva || enqueteAtiva?.titulo}"</strong>. O jogo ficará
+              disponível imediatamente para votação sem afetar os votos já existentes.
             </DialogDescription>
           </DialogHeader>
 
@@ -3429,8 +3508,9 @@ export default function Enquetes() {
               Excluir Enquete
             </DialogTitle>
             <DialogDescription className="text-xs text-slate-600">
-              Tem certeza que deseja excluir a enquete <strong>"{enqueteAtiva?.titulo}"</strong>?
-              Todos os votos e confrontos desta enquete serão removidos.
+              Tem certeza que deseja excluir a enquete{' '}
+              <strong>"{tituloEnqueteAtiva || enqueteAtiva?.titulo}"</strong>? Todos os votos e
+              confrontos desta enquete serão removidos.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
