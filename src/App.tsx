@@ -108,7 +108,9 @@ const App = () => (
               path="/bolao/jogos-do-dia"
               element={
                 <BolaoRoute>
-                  <JogosDoDia />
+                  <Layout>
+                    <JogosDoDia />
+                  </Layout>
                 </BolaoRoute>
               }
             />
