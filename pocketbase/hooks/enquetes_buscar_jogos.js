@@ -1574,6 +1574,51 @@ onRecordCreate((e) => {
   }
 
   e.next()
+
+  // Recalcula dinamicamente o título da enquete após inserção do jogo
+  try {
+    var enqueteId = rec.getString('enquete')
+    if (enqueteId) {
+      var enq = $app.findRecordById('enquetes', enqueteId)
+      if (enq) {
+        var formatBR = function (iso) {
+          if (!iso) return ''
+          var parts = iso.split('-')
+          if (parts.length === 3) return parts[2] + '/' + parts[1] + '/' + parts[0]
+          return iso
+        }
+        var jogos = $app.findRecordsByFilter(
+          'enquete_jogos',
+          "enquete = '" + enqueteId + "'",
+          'data,horario',
+          500,
+          0,
+        )
+        var nomeCopa = 'Copa Coni'
+        var curTitulo = enq.getString('titulo') || ''
+        var matchPrefixo = curTitulo.match(/^(?:Enquete\s+)?([^\-—–]+)/i)
+        if (matchPrefixo && matchPrefixo[1].trim()) {
+          var parsedPrefixo = matchPrefixo[1].trim()
+          if (!/\d/.test(parsedPrefixo)) {
+            nomeCopa = parsedPrefixo.replace(/^Enquete\s+/i, '').trim() || nomeCopa
+          }
+        }
+        if (jogos.length > 0) {
+          var dMin = jogos[0].getString('data')
+          var dMax = jogos[jogos.length - 1].getString('data')
+          if (dMin && dMax) {
+            enq.set(
+              'titulo',
+              'Enquete ' + nomeCopa + ' — ' + formatBR(dMin) + ' a ' + formatBR(dMax),
+            )
+            $app.save(enq)
+          }
+        }
+      }
+    }
+  } catch (errRecalc) {
+    console.log('[enquete_jogos onRecordCreate] Erro ao recalcular título da enquete:', errRecalc)
+  }
 }, 'enquete_jogos')
 
 onRecordUpdate((e) => {
@@ -1604,4 +1649,119 @@ onRecordUpdate((e) => {
   }
 
   e.next()
+
+  // Recalcula dinamicamente o título da enquete caso data/horário do jogo tenha sido editado
+  try {
+    var enqueteId = rec.getString('enquete')
+    if (enqueteId) {
+      var enq = $app.findRecordById('enquetes', enqueteId)
+      if (enq) {
+        var formatBR = function (iso) {
+          if (!iso) return ''
+          var parts = iso.split('-')
+          if (parts.length === 3) return parts[2] + '/' + parts[1] + '/' + parts[0]
+          return iso
+        }
+        var jogos = $app.findRecordsByFilter(
+          'enquete_jogos',
+          "enquete = '" + enqueteId + "'",
+          'data,horario',
+          500,
+          0,
+        )
+        var nomeCopa = 'Copa Coni'
+        var curTitulo = enq.getString('titulo') || ''
+        var matchPrefixo = curTitulo.match(/^(?:Enquete\s+)?([^\-—–]+)/i)
+        if (matchPrefixo && matchPrefixo[1].trim()) {
+          var parsedPrefixo = matchPrefixo[1].trim()
+          if (!/\d/.test(parsedPrefixo)) {
+            nomeCopa = parsedPrefixo.replace(/^Enquete\s+/i, '').trim() || nomeCopa
+          }
+        }
+        if (jogos.length > 0) {
+          var dMin = jogos[0].getString('data')
+          var dMax = jogos[jogos.length - 1].getString('data')
+          if (dMin && dMax) {
+            enq.set(
+              'titulo',
+              'Enquete ' + nomeCopa + ' — ' + formatBR(dMin) + ' a ' + formatBR(dMax),
+            )
+            $app.save(enq)
+          }
+        }
+      }
+    }
+  } catch (errRecalc) {
+    console.log('[enquete_jogos onRecordUpdate] Erro ao recalcular título da enquete:', errRecalc)
+  }
+}, 'enquete_jogos')
+
+onRecordDelete((e) => {
+  var rec = e.record
+  var enqueteId = rec.getString('enquete')
+  var jogoId = rec.id
+
+  e.next()
+
+  // Recalcula dinamicamente o título da enquete após a exclusão do jogo
+  try {
+    if (enqueteId) {
+      var enq = $app.findRecordById('enquetes', enqueteId)
+      if (enq) {
+        var formatBR = function (iso) {
+          if (!iso) return ''
+          var parts = iso.split('-')
+          if (parts.length === 3) return parts[2] + '/' + parts[1] + '/' + parts[0]
+          return iso
+        }
+        var jogos = $app.findRecordsByFilter(
+          'enquete_jogos',
+          "enquete = '" + enqueteId + "'",
+          'data,horario',
+          500,
+          0,
+        )
+        // Filtra o jogo deletado caso ainda retorne
+        var restantes = []
+        for (var i = 0; i < jogos.length; i++) {
+          if (jogos[i].id !== jogoId) {
+            restantes.push(jogos[i])
+          }
+        }
+        var nomeCopa = 'Copa Coni'
+        var curTitulo = enq.getString('titulo') || ''
+        var matchPrefixo = curTitulo.match(/^(?:Enquete\s+)?([^\-—–]+)/i)
+        if (matchPrefixo && matchPrefixo[1].trim()) {
+          var parsedPrefixo = matchPrefixo[1].trim()
+          if (!/\d/.test(parsedPrefixo)) {
+            nomeCopa = parsedPrefixo.replace(/^Enquete\s+/i, '').trim() || nomeCopa
+          }
+        }
+        if (restantes.length > 0) {
+          var dMin = restantes[0].getString('data')
+          var dMax = restantes[restantes.length - 1].getString('data')
+          if (dMin && dMax) {
+            enq.set(
+              'titulo',
+              'Enquete ' + nomeCopa + ' — ' + formatBR(dMin) + ' a ' + formatBR(dMax),
+            )
+            $app.save(enq)
+          }
+        } else {
+          // Fallback: usa data_inicio e data_fim pré-definidas
+          var dInicio = enq.getString('data_inicio')
+          var dFim = enq.getString('data_fim')
+          if (dInicio && dFim) {
+            enq.set(
+              'titulo',
+              'Enquete ' + nomeCopa + ' — ' + formatBR(dInicio) + ' a ' + formatBR(dFim),
+            )
+            $app.save(enq)
+          }
+        }
+      }
+    }
+  } catch (errRecalc) {
+    console.log('[enquete_jogos onRecordDelete] Erro ao recalcular título da enquete:', errRecalc)
+  }
 }, 'enquete_jogos')
