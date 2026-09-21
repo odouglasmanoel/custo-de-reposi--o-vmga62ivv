@@ -8,27 +8,7 @@
 onBootstrap((e) => {
   e.next()
   try {
-    var siteUrl = (
-      $os.getenv('PB_INSTANCE_URL') ||
-      $os.getenv('SITE_URL') ||
-      'http://127.0.0.1:8090'
-    ).replace(/\/+$/, '')
-    var nowSp = new Date(Date.now() - 3 * 3600 * 1000)
-    var ym = ('0' + (nowSp.getUTCMonth() + 1)).slice(-2)
-    var yd = ('0' + nowSp.getUTCDate()).slice(-2)
-    var todaySp = nowSp.getUTCFullYear() + '-' + ym + '-' + yd
-    var targetUrl = siteUrl + '/backend/v1/placar-ao-vivo?date=' + encodeURIComponent(todaySp)
-    console.log(
-      '[bootstrap placar-ao-vivo] Disparando chamada real imediata pós-deploy:',
-      targetUrl,
-    )
-    var res = $http.send({
-      url: targetUrl,
-      method: 'GET',
-      headers: { 'x-internal-secret': 'skip-cron' },
-      timeout: 30,
-    })
-    console.log('[bootstrap placar-ao-vivo] Resposta status: ' + (res ? res.statusCode : 0))
+    console.log('[bootstrap placar-ao-vivo] Instância inicializada e pronta.')
   } catch (errBoot) {
     console.log('[bootstrap placar-ao-vivo] Erro no bootstrap:', errBoot)
   }
