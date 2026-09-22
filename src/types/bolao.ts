@@ -52,6 +52,8 @@ export interface Jogo extends RecordModel {
   vencedor_penaltis?: 'A' | 'B' | string
   escalacoes?: unknown
   ficha_detalhes?: unknown
+  url_escudo_mandante?: string
+  url_escudo_visitante?: string
 }
 
 export interface Participante extends RecordModel {

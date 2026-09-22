@@ -1,5 +1,6 @@
 import type { RecordModel } from 'pocketbase'
 import pb from '@/lib/pocketbase/client'
+import type { Jogo } from '@/types/bolao'
 
 export interface EnqueteModel extends RecordModel {
   titulo: string
@@ -697,6 +698,44 @@ export async function editarJogoEnquete(
 
   const atualizado = await pb.collection('enquete_jogos').update<EnqueteJogoModel>(jogoId, payload)
   invalidateEnqueteCache()
+
+  // Propaga imediatamente as alterações para o jogo correspondente no bolão se já estiver cadastrado
+  try {
+    const jogoAntigo = await pb
+      .collection('enquete_jogos')
+      .getOne<EnqueteJogoModel>(jogoId)
+      .catch(() => null)
+    const timeABusca = (jogoAntigo?.time_a || params.time_a).trim().replace(/'/g, "\\'")
+    const timeBBusca = (jogoAntigo?.time_b || params.time_b).trim().replace(/'/g, "\\'")
+
+    const jogosRelacionados = await pb.collection('jogos').getFullList<Jogo>({
+      filter: `time_a = '${timeABusca}' && time_b = '${timeBBusca}'`,
+    })
+
+    const jogoUpdatePayload: Record<string, unknown> = {
+      time_a: params.time_a.trim(),
+      time_b: params.time_b.trim(),
+    }
+    if (params.logo_casa !== undefined) {
+      jogoUpdatePayload.url_escudo_mandante = params.logo_casa.trim()
+    }
+    if (params.logo_visitante !== undefined) {
+      jogoUpdatePayload.url_escudo_visitante = params.logo_visitante.trim()
+    }
+    if (params.campeonato !== undefined) {
+      jogoUpdatePayload.competicao = params.campeonato.trim()
+    }
+
+    for (const jr of jogosRelacionados) {
+      await pb
+        .collection('jogos')
+        .update(jr.id, jogoUpdatePayload)
+        .catch(() => {})
+    }
+  } catch (syncErr) {
+    console.warn('[editarJogoEnquete] Falha ao sincronizar com tabela de jogos:', syncErr)
+  }
+
   return atualizado
 }
 
@@ -793,6 +832,8 @@ export async function cadastrarJogosAprovadosNaCopaConi(
         tem_penaltis: false,
         gols_time_a: [],
         gols_time_b: [],
+        url_escudo_mandante: j.logo_casa || '',
+        url_escudo_visitante: j.logo_visitante || '',
       })
 
       // Marca o jogo da enquete como cadastrado no bolão

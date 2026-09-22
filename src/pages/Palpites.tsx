@@ -49,7 +49,7 @@ import {
   getPalpiteMarcadoresPorTime,
   formatScorersDisplayText,
 } from '@/lib/scorerUtils'
-import { buscarEscudoTime, readEscudoCache } from '@/services/enquetes'
+
 import { GameLineupAccordion } from '@/components/GameLineupAccordion'
 import { checkPlayerInLineup, LineupResponse } from '@/services/escalacoes'
 
@@ -188,22 +188,6 @@ export default function Palpites() {
   const [totalPages, setTotalPages] = useState<number>(() => initialCache?.totalPages || 1)
   const [totalItems, setTotalItems] = useState<number>(() => initialCache?.totalItems || 0)
   const [isLoadingMore, setIsLoadingMore] = useState<boolean>(false)
-  const [escudosMap, setEscudosMap] = useState<Record<string, string>>(() => {
-    const initialMap: Record<string, string> = {}
-    if (initialCache?.jogos) {
-      for (const j of initialCache.jogos) {
-        if (j.time_a) {
-          const cA = readEscudoCache(j.time_a.trim())
-          if (cA) initialMap[j.time_a.trim()] = cA
-        }
-        if (j.time_b) {
-          const cB = readEscudoCache(j.time_b.trim())
-          if (cB) initialMap[j.time_b.trim()] = cB
-        }
-      }
-    }
-    return initialMap
-  })
   const [allBoloes, setAllBoloes] = useState<Bolao[]>([])
   const [participantesList, setParticipantesList] = useState<Participante[]>([])
   const [allGroupPalpites, setAllGroupPalpites] = useState<Palpite[]>([])
@@ -257,62 +241,6 @@ export default function Palpites() {
     return () => clearInterval(timer)
   }, [])
 
-  // Carregamento de escudos para os times exibidos nos cards
-  useEffect(() => {
-    if (!jogos || jogos.length === 0) return
-
-    const teamNames = new Set<string>()
-    for (const j of jogos) {
-      if (j.time_a && j.time_a.trim()) teamNames.add(j.time_a.trim())
-      if (j.time_b && j.time_b.trim()) teamNames.add(j.time_b.trim())
-    }
-
-    const missingTeams: string[] = []
-    const initialFound: Record<string, string> = {}
-
-    teamNames.forEach((t) => {
-      const cached = readEscudoCache(t)
-      if (cached) {
-        initialFound[t] = cached
-      } else {
-        missingTeams.push(t)
-      }
-    })
-
-    if (Object.keys(initialFound).length > 0) {
-      setEscudosMap((prev) => ({ ...prev, ...initialFound }))
-    }
-
-    if (missingTeams.length > 0) {
-      let isMounted = true
-      Promise.all(
-        missingTeams.map(async (time) => {
-          try {
-            const url = await buscarEscudoTime(time)
-            return { time, url }
-          } catch {
-            return { time, url: '' }
-          }
-        }),
-      ).then((results) => {
-        if (!isMounted) return
-        setEscudosMap((prev) => {
-          const next = { ...prev }
-          for (const res of results) {
-            if (res.url) {
-              next[res.time] = res.url
-            }
-          }
-          return next
-        })
-      })
-
-      return () => {
-        isMounted = false
-      }
-    }
-  }, [jogos])
-
   // Sincronizar filtro se a query string mudar na navegação
   useEffect(() => {
     if (pendentesRaw !== null) {
@@ -341,20 +269,7 @@ export default function Palpites() {
         setCurrentPage(cached.currentPage || 1)
         setTotalPages(cached.totalPages || 1)
         setTotalItems(cached.totalItems || cached.jogos.length)
-        const cachedShields: Record<string, string> = {}
-        for (const j of cached.jogos) {
-          if (j.time_a) {
-            const cA = readEscudoCache(j.time_a.trim())
-            if (cA) cachedShields[j.time_a.trim()] = cA
-          }
-          if (j.time_b) {
-            const cB = readEscudoCache(j.time_b.trim())
-            if (cB) cachedShields[j.time_b.trim()] = cB
-          }
-        }
-        if (Object.keys(cachedShields).length > 0) {
-          setEscudosMap((prev) => ({ ...prev, ...cachedShields }))
-        }
+
         setLoading(false)
         setIsBackgroundRevalidating(true)
       } else {
@@ -515,7 +430,7 @@ export default function Palpites() {
               filter: gamesFilter || undefined,
               sort: 'data,hora',
               fields:
-                'id,bolao,time_a,time_b,data,hora,competicao,resultado_finalizado,placar_a,placar_b,tem_penaltis,vencedor_penaltis,fixture_id',
+                'id,bolao,time_a,time_b,data,hora,competicao,resultado_finalizado,placar_a,placar_b,tem_penaltis,vencedor_penaltis,fixture_id,url_escudo_mandante,url_escudo_visitante',
             })
 
             // Buscar registros de participante deste usuário
@@ -652,7 +567,7 @@ export default function Palpites() {
               filter: specificFilter,
               sort: 'data,hora',
               fields:
-                'id,bolao,time_a,time_b,data,hora,competicao,resultado_finalizado,placar_a,placar_b,tem_penaltis,vencedor_penaltis,fixture_id',
+                'id,bolao,time_a,time_b,data,hora,competicao,resultado_finalizado,placar_a,placar_b,tem_penaltis,vencedor_penaltis,fixture_id,url_escudo_mandante,url_escudo_visitante',
             })
 
             const [gamesResult] = await Promise.race([
@@ -2456,8 +2371,8 @@ export default function Palpites() {
             const pontos = palpite ? palpite.pontuacao_jogo : 0
             const detalhamento = palpite?.detalhamento || []
 
-            const escudoA = escudosMap[jogo.time_a?.trim()]
-            const escudoB = escudosMap[jogo.time_b?.trim()]
+            const escudoA = jogo.url_escudo_mandante
+            const escudoB = jogo.url_escudo_visitante
             const initialsA = (jogo.time_a || '').slice(0, 2).toUpperCase()
             const initialsB = (jogo.time_b || '').slice(0, 2).toUpperCase()
 

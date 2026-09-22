@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-09-22T15:00:57.613Z",
+  "generatedAt": "2026-09-22T17:19:57.274Z",
   "collections": [
     {
       "name": "users",
@@ -315,6 +315,18 @@
         {
           "name": "ficha_detalhes",
           "type": "json",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "url_escudo_mandante",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "url_escudo_visitante",
+          "type": "text",
           "required": false,
           "system": false
         }
