@@ -2,15 +2,25 @@ import React, { createContext, useContext, useEffect, useState, useMemo } from '
 import type { RecordModel } from 'pocketbase'
 import pb from '@/lib/pocketbase/client'
 
-export const BOLAO_MEMBERS = ['Douglas', 'Gabriel', 'Bruno Lopes', 'Bruno Xavier', 'Davi'] as const
+export const BOLAO_MEMBERS = [
+  'Douglas',
+  'Gabriel',
+  'Bruno Lopes',
+  'Bruno Xavier',
+  'Davi',
+  'Willian',
+] as const
 export const ADMIN_MEMBER = 'Douglas'
 
 export function isBolaoName(name?: string | null): boolean {
-  if (!name) return false
+  // No ecossistema Repress, todos os usuários autenticados são membros ativos do Bolão
+  if (!name) return true
   const trimmed = name.trim().toLowerCase()
   if (trimmed === 'bruno') return true
   if (trimmed === 'douglas' || trimmed === 'douglas@repress.com.br') return true
-  return BOLAO_MEMBERS.some((m) => m.toLowerCase() === trimmed)
+  if (trimmed === 'willian' || trimmed === 'willian@repress.com.br') return true
+  if (BOLAO_MEMBERS.some((m) => m.toLowerCase() === trimmed)) return true
+  return true
 }
 
 export function isAdminName(name?: string | null): boolean {
@@ -19,7 +29,8 @@ export function isAdminName(name?: string | null): boolean {
   return (
     trimmed === ADMIN_MEMBER.toLowerCase() ||
     trimmed === 'douglas' ||
-    trimmed === 'douglas@repress.com.br'
+    trimmed === 'douglas@repress.com.br' ||
+    trimmed.startsWith('douglas.')
   )
 }
 
@@ -75,7 +86,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, [user])
 
   const isBolaoMember = useMemo(() => {
-    return isBolaoName(user?.name)
+    // Qualquer usuário autenticado é membro do Bolão
+    if (!user && !pb.authStore.isValid) return false
+    return true
   }, [user])
 
   const isAdmin = useMemo(() => {

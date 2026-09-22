@@ -2,7 +2,6 @@ import React, { useState } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
 import { User, Lock, Eye, EyeOff, ShieldCheck, AlertCircle, Loader2 } from 'lucide-react'
 import pb from '@/lib/pocketbase/client'
-import { isBolaoName } from '@/context/AuthContext'
 import { normalizarLogin } from '@/lib/loginUtils'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -29,12 +28,10 @@ export default function Login() {
         ? `${stateFrom.pathname}${stateFrom.search || ''}`
         : null
 
-      const userName = pb.authStore.record.name || ''
       if (targetPath && targetPath !== '/login') {
         navigate(targetPath, { replace: true })
-      } else if (isBolaoName(userName)) {
-        navigate('/inicio', { replace: true })
       } else {
+        // Redireciona sempre para a Dashboard Oficial do Bolão
         navigate('/', { replace: true })
       }
     }
@@ -85,8 +82,7 @@ export default function Login() {
         }
       })
 
-      const authData = await pb.collection('users').authWithPassword(normalizedIdentifier, password)
-      const userName = authData.record?.name || ''
+      await pb.collection('users').authWithPassword(normalizedIdentifier, password)
 
       // Check post-login redirect logic
       const stateFrom = (
@@ -98,9 +94,8 @@ export default function Login() {
 
       if (targetPath && targetPath !== '/login') {
         navigate(targetPath, { replace: true })
-      } else if (isBolaoName(userName)) {
-        navigate('/inicio', { replace: true })
       } else {
+        // Redireciona sempre para a Dashboard Oficial do Bolão
         navigate('/', { replace: true })
       }
     } catch (err: unknown) {

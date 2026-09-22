@@ -4,7 +4,7 @@ import { Toaster as Sonner } from '@/components/ui/sonner'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { AuthProvider } from '@/context/AuthContext'
 import { ActivePoolProvider } from '@/context/ActivePoolContext'
-import { ProtectedRoute, BolaoRoute, AdminRoute } from '@/components/RouteGuards'
+import { ProtectedRoute, AdminRoute } from '@/components/RouteGuards'
 
 import Layout from './components/Layout'
 import Login from './pages/Login'
@@ -32,9 +32,44 @@ const App = () => (
             {/* Public Entry Point: Login */}
             <Route path="/login" element={<Login />} />
 
-            {/* Protected Corporate & Bolão routes with Layout */}
+            {/* Rota principal "/" e "/inicio" renderizam SEMPRE a Dashboard Oficial do Bolão */}
             <Route
               path="/"
+              element={
+                <ProtectedRoute>
+                  <Layout>
+                    <BolaoDashboard />
+                  </Layout>
+                </ProtectedRoute>
+              }
+            />
+
+            {/* Rota /bolao e /inicio */}
+            <Route
+              path="/bolao"
+              element={
+                <ProtectedRoute>
+                  <Layout>
+                    <BolaoDashboard />
+                  </Layout>
+                </ProtectedRoute>
+              }
+            />
+
+            <Route
+              path="/inicio"
+              element={
+                <ProtectedRoute>
+                  <Layout>
+                    <BolaoDashboard />
+                  </Layout>
+                </ProtectedRoute>
+              }
+            />
+
+            {/* Rota legada/corporativa Painel de Custo de Reposição */}
+            <Route
+              path="/custo-reposicao"
               element={
                 <ProtectedRoute>
                   <Layout>
@@ -44,38 +79,14 @@ const App = () => (
               }
             />
 
-            {/* Bolão Restricted Layer (Douglas, Gabriel, Bruno, Davi) */}
-            <Route
-              path="/bolao"
-              element={
-                <BolaoRoute>
-                  <Layout>
-                    <BolaoDashboard />
-                  </Layout>
-                </BolaoRoute>
-              }
-            />
-
-            {/* Alias /inicio para a tela inicial do Bolão */}
-            <Route
-              path="/inicio"
-              element={
-                <BolaoRoute>
-                  <Layout>
-                    <BolaoDashboard />
-                  </Layout>
-                </BolaoRoute>
-              }
-            />
-
             <Route
               path="/bolao/palpites"
               element={
-                <BolaoRoute>
+                <ProtectedRoute>
                   <Layout>
                     <Palpites />
                   </Layout>
-                </BolaoRoute>
+                </ProtectedRoute>
               }
             />
 
@@ -83,11 +94,11 @@ const App = () => (
             <Route
               path="/bolao/meus-palpites"
               element={
-                <BolaoRoute>
+                <ProtectedRoute>
                   <Layout>
                     <Palpites />
                   </Layout>
-                </BolaoRoute>
+                </ProtectedRoute>
               }
             />
 
@@ -95,11 +106,11 @@ const App = () => (
             <Route
               path="/meus-palpites"
               element={
-                <BolaoRoute>
+                <ProtectedRoute>
                   <Layout>
                     <Palpites />
                   </Layout>
-                </BolaoRoute>
+                </ProtectedRoute>
               }
             />
 
@@ -107,11 +118,11 @@ const App = () => (
             <Route
               path="/bolao/jogos-do-dia"
               element={
-                <BolaoRoute>
+                <ProtectedRoute>
                   <Layout>
                     <JogosDoDia />
                   </Layout>
-                </BolaoRoute>
+                </ProtectedRoute>
               }
             />
             <Route path="/jogos-do-dia" element={<Navigate to="/bolao/jogos-do-dia" replace />} />
@@ -119,47 +130,52 @@ const App = () => (
             <Route
               path="/bolao/historico"
               element={
-                <BolaoRoute>
+                <ProtectedRoute>
                   <Layout>
                     <Historico />
                   </Layout>
-                </BolaoRoute>
+                </ProtectedRoute>
               }
             />
+            <Route path="/historico" element={<Navigate to="/bolao/historico" replace />} />
 
             <Route
               path="/bolao/estatisticas"
               element={
-                <BolaoRoute>
+                <ProtectedRoute>
                   <Layout>
                     <Estatisticas />
                   </Layout>
-                </BolaoRoute>
+                </ProtectedRoute>
               }
             />
+            <Route path="/estatisticas" element={<Navigate to="/bolao/estatisticas" replace />} />
 
             <Route
               path="/bolao/chat"
               element={
-                <BolaoRoute>
+                <ProtectedRoute>
                   <Layout>
                     <Chat />
                   </Layout>
-                </BolaoRoute>
+                </ProtectedRoute>
               }
             />
+            <Route path="/chat" element={<Navigate to="/bolao/chat" replace />} />
+            <Route path="/assistente" element={<Navigate to="/bolao/chat" replace />} />
 
             {/* Módulo de Enquetes da Copa Coni (Acessível por todos os participantes) */}
             <Route
               path="/bolao/enquetes"
               element={
-                <BolaoRoute>
+                <ProtectedRoute>
                   <Layout>
                     <Enquetes />
                   </Layout>
-                </BolaoRoute>
+                </ProtectedRoute>
               }
             />
+            <Route path="/enquetes" element={<Navigate to="/bolao/enquetes" replace />} />
 
             {/* Admin Routes (Douglas Only) */}
             <Route path="/admin/jogos" element={<Navigate to="/bolao/admin/jogos" replace />} />

@@ -53,9 +53,9 @@ const NAV_ITEMS: NavItem[] = [
   {
     id: 'inicio',
     label: 'Início',
-    path: '/bolao',
+    path: '/',
     icon: Home,
-    aliases: ['/inicio'],
+    aliases: ['/inicio', '/bolao'],
   },
   {
     id: 'meus-palpites',
@@ -76,24 +76,28 @@ const NAV_ITEMS: NavItem[] = [
     label: 'Enquetes',
     path: '/bolao/enquetes',
     icon: Vote,
+    aliases: ['/enquetes'],
   },
   {
     id: 'historico',
     label: 'Histórico',
     path: '/bolao/historico',
     icon: History,
+    aliases: ['/historico'],
   },
   {
     id: 'estatisticas',
     label: 'Estatísticas',
     path: '/bolao/estatisticas',
     icon: BarChart2,
+    aliases: ['/estatisticas'],
   },
   {
     id: 'chat',
     label: 'Assistente',
     path: '/bolao/chat',
     icon: MessageSquare,
+    aliases: ['/chat', '/assistente'],
   },
   {
     id: 'admin',
@@ -101,12 +105,17 @@ const NAV_ITEMS: NavItem[] = [
     path: '/bolao/admin/jogos',
     icon: Shield,
     adminOnly: true,
-    aliases: ['/bolao/admin/jogos', '/bolao/configuracoes', '/bolao/admin/configuracoes'],
+    aliases: [
+      '/bolao/admin/jogos',
+      '/admin/jogos',
+      '/bolao/configuracoes',
+      '/bolao/admin/configuracoes',
+    ],
   },
 ]
 
 export default function Layout({ children }: LayoutProps) {
-  const { user, isBolaoMember, isAdmin, logout } = useAuth()
+  const { user, isAdmin, logout } = useAuth()
   const { activeBolao } = useActivePool()
   const navigate = useNavigate()
   const location = useLocation()
@@ -141,17 +150,33 @@ export default function Layout({ children }: LayoutProps) {
     })
   }
 
-  const isBolaoScreen = location.pathname.startsWith('/bolao') || location.pathname === '/inicio'
+  const isBolaoScreen =
+    location.pathname === '/' ||
+    location.pathname.startsWith('/bolao') ||
+    location.pathname === '/inicio' ||
+    location.pathname === '/meus-palpites' ||
+    location.pathname === '/jogos-do-dia' ||
+    location.pathname === '/enquetes' ||
+    location.pathname === '/historico' ||
+    location.pathname === '/estatisticas' ||
+    location.pathname === '/chat' ||
+    location.pathname === '/assistente'
+
   const showBackButton =
     location.pathname === '/bolao/chat' ||
+    location.pathname === '/chat' ||
+    location.pathname === '/assistente' ||
     location.pathname === '/bolao/jogos-do-dia' ||
     location.pathname === '/jogos-do-dia' ||
     location.pathname === '/bolao/enquetes' ||
+    location.pathname === '/enquetes' ||
     location.pathname === '/bolao/palpites' ||
     location.pathname === '/bolao/meus-palpites' ||
     location.pathname === '/meus-palpites' ||
     location.pathname === '/bolao/historico' ||
+    location.pathname === '/historico' ||
     location.pathname === '/bolao/estatisticas' ||
+    location.pathname === '/estatisticas' ||
     location.pathname === '/bolao/configuracoes' ||
     location.pathname.startsWith('/bolao/admin')
 
@@ -165,20 +190,25 @@ export default function Layout({ children }: LayoutProps) {
     } else if (
       location.pathname === '/bolao/admin/jogos' ||
       location.pathname === '/bolao/chat' ||
+      location.pathname === '/chat' ||
+      location.pathname === '/assistente' ||
       location.pathname === '/bolao/jogos-do-dia' ||
       location.pathname === '/jogos-do-dia' ||
       location.pathname === '/bolao/enquetes' ||
+      location.pathname === '/enquetes' ||
       location.pathname === '/bolao/palpites' ||
       location.pathname === '/bolao/meus-palpites' ||
       location.pathname === '/meus-palpites' ||
       location.pathname === '/bolao/historico' ||
-      location.pathname === '/bolao/estatisticas'
+      location.pathname === '/historico' ||
+      location.pathname === '/bolao/estatisticas' ||
+      location.pathname === '/estatisticas'
     ) {
-      navigate('/bolao')
+      navigate('/')
     } else if (window.history.length > 1) {
       navigate(-1)
     } else {
-      navigate('/bolao')
+      navigate('/')
     }
   }
 
@@ -191,15 +221,17 @@ export default function Layout({ children }: LayoutProps) {
 
   const isItemActive = (item: NavItem) => {
     const p = location.pathname
+    if (item.id === 'inicio') {
+      return p === '/' || p === '/inicio' || p === '/bolao'
+    }
     if (p === item.path) return true
     if (item.aliases && item.aliases.includes(p)) return true
     if (
       item.id === 'admin' &&
-      (p.startsWith('/bolao/admin/jogos') ||
-        p === '/bolao/configuracoes' ||
-        p === '/bolao/admin/configuracoes')
-    )
+      (p.startsWith('/bolao/admin') || p.startsWith('/admin') || p === '/bolao/configuracoes')
+    ) {
       return true
+    }
     return false
   }
 
@@ -212,8 +244,9 @@ export default function Layout({ children }: LayoutProps) {
     <div className="flex min-h-screen bg-[#F3F6F9] text-[#0F172A]">
       {/* ============================================================== */}
       {/* DESKTOP SIDEBAR (Fixa à esquerda, retrátil / colapsável)      */}
+      {/* Sempre visível para todos os perfis (Admin e Participante)   */}
       {/* ============================================================== */}
-      {isBolaoMember && (
+      {user && (
         <aside
           className={`hidden md:flex flex-col border-r border-[#1B3A5C] bg-[#0B1E30] text-slate-200 transition-all duration-300 z-30 shrink-0 sticky top-0 h-screen ${
             collapsed ? 'w-20' : 'w-64'
@@ -223,7 +256,7 @@ export default function Layout({ children }: LayoutProps) {
           {/* Topo da Sidebar: Título limpo 'Bolão do Grupo' */}
           <div className="flex h-16 items-center justify-between border-b border-[#1B3A5C]/80 px-4">
             <Link
-              to="/bolao"
+              to="/"
               className="flex items-center gap-2.5 overflow-hidden focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400 rounded-lg p-1"
               title="Bolão do Grupo"
             >
@@ -400,7 +433,6 @@ export default function Layout({ children }: LayoutProps) {
           </div>
         </aside>
       )}
-
       {/* ============================================================== */}
       {/* DRAWER MOBILE (Deslizante à esquerda em telas pequenas)        */}
       {/* ============================================================== */}
@@ -536,7 +568,7 @@ export default function Layout({ children }: LayoutProps) {
             {/* Esquerda: Botão Menu Mobile (ou Voltar) + Título Padrão Limpo */}
             <div className="flex items-center gap-2.5 sm:gap-3">
               {/* Botão Hamburger em mobile para abrir Sidebar Drawer */}
-              {isBolaoMember && (
+              {user && (
                 <Button
                   variant="ghost"
                   size="icon"
@@ -547,7 +579,6 @@ export default function Layout({ children }: LayoutProps) {
                   <Menu className="h-5 w-5" />
                 </Button>
               )}
-
               {showBackButton && (
                 <Button
                   variant="ghost"
@@ -560,11 +591,12 @@ export default function Layout({ children }: LayoutProps) {
                 </Button>
               )}
 
-              {/* TÍTULO PADRÃO LIMPO: "Bolão do Grupo" (Sem logo/wordmark Repress e sem subtítulo corporativo) */}
+              {/* TÍTULO PADRÃO LIMPO: "Bolão do Grupo" */}
               <Link
-                to={isBolaoMember ? '/bolao' : '/'}
+                to="/"
                 className="flex items-center gap-2 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-emerald-400 rounded-lg py-1"
               >
+                {' '}
                 <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-[#F59E0B] text-slate-950 shadow-sm md:hidden">
                   <Trophy className="h-4 w-4" />
                 </div>

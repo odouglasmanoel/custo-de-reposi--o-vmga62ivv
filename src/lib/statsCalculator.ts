@@ -98,6 +98,7 @@ export function normalizeMemberName(name: string): string {
   if (clean.includes('brunol') || clean.includes('lopes')) return 'Bruno Lopes'
   if (clean === 'bruno') return 'Bruno Lopes'
   if (clean.includes('davi')) return 'Davi'
+  if (clean.includes('willian')) return 'Willian'
 
   for (const m of BOLAO_MEMBERS) {
     if (

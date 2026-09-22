@@ -51,14 +51,14 @@ export const BolaoRoute: React.FC<{ children: React.ReactNode }> = ({ children }
   }
 
   if (!isBolaoMember && !loading) {
-    return <Navigate to="/" replace />
+    return <Navigate to="/bolao" replace />
   }
 
   return <>{children}</>
 }
 
 export const AdminRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const { user, loading, isAdmin, isBolaoMember } = useAuth()
+  const { user, loading, isAdmin } = useAuth()
 
   const hasValidAuth = !!user || pb.authStore.isValid
 
@@ -80,7 +80,7 @@ export const AdminRoute: React.FC<{ children: React.ReactNode }> = ({ children }
   }
 
   if (!isAdmin && !loading) {
-    return isBolaoMember ? <Navigate to="/bolao" replace /> : <Navigate to="/" replace />
+    return <Navigate to="/" replace />
   }
 
   return <>{children}</>
