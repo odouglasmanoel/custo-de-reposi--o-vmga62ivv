@@ -14,10 +14,12 @@ import {
   CheckCircle2,
   FileSpreadsheet,
   Settings,
+  Users,
 } from 'lucide-react'
 import pb from '@/lib/pocketbase/client'
 import { useActivePool } from '@/context/ActivePoolContext'
 import { useRealtime } from '@/hooks/use-realtime'
+import { BOLAO_MEMBERS } from '@/context/AuthContext'
 import type { Bolao, Jogo } from '@/types/bolao'
 import { formatBolaoLabel } from '@/types/bolao'
 import { formatDataBR, formatHoraBR, sortJogosCadastrados } from '@/lib/dateUtils'
@@ -32,6 +34,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
+import { Checkbox } from '@/components/ui/checkbox'
 import {
   Dialog,
   DialogContent,
@@ -40,6 +43,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
+import { AdminManageParticipantesModal } from '@/components/AdminManageParticipantesModal'
 import { useToast } from '@/hooks/use-toast'
 import { getErrorMessage } from '@/lib/pocketbase/errors'
 
@@ -77,6 +81,15 @@ export default function AdminJogos() {
   const [novoBolaoAtivo, setNovoBolaoAtivo] = useState(true)
   const [salvandoBolao, setSalvandoBolao] = useState(false)
   const [erroNovoBolao, setErroNovoBolao] = useState<string | null>(null)
+  const [todosNomesParticipantes, setTodosNomesParticipantes] = useState<string[]>([
+    ...BOLAO_MEMBERS,
+  ])
+  const [participantesSelecionados, setParticipantesSelecionados] = useState<string[]>([
+    ...BOLAO_MEMBERS,
+  ])
+
+  // Modal Gerenciar Participantes
+  const [modalGerenciarParticipantes, setModalGerenciarParticipantes] = useState(false)
 
   // Upload Planilha states
   const [modalUpload, setModalUpload] = useState(false)
@@ -140,6 +153,32 @@ export default function AdminJogos() {
       }
     }
     fetchBoloesLocais()
+  }, [])
+
+  // Carregar todos os nomes únicos de participantes cadastrados para seleção na criação de bolão
+  const carregarNomesParticipantes = async () => {
+    try {
+      const records = await pb.collection('participantes').getFullList<{ nome: string }>({
+        fields: 'nome',
+      })
+      const setNomes = new Set<string>(BOLAO_MEMBERS)
+      for (const r of records) {
+        if (r.nome && r.nome.trim()) {
+          setNomes.add(r.nome.trim())
+        }
+      }
+      const lista = Array.from(setNomes).sort()
+      setTodosNomesParticipantes(lista)
+      // Se a lista de selecionados estiver vazia ou for default, manter os habituais
+      setParticipantesSelecionados((prev) => (prev.length > 0 ? prev : [...BOLAO_MEMBERS]))
+    } catch (err) {
+      console.warn('Erro ao carregar participantes para modal de novo bolão:', err)
+      setTodosNomesParticipantes([...BOLAO_MEMBERS])
+    }
+  }
+
+  useEffect(() => {
+    carregarNomesParticipantes()
   }, [])
 
   // Merge sem duplicar IDs entre boloesLocais e boloes do contexto
@@ -405,20 +444,26 @@ export default function AdminJogos() {
         ativo: novoBolaoAtivo,
       })
 
-      // Seed standard participants with 0 points
-      const defaultMembers = ['Douglas', 'Gabriel', 'Bruno Lopes', 'Bruno Xavier', 'Davi']
-      for (const m of defaultMembers) {
-        await pb.collection('participantes').create({
-          bolao: created.id,
-          nome: m,
-          pontos_importados: 0,
-          pontuacao_total: 0,
-        })
+      // Criar registros em participantes apenas para os selecionados
+      const membrosParaCriar =
+        participantesSelecionados.length > 0 ? participantesSelecionados : BOLAO_MEMBERS
+
+      for (const m of membrosParaCriar) {
+        try {
+          await pb.collection('participantes').create({
+            bolao: created.id,
+            nome: m,
+            pontos_importados: 0,
+            pontuacao_total: 0,
+          })
+        } catch (mErr) {
+          console.warn(`Aviso ao vincular participante ${m} ao novo bolão:`, mErr)
+        }
       }
 
       toast({
         title: 'Bolão criado com sucesso!',
-        description: `Competição "${novoBolaoNome.trim()}" cadastrada.`,
+        description: `Competição "${novoBolaoNome.trim()}" cadastrada com ${membrosParaCriar.length} participantes.`,
       })
 
       await refreshBoloes()
@@ -556,12 +601,27 @@ export default function AdminJogos() {
           {/* Criar Novo Bolão Button */}
           <Button
             type="button"
-            onClick={() => setModalNovoBolao(true)}
+            onClick={() => {
+              carregarNomesParticipantes()
+              setModalNovoBolao(true)
+            }}
             size="sm"
             className="h-8 rounded-lg bg-emerald-600 px-3 text-xs font-semibold text-white shadow-xs hover:bg-emerald-700"
           >
             <Plus className="mr-1 h-3.5 w-3.5" />
             Criar Novo Bolão
+          </Button>
+
+          {/* Gerenciar Participantes Button */}
+          <Button
+            type="button"
+            onClick={() => setModalGerenciarParticipantes(true)}
+            variant="outline"
+            size="sm"
+            className="h-8 rounded-lg border-emerald-300 bg-emerald-50 px-3 text-xs font-semibold text-emerald-900 shadow-xs hover:bg-emerald-100"
+          >
+            <Users className="mr-1 h-3.5 w-3.5 text-emerald-600" />
+            Gerenciar Participantes
           </Button>
 
           {/* Upload Planilha individual por bolão */}
@@ -979,6 +1039,56 @@ export default function AdminJogos() {
               </Label>
             </div>
 
+            {/* Participantes a vincular */}
+            <div className="pt-2 border-t border-slate-100">
+              <div className="flex items-center justify-between mb-1.5">
+                <Label className="text-xs font-bold text-slate-700">
+                  Participantes Iniciais ({participantesSelecionados.length} selecionado(s))
+                </Label>
+                <div className="flex items-center gap-2 text-[11px]">
+                  <button
+                    type="button"
+                    onClick={() => setParticipantesSelecionados([...todosNomesParticipantes])}
+                    className="text-emerald-700 hover:underline font-semibold"
+                  >
+                    Selecionar Todos
+                  </button>
+                  <span className="text-slate-300">•</span>
+                  <button
+                    type="button"
+                    onClick={() => setParticipantesSelecionados([])}
+                    className="text-slate-500 hover:underline"
+                  >
+                    Desmarcar Todos
+                  </button>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 bg-slate-50 p-2.5 rounded-lg border border-slate-200 max-h-40 overflow-y-auto">
+                {todosNomesParticipantes.map((nome) => {
+                  const isChecked = participantesSelecionados.includes(nome)
+                  return (
+                    <label
+                      key={nome}
+                      className="flex items-center gap-2 cursor-pointer p-1 rounded hover:bg-white text-xs"
+                    >
+                      <Checkbox
+                        checked={isChecked}
+                        onCheckedChange={(checked) => {
+                          if (checked) {
+                            setParticipantesSelecionados((prev) => [...prev, nome])
+                          } else {
+                            setParticipantesSelecionados((prev) => prev.filter((n) => n !== nome))
+                          }
+                        }}
+                      />
+                      <span className="font-medium text-slate-800">{nome}</span>
+                    </label>
+                  )
+                })}
+              </div>
+            </div>
+
             <DialogFooter className="mt-4 flex gap-2">
               <Button
                 type="button"
@@ -1200,6 +1310,17 @@ export default function AdminJogos() {
           </div>
         </DialogContent>
       </Dialog>
+
+      {/* Modal Gerenciar Participantes */}
+      <AdminManageParticipantesModal
+        open={modalGerenciarParticipantes}
+        onOpenChange={setModalGerenciarParticipantes}
+        boloes={boloesDisponiveis}
+        onSuccess={() => {
+          carregarNomesParticipantes()
+          refreshBoloes()
+        }}
+      />
     </div>
   )
 }

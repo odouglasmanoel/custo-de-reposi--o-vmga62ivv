@@ -58,7 +58,8 @@ import {
 } from '@/lib/apiFootballMatcher'
 import { AdminEditMarcadoresModal } from '@/components/AdminEditMarcadoresModal'
 import { ParticipantScorersView } from '@/components/ParticipantScorersView'
-import { Users } from 'lucide-react'
+import { ParticipantBetsModal } from '@/components/ParticipantBetsModal'
+import { Users, ChevronRight } from 'lucide-react'
 import { buscarEscudoTime, readEscudoCache } from '@/services/enquetes'
 
 function TeamShield({
@@ -291,6 +292,13 @@ export default function BolaoDashboard() {
     participanteNome: string
     timeA: string
     timeB: string
+  } | null>(null)
+
+  // Modal de Detalhes dos Palpites ao Clicar na Classificação
+  const [selectedRankingParticipant, setSelectedRankingParticipant] = useState<{
+    id: string
+    nome: string
+    pontuacao_total: number
   } | null>(null)
 
   // Atualiza periodicamente o timestamp atual para destravar os palpites do grupo no minuto exato do jogo
@@ -2620,12 +2628,32 @@ export default function BolaoDashboard() {
                     return (
                       <div
                         key={part.id}
-                        className={`flex items-center justify-between px-4 py-3.5 transition duration-150 ${
+                        role="button"
+                        tabIndex={0}
+                        onClick={() =>
+                          setSelectedRankingParticipant({
+                            id: part.id,
+                            nome: part.nome,
+                            pontuacao_total: part.pontuacao_total,
+                          })
+                        }
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' || e.key === ' ') {
+                            e.preventDefault()
+                            setSelectedRankingParticipant({
+                              id: part.id,
+                              nome: part.nome,
+                              pontuacao_total: part.pontuacao_total,
+                            })
+                          }
+                        }}
+                        title={`Clique para ver todos os palpites e pontuações de ${part.nome}`}
+                        className={`group flex items-center justify-between px-4 py-3.5 transition duration-150 cursor-pointer focus:outline-none focus:ring-2 focus:ring-emerald-500 ${
                           isCurrentUser
-                            ? 'bg-[#ECFDF5] font-semibold ring-1 ring-inset ring-emerald-200'
+                            ? 'bg-[#ECFDF5] font-semibold ring-1 ring-inset ring-emerald-200 hover:bg-[#D1FAE5]'
                             : index % 2 === 0
-                              ? 'bg-white hover:bg-slate-50'
-                              : 'bg-[#F8FAFC] hover:bg-slate-50'
+                              ? 'bg-white hover:bg-slate-100/80'
+                              : 'bg-[#F8FAFC] hover:bg-slate-100/80'
                         }`}
                       >
                         <div className="flex items-center gap-3">
@@ -2637,7 +2665,9 @@ export default function BolaoDashboard() {
                           </div>
                           <div>
                             <div className="flex items-center gap-1.5">
-                              <span className="text-sm font-bold text-[#0F172A]">{part.nome}</span>
+                              <span className="text-sm font-bold text-[#0F172A] group-hover:text-emerald-700 transition-colors">
+                                {part.nome}
+                              </span>
                               {index === 0 && <span className="animate-bounce">🏆</span>}
                               {isCurrentUser && (
                                 <Badge className="bg-[#10B981] px-1.5 py-0 text-[10px] font-bold text-white hover:bg-[#10B981]">
@@ -2648,19 +2678,22 @@ export default function BolaoDashboard() {
                           </div>
                         </div>
 
-                        {/* Points */}
-                        <div className="text-right flex flex-col items-end">
-                          <div className="flex items-center gap-1.5">
-                            <span className="text-lg font-black text-[#0F2A43]">
-                              {part.pontuacao_total}
-                            </span>
-                            <span className="text-xs font-medium text-slate-500">pts</span>
+                        {/* Points + Chevron */}
+                        <div className="flex items-center gap-3">
+                          <div className="text-right flex flex-col items-end">
+                            <div className="flex items-center gap-1.5">
+                              <span className="text-lg font-black text-[#0F2A43]">
+                                {part.pontuacao_total}
+                              </span>
+                              <span className="text-xs font-medium text-slate-500">pts</span>
+                            </div>
+                            {(part as any).pontos_ao_vivo > 0 && (
+                              <span className="text-xs text-emerald-600 font-semibold leading-tight">
+                                (+{(part as any).pontos_ao_vivo} ao vivo)
+                              </span>
+                            )}
                           </div>
-                          {(part as any).pontos_ao_vivo > 0 && (
-                            <span className="text-xs text-emerald-600 font-semibold leading-tight">
-                              (+{(part as any).pontos_ao_vivo} ao vivo)
-                            </span>
-                          )}
+                          <ChevronRight className="h-4 w-4 text-slate-400 group-hover:text-emerald-600 group-hover:translate-x-0.5 transition-all" />
                         </div>
                       </div>
                     )
@@ -3046,6 +3079,17 @@ export default function BolaoDashboard() {
           setPalpites((prev) => prev.map((p) => (p.id === updatedRecord.id ? updatedRecord : p)))
           loadData(true)
         }}
+      />
+
+      {/* Modal de Detalhes dos Palpites do Participante ao Clicar na Classificação */}
+      <ParticipantBetsModal
+        open={Boolean(selectedRankingParticipant)}
+        onOpenChange={(open) => {
+          if (!open) setSelectedRankingParticipant(null)
+        }}
+        participante={selectedRankingParticipant}
+        activeBolaoId={activeBolaoId || 'geral'}
+        boloes={boloes}
       />
     </div>
   )
