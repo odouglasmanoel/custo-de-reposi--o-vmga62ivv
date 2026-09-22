@@ -55,6 +55,19 @@ export interface GroupedParticipante {
   matchedUser?: AuthUserInfo | null
 }
 
+export function checkIsRateLimitError(err: any): boolean {
+  if (!err) return false
+  const status = Number(err?.status || err?.statusCode || err?.response?.status || 0)
+  if (status === 429) return true
+  const msg = String(err?.message || err?.error || '').toLowerCase()
+  return (
+    msg.includes('429') ||
+    msg.includes('too many requests') ||
+    msg.includes('rate limit') ||
+    msg.includes('limite de requisições')
+  )
+}
+
 export function AdminManageParticipantesModal({
   open,
   onOpenChange,
@@ -102,6 +115,19 @@ export function AdminManageParticipantesModal({
   // Exclusão pontual de vínculo de um chip
   const [deletingVinculoId, setDeletingVinculoId] = useState<string | null>(null)
 
+  // Sincroniza a lista de bolões locais quando boloes recebidos mudarem (sem disparar re-fetches)
+  useEffect(() => {
+    if (boloes && boloes.length > 0) {
+      setTodosBoloes((prev) => (prev.length === 0 ? boloes : prev))
+    }
+  }, [boloes])
+
+  // Ref para boloes recebidos via props, evitando recriar callbacks em re-renders do componente pai
+  const boloesPropsRef = useRef<Bolao[]>(boloes)
+  useEffect(() => {
+    boloesPropsRef.current = boloes
+  }, [boloes])
+
   // Carregar todos os bolões (ativos e encerrados/passados)
   const carregarBoloesCompletos = useCallback(async () => {
     try {
@@ -110,22 +136,69 @@ export function AdminManageParticipantesModal({
       })
       if (records && records.length > 0) {
         setTodosBoloes(records)
-      } else {
-        setTodosBoloes(boloes)
+      } else if (boloesPropsRef.current && boloesPropsRef.current.length > 0) {
+        setTodosBoloes(boloesPropsRef.current)
       }
-    } catch (err) {
+    } catch (err: any) {
+      if (checkIsRateLimitError(err)) {
+        throw err
+      }
       console.warn('Erro ao carregar lista completa de bolões:', err)
-      setTodosBoloes(boloes)
+      if (boloesPropsRef.current && boloesPropsRef.current.length > 0) {
+        setTodosBoloes(boloesPropsRef.current)
+      }
     }
-  }, [boloes])
+  }, [])
+
+  // Cooldown / Rate-limit (429) state
+  const [cooldownSeconds, setCooldownSeconds] = useState(0)
+  const [isRateLimited, setIsRateLimited] = useState(false)
+  const rateLimitCooldownUntilRef = useRef<number>(0)
+
+  // Timer para contagem regressiva de cooldown quando 429 ocorrer
+  useEffect(() => {
+    if (cooldownSeconds <= 0) {
+      if (isRateLimited) {
+        setIsRateLimited(false)
+      }
+      return
+    }
+
+    const interval = setInterval(() => {
+      setCooldownSeconds((prev) => {
+        if (prev <= 1) {
+          setIsRateLimited(false)
+          return 0
+        }
+        return prev - 1
+      })
+    }, 1000)
+
+    return () => clearInterval(interval)
+  }, [cooldownSeconds, isRateLimited])
+
+  // Trava de sessão de abertura: garante que a busca automática dispare apenas UMA vez por abertura
+  const hasFetchedInSessionRef = useRef(false)
 
   // Carregar participantes e usuários de autenticação
   const carregarDados = useCallback(
     async (options?: { force?: boolean }) => {
-      // Evita chamadas duplicadas simultâneas (ex: montagem em React StrictMode)
-      if (fetchInProgressRef.current && !options?.force) {
+      // Se estiver em cooldown ativo por rate limit (429) e não for tentativa forçada
+      const now = Date.now()
+      if (now < rateLimitCooldownUntilRef.current && !options?.force) {
         return
       }
+
+      // Evita chamadas duplicadas simultâneas (ex: montagem em React StrictMode)
+      if (fetchInProgressRef.current) {
+        return
+      }
+
+      // Trava de sessão do modal: se já carregou com sucesso e não é recarregamento manual forçado, não re-disparar
+      if (hasFetchedInSessionRef.current && !options?.force) {
+        return
+      }
+
       fetchInProgressRef.current = true
       setLoading(true)
       setErroCarregamento(null)
@@ -148,7 +221,11 @@ export function AdminManageParticipantesModal({
           if (res && res.users) {
             setAuthUsers(res.users)
           }
-        } catch (adminHookErr) {
+        } catch (adminHookErr: any) {
+          // Se o endpoint retornou 429, propaga para ativar cooldown
+          if (checkIsRateLimitError(adminHookErr)) {
+            throw adminHookErr
+          }
           console.warn('Aviso ao consultar endpoint admin hook, usando fallback:', adminHookErr)
           try {
             const directUsers = await pb.collection('users').getFullList()
@@ -163,19 +240,47 @@ export function AdminManageParticipantesModal({
               }
             })
             setAuthUsers(sanitized)
-          } catch (uErr) {
+          } catch (uErr: any) {
+            if (checkIsRateLimitError(uErr)) {
+              throw uErr
+            }
             console.error('Falha ao listar usuários auth:', uErr)
           }
         }
+
+        // Sucesso: marca como carregado na sessão atual
+        hasFetchedInSessionRef.current = true
+        setIsRateLimited(false)
+        setCooldownSeconds(0)
+        rateLimitCooldownUntilRef.current = 0
       } catch (err: any) {
         console.error('Erro ao carregar participantes:', err)
-        const msg = err?.message || 'Não foi possível buscar a lista de participantes.'
-        setErroCarregamento(msg)
-        toast({
-          title: 'Erro ao carregar participantes',
-          description: msg,
-          variant: 'destructive',
-        })
+        const isRateLimit = checkIsRateLimitError(err)
+
+        if (isRateLimit) {
+          const cooldownDuration = 30 // 30 segundos de cooldown
+          rateLimitCooldownUntilRef.current = Date.now() + cooldownDuration * 1000
+          setIsRateLimited(true)
+          setCooldownSeconds(cooldownDuration)
+
+          const msg429 =
+            'Muitas requisições em curto intervalo (429 - Limite atingido). As buscas automáticas foram pausadas temporariamente. Aguarde o tempo restante ou utilize o botão Atualizar.'
+          setErroCarregamento(msg429)
+          toast({
+            title: 'Limite de requisições atingido (429)',
+            description:
+              'Aguarde alguns instantes antes de atualizar novamente para restabelecer a conexão.',
+            variant: 'destructive',
+          })
+        } else {
+          const msg = err?.message || 'Não foi possível buscar a lista de participantes.'
+          setErroCarregamento(msg)
+          toast({
+            title: 'Erro ao carregar participantes',
+            description: msg,
+            variant: 'destructive',
+          })
+        }
       } finally {
         fetchInProgressRef.current = false
         setLoading(false)
@@ -202,19 +307,29 @@ export function AdminManageParticipantesModal({
   }, [todosBoloes, boloes])
 
   // CARREGAMENTO AUTOMÁTICO NA ABERTURA (ON MOUNT/OPEN)
-  // Garante que o fetch seja disparado automaticamente assim que open = true
-  // e recarregue toda vez que o modal for fechado e reaberto.
+  // Garante que o fetch seja disparado automaticamente APENAS UMA VEZ na transição de false -> true de open
+  // e recarregue toda vez que o modal for fechado e reaberto pelo usuário.
+  // Protegido contra re-execuções por re-renders do componente pai ou do modal.
   useEffect(() => {
     if (open) {
-      resetFormState()
-      carregarDados({ force: true })
+      if (!hasFetchedInSessionRef.current && !fetchInProgressRef.current) {
+        resetFormState()
+        carregarDados()
+      }
+    } else {
+      // Ao fechar o modal, reseta a trava para permitir novo carregamento na próxima abertura
+      hasFetchedInSessionRef.current = false
+      fetchInProgressRef.current = false
     }
-  }, [open, carregarDados, resetFormState])
+    // Observação de dependência estrita: apenas 'open' controla a transição de ciclo de abertura
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open])
 
   // Trata mudanças no estado de abertura vindas do Dialog
   const handleOpenChange = (isOpen: boolean) => {
     onOpenChange(isOpen)
     if (!isOpen) {
+      hasFetchedInSessionRef.current = false
       fetchInProgressRef.current = false
     }
   }
@@ -372,7 +487,7 @@ export function AdminManageParticipantesModal({
         setNovaSenhaInicial('')
         setCriarLoginJunto(false)
         setNovoPontosImportados(0)
-        await carregarDados()
+        await carregarDados({ force: true })
         onSuccess?.()
       }
 
@@ -500,7 +615,7 @@ export function AdminManageParticipantesModal({
       })
 
       setEditingTarget(null)
-      await carregarDados()
+      await carregarDados({ force: true })
       onSuccess?.()
     } catch (err: any) {
       console.error('Erro geral ao salvar edição completa:', err)
@@ -553,7 +668,7 @@ export function AdminManageParticipantesModal({
       }
 
       setDeletingTarget(null)
-      await carregarDados()
+      await carregarDados({ force: true })
       onSuccess?.()
     } catch (err: any) {
       console.error('Erro na exclusão/desativação:', err)
@@ -588,7 +703,7 @@ export function AdminManageParticipantesModal({
         title: 'Participante removido do bolão',
         description: `Vínculo com ${nomeBolao} removido com sucesso.`,
       })
-      await carregarDados()
+      await carregarDados({ force: true })
       onSuccess?.()
     } catch (err: any) {
       console.error('Erro ao remover vínculo único:', err)
@@ -631,12 +746,16 @@ export function AdminManageParticipantesModal({
                 variant="ghost"
                 size="sm"
                 onClick={() => carregarDados({ force: true })}
-                disabled={loading}
-                className="h-8 text-xs text-slate-500 hover:text-slate-800"
-                title="Recarregar lista"
+                disabled={loading || cooldownSeconds > 0}
+                className="h-8 text-xs text-slate-500 hover:text-slate-800 disabled:opacity-60"
+                title={
+                  cooldownSeconds > 0
+                    ? `Aguarde ${cooldownSeconds}s para atualizar novamente`
+                    : 'Recarregar lista'
+                }
               >
                 <RefreshCw className={`h-3.5 w-3.5 mr-1 ${loading ? 'animate-spin' : ''}`} />
-                Atualizar
+                {cooldownSeconds > 0 ? `Aguarde (${cooldownSeconds}s)` : 'Atualizar'}
               </Button>
             </div>
             <DialogDescription className="text-xs text-[#64748B]">
@@ -832,12 +951,38 @@ export function AdminManageParticipantesModal({
               </div>
 
               {erroCarregamento && (
-                <div className="mb-3 flex items-start justify-between gap-2 rounded-lg border border-red-200 bg-red-50 p-3 text-xs text-red-800">
+                <div
+                  className={`mb-3 flex items-start justify-between gap-2 rounded-lg border p-3 text-xs ${
+                    isRateLimited
+                      ? 'border-amber-200 bg-amber-50 text-amber-900'
+                      : 'border-red-200 bg-red-50 text-red-800'
+                  }`}
+                >
                   <div className="flex items-start gap-2">
-                    <AlertCircle className="h-4 w-4 shrink-0 text-red-600 mt-0.5" />
+                    {isRateLimited ? (
+                      <AlertTriangle className="h-4 w-4 shrink-0 text-amber-600 mt-0.5" />
+                    ) : (
+                      <AlertCircle className="h-4 w-4 shrink-0 text-red-600 mt-0.5" />
+                    )}
                     <div>
-                      <p className="font-semibold text-red-900">Falha ao carregar participantes</p>
-                      <p className="text-red-700">{erroCarregamento}</p>
+                      <p
+                        className={`font-semibold ${
+                          isRateLimited ? 'text-amber-950' : 'text-red-900'
+                        }`}
+                      >
+                        {isRateLimited
+                          ? 'Limite de requisições excedido (429 Too Many Requests)'
+                          : 'Falha ao carregar participantes'}
+                      </p>
+                      <p className={`mt-0.5 ${isRateLimited ? 'text-amber-800' : 'text-red-700'}`}>
+                        {erroCarregamento}
+                      </p>
+                      {isRateLimited && cooldownSeconds > 0 && (
+                        <p className="text-[11px] font-medium text-amber-700 mt-1">
+                          Cooldown de segurança: novas tentativas automáticas estão pausadas por
+                          mais <span className="font-bold">{cooldownSeconds} segundo(s)</span>.
+                        </p>
+                      )}
                     </div>
                   </div>
                   <Button
@@ -845,10 +990,15 @@ export function AdminManageParticipantesModal({
                     variant="outline"
                     size="sm"
                     onClick={() => carregarDados({ force: true })}
-                    className="h-7 border-red-300 text-red-800 hover:bg-red-100 text-xs shrink-0"
+                    disabled={loading || cooldownSeconds > 0}
+                    className={`h-7 text-xs shrink-0 ${
+                      isRateLimited
+                        ? 'border-amber-300 text-amber-900 hover:bg-amber-100 disabled:opacity-50'
+                        : 'border-red-300 text-red-800 hover:bg-red-100 disabled:opacity-50'
+                    }`}
                   >
-                    <RefreshCw className="h-3 w-3 mr-1" />
-                    Tentar Novamente
+                    <RefreshCw className={`h-3 w-3 mr-1 ${loading ? 'animate-spin' : ''}`} />
+                    {cooldownSeconds > 0 ? `Aguarde (${cooldownSeconds}s)` : 'Tentar Novamente'}
                   </Button>
                 </div>
               )}

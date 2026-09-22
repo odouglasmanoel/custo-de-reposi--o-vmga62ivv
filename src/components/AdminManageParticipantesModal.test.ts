@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import pb from '@/lib/pocketbase/client'
 import type { Bolao, Participante } from '@/types/bolao'
+import { checkIsRateLimitError } from './AdminManageParticipantesModal'
 
 describe('AdminManageParticipantesModal logic and backend contracts', () => {
   beforeEach(() => {
@@ -288,5 +289,94 @@ describe('AdminManageParticipantesModal logic and backend contracts', () => {
     const segundaCarga = await pb.collection('participantes').getFullList()
     expect(segundaCarga[0].id).toBe('p-2')
     expect(callCount).toBe(2)
+  })
+
+  it('identifica corretamente erros 429 e Rate Limit com checkIsRateLimitError', () => {
+    expect(checkIsRateLimitError({ status: 429 })).toBe(true)
+    expect(checkIsRateLimitError({ statusCode: 429 })).toBe(true)
+    expect(checkIsRateLimitError({ response: { status: 429 } })).toBe(true)
+    expect(checkIsRateLimitError({ message: 'Client error: 429 Too Many Requests' })).toBe(true)
+    expect(checkIsRateLimitError({ error: 'rate limit exceeded' })).toBe(true)
+    expect(checkIsRateLimitError({ message: 'Limite de requisições atingido' })).toBe(true)
+
+    // Outros erros normais não devem ser classificados como rate limit
+    expect(checkIsRateLimitError({ status: 500, message: 'Internal Server Error' })).toBe(false)
+    expect(checkIsRateLimitError({ status: 404, message: 'Not found' })).toBe(false)
+    expect(checkIsRateLimitError(null)).toBe(false)
+    expect(checkIsRateLimitError(undefined)).toBe(false)
+  })
+
+  it('trava hasFetched / session lock impede re-execuções sucessivas de busca automática na mesma sessão de abertura', async () => {
+    let fetchCount = 0
+    let hasFetchedInSession = false
+    let fetchInProgress = false
+
+    const carregarDadosSimulado = async (options?: { force?: boolean }) => {
+      if (fetchInProgress) return
+      if (hasFetchedInSession && !options?.force) return
+
+      fetchInProgress = true
+      try {
+        fetchCount++
+        hasFetchedInSession = true
+      } finally {
+        fetchInProgress = false
+      }
+    }
+
+    // Modal abre pela 1ª vez: open = true
+    await carregarDadosSimulado()
+    expect(fetchCount).toBe(1)
+    expect(hasFetchedInSession).toBe(true)
+
+    // Re-renders do pai acontecem 5 vezes com o modal ainda aberto (open = true)
+    for (let i = 0; i < 5; i++) {
+      await carregarDadosSimulado()
+    }
+    // Deve continuar sendo exatamente 1 chamada!
+    expect(fetchCount).toBe(1)
+
+    // Botão Atualizar (force: true) permite recarregar manualmente
+    await carregarDadosSimulado({ force: true })
+    expect(fetchCount).toBe(2)
+
+    // Usuário fecha o modal (open = false) e reabre (open = true)
+    hasFetchedInSession = false
+    await carregarDadosSimulado()
+    expect(fetchCount).toBe(3)
+  })
+
+  it('backoff de cooldown após 429 bloqueia chamadas automáticas até expirar', () => {
+    let rateLimitCooldownUntil = 0
+    let cooldownDurationSeconds = 30
+
+    const trigger429 = () => {
+      rateLimitCooldownUntil = Date.now() + cooldownDurationSeconds * 1000
+    }
+
+    const podeExecutarBusca = (options?: { force?: boolean }) => {
+      const now = Date.now()
+      if (now < rateLimitCooldownUntil && !options?.force) {
+        return false
+      }
+      return true
+    }
+
+    // Inicialmente pode executar
+    expect(podeExecutarBusca()).toBe(true)
+
+    // Ocorre erro 429
+    trigger429()
+
+    // Novas chamadas automáticas são bloqueadas
+    expect(podeExecutarBusca()).toBe(false)
+    expect(podeExecutarBusca({ force: false })).toBe(false)
+
+    // Botão forçado (atualização manual consciente) tem permissão de bypass
+    expect(podeExecutarBusca({ force: true })).toBe(true)
+
+    // Quando o tempo de espera expira
+    rateLimitCooldownUntil = Date.now() - 1000
+    expect(podeExecutarBusca()).toBe(true)
   })
 })
