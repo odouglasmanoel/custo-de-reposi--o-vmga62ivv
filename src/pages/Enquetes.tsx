@@ -56,6 +56,7 @@ import {
   formatEnqueteStatusLabel,
   formatEnquetePeriodoCurto,
   enquetesPossuemAnosDiferentes,
+  ordenarEnquetesCrescente,
 } from '@/lib/dateUtils'
 import { Skeleton } from '@/components/ui/skeleton'
 import {
@@ -104,17 +105,24 @@ export default function Enquetes() {
   // Estado único de verdade (Single Source of Truth) para a enquete ativa
   const [enquetes, setEnquetes] = useState<EnqueteModel[]>(initialListaCached)
   const [activePoll, setActivePoll] = useState<EnqueteModel | null>(() => {
+    if (initialListaCached.length === 0) return null
+
+    // 1. Prioridade máxima: parâmetro ?id= da URL (deep links como os enviados no WhatsApp)
     let resolvedPoll: EnqueteModel | null = null
     if (typeof window !== 'undefined') {
       const urlParams = new URLSearchParams(window.location.search)
       const idFromUrl = urlParams.get('id')
-      if (idFromUrl && initialListaCached.length > 0) {
+      if (idFromUrl) {
         resolvedPoll = initialListaCached.find((e) => e.id === idFromUrl) || null
       }
     }
-    if (!resolvedPoll && initialListaCached.length > 0) {
-      resolvedPoll = initialListaCached.find((e) => e.status === 'aberta') || initialListaCached[0]
+
+    // 2. Default sem id na URL: SEMPRE a primeira enquete da ordem crescente de data_inicio (enquetesOrdenadas[0])
+    if (!resolvedPoll) {
+      const ordenadas = ordenarEnquetesCrescente(initialListaCached)
+      resolvedPoll = ordenadas[0] || null
     }
+
     if (resolvedPoll) {
       const cached = readEnqueteDetalhesCache(resolvedPoll.id, user?.id)
       if (cached?.enquete) {
@@ -291,9 +299,9 @@ export default function Enquetes() {
             const idFromUrl = urlParams?.get('id')
             const correspondenteUrl = idFromUrl ? lista.find((e) => e.id === idFromUrl) : null
 
-            // Seleciona a enquete da URL, a primeira aberta ou a mais recente (lista[0])
-            const selecionada =
-              correspondenteUrl || lista.find((e) => e.status === 'aberta') || lista[0]
+            // Regra: se houver ?id= na URL, prevalece; senão, a primeira da ordem crescente de data_inicio
+            const listaOrdenada = ordenarEnquetesCrescente(lista)
+            const selecionada = correspondenteUrl || listaOrdenada[0] || lista[0]
             return selecionada
           } else {
             // Sincroniza activePoll com os dados mais recentes da lista revalidada
@@ -390,14 +398,7 @@ export default function Enquetes() {
 
   // Ordena os botões de enquetes por data_inicio em ordem CRESCENTE (mais antiga/próxima para a mais distante)
   const enquetesOrdenadas = useMemo(() => {
-    return [...enquetes].sort((a, b) => {
-      const dataA = a.data_inicio ? String(a.data_inicio).slice(0, 10) : ''
-      const dataB = b.data_inicio ? String(b.data_inicio).slice(0, 10) : ''
-      if (dataA !== dataB) {
-        return dataA.localeCompare(dataB)
-      }
-      return (a.titulo || '').localeCompare(b.titulo || '')
-    })
+    return ordenarEnquetesCrescente(enquetes)
   }, [enquetes])
 
   // Desambiguação de anos: se houver enquetes de anos diferentes, inclui o ano no rótulo curto

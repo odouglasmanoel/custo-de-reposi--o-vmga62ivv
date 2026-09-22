@@ -11,6 +11,7 @@ import {
   type EnqueteModel,
   type JogoComVotos,
 } from './enquetes'
+import { ordenarEnquetesCrescente } from '@/lib/dateUtils'
 
 describe('Serviço de Enquetes - Otimizações de Carregamento, Cache e Requisições', () => {
   beforeEach(() => {
@@ -199,21 +200,46 @@ describe('Serviço de Enquetes - Otimizações de Carregamento, Cache e Requisi�
   })
 
   describe('4. Estabilidade de seleção e deep link', () => {
-    it('seleção respeita parâmetro de ID da URL ou seleciona a primeira aberta', () => {
+    it('seleção no carregamento inicial: sem ?id= na URL seleciona SEMPRE o primeiro elemento da ordem crescente (enquetes[0])', () => {
+      // Simula a lista vinda da API ordenada por -created (da mais recente para a mais antiga)
+      // Exemplo real do Bolão: 30/09 a 03/10 (criada por último), 27/09 a 29/09, 23/09 a 26/09
       const enquetes: EnqueteModel[] = [
-        { id: 'enq_antiga', status: 'encerrada', created: '2026-01-01' } as unknown as EnqueteModel,
-        { id: 'enq_aberta', status: 'aberta', created: '2026-02-01' } as unknown as EnqueteModel,
-        { id: 'enq_recente', status: 'cadastrada', created: '2026-03-01' } as unknown as EnqueteModel,
+        {
+          id: 'enq_30_09',
+          titulo: 'Enquete Copa Coni — 30/09/2026 a 03/10/2026',
+          data_inicio: '2026-09-30',
+          data_fim: '2026-10-03',
+          status: 'aberta',
+          created: '2026-09-22T15:00:00.000Z',
+        } as unknown as EnqueteModel,
+        {
+          id: 'enq_27_09',
+          titulo: 'Enquete Copa Coni — 27/09/2026 a 29/09/2026',
+          data_inicio: '2026-09-27',
+          data_fim: '2026-09-29',
+          status: 'aberta',
+          created: '2026-09-22T13:00:00.000Z',
+        } as unknown as EnqueteModel,
+        {
+          id: 'enq_23_09',
+          titulo: 'Enquete Copa Coni — 23/09/2026 a 26/09/2026',
+          data_inicio: '2026-09-23',
+          data_fim: '2026-09-26',
+          status: 'aberta',
+          created: '2026-09-19T16:00:00.000Z',
+        } as unknown as EnqueteModel,
       ]
 
-      // 1. Sem URL param: prefere aberta
-      const selecionadaPadrao = enquetes.find((e) => e.status === 'aberta') || enquetes[0]
-      expect(selecionadaPadrao.id).toBe('enq_aberta')
+      // 1. Sem parâmetro de ID da URL: deve selecionar a primeira da ordem crescente de data_inicio (23/09 a 26/09)
+      const listaOrdenada = ordenarEnquetesCrescente(enquetes)
+      const selecionadaPadrao = listaOrdenada[0]
+      expect(selecionadaPadrao.id).toBe('enq_23_09')
+      expect(selecionadaPadrao.data_inicio).toBe('2026-09-23')
 
-      // 2. Com URL param
-      const urlId = 'enq_antiga'
-      const selecionadaUrl = enquetes.find((e) => e.id === urlId) || selecionadaPadrao
-      expect(selecionadaUrl.id).toBe('enq_antiga')
+      // 2. Com parâmetro de ID da URL (deep link do WhatsApp): id da URL prevalece
+      const urlId = 'enq_30_09'
+      const selecionadaUrl = enquetes.find((e) => e.id === urlId) || listaOrdenada[0]
+      expect(selecionadaUrl.id).toBe('enq_30_09')
     })
   })
 })

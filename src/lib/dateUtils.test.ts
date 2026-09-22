@@ -22,6 +22,7 @@ import {
   formatEnqueteDropdownOptionLabel,
   formatEnquetePeriodoCurto,
   enquetesPossuemAnosDiferentes,
+  ordenarEnquetesCrescente,
 } from './dateUtils'
 
 describe('dateUtils - Jogos de Hoje e Fuso de Brasília', () => {
@@ -643,6 +644,31 @@ describe('dateUtils - Jogos de Hoje e Fuso de Brasília', () => {
         expect(formatEnquetePeriodoCurto('2026-09-23', null)).toBe('23/09')
         expect(formatEnquetePeriodoCurto(null, '2026-09-26')).toBe('26/09')
         expect(formatEnquetePeriodoCurto(null, null)).toBe('Sem data')
+      })
+
+      it('ordenarEnquetesCrescente ordena por data_inicio crescente com a mais próxima/recente primeiro', () => {
+        const enquetes = [
+          {
+            id: 'enq_3',
+            titulo: 'Enquete Copa Coni — 30/09 a 03/10',
+            data_inicio: '2026-09-30',
+          },
+          {
+            id: 'enq_1',
+            titulo: 'Enquete Copa Coni — 23/09 a 26/09',
+            data_inicio: '2026-09-23',
+          },
+          {
+            id: 'enq_2',
+            titulo: 'Enquete Copa Coni — 27/09 a 29/09',
+            data_inicio: '2026-09-27',
+          },
+        ]
+
+        const ordenadas = ordenarEnquetesCrescente(enquetes)
+        expect(ordenadas.map((e) => e.id)).toEqual(['enq_1', 'enq_2', 'enq_3'])
+        expect(ordenadas[0].id).toBe('enq_1')
+        expect(ordenadas[0].data_inicio).toBe('2026-09-23')
       })
     })
 

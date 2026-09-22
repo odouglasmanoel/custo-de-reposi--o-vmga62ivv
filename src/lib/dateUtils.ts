@@ -756,6 +756,23 @@ export function enquetesPossuemAnosDiferentes(
 }
 
 /**
+ * Ordena a lista de enquetes por data_inicio em ordem CRESCENTE (mais próxima/antiga no tempo primeiro).
+ * Em caso de empate em data_inicio, desempata alfabeticamente pelo título.
+ */
+export function ordenarEnquetesCrescente<
+  T extends { data_inicio?: string | Date | null; titulo?: string | null },
+>(enquetes: T[]): T[] {
+  return [...enquetes].sort((a, b) => {
+    const dataA = a.data_inicio ? String(a.data_inicio).slice(0, 10) : ''
+    const dataB = b.data_inicio ? String(b.data_inicio).slice(0, 10) : ''
+    if (dataA !== dataB) {
+      return dataA.localeCompare(dataB)
+    }
+    return (a.titulo || '').localeCompare(b.titulo || '')
+  })
+}
+
+/**
  * Extrai o nome da competição/copa a partir do título existente ou padrão.
  * Padrão: "Copa Coni"
  */
