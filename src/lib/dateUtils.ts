@@ -645,6 +645,47 @@ export function formatEnqueteStatusLabel(status?: string | null): string {
 }
 
 /**
+ * Interface para formatação dos rótulos reativos das opções do dropdown de enquetes.
+ * Formato padrão: `${enquete.titulo} — ${enquete.data_inicio} a ${enquete.data_fim} (Status)`
+ */
+export interface EnqueteDropdownOptionItem {
+  id?: string
+  titulo?: string | null
+  data_inicio?: string | Date | null
+  data_fim?: string | Date | null
+  status?: string | null
+  [key: string]: unknown
+}
+
+/**
+ * Formata o rótulo reativo de uma opção do dropdown de enquetes EM TEMPO DE RENDER
+ * a partir dos dados do objeto da enquete em memória:
+ * `${enquete.titulo} — ${enquete.data_inicio} a ${enquete.data_fim}` + status entre parênteses.
+ * Utiliza formatDataBR (fuso de São Paulo) para consistência entre dropdown e cabeçalho.
+ */
+export function formatEnqueteDropdownOptionLabel(enq: EnqueteDropdownOptionItem): string {
+  const nomeCopa = extrairNomeCopaEnquete(enq.titulo, 'Copa Coni')
+  const dInicio = formatDataBR(enq.data_inicio)
+  const dFim = formatDataBR(enq.data_fim)
+  const statusLabel = formatEnqueteStatusLabel(enq.status)
+
+  let labelBase = ''
+  if (dInicio && dInicio !== '—' && dFim && dFim !== '—') {
+    labelBase = `Enquete ${nomeCopa} — ${dInicio} a ${dFim}`
+  } else if (dInicio && dInicio !== '—') {
+    labelBase = `Enquete ${nomeCopa} — ${dInicio}`
+  } else if (dFim && dFim !== '—') {
+    labelBase = `Enquete ${nomeCopa} — ${dFim}`
+  } else if (enq.titulo) {
+    labelBase = enq.titulo.trim()
+  } else {
+    labelBase = `Enquete ${nomeCopa}`
+  }
+
+  return `${labelBase} (${statusLabel})`
+}
+
+/**
  * Extrai o nome da competição/copa a partir do título existente ou padrão.
  * Padrão: "Copa Coni"
  */
@@ -729,6 +770,8 @@ export function formatEnqueteTituloDinamico(options: EnqueteTituloOptions): stri
   let baseTitulo = ''
   if (intervaloTexto) {
     baseTitulo = `Enquete ${nomeCopa} — ${intervaloTexto}`
+  } else if (options.titulo) {
+    baseTitulo = options.titulo.trim()
   } else {
     baseTitulo = `Enquete ${nomeCopa}`
   }

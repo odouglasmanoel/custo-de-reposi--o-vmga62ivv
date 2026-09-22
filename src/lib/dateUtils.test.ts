@@ -19,6 +19,7 @@ import {
   formatDataHoraSaoPaulo,
   satisfiesEnqueteMinTimeMargin,
   formatEnqueteTituloDinamico,
+  formatEnqueteDropdownOptionLabel,
 } from './dateUtils'
 
 describe('dateUtils - Jogos de Hoje e Fuso de Brasília', () => {
@@ -603,6 +604,77 @@ describe('dateUtils - Jogos de Hoje e Fuso de Brasília', () => {
         incluirStatus: false,
       })
       expect(tituloOutra).toBe('Enquete Copa Coni — 27/09/2026 a 29/09/2026')
+    })
+
+    describe('formatEnqueteDropdownOptionLabel (Rótulos Reativos do Dropdown)', () => {
+      it('formata o rótulo reativamente a partir de data_inicio e data_fim e status atual do objeto', () => {
+        const enquete = {
+          id: 'uj08y650k4tt5yu',
+          titulo: 'Enquete Copa Coni — 22/09/2026 a 06/10/2026',
+          data_inicio: '2026-09-23',
+          data_fim: '2026-09-26',
+          status: 'cadastrada',
+        }
+
+        // Mesmo que o título antigo ainda traga texto defasado, o rótulo reativo formata
+        // imediatamente com as novas datas no formato DD/MM/AAAA e status
+        const rotulo = formatEnqueteDropdownOptionLabel(enquete)
+        expect(rotulo).toBe('Enquete Copa Coni — 23/09/2026 a 26/09/2026 (Cadastrada)')
+        expect(rotulo).not.toContain('22/09/2026')
+        expect(rotulo).not.toContain('06/10/2026')
+      })
+
+      it('reflete atualização de período no banco sem precisar selecionar a enquete primeiro', () => {
+        const listaEnquetesMemoria = [
+          {
+            id: 'i8w8qxktaccwfys',
+            titulo: 'Enquete Copa Coni — 01/10/2026 a 03/10/2026',
+            data_inicio: '2026-10-01',
+            data_fim: '2026-10-03',
+            status: 'aberta',
+          },
+          {
+            id: 'c65ast6d85rfajs',
+            titulo: 'Enquete Copa Coni — 27/09/2026 a 29/09/2026',
+            data_inicio: '2026-09-27',
+            data_fim: '2026-09-29',
+            status: 'aberta',
+          },
+          {
+            id: 'uj08y650k4tt5yu',
+            titulo: 'Enquete Copa Coni — 23/09/2026 a 26/09/2026',
+            data_inicio: '2026-09-23',
+            data_fim: '2026-09-26',
+            status: 'cadastrada',
+          },
+        ]
+
+        const rotulos = listaEnquetesMemoria.map(formatEnqueteDropdownOptionLabel)
+
+        expect(rotulos[0]).toBe('Enquete Copa Coni — 01/10/2026 a 03/10/2026 (Aberta)')
+        expect(rotulos[1]).toBe('Enquete Copa Coni — 27/09/2026 a 29/09/2026 (Aberta)')
+        expect(rotulos[2]).toBe('Enquete Copa Coni — 23/09/2026 a 26/09/2026 (Cadastrada)')
+      })
+
+      it('trata status aberta, cadastrada e encerrada adequadamente', () => {
+        expect(
+          formatEnqueteDropdownOptionLabel({
+            titulo: 'Enquete Copa Coni',
+            data_inicio: '2026-09-23',
+            data_fim: '2026-09-26',
+            status: 'encerrada',
+          }),
+        ).toBe('Enquete Copa Coni — 23/09/2026 a 26/09/2026 (Encerrada)')
+
+        expect(
+          formatEnqueteDropdownOptionLabel({
+            titulo: 'Enquete Copa Coni',
+            data_inicio: '2026-09-23',
+            data_fim: '2026-09-26',
+            status: 'aberta',
+          }),
+        ).toBe('Enquete Copa Coni — 23/09/2026 a 26/09/2026 (Aberta)')
+      })
     })
 
     it('ao trocar de enquete no dropdown, título calcula imediatamente a partir de activePoll (titulo, data_inicio e data_fim)', () => {

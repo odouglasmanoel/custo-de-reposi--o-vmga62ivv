@@ -1607,6 +1607,8 @@ onRecordCreate((e) => {
           var dMin = jogos[0].getString('data')
           var dMax = jogos[jogos.length - 1].getString('data')
           if (dMin && dMax) {
+            enq.set('data_inicio', dMin)
+            enq.set('data_fim', dMax)
             enq.set(
               'titulo',
               'Enquete ' + nomeCopa + ' — ' + formatBR(dMin) + ' a ' + formatBR(dMax),
@@ -1682,6 +1684,8 @@ onRecordUpdate((e) => {
           var dMin = jogos[0].getString('data')
           var dMax = jogos[jogos.length - 1].getString('data')
           if (dMin && dMax) {
+            enq.set('data_inicio', dMin)
+            enq.set('data_fim', dMax)
             enq.set(
               'titulo',
               'Enquete ' + nomeCopa + ' — ' + formatBR(dMin) + ' a ' + formatBR(dMax),
@@ -1741,6 +1745,8 @@ onRecordDelete((e) => {
           var dMin = restantes[0].getString('data')
           var dMax = restantes[restantes.length - 1].getString('data')
           if (dMin && dMax) {
+            enq.set('data_inicio', dMin)
+            enq.set('data_fim', dMax)
             enq.set(
               'titulo',
               'Enquete ' + nomeCopa + ' — ' + formatBR(dMin) + ' a ' + formatBR(dMax),
