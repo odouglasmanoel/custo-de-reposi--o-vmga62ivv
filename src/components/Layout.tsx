@@ -101,15 +101,7 @@ const NAV_ITEMS: NavItem[] = [
     path: '/bolao/admin/jogos',
     icon: Shield,
     adminOnly: true,
-    aliases: ['/bolao/admin/jogos'],
-  },
-  {
-    id: 'configuracoes',
-    label: 'Configurações',
-    path: '/bolao/configuracoes',
-    icon: Settings,
-    adminOnly: true,
-    aliases: ['/bolao/admin/configuracoes'],
+    aliases: ['/bolao/admin/jogos', '/bolao/configuracoes', '/bolao/admin/configuracoes'],
   },
 ]
 
@@ -164,12 +156,14 @@ export default function Layout({ children }: LayoutProps) {
     location.pathname.startsWith('/bolao/admin')
 
   const handleBack = () => {
-    if (location.pathname.startsWith('/bolao/admin/jogos/')) {
+    if (
+      location.pathname.startsWith('/bolao/admin/jogos/') ||
+      location.pathname === '/bolao/admin/configuracoes' ||
+      location.pathname === '/bolao/configuracoes'
+    ) {
       navigate('/bolao/admin/jogos')
     } else if (
       location.pathname === '/bolao/admin/jogos' ||
-      location.pathname === '/bolao/admin/configuracoes' ||
-      location.pathname === '/bolao/configuracoes' ||
       location.pathname === '/bolao/chat' ||
       location.pathname === '/bolao/jogos-do-dia' ||
       location.pathname === '/jogos-do-dia' ||
@@ -199,10 +193,11 @@ export default function Layout({ children }: LayoutProps) {
     const p = location.pathname
     if (p === item.path) return true
     if (item.aliases && item.aliases.includes(p)) return true
-    if (item.id === 'admin' && p.startsWith('/bolao/admin/jogos')) return true
     if (
-      item.id === 'configuracoes' &&
-      (p === '/bolao/configuracoes' || p === '/bolao/admin/configuracoes')
+      item.id === 'admin' &&
+      (p.startsWith('/bolao/admin/jogos') ||
+        p === '/bolao/configuracoes' ||
+        p === '/bolao/admin/configuracoes')
     )
       return true
     return false

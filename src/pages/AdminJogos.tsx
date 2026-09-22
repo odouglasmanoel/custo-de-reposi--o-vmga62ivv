@@ -592,7 +592,7 @@ export default function AdminJogos() {
               title="Configurar fontes de placar ao vivo e API Key"
             >
               <Settings className="mr-1 h-3.5 w-3.5 text-emerald-600" />
-              Configurar Placar Ao Vivo
+              Configurações da API
             </Button>
           </Link>
         </div>
