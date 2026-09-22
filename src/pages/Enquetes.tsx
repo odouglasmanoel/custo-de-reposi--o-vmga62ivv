@@ -96,66 +96,48 @@ export default function Enquetes() {
 
   // Inicialização instantânea a partir do cache (dois níveis) e parâmetro da URL
   const initialListaCached = useMemo(() => readListaEnquetesCache() || [], [])
-  const initialEnqueteId = useMemo(() => {
+
+  // Estado único de verdade (Single Source of Truth) para a enquete ativa
+  const [enquetes, setEnquetes] = useState<EnqueteModel[]>(initialListaCached)
+  const [activePoll, setActivePoll] = useState<EnqueteModel | null>(() => {
+    let resolvedPoll: EnqueteModel | null = null
     if (typeof window !== 'undefined') {
       const urlParams = new URLSearchParams(window.location.search)
       const idFromUrl = urlParams.get('id')
-      if (idFromUrl) {
-        if (initialListaCached.length > 0) {
-          const match = initialListaCached.find((e) => e.id === idFromUrl)
-          if (match) return match.id
-        }
-        return idFromUrl
+      if (idFromUrl && initialListaCached.length > 0) {
+        resolvedPoll = initialListaCached.find((e) => e.id === idFromUrl) || null
       }
     }
-    if (initialListaCached.length > 0) {
-      const aberta = initialListaCached.find((e) => e.status === 'aberta') || initialListaCached[0]
-      return aberta.id
+    if (!resolvedPoll && initialListaCached.length > 0) {
+      resolvedPoll = initialListaCached.find((e) => e.status === 'aberta') || initialListaCached[0]
     }
-    return ''
-  }, [initialListaCached])
-
-  // Estados principais
-  const [enquetes, setEnquetes] = useState<EnqueteModel[]>(initialListaCached)
-  const [enqueteAtivaId, setEnqueteAtivaId] = useState<string>(initialEnqueteId)
-  const [enqueteAtiva, setEnqueteAtiva] = useState<EnqueteModel | null>(() => {
-    if (initialEnqueteId) {
-      const cached = readEnqueteDetalhesCache(initialEnqueteId, user?.id)
-      if (cached) return cached.enquete
-      return initialListaCached.find((e) => e.id === initialEnqueteId) || null
+    if (resolvedPoll) {
+      const cached = readEnqueteDetalhesCache(resolvedPoll.id, user?.id)
+      if (cached?.enquete) {
+        return cached.enquete
+      }
+      return resolvedPoll
     }
     return null
   })
+
   const [jogosEnquete, setJogosEnquete] = useState<JogoComVotos[]>(() => {
-    if (initialEnqueteId) {
-      const cached = readEnqueteDetalhesCache(initialEnqueteId, user?.id)
+    if (activePoll?.id) {
+      const cached = readEnqueteDetalhesCache(activePoll.id, user?.id)
       if (cached) return cached.jogos
     }
     return []
   })
 
-  // Enquete selecionada no dropdown garantida a qualquer momento:
-  // Prioriza o objeto completo enqueteAtiva se seu ID corresponder ao enqueteAtivaId,
-  // ou busca na lista de enquetes disponíveis pelo ID selecionado no menu suspenso.
-  const selectedEnquete = useMemo(() => {
-    if (enqueteAtiva && enqueteAtiva.id === enqueteAtivaId) {
-      return enqueteAtiva
-    }
-    if (enqueteAtivaId) {
-      const encontradaNaLista = enquetes.find((e) => e.id === enqueteAtivaId)
-      if (encontradaNaLista) return encontradaNaLista
-    }
-    return enqueteAtiva || enquetes[0] || null
-  }, [enqueteAtiva, enqueteAtivaId, enquetes])
   const [meusVotosIds, setMeusVotosIds] = useState<Set<string>>(() => {
-    if (initialEnqueteId) {
-      const cached = readEnqueteDetalhesCache(initialEnqueteId, user?.id)
+    if (activePoll?.id) {
+      const cached = readEnqueteDetalhesCache(activePoll.id, user?.id)
       if (cached) return cached.meusVotosIds
     }
     return new Set()
   })
   // Se tínhamos cache inicial para a enquete ativa, não bloqueia a tela!
-  const hasInitialCache = Boolean(initialEnqueteId && jogosEnquete.length > 0)
+  const hasInitialCache = Boolean(activePoll?.id && jogosEnquete.length > 0)
   const [loading, setLoading] = useState(!hasInitialCache)
   const [isSyncing, setIsSyncing] = useState(false)
   const [votandoJogoId, setVotandoJogoId] = useState<string | null>(null)
@@ -191,28 +173,20 @@ export default function Enquetes() {
   const [manualAvisoMargem, setManualAvisoMargem] = useState<string | null>(null)
   const [manualAvisoDuplicado, setManualAvisoDuplicado] = useState<string | null>(null)
 
-  // Título dinâmico da enquete selecionada no dropdown calculado em tempo real:
-  // Lê dinamicamente as propriedades do objeto da enquete selecionada (selectedEnquete)
+  // Título dinâmico da enquete ativa calculado em tempo real:
+  // Lê dinamicamente as propriedades de activePoll (Single Source of Truth)
   // desde o primeiro carregamento, sem qualquer valor inicial fixo hardcoded.
-  // Se a enquete selecionada for a enquete com detalhes e jogos carregados, usa os jogos em tempo real.
   const tituloEnqueteAtiva = useMemo(() => {
-    const poll = selectedEnquete
-    if (!poll) return ''
-    const jogosParaCalculo = poll.id === enqueteAtiva?.id ? jogosEnquete : []
+    if (!activePoll) return ''
     return formatEnqueteTituloDinamico({
-      titulo: poll.titulo,
-      data_inicio: poll.data_inicio,
-      data_fim: poll.data_fim,
-      status: poll.status,
-      jogos: jogosParaCalculo,
+      titulo: activePoll.titulo,
+      data_inicio: activePoll.data_inicio,
+      data_fim: activePoll.data_fim,
+      status: activePoll.status,
+      jogos: jogosEnquete,
       incluirStatus: false,
     })
-  }, [selectedEnquete, enqueteAtiva?.id, jogosEnquete])
-
-  // Referência visual e de dados da enquete exibida:
-  // Usa selectedEnquete como prioridade para garantir que qualquer propriedade
-  // (período, status, data limite) reflita a enquete selecionada no dropdown.
-  const enqueteExibida = selectedEnquete || enqueteAtiva
+  }, [activePoll, jogosEnquete])
 
   // Diálogo para Reabrir Votação com nova data limite
   const [dialogReabrirOpen, setDialogReabrirOpen] = useState(false)
@@ -268,14 +242,14 @@ export default function Enquetes() {
 
   // Realtime para atualizar votos e status
   useRealtime('enquete_votos', () => {
-    if (enqueteAtivaId) {
-      carregarDetalhesEnquete(enqueteAtivaId, false)
+    if (activePoll?.id) {
+      carregarDetalhesEnquete(activePoll.id, false)
     }
   })
 
   useRealtime('enquete_jogos', () => {
-    if (enqueteAtivaId) {
-      carregarDetalhesEnquete(enqueteAtivaId, false)
+    if (activePoll?.id) {
+      carregarDetalhesEnquete(activePoll.id, false)
     }
   })
 
@@ -298,21 +272,25 @@ export default function Enquetes() {
         const lista = await listarEnquetes()
         setEnquetes(lista)
         if (lista.length > 0) {
-          if (selectFirst || !enqueteAtivaId) {
+          if (selectFirst || !activePoll) {
             // Verifica se há enquete indicada na URL
             const urlParams = new URLSearchParams(window.location.search)
             const idFromUrl = urlParams.get('id')
             const correspondenteUrl = idFromUrl ? lista.find((e) => e.id === idFromUrl) : null
 
-            // Seleciona a enquete da URL, a primeira aberta ou a mais recente
+            // Seleciona a enquete da URL, a primeira aberta ou a mais recente (lista[0])
             const selecionada =
               correspondenteUrl || lista.find((e) => e.status === 'aberta') || lista[0]
-            setEnqueteAtivaId(selecionada.id)
-            setEnqueteAtiva(selecionada)
+            setActivePoll(selecionada)
+          } else {
+            // Sincroniza activePoll com os dados mais recentes da lista revalidada
+            const atualizada = lista.find((e) => e.id === activePoll.id)
+            if (atualizada) {
+              setActivePoll((prev) => ({ ...prev, ...atualizada }))
+            }
           }
         } else {
-          setEnqueteAtivaId('')
-          setEnqueteAtiva(null)
+          setActivePoll(null)
           setJogosEnquete([])
         }
       } catch (err) {
@@ -322,7 +300,7 @@ export default function Enquetes() {
         setIsSyncing(false)
       }
     },
-    [enqueteAtivaId],
+    [activePoll],
   )
 
   // Carrega detalhes da enquete selecionada com SWR
@@ -333,7 +311,9 @@ export default function Enquetes() {
       // 1. Lê do cache local/memória imediatamente
       const cached = readEnqueteDetalhesCache(enqueteId, user?.id)
       if (cached) {
-        setEnqueteAtiva(cached.enquete)
+        setActivePoll((prev) =>
+          prev?.id === enqueteId ? { ...prev, ...cached.enquete } : cached.enquete,
+        )
         setJogosEnquete(cached.jogos)
         setMeusVotosIds(cached.meusVotosIds)
         setLoading(false) // Dados exibidos instantaneamente!
@@ -344,7 +324,9 @@ export default function Enquetes() {
 
       try {
         const dados = await obterDadosEnquete(enqueteId, user?.id)
-        setEnqueteAtiva(dados.enquete)
+        setActivePoll((prev) =>
+          prev?.id === enqueteId ? { ...prev, ...dados.enquete } : dados.enquete,
+        )
 
         // Assegura conversão de datas e horários dos jogos para o fuso America/Sao_Paulo (UTC-3)
         const jogosNormalizados = dados.jogos.map((j) => {
@@ -390,24 +372,25 @@ export default function Enquetes() {
     carregarListaEnquetes(true)
   }, [carregarListaEnquetes])
 
+  const activePollId = activePoll?.id
   useEffect(() => {
-    if (enqueteAtivaId) {
+    if (activePollId) {
       setFiltroCategoria('todos')
-      carregarDetalhesEnquete(enqueteAtivaId, true)
+      carregarDetalhesEnquete(activePollId, true)
 
       if (typeof window !== 'undefined') {
         const url = new URL(window.location.href)
-        if (url.searchParams.get('id') !== enqueteAtivaId) {
-          url.searchParams.set('id', enqueteAtivaId)
+        if (url.searchParams.get('id') !== activePollId) {
+          url.searchParams.set('id', activePollId)
           window.history.replaceState({}, '', url.toString())
         }
       }
     }
-  }, [enqueteAtivaId, carregarDetalhesEnquete])
+  }, [activePollId, carregarDetalhesEnquete])
 
   // Total de votos do usuário logado na enquete ativa (piso mínimo de 10 votos)
   const totalMeusVotos = meusVotosIds.size
-  const limiteVotos = Math.max(10, enqueteAtiva?.limite_votos || 10)
+  const limiteVotos = Math.max(10, activePoll?.limite_votos || 10)
   const limiteAtingido = totalMeusVotos >= limiteVotos
 
   // Ranking dos jogos por total de votos (decrescente)
@@ -436,16 +419,16 @@ export default function Enquetes() {
   // Status efetivo da votação da enquete ativa:
   // Se explicitamente 'encerrada' OU se atingiu o prazo limite configurado (data_limite_votacao / fallback data_fim)
   const votacaoExpiradaPorPrazo = useMemo(() => {
-    if (!enqueteExibida) return false
-    return isEnqueteExpirada(enqueteExibida.data_limite_votacao, enqueteExibida.data_fim)
-  }, [enqueteExibida])
+    if (!activePoll) return false
+    return isEnqueteExpirada(activePoll.data_limite_votacao, activePoll.data_fim)
+  }, [activePoll])
 
   const isVotacaoEncerrada = useMemo(() => {
-    if (!enqueteExibida) return true
-    if (enqueteExibida.status === 'encerrada') return true
+    if (!activePoll) return true
+    if (activePoll.status === 'encerrada') return true
     if (votacaoExpiradaPorPrazo) return true
     return false
-  }, [enqueteExibida, votacaoExpiradaPorPrazo])
+  }, [activePoll, votacaoExpiradaPorPrazo])
 
   // Lista dinâmica de competições presentes nos jogos da enquete ativa, com contagem de jogos
   const competicoesEnquete = useMemo(() => {
@@ -482,7 +465,7 @@ export default function Enquetes() {
   // Reseta paginação de cards quando a categoria de filtro ou enquete ativa mudar
   useEffect(() => {
     setVisibleCount(15)
-  }, [filtroCategoria, enqueteAtivaId])
+  }, [filtroCategoria, activePoll?.id])
 
   // Jogos visíveis renderizados incrementalmente no DOM (Lazy Loading)
   const jogosVisiveis = useMemo(() => {
@@ -498,23 +481,20 @@ export default function Enquetes() {
     urlObj.pathname = '/bolao/enquetes'
     // Limpa parâmetros residuais de busca
     urlObj.search = ''
-    if (enqueteAtivaId) {
-      urlObj.searchParams.set('id', enqueteAtivaId)
-    } else if (enqueteAtiva?.id) {
-      urlObj.searchParams.set('id', enqueteAtiva.id)
+    if (activePoll?.id) {
+      urlObj.searchParams.set('id', activePoll.id)
     }
     const linkPagina = urlObj.toString()
 
-    const targetPoll = selectedEnquete || enqueteAtiva
     const tituloMsg =
       tituloEnqueteAtiva ||
-      (targetPoll
+      (activePoll
         ? formatEnqueteTituloDinamico({
-            titulo: targetPoll.titulo,
-            data_inicio: targetPoll.data_inicio,
-            data_fim: targetPoll.data_fim,
-            status: targetPoll.status,
-            jogos: targetPoll.id === enqueteAtiva?.id ? jogosEnquete : [],
+            titulo: activePoll.titulo,
+            data_inicio: activePoll.data_inicio,
+            data_fim: activePoll.data_fim,
+            status: activePoll.status,
+            jogos: jogosEnquete,
             incluirStatus: false,
           })
         : '')
@@ -526,12 +506,12 @@ export default function Enquetes() {
 
     const whatsappUrl = `https://api.whatsapp.com/send?text=${encodeURIComponent(mensagem)}`
     window.open(whatsappUrl, '_blank', 'noopener,noreferrer')
-  }, [enqueteAtivaId, enqueteAtiva, selectedEnquete, tituloEnqueteAtiva, jogosEnquete])
+  }, [activePoll, tituloEnqueteAtiva, jogosEnquete])
 
   // Ação: Votar / Desmarcar Jogo
   const handleToggleVoto = async (jogoId: string) => {
-    if (!enqueteAtiva) return
-    if (enqueteAtiva.status !== 'aberta' || isVotacaoEncerrada) {
+    if (!activePoll) return
+    if (activePoll.status !== 'aberta' || isVotacaoEncerrada) {
       toast({
         title: 'Votação encerrada',
         description: 'Esta enquete não está mais recebendo votos.',
@@ -552,7 +532,7 @@ export default function Enquetes() {
 
     setVotandoJogoId(jogoId)
     try {
-      const res = await toggleVotoJogo(enqueteAtiva.id, jogoId, limiteVotos)
+      const res = await toggleVotoJogo(activePoll.id, jogoId, limiteVotos)
       setMeusVotosIds((prev) => {
         const next = new Set(prev)
         if (res.voted) next.add(jogoId)
@@ -896,7 +876,7 @@ export default function Enquetes() {
       setDataLimiteVotacao(datasPadrao.dataFim ? `${datasPadrao.dataFim}T12:00` : '')
 
       await carregarListaEnquetes(false)
-      setEnqueteAtivaId(nova.id)
+      setActivePoll(nova)
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Falha ao publicar enquete.'
       toast({
@@ -916,7 +896,7 @@ export default function Enquetes() {
     setAtivaManualLogoCasa('')
     setAtivaManualLogoVisitante('')
     setAtivaManualCompeticao('')
-    setAtivaManualData(enqueteAtiva?.data_inicio || datasPadrao.dataInicio)
+    setAtivaManualData(activePoll?.data_inicio || datasPadrao.dataInicio)
     setAtivaManualHorario('16:00')
     setAtivaManualAvisoMargem(null)
     setAtivaManualAvisoDuplicado(null)
@@ -925,7 +905,7 @@ export default function Enquetes() {
 
   // Admin: Salvar jogo manual na enquete ativa
   const handleSalvarJogoManualAtiva = async () => {
-    if (!enqueteAtiva) return
+    if (!activePoll) return
 
     const timeA = ativaManualMandante.trim()
     const timeB = ativaManualVisitante.trim()
@@ -1035,7 +1015,7 @@ export default function Enquetes() {
     setSalvandoJogoAtiva(true)
     try {
       const novoRegistro = await adicionarJogoManualNaEnquete({
-        enqueteId: enqueteAtiva.id,
+        enqueteId: activePoll.id,
         time_a: timeA,
         time_b: timeB,
         logo_casa: logoAFinal,
@@ -1319,7 +1299,7 @@ export default function Enquetes() {
 
   // Admin: Cadastrar selecionados na Copa Coni
   const handleCadastrarNaCopaConi = async () => {
-    if (!enqueteAtiva) return
+    if (!activePoll) return
     if (jogosAprovadosParaConi.length === 0) {
       toast({
         title: 'Nenhum jogo selecionado',
@@ -1331,13 +1311,13 @@ export default function Enquetes() {
 
     setCadastrandoConi(true)
     try {
-      const res = await cadastrarJogosAprovadosNaCopaConi(enqueteAtiva.id, jogosAprovadosParaConi)
+      const res = await cadastrarJogosAprovadosNaCopaConi(activePoll.id, jogosAprovadosParaConi)
       toast({
         title: 'Jogos cadastrados na Copa Coni!',
         description: `${res.cadastrados} partida(s) inserida(s) automaticamente no bolão ${res.bolaoNome} sem digitação manual.`,
       })
       setConfirmCadastrarOpen(false)
-      await carregarDetalhesEnquete(enqueteAtiva.id, false)
+      await carregarDetalhesEnquete(activePoll.id, false)
       await carregarListaEnquetes(false)
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Erro ao cadastrar partidas'
@@ -1353,13 +1333,13 @@ export default function Enquetes() {
 
   // Admin: Alternar status da enquete (Encerrar / Reabrir)
   const handleMudarStatusEnquete = async (novoStatus: 'aberta' | 'encerrada') => {
-    if (!enqueteAtiva) return
+    if (!activePoll) return
     if (novoStatus === 'aberta') {
       // Abre modal para definir nova data/hora limite de votação
-      const baseData = enqueteAtiva.data_limite_votacao
-        ? enqueteAtiva.data_limite_votacao.replace(' ', 'T').slice(0, 16)
-        : enqueteAtiva.data_fim
-          ? `${enqueteAtiva.data_fim}T12:00`
+      const baseData = activePoll.data_limite_votacao
+        ? activePoll.data_limite_votacao.replace(' ', 'T').slice(0, 16)
+        : activePoll.data_fim
+          ? `${activePoll.data_fim}T12:00`
           : ''
       setReabrirNovaDataLimite(baseData)
       setDialogReabrirOpen(true)
@@ -1367,8 +1347,8 @@ export default function Enquetes() {
     }
 
     try {
-      await atualizarStatusEnquete(enqueteAtiva.id, novoStatus)
-      setEnqueteAtiva((prev) => (prev ? { ...prev, status: novoStatus } : null))
+      await atualizarStatusEnquete(activePoll.id, novoStatus)
+      setActivePoll((prev) => (prev ? { ...prev, status: novoStatus } : null))
       toast({
         title: 'Votação encerrada!',
         description: 'Os participantes não podem mais alterar votos.',
@@ -1385,12 +1365,12 @@ export default function Enquetes() {
 
   // Admin: Confirmar Reabertura com Nova Data Limite
   const handleConfirmarReabrirVotacao = async () => {
-    if (!enqueteAtiva) return
+    if (!activePoll) return
     setReabrindoVotacao(true)
     try {
       const novaDataLimiteTrim = reabrirNovaDataLimite.trim()
-      await atualizarStatusEnquete(enqueteAtiva.id, 'aberta', novaDataLimiteTrim || undefined)
-      setEnqueteAtiva((prev) =>
+      await atualizarStatusEnquete(activePoll.id, 'aberta', novaDataLimiteTrim || undefined)
+      setActivePoll((prev) =>
         prev
           ? {
               ...prev,
@@ -1418,10 +1398,10 @@ export default function Enquetes() {
 
   // Admin: Excluir enquete
   const handleExcluirEnquete = async () => {
-    if (!enqueteAtiva) return
+    if (!activePoll) return
     setExcluindoEnquete(true)
     try {
-      await excluirEnquete(enqueteAtiva.id)
+      await excluirEnquete(activePoll.id)
       toast({
         title: 'Enquete excluída',
         description: 'A enquete e seus votos foram removidos com sucesso.',
@@ -1730,10 +1710,11 @@ export default function Enquetes() {
               </Label>
               <select
                 id="select-enquete"
-                value={enqueteAtivaId}
+                value={activePoll?.id || ''}
                 onChange={(e) => {
                   const newId = e.target.value
-                  setEnqueteAtivaId(newId)
+                  const selected = enquetes.find((item) => item.id === newId) || null
+                  setActivePoll(selected)
                   if (typeof window !== 'undefined') {
                     const url = new URL(window.location.href)
                     if (newId) {
@@ -1748,7 +1729,7 @@ export default function Enquetes() {
               >
                 {enquetes.map((enq) => {
                   // Se for a enquete ativa atualmente carregada na tela, usa seus jogos em tempo real
-                  const jogosParaEnq = enq.id === enqueteAtivaId ? jogosEnquete : null
+                  const jogosParaEnq = enq.id === activePoll?.id ? jogosEnquete : null
                   const labelCompleto = formatEnqueteTituloDinamico({
                     titulo: enq.titulo,
                     data_inicio: enq.data_inicio,
@@ -1794,7 +1775,7 @@ export default function Enquetes() {
       </div>
 
       {/* Skeleton de Carregamento Instantâneo quando ainda não temos dados */}
-      {loading && !enqueteAtiva && (
+      {loading && !activePoll && (
         <div className="space-y-6">
           <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
             {[1, 2, 3].map((i) => (
@@ -1837,7 +1818,7 @@ export default function Enquetes() {
       )}
 
       {/* Trava de votação e Contador Reativo */}
-      {enqueteAtiva && (
+      {activePoll && (
         <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
           {/* Contador de Votos Pessoais */}
           <Card className="border-emerald-200 bg-linear-to-br from-emerald-50/60 to-white shadow-xs">
@@ -1899,25 +1880,25 @@ export default function Enquetes() {
                 <div className="mt-1 flex items-center gap-2">
                   <span
                     className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-bold ${
-                      !isVotacaoEncerrada && enqueteExibida.status === 'aberta'
+                      !isVotacaoEncerrada && activePoll.status === 'aberta'
                         ? 'bg-emerald-100 text-emerald-800'
-                        : enqueteExibida.status === 'cadastrada'
+                        : activePoll.status === 'cadastrada'
                           ? 'bg-indigo-100 text-indigo-800'
                           : 'bg-slate-100 text-slate-700'
                     }`}
                   >
                     <span
                       className={`h-2 w-2 rounded-full ${
-                        !isVotacaoEncerrada && enqueteExibida.status === 'aberta'
+                        !isVotacaoEncerrada && activePoll.status === 'aberta'
                           ? 'animate-pulse bg-emerald-500'
-                          : enqueteExibida.status === 'cadastrada'
+                          : activePoll.status === 'cadastrada'
                             ? 'bg-indigo-500'
                             : 'bg-slate-400'
                       }`}
                     />
-                    {!isVotacaoEncerrada && enqueteExibida.status === 'aberta'
+                    {!isVotacaoEncerrada && activePoll.status === 'aberta'
                       ? 'Votação Aberta'
-                      : enqueteExibida.status === 'cadastrada'
+                      : activePoll.status === 'cadastrada'
                         ? 'Jogos Cadastrados na Copa Coni'
                         : 'Votação Encerrada'}
                   </span>
@@ -1926,14 +1907,14 @@ export default function Enquetes() {
                   Votação Encerra em:{' '}
                   <span className="font-bold text-[#0F2A43]">
                     {formatEnquetePrazoLimiteBR(
-                      enqueteExibida.data_limite_votacao,
-                      enqueteExibida.data_fim,
+                      activePoll.data_limite_votacao,
+                      activePoll.data_fim,
                     )}
                   </span>
                 </p>
                 <p className="mt-0.5 text-[11px] text-slate-500">
-                  Período dos jogos: {formatDataBR(enqueteExibida.data_inicio)} até{' '}
-                  {formatDataBR(enqueteExibida.data_fim)}
+                  Período dos jogos: {formatDataBR(activePoll.data_inicio)} até{' '}
+                  {formatDataBR(activePoll.data_fim)}
                 </p>
               </div>
               <div className="flex h-12 w-12 items-center justify-center rounded-full bg-slate-100 text-slate-700">
@@ -1993,7 +1974,7 @@ export default function Enquetes() {
       )}
 
       {/* Conteúdo com Abas: 1. Votação dos Participantes | 2. Apurador e Decisão Admin */}
-      {enqueteAtiva && (
+      {activePoll && (
         <Tabs defaultValue="votacao" className="w-full">
           <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
             <TabsList className="bg-slate-100 p-1">
@@ -2019,7 +2000,7 @@ export default function Enquetes() {
                   <Plus className="mr-1.5 h-3.5 w-3.5" />+ Adicionar Jogo Manual
                 </Button>
 
-                {!isVotacaoEncerrada && enqueteAtiva.status === 'aberta' ? (
+                {!isVotacaoEncerrada && activePoll.status === 'aberta' ? (
                   <Button
                     variant="outline"
                     size="sm"
@@ -2152,7 +2133,7 @@ export default function Enquetes() {
                     votado={votado}
                     isTop4={isTop4}
                     isBlocked={isBlocked}
-                    statusEnquete={isVotacaoEncerrada ? 'encerrada' : enqueteAtiva.status}
+                    statusEnquete={isVotacaoEncerrada ? 'encerrada' : activePoll.status}
                     participantName={participantName}
                     isAdmin={isAdmin}
                     onToggleVoto={handleToggleVoto}
@@ -3120,7 +3101,7 @@ export default function Enquetes() {
             </DialogTitle>
             <DialogDescription className="text-xs text-slate-600">
               Inclua manualmente um confronto em{' '}
-              <strong>"{tituloEnqueteAtiva || enqueteAtiva?.titulo}"</strong>. O jogo ficará
+              <strong>"{tituloEnqueteAtiva || activePoll?.titulo}"</strong>. O jogo ficará
               disponível imediatamente para votação sem afetar os votos já existentes.
             </DialogDescription>
           </DialogHeader>
@@ -3535,7 +3516,7 @@ export default function Enquetes() {
             </DialogTitle>
             <DialogDescription className="text-xs text-slate-600">
               Tem certeza que deseja excluir a enquete{' '}
-              <strong>"{tituloEnqueteAtiva || enqueteAtiva?.titulo}"</strong>? Todos os votos e
+              <strong>"{tituloEnqueteAtiva || activePoll?.titulo}"</strong>? Todos os votos e
               confrontos desta enquete serão removidos.
             </DialogDescription>
           </DialogHeader>
