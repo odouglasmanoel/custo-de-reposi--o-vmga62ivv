@@ -561,5 +561,48 @@ describe('dateUtils - Jogos de Hoje e Fuso de Brasília', () => {
 
       expect(resultado).toBe('Enquete Copa Coni — 23/09/2026 a 23/09/2026')
     })
+
+    it('derivação dinâmica consistente com o menu suspenso no primeiro carregamento', () => {
+      // Simula duas enquetes cadastradas (como no bug report do usuário)
+      const enqueteSelecionadaDropdown = {
+        id: 'uj08y650k4tt5yu',
+        titulo: 'Enquete Copa Coni — 23/09/2026 a 26/09/2026',
+        data_inicio: '2026-09-22',
+        data_fim: '2026-10-06',
+        status: 'aberta',
+      }
+      const outraEnquete = {
+        id: 'c65ast6d85rfajs',
+        titulo: 'Enquete Copa Coni — 27/09/2026 a 29/09/2026',
+        data_inicio: '2026-09-27',
+        data_fim: '2026-09-29',
+        status: 'aberta',
+      }
+
+      // No primeiro render da tela, a enquete selecionada no dropdown é enqueteSelecionadaDropdown
+      const tituloTopo = formatEnqueteTituloDinamico({
+        titulo: enqueteSelecionadaDropdown.titulo,
+        data_inicio: enqueteSelecionadaDropdown.data_inicio,
+        data_fim: enqueteSelecionadaDropdown.data_fim,
+        status: enqueteSelecionadaDropdown.status,
+        jogos: [],
+        incluirStatus: false,
+      })
+
+      // O título deve refletir rigorosamente o período da enquete selecionada no dropdown, e NÃO da outra
+      expect(tituloTopo).toBe('Enquete Copa Coni — 22/09/2026 a 06/10/2026')
+      expect(tituloTopo).not.toContain('27/09/2026')
+
+      // Quando a outra enquete é selecionada no dropdown
+      const tituloOutra = formatEnqueteTituloDinamico({
+        titulo: outraEnquete.titulo,
+        data_inicio: outraEnquete.data_inicio,
+        data_fim: outraEnquete.data_fim,
+        status: outraEnquete.status,
+        jogos: [],
+        incluirStatus: false,
+      })
+      expect(tituloOutra).toBe('Enquete Copa Coni — 27/09/2026 a 29/09/2026')
+    })
   })
 })

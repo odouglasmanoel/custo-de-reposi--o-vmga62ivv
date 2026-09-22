@@ -133,6 +133,20 @@ export default function Enquetes() {
     }
     return []
   })
+
+  // Enquete selecionada no dropdown garantida a qualquer momento:
+  // Prioriza o objeto completo enqueteAtiva se seu ID corresponder ao enqueteAtivaId,
+  // ou busca na lista de enquetes disponíveis pelo ID selecionado no menu suspenso.
+  const selectedEnquete = useMemo(() => {
+    if (enqueteAtiva && enqueteAtiva.id === enqueteAtivaId) {
+      return enqueteAtiva
+    }
+    if (enqueteAtivaId) {
+      const encontradaNaLista = enquetes.find((e) => e.id === enqueteAtivaId)
+      if (encontradaNaLista) return encontradaNaLista
+    }
+    return enqueteAtiva || enquetes[0] || null
+  }, [enqueteAtiva, enqueteAtivaId, enquetes])
   const [meusVotosIds, setMeusVotosIds] = useState<Set<string>>(() => {
     if (initialEnqueteId) {
       const cached = readEnqueteDetalhesCache(initialEnqueteId, user?.id)
@@ -177,18 +191,28 @@ export default function Enquetes() {
   const [manualAvisoMargem, setManualAvisoMargem] = useState<string | null>(null)
   const [manualAvisoDuplicado, setManualAvisoDuplicado] = useState<string | null>(null)
 
-  // Título dinâmico da enquete ativa calculado em tempo real com base nos jogos carregados
+  // Título dinâmico da enquete selecionada no dropdown calculado em tempo real:
+  // Lê dinamicamente as propriedades do objeto da enquete selecionada (selectedEnquete)
+  // desde o primeiro carregamento, sem qualquer valor inicial fixo hardcoded.
+  // Se a enquete selecionada for a enquete com detalhes e jogos carregados, usa os jogos em tempo real.
   const tituloEnqueteAtiva = useMemo(() => {
-    if (!enqueteAtiva) return ''
+    const poll = selectedEnquete
+    if (!poll) return ''
+    const jogosParaCalculo = poll.id === enqueteAtiva?.id ? jogosEnquete : []
     return formatEnqueteTituloDinamico({
-      titulo: enqueteAtiva.titulo,
-      data_inicio: enqueteAtiva.data_inicio,
-      data_fim: enqueteAtiva.data_fim,
-      status: enqueteAtiva.status,
-      jogos: jogosEnquete,
+      titulo: poll.titulo,
+      data_inicio: poll.data_inicio,
+      data_fim: poll.data_fim,
+      status: poll.status,
+      jogos: jogosParaCalculo,
       incluirStatus: false,
     })
-  }, [enqueteAtiva, jogosEnquete])
+  }, [selectedEnquete, enqueteAtiva?.id, jogosEnquete])
+
+  // Referência visual e de dados da enquete exibida:
+  // Usa selectedEnquete como prioridade para garantir que qualquer propriedade
+  // (período, status, data limite) reflita a enquete selecionada no dropdown.
+  const enqueteExibida = selectedEnquete || enqueteAtiva
 
   // Diálogo para Reabrir Votação com nova data limite
   const [dialogReabrirOpen, setDialogReabrirOpen] = useState(false)
@@ -284,6 +308,7 @@ export default function Enquetes() {
             const selecionada =
               correspondenteUrl || lista.find((e) => e.status === 'aberta') || lista[0]
             setEnqueteAtivaId(selecionada.id)
+            setEnqueteAtiva(selecionada)
           }
         } else {
           setEnqueteAtivaId('')
@@ -411,16 +436,16 @@ export default function Enquetes() {
   // Status efetivo da votação da enquete ativa:
   // Se explicitamente 'encerrada' OU se atingiu o prazo limite configurado (data_limite_votacao / fallback data_fim)
   const votacaoExpiradaPorPrazo = useMemo(() => {
-    if (!enqueteAtiva) return false
-    return isEnqueteExpirada(enqueteAtiva.data_limite_votacao, enqueteAtiva.data_fim)
-  }, [enqueteAtiva])
+    if (!enqueteExibida) return false
+    return isEnqueteExpirada(enqueteExibida.data_limite_votacao, enqueteExibida.data_fim)
+  }, [enqueteExibida])
 
   const isVotacaoEncerrada = useMemo(() => {
-    if (!enqueteAtiva) return true
-    if (enqueteAtiva.status === 'encerrada') return true
+    if (!enqueteExibida) return true
+    if (enqueteExibida.status === 'encerrada') return true
     if (votacaoExpiradaPorPrazo) return true
     return false
-  }, [enqueteAtiva, votacaoExpiradaPorPrazo])
+  }, [enqueteExibida, votacaoExpiradaPorPrazo])
 
   // Lista dinâmica de competições presentes nos jogos da enquete ativa, com contagem de jogos
   const competicoesEnquete = useMemo(() => {
@@ -480,18 +505,19 @@ export default function Enquetes() {
     }
     const linkPagina = urlObj.toString()
 
+    const targetPoll = selectedEnquete || enqueteAtiva
     const tituloMsg =
       tituloEnqueteAtiva ||
-      (enqueteAtiva
+      (targetPoll
         ? formatEnqueteTituloDinamico({
-            titulo: enqueteAtiva.titulo,
-            data_inicio: enqueteAtiva.data_inicio,
-            data_fim: enqueteAtiva.data_fim,
-            status: enqueteAtiva.status,
-            jogos: jogosEnquete,
+            titulo: targetPoll.titulo,
+            data_inicio: targetPoll.data_inicio,
+            data_fim: targetPoll.data_fim,
+            status: targetPoll.status,
+            jogos: targetPoll.id === enqueteAtiva?.id ? jogosEnquete : [],
             incluirStatus: false,
           })
-        : 'Enquete Copa Coni')
+        : '')
 
     const mensagem =
       `🗳️ *Votação Aberta: ${tituloMsg}*\n\n` +
@@ -500,7 +526,7 @@ export default function Enquetes() {
 
     const whatsappUrl = `https://api.whatsapp.com/send?text=${encodeURIComponent(mensagem)}`
     window.open(whatsappUrl, '_blank', 'noopener,noreferrer')
-  }, [enqueteAtivaId, enqueteAtiva?.id])
+  }, [enqueteAtivaId, enqueteAtiva, selectedEnquete, tituloEnqueteAtiva, jogosEnquete])
 
   // Ação: Votar / Desmarcar Jogo
   const handleToggleVoto = async (jogoId: string) => {
@@ -1873,25 +1899,25 @@ export default function Enquetes() {
                 <div className="mt-1 flex items-center gap-2">
                   <span
                     className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-bold ${
-                      !isVotacaoEncerrada && enqueteAtiva.status === 'aberta'
+                      !isVotacaoEncerrada && enqueteExibida.status === 'aberta'
                         ? 'bg-emerald-100 text-emerald-800'
-                        : enqueteAtiva.status === 'cadastrada'
+                        : enqueteExibida.status === 'cadastrada'
                           ? 'bg-indigo-100 text-indigo-800'
                           : 'bg-slate-100 text-slate-700'
                     }`}
                   >
                     <span
                       className={`h-2 w-2 rounded-full ${
-                        !isVotacaoEncerrada && enqueteAtiva.status === 'aberta'
+                        !isVotacaoEncerrada && enqueteExibida.status === 'aberta'
                           ? 'animate-pulse bg-emerald-500'
-                          : enqueteAtiva.status === 'cadastrada'
+                          : enqueteExibida.status === 'cadastrada'
                             ? 'bg-indigo-500'
                             : 'bg-slate-400'
                       }`}
                     />
-                    {!isVotacaoEncerrada && enqueteAtiva.status === 'aberta'
+                    {!isVotacaoEncerrada && enqueteExibida.status === 'aberta'
                       ? 'Votação Aberta'
-                      : enqueteAtiva.status === 'cadastrada'
+                      : enqueteExibida.status === 'cadastrada'
                         ? 'Jogos Cadastrados na Copa Coni'
                         : 'Votação Encerrada'}
                   </span>
@@ -1900,14 +1926,14 @@ export default function Enquetes() {
                   Votação Encerra em:{' '}
                   <span className="font-bold text-[#0F2A43]">
                     {formatEnquetePrazoLimiteBR(
-                      enqueteAtiva.data_limite_votacao,
-                      enqueteAtiva.data_fim,
+                      enqueteExibida.data_limite_votacao,
+                      enqueteExibida.data_fim,
                     )}
                   </span>
                 </p>
                 <p className="mt-0.5 text-[11px] text-slate-500">
-                  Período dos jogos: {formatDataBR(enqueteAtiva.data_inicio)} até{' '}
-                  {formatDataBR(enqueteAtiva.data_fim)}
+                  Período dos jogos: {formatDataBR(enqueteExibida.data_inicio)} até{' '}
+                  {formatDataBR(enqueteExibida.data_fim)}
                 </p>
               </div>
               <div className="flex h-12 w-12 items-center justify-center rounded-full bg-slate-100 text-slate-700">
