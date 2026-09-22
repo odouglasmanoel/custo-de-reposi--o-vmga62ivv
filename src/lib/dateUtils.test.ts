@@ -20,6 +20,8 @@ import {
   satisfiesEnqueteMinTimeMargin,
   formatEnqueteTituloDinamico,
   formatEnqueteDropdownOptionLabel,
+  formatEnquetePeriodoCurto,
+  enquetesPossuemAnosDiferentes,
 } from './dateUtils'
 
 describe('dateUtils - Jogos de Hoje e Fuso de Brasília', () => {
@@ -604,6 +606,44 @@ describe('dateUtils - Jogos de Hoje e Fuso de Brasília', () => {
         incluirStatus: false,
       })
       expect(tituloOutra).toBe('Enquete Copa Coni — 27/09/2026 a 29/09/2026')
+    })
+
+    describe('formatEnquetePeriodoCurto & enquetesPossuemAnosDiferentes (Botões de Navegação)', () => {
+      it('formata período curto dia/mês sem ano quando o ano é o mesmo', () => {
+        expect(formatEnquetePeriodoCurto('2026-09-23', '2026-09-26')).toBe('23/09 a 26/09')
+        expect(formatEnquetePeriodoCurto('2026-09-27', '2026-09-29')).toBe('27/09 a 29/09')
+        expect(formatEnquetePeriodoCurto('2026-10-01', '2026-10-03')).toBe('01/10 a 03/10')
+      })
+
+      it('inclui ano quando solicitado explicitamente ou quando anos são diferentes', () => {
+        expect(formatEnquetePeriodoCurto('2026-09-23', '2026-09-26', true)).toBe(
+          '23/09/2026 a 26/09/2026',
+        )
+        // Virada de ano no mesmo período
+        expect(formatEnquetePeriodoCurto('2025-12-30', '2026-01-02', false)).toBe(
+          '30/12/2025 a 02/01/2026',
+        )
+      })
+
+      it('detecta se uma lista de enquetes contém anos distintos', () => {
+        const mesmoAno = [
+          { data_inicio: '2026-09-23', data_fim: '2026-09-26' },
+          { data_inicio: '2026-10-01', data_fim: '2026-10-03' },
+        ]
+        expect(enquetesPossuemAnosDiferentes(mesmoAno)).toBe(false)
+
+        const anosDiferentes = [
+          { data_inicio: '2025-11-20', data_fim: '2025-11-23' },
+          { data_inicio: '2026-09-23', data_fim: '2026-09-26' },
+        ]
+        expect(enquetesPossuemAnosDiferentes(anosDiferentes)).toBe(true)
+      })
+
+      it('lida com apenas data_inicio ou sem datas com segurança', () => {
+        expect(formatEnquetePeriodoCurto('2026-09-23', null)).toBe('23/09')
+        expect(formatEnquetePeriodoCurto(null, '2026-09-26')).toBe('26/09')
+        expect(formatEnquetePeriodoCurto(null, null)).toBe('Sem data')
+      })
     })
 
     describe('formatEnqueteDropdownOptionLabel (Rótulos Reativos do Dropdown)', () => {

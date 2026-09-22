@@ -54,7 +54,8 @@ import {
   formatEnqueteTituloDinamico,
   extrairNomeCopaEnquete,
   formatEnqueteStatusLabel,
-  formatEnqueteDropdownOptionLabel,
+  formatEnquetePeriodoCurto,
+  enquetesPossuemAnosDiferentes,
 } from '@/lib/dateUtils'
 import { Skeleton } from '@/components/ui/skeleton'
 import {
@@ -381,6 +382,47 @@ export default function Enquetes() {
       }
     }
   }, [activePollId, carregarDetalhesEnquete])
+
+  // Ordena os botões de enquetes por data_inicio em ordem CRESCENTE (mais antiga/próxima para a mais distante)
+  const enquetesOrdenadas = useMemo(() => {
+    return [...enquetes].sort((a, b) => {
+      const dataA = a.data_inicio ? String(a.data_inicio).slice(0, 10) : ''
+      const dataB = b.data_inicio ? String(b.data_inicio).slice(0, 10) : ''
+      if (dataA !== dataB) {
+        return dataA.localeCompare(dataB)
+      }
+      return (a.titulo || '').localeCompare(b.titulo || '')
+    })
+  }, [enquetes])
+
+  // Desambiguação de anos: se houver enquetes de anos diferentes, inclui o ano no rótulo curto
+  const exibirAnoBotoes = useMemo(() => {
+    return enquetesPossuemAnosDiferentes(enquetes)
+  }, [enquetes])
+
+  // Troca imediata ao clicar no botão da enquete
+  const handleSelecionarEnquete = useCallback(
+    (selected: EnqueteModel) => {
+      if (!selected) return
+      setActivePoll(selected)
+      // Se houver cache de detalhes da enquete, já hidrata jogos e votos sem travar UI
+      if (selected.id) {
+        const cached = readEnqueteDetalhesCache(selected.id, user?.id)
+        if (cached) {
+          setJogosEnquete(cached.jogos)
+          setMeusVotosIds(cached.meusVotosIds)
+        } else {
+          setJogosEnquete([])
+        }
+      }
+      if (typeof window !== 'undefined') {
+        const url = new URL(window.location.href)
+        url.searchParams.set('id', selected.id)
+        window.history.replaceState({}, '', url.toString())
+      }
+    },
+    [user?.id],
+  )
 
   // Total de votos do usuário logado na enquete ativa (piso mínimo de 10 votos)
   const totalMeusVotos = meusVotosIds.size
@@ -1690,48 +1732,77 @@ export default function Enquetes() {
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
-          {/* Seletor de Enquete */}
-          {enquetes.length > 0 && (
-            <div className="flex items-center gap-1.5">
-              <Label htmlFor="select-enquete" className="text-xs font-semibold text-slate-500">
-                Enquete:
-              </Label>
-              <select
-                id="select-enquete"
-                value={activePoll?.id || ''}
-                onChange={(e) => {
-                  const newId = e.target.value
-                  const selected = enquetes.find((item) => item.id === newId) || null
-                  // Atualização imediata em UMA chamada de setState gravando o objeto escolhido
-                  setActivePoll(selected)
-                  // Se houver cache de detalhes da enquete, já hidrata jogos e votos sem travar UI
-                  if (selected?.id) {
-                    const cached = readEnqueteDetalhesCache(selected.id, user?.id)
-                    if (cached) {
-                      setJogosEnquete(cached.jogos)
-                      setMeusVotosIds(cached.meusVotosIds)
-                    } else {
-                      setJogosEnquete([])
-                    }
-                  }
-                  if (typeof window !== 'undefined') {
-                    const url = new URL(window.location.href)
-                    if (newId) {
-                      url.searchParams.set('id', newId)
-                    } else {
-                      url.searchParams.delete('id')
-                    }
-                    window.history.replaceState({}, '', url.toString())
-                  }
-                }}
-                className="h-9 rounded-md border border-slate-200 bg-white px-2.5 text-xs font-semibold text-slate-800 shadow-xs focus:border-emerald-500 focus:outline-none"
-              >
-                {enquetes.map((enq) => (
-                  <option key={enq.id} value={enq.id}>
-                    {formatEnqueteDropdownOptionLabel(enq)}
-                  </option>
-                ))}
-              </select>
+          {/* Botões / Tabs de Navegação entre Enquetes */}
+          {enquetesOrdenadas.length > 0 && (
+            <div
+              role="tablist"
+              aria-label="Enquetes disponíveis"
+              className="flex w-full flex-col gap-1.5 sm:w-auto sm:flex-row sm:flex-wrap sm:items-center"
+            >
+              {enquetesOrdenadas.map((enq) => {
+                const isActive = activePoll?.id === enq.id
+                const periodoCurto = formatEnquetePeriodoCurto(
+                  enq.data_inicio,
+                  enq.data_fim,
+                  exibirAnoBotoes,
+                )
+                const isAberta = (enq.status || '').toLowerCase() === 'aberta'
+                const isCadastrada = (enq.status || '').toLowerCase() === 'cadastrada'
+                const statusTextoCurto = isAberta
+                  ? 'Aberta'
+                  : isCadastrada
+                    ? 'Cadastrada'
+                    : 'Encerrada'
+
+                return (
+                  <button
+                    key={enq.id}
+                    type="button"
+                    role="tab"
+                    aria-selected={isActive}
+                    aria-current={isActive ? 'page' : undefined}
+                    onClick={() => handleSelecionarEnquete(enq)}
+                    className={`group relative inline-flex items-center justify-between gap-2 rounded-lg px-3 py-2 text-xs font-bold transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 sm:justify-start ${
+                      isActive
+                        ? 'bg-gradient-to-r from-[#10B981] to-emerald-600 text-white shadow-sm shadow-emerald-950/20'
+                        : 'border border-slate-200 bg-white text-slate-700 hover:border-slate-300 hover:bg-slate-50'
+                    }`}
+                  >
+                    {/* Indicador / Badge compacto de status */}
+                    <span
+                      className={`inline-flex items-center gap-1.5 rounded-full px-1.5 py-0.5 text-[10px] font-bold ${
+                        isActive
+                          ? isAberta
+                            ? 'bg-white/20 text-white'
+                            : 'bg-black/20 text-white'
+                          : isAberta
+                            ? 'bg-emerald-100 text-emerald-800'
+                            : isCadastrada
+                              ? 'bg-indigo-100 text-indigo-800'
+                              : 'bg-slate-100 text-slate-600'
+                      }`}
+                    >
+                      <span
+                        className={`h-1.5 w-1.5 rounded-full ${
+                          isActive
+                            ? isAberta
+                              ? 'bg-white'
+                              : 'bg-emerald-100'
+                            : isAberta
+                              ? 'bg-emerald-500'
+                              : isCadastrada
+                                ? 'bg-indigo-500'
+                                : 'bg-slate-400'
+                        }`}
+                      />
+                      <span>{statusTextoCurto}</span>
+                    </span>
+
+                    {/* Período curto */}
+                    <span className="font-extrabold tracking-tight">{periodoCurto}</span>
+                  </button>
+                )
+              })}
             </div>
           )}
 

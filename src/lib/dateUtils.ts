@@ -686,6 +686,76 @@ export function formatEnqueteDropdownOptionLabel(enq: EnqueteDropdownOptionItem)
 }
 
 /**
+ * Extrai dia, mês e ano de um valor de data (ou string DD/MM/AAAA ou ISO YYYY-MM-DD).
+ */
+export function extrairPartesData(value?: string | Date | null): {
+  dia: string
+  mes: string
+  ano: string
+} | null {
+  const br = formatDataBR(value)
+  if (!br || br === '—') return null
+  const match = br.match(/^(\d{2})\/(\d{2})\/(\d{4})$/)
+  if (!match) return null
+  return { dia: match[1], mes: match[2], ano: match[3] }
+}
+
+/**
+ * Formata o período de uma enquete em formato CURTO para exibição em botões/tabs.
+ * Exemplo padrão: "23/09 a 26/09", "27/09 a 29/09", "01/10 a 03/10"
+ * Se `incluirAno` for true (ex: enquetes em anos diferentes): "23/09/2026 a 26/09/2026"
+ * Se o início e fim forem em anos distintos: ex: "30/12/2025 a 02/01/2026"
+ */
+export function formatEnquetePeriodoCurto(
+  dataInicio?: string | Date | null,
+  dataFim?: string | Date | null,
+  incluirAno = false,
+): string {
+  const pInicio = extrairPartesData(dataInicio)
+  const pFim = extrairPartesData(dataFim)
+
+  if (pInicio && pFim) {
+    // Se virou de ano no próprio período
+    if (pInicio.ano !== pFim.ano) {
+      return `${pInicio.dia}/${pInicio.mes}/${pInicio.ano} a ${pFim.dia}/${pFim.mes}/${pFim.ano}`
+    }
+    if (incluirAno) {
+      return `${pInicio.dia}/${pInicio.mes}/${pInicio.ano} a ${pFim.dia}/${pFim.mes}/${pFim.ano}`
+    }
+    return `${pInicio.dia}/${pInicio.mes} a ${pFim.dia}/${pFim.mes}`
+  }
+
+  if (pInicio) {
+    return incluirAno
+      ? `${pInicio.dia}/${pInicio.mes}/${pInicio.ano}`
+      : `${pInicio.dia}/${pInicio.mes}`
+  }
+
+  if (pFim) {
+    return incluirAno ? `${pFim.dia}/${pFim.mes}/${pFim.ano}` : `${pFim.dia}/${pFim.mes}`
+  }
+
+  return 'Sem data'
+}
+
+/**
+ * Helper para verificar se uma lista de enquetes contém anos diferentes
+ * para decidir se os botões devem incluir o ano.
+ */
+export function enquetesPossuemAnosDiferentes(
+  lista: Array<{ data_inicio?: string | Date | null; data_fim?: string | Date | null }>,
+): boolean {
+  const anos = new Set<string>()
+  for (const item of lista) {
+    const p1 = extrairPartesData(item.data_inicio)
+    const p2 = extrairPartesData(item.data_fim)
+    if (p1) anos.add(p1.ano)
+    if (p2) anos.add(p2.ano)
+  }
+  return anos.size > 1
+}
+
+/**
  * Extrai o nome da competição/copa a partir do título existente ou padrão.
  * Padrão: "Copa Coni"
  */
