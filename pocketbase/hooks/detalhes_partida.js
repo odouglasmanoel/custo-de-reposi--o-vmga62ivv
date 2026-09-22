@@ -28,6 +28,8 @@ routerAdd(
   'GET',
   '/backend/v1/detalhes-partida',
   (e) => {
+    const { enviarRequisicaoApiFootball } = require(`${__hooks}/api_football_limiter.js`)
+
     // Anti-spam leve por fixture (30s) para chamadas sob demanda
     var FIXTURE_SPAM_WINDOW_MS = 30 * 1000
 
@@ -288,6 +290,42 @@ routerAdd(
         } catch (_) {}
       }
 
+      // Se o limiter estiver esgotado/aguardando reset, responde gracioso com 200
+      try {
+        const { obterStatusLimiter } = require(`${__hooks}/api_football_limiter.js`)
+        const statusLim = obterStatusLimiter()
+        if (statusLim.waiting_reset) {
+          if (matchingJogoRecord) {
+            var localFicha = matchingJogoRecord.get('ficha_detalhes')
+            if (localFicha) {
+              var parsedF = typeof localFicha === 'string' ? JSON.parse(localFicha) : localFicha
+              return e.json(
+                200,
+                Object.assign(
+                  {
+                    cached: true,
+                    rate_limited: true,
+                    waiting_reset: true,
+                    notice:
+                      'Exibindo dados armazenados localmente (Aguardando reset da API às 21h)',
+                  },
+                  parsedF,
+                ),
+              )
+            }
+          }
+          return e.json(200, {
+            cached: true,
+            rate_limited: true,
+            waiting_reset: true,
+            notice: 'Exibindo dados armazenados localmente (Aguardando reset da API às 21h)',
+            fixtureId: fixtureIdParam,
+            provider: 'local',
+            updatedAt: new Date().toISOString(),
+          })
+        }
+      } catch (_) {}
+
       if (!matchingJogoRecord && timeA && timeB) {
         try {
           var candRecords = $app.findRecordsByFilter(
@@ -470,25 +508,21 @@ routerAdd(
               ? { 'x-rapidapi-key': apiKey, 'x-rapidapi-host': 'api-football-v1.p.rapidapi.com' }
               : { 'x-apisports-key': apiKey }
 
-            var resSearch = $http.send({
-              url: searchUrl,
-              method: 'GET',
-              headers: sHeaders,
-              timeout: 7,
-            })
+            var resSearchLimiter = enviarRequisicaoApiFootball(
+              searchUrl,
+              { headers: sHeaders, timeout: 7 },
+              2,
+            )
 
-            if (isRateLimitErrorHelper(resSearch.statusCode, resSearch.json || resSearch.raw)) {
-              tripApiFootballCircuitBreaker(
-                'Rate limit 429 na resolução de fixture_id em detalhes_partida',
-              )
-            } else if (
-              resSearch &&
-              resSearch.statusCode === 200 &&
-              resSearch.json &&
-              Array.isArray(resSearch.json.response)
+            if (
+              resSearchLimiter &&
+              !resSearchLimiter.blocked &&
+              resSearchLimiter.statusCode === 200 &&
+              resSearchLimiter.json &&
+              Array.isArray(resSearchLimiter.json.response)
             ) {
               resetApiFootballCircuitBreaker()
-              var listResp = resSearch.json.response
+              var listResp = resSearchLimiter.json.response
               var targetA =
                 timeA || (matchingJogoRecord ? matchingJogoRecord.getString('time_a') : '')
               var targetB =
@@ -574,27 +608,20 @@ routerAdd(
             ? { 'x-rapidapi-key': apiKey, 'x-rapidapi-host': 'api-football-v1.p.rapidapi.com' }
             : { 'x-apisports-key': apiKey }
 
-          var res = $http.send({
-            url: url,
-            method: 'GET',
-            headers: headers,
-            timeout: 8,
-          })
+          var limiterRes = enviarRequisicaoApiFootball(url, { headers: headers, timeout: 8 }, 1)
 
-          if (isRateLimitErrorHelper(res.statusCode, res.json || res.raw)) {
-            tripApiFootballCircuitBreaker(
-              'Rate limit 429 em detalhes_partida ao consultar fixture ' + fixtureIdParam,
-            )
+          if (limiterRes.blocked) {
+            console.log('[detalhes_partida] Chamada suprimida pelo limiter:', limiterRes.reason)
           } else if (
-            res &&
-            res.statusCode === 200 &&
-            res.json &&
-            Array.isArray(res.json.response) &&
-            res.json.response.length > 0
+            limiterRes &&
+            limiterRes.statusCode === 200 &&
+            limiterRes.json &&
+            Array.isArray(limiterRes.json.response) &&
+            limiterRes.json.response.length > 0
           ) {
             recordFixtureCall(fixtureIdParam)
             resetApiFootballCircuitBreaker()
-            var fixData = res.json.response[0]
+            var fixData = limiterRes.json.response[0]
 
             var teamsObj = fixData.teams || {}
             // Garantir logo oficial do PSG na ficha retornada

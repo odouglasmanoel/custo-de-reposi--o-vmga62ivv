@@ -40,6 +40,7 @@ export const GameLineupAccordion: React.FC<GameLineupAccordionProps> = ({
     async (force = false) => {
       setLoading(true)
       try {
+        // Regra de Proteção de Cota: leitura padrão prioritária do banco local sem forceRefresh desnecessário
         const res = await fetchGameLineup({
           jogoId,
           fixtureId,
@@ -174,19 +175,6 @@ export const GameLineupAccordion: React.FC<GameLineupAccordionProps> = ({
                     </Badge>
                   )}
                 </div>
-
-                <button
-                  type="button"
-                  onClick={() => loadLineup(true)}
-                  disabled={loading}
-                  className="inline-flex items-center gap-1 text-[10px] text-slate-500 hover:text-slate-900 transition"
-                  title="Atualizar escalações da API"
-                >
-                  <RefreshCw
-                    className={`h-3 w-3 ${loading ? 'animate-spin text-[#0F2A43]' : ''}`}
-                  />
-                  <span>Atualizar</span>
-                </button>
               </div>
 
               {/* Seletor de time (Tabs Mandante / Visitante) */}

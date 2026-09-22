@@ -889,20 +889,19 @@ routerAdd('GET', '/backend/v1/placar-ao-vivo', (e) => {
               ? { 'x-rapidapi-key': apiKey, 'x-rapidapi-host': 'api-football-v1.p.rapidapi.com' }
               : { 'x-apisports-key': apiKey }
 
-            var resFixturesDate = $http.send({
-              url: resUrlR,
-              method: 'GET',
-              headers: rHeaders,
-              timeout: 8,
-            })
+            var { enviarRequisicaoApiFootball } = require(`${__hooks}/api_football_limiter.js`)
+            var resFixturesDate = enviarRequisicaoApiFootball(
+              resUrlR,
+              { headers: rHeaders, timeout: 8 },
+              1,
+            )
 
-            if (
-              isRateLimitError(
-                resFixturesDate.statusCode,
-                resFixturesDate.json || resFixturesDate.raw,
+            if (resFixturesDate.blocked) {
+              console.log(
+                '[placar-ao-vivo] Resolução de data bloqueada pelo limiter:',
+                resFixturesDate.reason,
               )
-            ) {
-              tripApiFootballCircuitBreaker('Rate limit 429 na resolução de fixture_id por data')
+              rateLimitDetected = true
               break
             } else if (
               resFixturesDate &&
@@ -1153,17 +1152,15 @@ routerAdd('GET', '/backend/v1/placar-ao-vivo', (e) => {
           '&timezone=America%2FSao_Paulo'
 
         try {
-          var resDirect = $http.send({
-            url: urlDirect,
-            method: 'GET',
-            headers: headers,
-            timeout: 8,
-          })
+          var { enviarRequisicaoApiFootball } = require(`${__hooks}/api_football_limiter.js`)
+          var resDirect = enviarRequisicaoApiFootball(
+            urlDirect,
+            { headers: headers, timeout: 8 },
+            1,
+          )
 
-          if (isRateLimitError(resDirect.statusCode, resDirect.json || resDirect.raw)) {
-            tripApiFootballCircuitBreaker(
-              'Rate limit 429 ao consultar direct fixture ' + targetFixtureId,
-            )
+          if (resDirect.blocked) {
+            console.log('[placar-ao-vivo] Direct fixture bloqueada pelo limiter:', resDirect.reason)
             rateLimitDetected = true
             break
           } else if (resDirect.statusCode === 200) {
@@ -1197,15 +1194,11 @@ routerAdd('GET', '/backend/v1/placar-ao-vivo', (e) => {
     // Consulta /fixtures?live=all somente se houver partidas cadastradas dentro da janela
     if (!rateLimitDetected && fixturesDentroJanela.length > 0) {
       try {
-        const resLive = $http.send({
-          url: urlLive,
-          method: 'GET',
-          headers: headers,
-          timeout: 8,
-        })
+        const { enviarRequisicaoApiFootball } = require(`${__hooks}/api_football_limiter.js`)
+        const resLive = enviarRequisicaoApiFootball(urlLive, { headers: headers, timeout: 8 }, 1)
 
-        if (isRateLimitError(resLive.statusCode, resLive.json || resLive.raw)) {
-          tripApiFootballCircuitBreaker('Rate limit 429 ao consultar live fixtures')
+        if (resLive.blocked) {
+          console.log('[placar-ao-vivo] Live fixtures bloqueado pelo limiter:', resLive.reason)
           rateLimitDetected = true
         } else if (resLive.statusCode === 200) {
           recordApiFootballCall()
@@ -2134,17 +2127,11 @@ routerAdd('GET', '/backend/v1/jogos-do-dia', (e) => {
           var callUrl =
             baseUrl + '?id=' + encodeURIComponent(targetFid) + '&timezone=America%2FSao_Paulo'
           try {
-            var resp = $http.send({
-              url: callUrl,
-              method: 'GET',
-              headers: headers,
-              timeout: 8,
-            })
+            var { enviarRequisicaoApiFootball } = require(`${__hooks}/api_football_limiter.js`)
+            var resp = enviarRequisicaoApiFootball(callUrl, { headers: headers, timeout: 8 }, 3)
 
-            if (isRateLimitErrorDay(resp.statusCode, resp.json || resp.raw)) {
-              tripApiFootballCircuitBreaker(
-                'Rate limit 429 em jogos-do-dia para fixture ' + targetFid,
-              )
+            if (resp.blocked) {
+              console.log('[jogos-do-dia legacy] Chamada suprimida pelo limiter:', resp.reason)
               rateLimitHit = true
               break
             } else if (
@@ -2186,6 +2173,8 @@ routerAdd('GET', '/backend/v1/jogos-do-dia', (e) => {
           cached: true,
           fallback: true,
           rate_limited: true,
+          waiting_reset: true,
+          notice: 'Exibindo dados armazenados localmente (Aguardando reset da API às 21h)',
           warning: rateLimitMessage,
           cacheAgeSeconds: Math.round(cacheAgeMs / 1000),
           ttlSeconds: Math.round(maxAgeMs / 1000),
@@ -2200,6 +2189,8 @@ routerAdd('GET', '/backend/v1/jogos-do-dia', (e) => {
         hasLive: false,
         fixtures: [],
         rate_limited: true,
+        waiting_reset: true,
+        notice: 'Exibindo dados armazenados localmente (Aguardando reset da API às 21h)',
         error: rateLimitMessage,
       })
     }
@@ -2357,8 +2348,9 @@ routerAdd('GET', '/backend/v1/jogos-do-dia', (e) => {
         total: 0,
         hasLive: false,
         fixtures: [],
-        error:
-          'A API externa de futebol está temporariamente instável ou indisponível. Tente novamente em instantes.',
+        cached: true,
+        waiting_reset: true,
+        notice: 'Exibindo dados armazenados localmente (Aguardando reset da API às 21h)',
       })
     }
 
@@ -2938,16 +2930,39 @@ routerAdd('POST', '/backend/v1/placar-ao-vivo/test', (e) => {
     }
 
     try {
-      console.log('[placar-ao-vivo/test] Executando chamada à API-Football: ' + urlTest)
-      const res = $http.send({
-        url: urlTest,
-        method: 'GET',
-        headers: headersTest,
-        timeout: 10,
-      })
-      console.log('[placar-ao-vivo/test] Resposta da API-Football: HTTP ' + res.statusCode)
+      console.log('[placar-ao-vivo/test] Executando teste controlado de conexão: ' + urlTest)
+      var { enviarRequisicaoApiFootball, obterStatusLimiter } = require(
+        `${__hooks}/api_football_limiter.js`,
+      )
+      var limStatus = obterStatusLimiter()
+      if (limStatus.waiting_reset) {
+        return e.json(200, {
+          success: false,
+          rate_limited: true,
+          waiting_reset: true,
+          usage: limStatus,
+          message:
+            'Limite diário de 15 requisições já atingido hoje (UTC). Requisição de teste bloqueada.',
+        })
+      }
 
-      var resJson = res.json || {}
+      var limiterRes = enviarRequisicaoApiFootball(
+        urlTest,
+        { headers: headersTest, timeout: 10 },
+        1,
+      )
+      if (limiterRes.blocked) {
+        return e.json(200, {
+          success: false,
+          rate_limited: true,
+          waiting_reset: true,
+          usage: limiterRes.usage,
+          message: 'Limite diário de 15 requisições atingido para hoje. Bloqueio preventivo.',
+        })
+      }
+
+      const res = limiterRes.rawResponse || { statusCode: limiterRes.statusCode }
+      var resJson = limiterRes.json || {}
       var hasErrorAccess = resJson.errors && (resJson.errors.access || resJson.errors.requests)
       if (res.statusCode === 200 && !hasErrorAccess) {
         return e.json(200, {

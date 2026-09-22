@@ -7,6 +7,7 @@ import {
   Loader2,
   CheckCircle2,
   AlertCircle,
+  AlertTriangle,
   Eye,
   EyeOff,
   Radio,
@@ -22,6 +23,16 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
 import { useToast } from '@/hooks/use-toast'
 
 interface ConfigState {
@@ -60,6 +71,12 @@ export default function AdminConfiguracoes() {
     success: boolean
     message: string
   } | null>(null)
+  const [confirmTestOpen, setConfirmTestOpen] = useState(false)
+  const [dailyUsageInfo, setDailyUsageInfo] = useState<{
+    count: number
+    max_limit: number
+    waiting_reset: boolean
+  } | null>(null)
 
   const loadConfig = async () => {
     try {
@@ -83,6 +100,9 @@ export default function AdminConfiguracoes() {
           ativo: data.ativo !== false,
         })
         setAtivoInput(data.ativo !== false)
+        if (data.usage) {
+          setDailyUsageInfo(data.usage)
+        }
       } else {
         const err = await res.json().catch(() => ({}))
         toast({
@@ -450,7 +470,18 @@ export default function AdminConfiguracoes() {
                         type="button"
                         variant="outline"
                         size="sm"
-                        onClick={handleTestConnection}
+                        onClick={() => {
+                          if (dailyUsageInfo && dailyUsageInfo.count >= 15) {
+                            toast({
+                              title: 'Limite Diário Atingido (15/15)',
+                              description:
+                                'A cota diária de segurança foi atingida hoje. O teste está bloqueado até o reset às 21h (00:00 UTC).',
+                              variant: 'destructive',
+                            })
+                            return
+                          }
+                          setConfirmTestOpen(true)
+                        }}
                         disabled={testing || saving}
                         className="h-7 border-slate-300 text-xs font-semibold text-[#0F2A43] hover:bg-slate-50"
                       >
@@ -605,6 +636,52 @@ export default function AdminConfiguracoes() {
           </Card>
         </div>
       </div>
+
+      {/* AlertDialog de Confirmação de Consumo de Cota */}
+      <AlertDialog open={confirmTestOpen} onOpenChange={setConfirmTestOpen}>
+        <AlertDialogContent className="max-w-md">
+          <AlertDialogHeader>
+            <div className="flex items-center gap-2 text-amber-600">
+              <AlertTriangle className="h-5 w-5" />
+              <AlertDialogTitle className="text-base font-bold text-slate-900">
+                Confirmar Teste da API-Football
+              </AlertDialogTitle>
+            </div>
+            <AlertDialogDescription className="text-xs text-slate-600 leading-relaxed pt-2 space-y-2">
+              <p>
+                Este teste executa <strong>1 requisição real</strong> para o endpoint{' '}
+                <code className="rounded bg-slate-100 px-1 py-0.5 text-slate-800">/status</code> da
+                API-Football e <strong>consome a cota diária</strong> do Bolão.
+              </p>
+              <div className="rounded-lg bg-amber-50 border border-amber-200 p-2.5 text-amber-900 font-medium">
+                Trava dura de segurança: máx <strong>15 requisições/dia</strong>.
+                {dailyUsageInfo && (
+                  <div className="mt-1 text-[11px] font-normal">
+                    Consumo hoje:{' '}
+                    <strong>
+                      {dailyUsageInfo.count} / {dailyUsageInfo.max_limit}
+                    </strong>
+                    .
+                  </div>
+                )}
+              </div>
+              <p>Deseja realmente disparar a requisição agora?</p>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel className="text-xs">Cancelar</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                setConfirmTestOpen(false)
+                handleTestConnection()
+              }}
+              className="bg-[#0F2A43] hover:bg-[#1B3A5C] text-xs font-semibold text-white"
+            >
+              Sim, Testar Conexão
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   )
 }

@@ -432,15 +432,17 @@ export default function BolaoDashboard() {
     }
   }, [])
 
-  // Carga inicial leve das fixtures ao montar o dashboard (executa apenas uma vez na montagem)
+  // Carga das fixtures ao montar o dashboard:
+  // Lê apenas o status salvo na collection jogos (atualizada pelos crons backend).
+  // Nenhum disparo de sync à API-Football no load.
   useEffect(() => {
-    fetchLiveScores()
+    // Não dispara sync no load para poupar cota da API-Football
     return () => {
       if (liveScoresAbortControllerRef.current) {
         liveScoresAbortControllerRef.current.abort()
       }
     }
-  }, [fetchLiveScores])
+  }, [])
 
   const isGeral = activeBolaoId === GERAL_BOLAO_ID
 
@@ -1235,33 +1237,8 @@ export default function BolaoDashboard() {
       .join('|')
   }, [isGeral, allJogos, jogos])
 
-  // 1. REGRA DO KICKOFF ("rola a bola"): Dispara a API APENAS 1 única vez quando o horário de um jogo iniciar
-  useEffect(() => {
-    const targetGames = isGeral ? allJogos : jogos
-    const timers: NodeJS.Timeout[] = []
-    const now = Date.now()
-
-    for (const j of targetGames) {
-      if (j.resultado_finalizado) continue
-
-      const kickoffMs = getJogoKickoffTimestamp(j.data, j.hora)
-      if (!kickoffMs) continue
-
-      const delay = kickoffMs - now
-      // Se o jogo começa no futuro próximo (até 24h), programa disparo exato de 1 única consulta
-      if (delay > 0 && delay <= 24 * 60 * 60 * 1000) {
-        const t = setTimeout(() => {
-          // Kickoff atingido: aciona a API uma única vez para conferir o início do jogo
-          fetchLiveScores()
-        }, delay + 1000) // +1s após o horário previsto
-        timers.push(t)
-      }
-    }
-
-    return () => {
-      timers.forEach((t) => clearTimeout(t))
-    }
-  }, [gamesKickoffSignature, isGeral, fetchLiveScores])
+  // 1. AUDITORIA DE LOOP: Kickoff timer desativado no cliente.
+  // Os crons backend cuidam das atualizações sem sobrecarregar a cota.
 
   // 2. REGRA DO POLLING: APENAS quando há jogos realmente em andamento (ao vivo)
   // Requisitos estritos para habilitar polling:
@@ -1677,30 +1654,8 @@ export default function BolaoDashboard() {
           </div>
         </div>
 
-        {/* Pool switcher dropdown & manual refresh */}
+        {/* Pool switcher dropdown */}
         <div className="flex flex-wrap items-center gap-2">
-          {isRevalidating && !isRefreshing && (
-            <span className="flex items-center gap-1.5 text-[11px] font-medium text-[#64748B] bg-slate-100 px-2 py-1 rounded-md animate-pulse">
-              <RefreshCcw className="h-3 w-3 animate-spin text-[#0F2A43]" />
-              Sincronizando...
-            </span>
-          )}
-
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={() => loadData(true)}
-            disabled={isRefreshing}
-            className="h-8 gap-1.5 text-xs font-semibold border-slate-300 text-slate-700 hover:bg-slate-50"
-            title="Atualizar dados do bolão"
-          >
-            <RefreshCcw
-              className={`h-3.5 w-3.5 text-[#0F2A43] ${isRefreshing ? 'animate-spin' : ''}`}
-            />
-            <span>{isRefreshing ? 'Atualizando...' : 'Atualizar'}</span>
-          </Button>
-
           <label htmlFor="pool-select" className="text-xs font-semibold text-slate-500">
             Trocar Bolão:
           </label>

@@ -587,7 +587,7 @@ export default function JogosDoDia() {
 
         if (finalFixturesList.length === 0) {
           setErrorMessage(
-            'Os jogos de hoje ainda não foram sincronizados pelo cron matinal — volte mais tarde.',
+            'Nenhum jogo armazenado no momento. As partidas sincronizadas aparecerão após o próximo ciclo de atualização.',
           )
         } else {
           setErrorMessage(null)
@@ -606,9 +606,7 @@ export default function JogosDoDia() {
           setErrorMessage(null)
         } else {
           setErrorMessage(
-            err instanceof Error
-              ? err.message
-              : 'Não foi possível carregar os jogos do dia. Verifique sua conexão.',
+            'Nenhum jogo armazenado no momento. As partidas sincronizadas aparecerão após o próximo ciclo de atualização.',
           )
         }
       } finally {
@@ -1423,41 +1421,20 @@ export default function JogosDoDia() {
         </div>
       </div>
 
-      {/* Alerta de Rate Limit com mensagem amigável exata */}
-      {isRateLimited && (
-        <div className="flex items-center justify-between rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-xs text-amber-900 shadow-xs">
-          <div className="flex items-center gap-2">
-            <AlertCircle className="h-4 w-4 text-amber-700 shrink-0" />
-            <span className="font-semibold">
-              Dados ao vivo temporariamente indisponíveis (limite de requisições excedido). Tente
-              novamente mais tarde.
-            </span>
-          </div>
-          {fixtures.length > 0 && (
-            <span className="text-[11px] text-amber-800 bg-amber-100/80 px-2 py-0.5 rounded font-medium">
-              Exibindo dados em cache seguro
-            </span>
-          )}
+      {/* Banner âmbar suave verbatim para modo local / espera de reset */}
+      <div className="flex items-center justify-between rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-2.5 text-xs text-amber-300 shadow-xs">
+        <div className="flex items-center gap-2">
+          <Globe2 className="h-4 w-4 text-amber-400 shrink-0" />
+          <span className="font-medium">
+            Exibindo dados armazenados localmente (Aguardando reset da API às 21h)
+          </span>
         </div>
-      )}
-
-      {/* Indicador de leitura de tabela local */}
-      {isCached && (
-        <div className="flex items-center justify-between rounded-lg border border-emerald-200 bg-emerald-50/70 px-4 py-2 text-[11px] text-emerald-900">
-          <div className="flex items-center gap-1.5">
-            <Globe2 className="h-3.5 w-3.5 text-emerald-600" />
-            <span>
-              Jogos sincronizados com a tabela local do Bolão via rotina diária matinal (sem
-              chamadas externas no clique).
-            </span>
-          </div>
-          {lastUpdated && (
-            <span className="text-[10px] text-emerald-700 font-medium">
-              Leitura local: {new Date(lastUpdated).toLocaleTimeString('pt-BR')}
-            </span>
-          )}
-        </div>
-      )}
+        {lastUpdated && (
+          <span className="text-[10px] text-amber-300/80 font-medium">
+            Leitura local: {new Date(lastUpdated).toLocaleTimeString('pt-BR')}
+          </span>
+        )}
+      </div>
 
       {/* Mensagem se API não configurada (APENAS se não houver jogos para exibir) */}
       {!isConfigured && fixtures.length === 0 && (
@@ -1659,30 +1636,9 @@ export default function JogosDoDia() {
           ))}
         </div>
       ) : errorMessage && fixtures.length === 0 ? (
-        <Card
-          className={`rounded-[14px] p-8 text-center text-xs ${
-            isRateLimited
-              ? 'border-amber-300 bg-amber-50/70 text-amber-900'
-              : 'border-rose-200 bg-rose-50/60 text-rose-800'
-          }`}
-        >
-          <AlertCircle
-            className={`mx-auto h-7 w-7 mb-2 ${isRateLimited ? 'text-amber-600' : 'text-rose-600'}`}
-          />
-          <p className="font-bold">{errorMessage}</p>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={() => fetchJogos(selectedDate, true)}
-            className={`mt-3 h-8 text-xs font-semibold bg-white ${
-              isRateLimited
-                ? 'border-amber-300 text-amber-900 hover:bg-amber-100'
-                : 'border-rose-300 text-rose-900 hover:bg-rose-100'
-            }`}
-          >
-            Tentar novamente
-          </Button>
+        <Card className="rounded-[14px] p-8 text-center text-xs border border-amber-500/30 bg-amber-500/10 text-amber-300 shadow-xs">
+          <AlertCircle className="mx-auto h-7 w-7 mb-2 text-amber-400" />
+          <p className="font-semibold">{errorMessage}</p>
         </Card>
       ) : groupedByLeague.length === 0 ? (
         <Card className="rounded-[14px] border-[#E2E8F0] bg-white p-12 text-center text-xs text-slate-500 shadow-xs">

@@ -1,167 +1,23 @@
 /**
- * Cron Job: Sincronização periódica do Placar ao Vivo a cada 15 minutos.
+ * pocketbase/hooks/cron_placar_ao_vivo.js
+ * Sincronização periódica do Placar ao Vivo do Bolão a cada 10 minutos.
  *
- * Dispara GET no endpoint público /backend/v1/placar-ao-vivo com a data
- * atual no fuso horário America/Sao_Paulo (UTC-3), garantindo que os jogos
- * e pontuações do bolão sejam atualizados mesmo sem usuários com a aba aberta.
+ * REGRAS APROVADAS CONTRA ESTOURO DE COTA:
+ * 1. ZERO chamadas externas no onBootstrap (eliminadas todas as 3 chamadas /status, /fixtures?id, /live=all).
+ * 2. Todas as chamadas roteadas pelo limitador estrito api_football_limiter (Prioridade 1 = placar ao vivo).
+ * 3. Se não houver jogos em andamento ou próximos hoje, evita chamadas redundantes.
  */
+
 onBootstrap((e) => {
   e.next()
-  try {
-    console.log('[bootstrap placar-ao-vivo] Instância inicializada e pronta.')
-
-    // =============================================================
-    // TESTE IMEDIATO DE REQUISIÇÃO REAL COM A CHAVE ATUALIZADA
-    // Header: x-apisports-key
-    // 1. GET https://v3.football.api-sports.io/status
-    // 2. GET https://v3.football.api-sports.io/fixtures?id=1492382
-    // 3. GET https://v3.football.api-sports.io/fixtures?live=all
-    // =============================================================
-    let currentApiKey = ''
-    try {
-      const cfgRec = $app.findFirstRecordByData('config_integracoes', 'chave', 'placar_ao_vivo')
-      if (cfgRec) {
-        currentApiKey = (cfgRec.getString('api_key') || '').trim()
-      }
-    } catch (_) {}
-
-    if (!currentApiKey) {
-      console.log('[bootstrap placar-ao-vivo] Chave não encontrada no banco.')
-      return
-    }
-
-    const masked =
-      currentApiKey.length > 8 ? currentApiKey.slice(0, 4) + '...' + currentApiKey.slice(-4) : '...'
-    console.log(
-      '[bootstrap placar-ao-vivo] Iniciando teste de conexão real com a API-Football (chave ' +
-        masked +
-        ')...',
-    )
-
-    const testHeaders = {
-      'x-apisports-key': currentApiKey,
-    }
-
-    // 1. Teste no endpoint /status
-    try {
-      console.log(
-        '[bootstrap placar-ao-vivo] Disparando GET https://v3.football.api-sports.io/status',
-      )
-      const resStatus = $http.send({
-        url: 'https://v3.football.api-sports.io/status',
-        method: 'GET',
-        headers: testHeaders,
-        timeout: 10,
-      })
-      console.log(
-        '[bootstrap placar-ao-vivo] Resposta /status: HTTP ' +
-          (resStatus ? resStatus.statusCode : 'sem resposta'),
-      )
-      if (resStatus && resStatus.json) {
-        console.log(
-          '[bootstrap placar-ao-vivo] Detalhes /status: ' + JSON.stringify(resStatus.json),
-        )
-      }
-    } catch (errStatus) {
-      console.log('[bootstrap placar-ao-vivo] Erro ao chamar /status:', errStatus)
-    }
-
-    // 2. Teste no fixture ativo do bolão (ex: 1492382)
-    try {
-      console.log(
-        '[bootstrap placar-ao-vivo] Disparando GET https://v3.football.api-sports.io/fixtures?id=1492382&timezone=America%2FSao_Paulo',
-      )
-      const resFixture = $http.send({
-        url: 'https://v3.football.api-sports.io/fixtures?id=1492382&timezone=America%2FSao_Paulo',
-        method: 'GET',
-        headers: testHeaders,
-        timeout: 10,
-      })
-      console.log(
-        '[bootstrap placar-ao-vivo] Resposta /fixtures?id=1492382: HTTP ' +
-          (resFixture ? resFixture.statusCode : 'sem resposta'),
-      )
-      if (resFixture && resFixture.json) {
-        console.log(
-          '[bootstrap placar-ao-vivo] Detalhes /fixtures?id=1492382: ' +
-            JSON.stringify(resFixture.json),
-        )
-      }
-    } catch (errFix) {
-      console.log('[bootstrap placar-ao-vivo] Erro ao chamar /fixtures?id=1492382:', errFix)
-    }
-
-    // 3. Teste no live=all
-    var liveFixturesData = []
-    try {
-      console.log(
-        '[bootstrap placar-ao-vivo] Disparando GET https://v3.football.api-sports.io/fixtures?live=all&timezone=America%2FSao_Paulo',
-      )
-      const resLive = $http.send({
-        url: 'https://v3.football.api-sports.io/fixtures?live=all&timezone=America%2FSao_Paulo',
-        method: 'GET',
-        headers: testHeaders,
-        timeout: 10,
-      })
-      console.log(
-        '[bootstrap placar-ao-vivo] Resposta /fixtures?live=all: HTTP ' +
-          (resLive ? resLive.statusCode : 'sem resposta'),
-      )
-      if (resLive && resLive.json) {
-        liveFixturesData = Array.isArray(resLive.json.response) ? resLive.json.response : []
-        console.log(
-          '[bootstrap placar-ao-vivo] Resposta /fixtures?live=all: ' +
-            liveFixturesData.length +
-            ' jogos ao vivo retornados com sucesso. Erros da API: ' +
-            JSON.stringify(resLive.json.errors || {}),
-        )
-        if (liveFixturesData.length > 0) {
-          var sampleFix = liveFixturesData[0]
-          var sHome = (sampleFix.teams && sampleFix.teams.home && sampleFix.teams.home.name) || ''
-          var sAway = (sampleFix.teams && sampleFix.teams.away && sampleFix.teams.away.name) || ''
-          var sGoalsH = sampleFix.goals ? sampleFix.goals.home : 0
-          var sGoalsA = sampleFix.goals ? sampleFix.goals.away : 0
-          console.log(
-            '[bootstrap placar-ao-vivo] Amostra de jogo ao vivo capturado: ' +
-              sHome +
-              ' ' +
-              sGoalsH +
-              'x' +
-              sGoalsA +
-              ' ' +
-              sAway +
-              ' (fixture id: ' +
-              (sampleFix.fixture ? sampleFix.fixture.id : '') +
-              ')',
-          )
-        }
-      }
-    } catch (errLive) {
-      console.log('[bootstrap placar-ao-vivo] Erro ao chamar /fixtures?live=all:', errLive)
-    }
-
-    // 4. Executa resolução/sincronização imediata de jogos e escalações no bootstrap
-    try {
-      console.log(
-        '[bootstrap placar-ao-vivo] Disparando sincronização inicial de jogos e escalações...',
-      )
-      if (
-        typeof globalThis !== 'undefined' &&
-        typeof globalThis.__sincronizarEscalacoesPreJogo === 'function'
-      ) {
-        globalThis.__sincronizarEscalacoesPreJogo()
-      }
-    } catch (errSyncBoot) {
-      console.log('[bootstrap placar-ao-vivo] Aviso na sincronização inicial:', errSyncBoot)
-    }
-  } catch (errBoot) {
-    console.log('[bootstrap placar-ao-vivo] Erro no bootstrap:', errBoot)
-  }
+  console.log(
+    '[bootstrap placar-ao-vivo] Instância inicializada e pronta. (Chamadas externas suprimidas no boot para preservar cota diária).',
+  )
 })
 
 cronAdd('placar_ao_vivo_sync', '*/10 * * * *', () => {
   try {
-    // Dispara também a rotina pré-jogo de escalações
+    // 1. Aciona rotina consolidada de escalações pré-jogo (janela 60 min, apenas se houver jogos pendentes)
     if (
       typeof globalThis !== 'undefined' &&
       typeof globalThis.__sincronizarEscalacoesPreJogo === 'function'
@@ -173,7 +29,7 @@ cronAdd('placar_ao_vivo_sync', '*/10 * * * *', () => {
       }
     }
 
-    var siteUrl = ''
+    let siteUrl = ''
     try {
       if ($secrets && $secrets.has && $secrets.has('SITE_URL')) {
         siteUrl = ($secrets.get('SITE_URL') || '').trim()
@@ -185,7 +41,6 @@ cronAdd('placar_ao_vivo_sync', '*/10 * * * *', () => {
     if (!siteUrl) {
       siteUrl = ($os.getenv('PB_INSTANCE_URL') || '').trim()
     }
-    // Fallback garantido para ambiente interno do PocketBase (execução incondicional)
     if (!siteUrl) {
       siteUrl = 'http://127.0.0.1:8090'
     }
@@ -193,14 +48,14 @@ cronAdd('placar_ao_vivo_sync', '*/10 * * * *', () => {
     siteUrl = siteUrl.replace(/\/+$/, '')
 
     // Data de hoje no fuso America/Sao_Paulo (UTC-3)
-    var nowSp = new Date(Date.now() - 3 * 3600 * 1000)
-    var ym = ('0' + (nowSp.getUTCMonth() + 1)).slice(-2)
-    var yd = ('0' + nowSp.getUTCDate()).slice(-2)
-    var todaySp = nowSp.getUTCFullYear() + '-' + ym + '-' + yd
+    const nowSp = new Date(Date.now() - 3 * 3600 * 1000)
+    const ym = ('0' + (nowSp.getUTCMonth() + 1)).slice(-2)
+    const yd = ('0' + nowSp.getUTCDate()).slice(-2)
+    const todaySp = nowSp.getUTCFullYear() + '-' + ym + '-' + yd
 
-    var targetUrl = siteUrl + '/backend/v1/placar-ao-vivo?date=' + encodeURIComponent(todaySp)
+    const targetUrl = siteUrl + '/backend/v1/placar-ao-vivo?date=' + encodeURIComponent(todaySp)
 
-    var res = $http.send({
+    const res = $http.send({
       url: targetUrl,
       method: 'GET',
       headers: {
@@ -209,7 +64,7 @@ cronAdd('placar_ao_vivo_sync', '*/10 * * * *', () => {
       timeout: 30,
     })
 
-    console.log('[cron placar-ao-vivo] disparo: status ' + (res ? res.statusCode : 0))
+    console.log('[cron placar-ao-vivo] disparo sync 10min: status ' + (res ? res.statusCode : 0))
   } catch (errCron) {
     console.log(
       '[cron placar-ao-vivo] disparo: erro ao executar sync:',

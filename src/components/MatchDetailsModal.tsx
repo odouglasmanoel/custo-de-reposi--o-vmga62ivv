@@ -79,17 +79,6 @@ export function MatchDetailsModal({ isOpen, onClose, match }: MatchDetailsModalP
   const [lineup, setLineup] = useState<LineupResponse | null>(null)
   const [lineupTab, setLineupTab] = useState<'home' | 'away'>('home')
 
-  // Cooldown defensivo no botão Atualizar: mínimo 30s no cliente
-  const [refreshCooldown, setRefreshCooldown] = useState(0)
-
-  useEffect(() => {
-    if (refreshCooldown <= 0) return
-    const timer = setInterval(() => {
-      setRefreshCooldown((prev) => (prev <= 1 ? 0 : prev - 1))
-    }, 1000)
-    return () => clearInterval(timer)
-  }, [refreshCooldown])
-
   const fetchDetails = useCallback(
     async (currentMatch: DayFixture, silent = false, force = false) => {
       if (!currentMatch) return
@@ -398,41 +387,6 @@ export function MatchDetailsModal({ isOpen, onClose, match }: MatchDetailsModalP
     }
   }, [isOpen, match, activeTab, lineup, lineupLoading, loadModalLineup])
 
-  // Revalidação periódica de 35s enquanto o modal estiver aberto E o jogo for ao vivo
-  useEffect(() => {
-    if (!isOpen || !match) return
-
-    const st = (match.fixture?.status?.short || '').toUpperCase().trim()
-    const isLiveGame = Boolean(match.isLive || isFixtureLive(st))
-
-    if (!isLiveGame) return
-
-    const intervalId = setInterval(() => {
-      fetchDetails(match, true, true)
-      if (activeTab === 'escalacoes') {
-        loadModalLineup(match, false)
-      }
-    }, 35000)
-
-    return () => {
-      clearInterval(intervalId)
-    }
-  }, [isOpen, match, activeTab, fetchDetails, loadModalLineup])
-
-  // Handler seguro com cooldown de 30s e prevenção de duplo clique
-  const handleManualRefresh = useCallback(
-    (targetMatch: DayFixture) => {
-      if (refreshCooldown > 0 || loading || lineupLoading) return
-      setRefreshCooldown(30)
-      if (activeTab === 'timeline') {
-        fetchDetails(targetMatch, false, true)
-      } else {
-        loadModalLineup(targetMatch, true)
-      }
-    },
-    [refreshCooldown, loading, lineupLoading, activeTab, fetchDetails, loadModalLineup],
-  )
-
   if (!match) return null
 
   const homeName = match.teams?.home?.name || 'Mandante'
@@ -712,33 +666,15 @@ export function MatchDetailsModal({ isOpen, onClose, match }: MatchDetailsModalP
             ) : errorMessage && events.length === 0 ? (
               <div className="py-10 text-center flex flex-col items-center justify-center gap-3">
                 <AlertCircle className="h-8 w-8 text-amber-500" />
-                <p className="text-xs text-slate-600 max-w-xs">{errorMessage}</p>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  disabled={refreshCooldown > 0 || loading}
-                  onClick={() => handleManualRefresh(match)}
-                  className="text-xs h-8 gap-1.5"
-                >
-                  <RefreshCw className={`h-3 w-3 ${loading ? 'animate-spin' : ''}`} />
-                  {refreshCooldown > 0 ? `Aguarde ${refreshCooldown}s` : 'Tentar novamente'}
-                </Button>
+                <p className="text-xs text-slate-600 max-w-xs">
+                  {errorMessage || 'Nenhum lance registrado no banco local no momento.'}
+                </p>
               </div>
             ) : events.length === 0 ? (
               <div className="py-10 text-center">
                 <p className="text-xs text-slate-500 font-medium">
                   Nenhum lance registrado até o momento para esta partida.
                 </p>
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  disabled={refreshCooldown > 0 || loading}
-                  onClick={() => handleManualRefresh(match)}
-                  className="text-xs text-slate-600 mt-2 gap-1"
-                >
-                  <RefreshCw className={`h-3 w-3 ${loading ? 'animate-spin' : ''}`} />
-                  {refreshCooldown > 0 ? `Aguarde ${refreshCooldown}s` : 'Atualizar'}
-                </Button>
               </div>
             ) : (
               <div className="space-y-4">
@@ -781,15 +717,6 @@ export function MatchDetailsModal({ isOpen, onClose, match }: MatchDetailsModalP
                 {/* Atualização e fonte */}
                 <div className="pt-2 flex items-center justify-between text-[10px] text-slate-400">
                   <span>Total de {events.length} evento(s) registrado(s)</span>
-                  <button
-                    type="button"
-                    disabled={refreshCooldown > 0 || loading}
-                    onClick={() => handleManualRefresh(match)}
-                    className="hover:text-slate-600 flex items-center gap-1 underline font-medium cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    <RefreshCw className={`h-2.5 w-2.5 ${loading ? 'animate-spin' : ''}`} />
-                    {refreshCooldown > 0 ? `Aguarde ${refreshCooldown}s` : 'Reconsultar'}
-                  </button>
                 </div>
               </div>
             )
@@ -812,19 +739,8 @@ export function MatchDetailsModal({ isOpen, onClose, match }: MatchDetailsModalP
               </p>
               <p className="text-xs text-slate-400 max-w-xs text-center">
                 As escalações oficiais costumam ser liberadas pelos clubes cerca de 30 a 60 minutos
-                antes do início da partida.
+                antes do início da partida e são sincronizadas automaticamente pelo servidor.
               </p>
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                disabled={refreshCooldown > 0 || lineupLoading}
-                onClick={() => handleManualRefresh(match)}
-                className="text-xs h-8 gap-1.5 mt-2 text-[#0F2A43]"
-              >
-                <RefreshCw className={`h-3 w-3 ${lineupLoading ? 'animate-spin' : ''}`} />
-                {refreshCooldown > 0 ? `Aguarde ${refreshCooldown}s` : 'Verificar agora'}
-              </Button>
             </div>
           ) : (
             <div className="space-y-3">
@@ -952,17 +868,6 @@ export function MatchDetailsModal({ isOpen, onClose, match }: MatchDetailsModalP
                           Treinador:{' '}
                           <strong className="text-slate-700">{selectedTeam.coach}</strong>
                         </span>
-                        <button
-                          type="button"
-                          disabled={refreshCooldown > 0 || lineupLoading}
-                          onClick={() => handleManualRefresh(match)}
-                          className="hover:text-slate-800 flex items-center gap-1 underline cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-                        >
-                          <RefreshCw
-                            className={`h-2.5 w-2.5 ${lineupLoading ? 'animate-spin' : ''}`}
-                          />
-                          {refreshCooldown > 0 ? `Aguarde ${refreshCooldown}s` : 'Reconsultar'}
-                        </button>
                       </div>
                     )}
                   </div>

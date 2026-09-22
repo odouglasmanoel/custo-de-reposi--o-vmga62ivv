@@ -134,6 +134,22 @@ export async function fetchGameLineup(params: {
     data = '',
     forceRefresh = false,
   } = params
+
+  // 1. LEITURA PRIORITÁRIA DA COLLECTION LOCAL JOGOS (SEM CONSUMO DE COTA)
+  if (jogoId && !forceRefresh) {
+    try {
+      const rec = await pb.collection('jogos').getOne(jogoId)
+      if (rec && rec.escalacoes) {
+        const esc = typeof rec.escalacoes === 'string' ? JSON.parse(rec.escalacoes) : rec.escalacoes
+        if (esc && esc.teams && esc.teams.length > 0) {
+          return { ...esc, cached: true }
+        }
+      }
+    } catch {
+      /* intentionally ignored */
+    }
+  }
+
   // Chave canônica unificada que considera também times e data para evitar colisões
   const fallbackKey = timeA && timeB ? `${timeA}_${timeB}_${data}` : ''
   const cacheKey = getLineupsCacheKey(jogoId, fixtureId) || fallbackKey

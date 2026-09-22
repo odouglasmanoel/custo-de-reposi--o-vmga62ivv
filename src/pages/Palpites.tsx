@@ -2280,29 +2280,6 @@ export default function Palpites() {
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
-          {/* Indicador discreto de revalidação em background (SWR) */}
-          {isBackgroundRevalidating && !isRefreshing && (
-            <span className="flex items-center gap-1.5 text-[11px] font-medium text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-1 rounded-md animate-pulse">
-              <RefreshCcw className="h-3 w-3 animate-spin text-emerald-600" />
-              Sincronizando dados...
-            </span>
-          )}
-
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={() => loadData(1, true, false)}
-            disabled={isRefreshing || isBackgroundRevalidating}
-            className="h-8 gap-1.5 text-xs font-semibold border-slate-300 text-slate-700 hover:bg-slate-50"
-            title="Atualizar palpites"
-          >
-            <RefreshCcw
-              className={`h-3.5 w-3.5 text-[#0F2A43] ${isRefreshing || isBackgroundRevalidating ? 'animate-spin' : ''}`}
-            />
-            <span>{isRefreshing ? 'Atualizando...' : 'Atualizar'}</span>
-          </Button>
-
           {/* Botão de filtro para alternar entre todos e apenas pendentes */}
           <Button
             type="button"
