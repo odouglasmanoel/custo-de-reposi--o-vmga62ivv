@@ -52,6 +52,7 @@ import {
   isEnqueteExpirada,
   formatEnquetePrazoLimiteBR,
   formatEnqueteTituloDinamico,
+  extrairNomeCopaEnquete,
 } from '@/lib/dateUtils'
 import { Skeleton } from '@/components/ui/skeleton'
 import {
@@ -139,7 +140,6 @@ export default function Enquetes() {
   // Se tínhamos cache inicial para a enquete ativa, não bloqueia a tela!
   const hasInitialCache = Boolean(activePoll?.id && jogosEnquete.length > 0)
   const [loading, setLoading] = useState(!hasInitialCache)
-  const [isSyncing, setIsSyncing] = useState(false)
   const [votandoJogoId, setVotandoJogoId] = useState<string | null>(null)
 
   // Paginação incremental / Lazy Loading de Cards de Jogos para alta performance de renderização
@@ -174,10 +174,17 @@ export default function Enquetes() {
   const [manualAvisoDuplicado, setManualAvisoDuplicado] = useState<string | null>(null)
 
   // Título dinâmico da enquete ativa calculado em tempo real:
-  // Lê dinamicamente as propriedades de activePoll (Single Source of Truth)
-  // desde o primeiro carregamento, sem qualquer valor inicial fixo hardcoded.
+  // Lê dinamicamente e com prioridade absoluta as propriedades de activePoll (Single Source of Truth)
+  // Se a enquete tiver data_inicio e data_fim preenchidas, monta o período diretamente da enquete selecionada,
+  // garantindo atualização síncrona imediata no onChange do select sem depender de revalidação ou jogos.
   const tituloEnqueteAtiva = useMemo(() => {
     if (!activePoll) return ''
+    const nomeCopa = extrairNomeCopaEnquete(activePoll.titulo, 'Copa Coni')
+    const dInicio = formatDataBR(activePoll.data_inicio)
+    const dFim = formatDataBR(activePoll.data_fim)
+    if (dInicio && dInicio !== '—' && dFim && dFim !== '—') {
+      return `Enquete ${nomeCopa} — ${dInicio} a ${dFim}`
+    }
     return formatEnqueteTituloDinamico({
       titulo: activePoll.titulo,
       data_inicio: activePoll.data_inicio,
@@ -266,8 +273,6 @@ export default function Enquetes() {
         setEnquetes((prev) => (prev.length === 0 ? cached : prev))
       }
 
-      // Revalidação em background (sem bloquear se já temos dados)
-      setIsSyncing(true)
       try {
         const lista = await listarEnquetes()
         setEnquetes(lista)
@@ -297,7 +302,6 @@ export default function Enquetes() {
         console.error('Erro ao carregar enquetes:', err)
       } finally {
         setLoading(false)
-        setIsSyncing(false)
       }
     },
     [activePoll],
@@ -317,7 +321,6 @@ export default function Enquetes() {
         setJogosEnquete(cached.jogos)
         setMeusVotosIds(cached.meusVotosIds)
         setLoading(false) // Dados exibidos instantaneamente!
-        setIsSyncing(true)
       } else if (showSpinner) {
         setLoading(true)
       }
@@ -362,7 +365,6 @@ export default function Enquetes() {
         console.error('Erro ao obter detalhes da enquete:', err)
       } finally {
         setLoading(false)
-        setIsSyncing(false)
       }
     },
     [user?.id],
@@ -376,7 +378,8 @@ export default function Enquetes() {
   useEffect(() => {
     if (activePollId) {
       setFiltroCategoria('todos')
-      carregarDetalhesEnquete(activePollId, true)
+      // Na troca de seleção, não exibe spinner invasivo nem aciona sincronização bloqueante
+      carregarDetalhesEnquete(activePollId, false)
 
       if (typeof window !== 'undefined') {
         const url = new URL(window.location.href)
@@ -1685,12 +1688,6 @@ export default function Enquetes() {
                 >
                   Jogos da Rodada
                 </Badge>
-                {isSyncing && (
-                  <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-50 border border-amber-200 px-2 py-0.5 text-[11px] font-semibold text-amber-700 animate-pulse">
-                    <RefreshCw className="h-3 w-3 animate-spin text-amber-600" />
-                    Sincronizando...
-                  </span>
-                )}
               </div>
               <p className="text-xs text-[#64748B]">
                 {tituloEnqueteAtiva
@@ -1714,7 +1711,18 @@ export default function Enquetes() {
                 onChange={(e) => {
                   const newId = e.target.value
                   const selected = enquetes.find((item) => item.id === newId) || null
+                  // Atualização imediata em UMA chamada de setState gravando o objeto escolhido
                   setActivePoll(selected)
+                  // Se houver cache de detalhes da enquete, já hidrata jogos e votos sem travar UI
+                  if (selected?.id) {
+                    const cached = readEnqueteDetalhesCache(selected.id, user?.id)
+                    if (cached) {
+                      setJogosEnquete(cached.jogos)
+                      setMeusVotosIds(cached.meusVotosIds)
+                    } else {
+                      setJogosEnquete([])
+                    }
+                  }
                   if (typeof window !== 'undefined') {
                     const url = new URL(window.location.href)
                     if (newId) {

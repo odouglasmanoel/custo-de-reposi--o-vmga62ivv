@@ -604,5 +604,55 @@ describe('dateUtils - Jogos de Hoje e Fuso de Brasília', () => {
       })
       expect(tituloOutra).toBe('Enquete Copa Coni — 27/09/2026 a 29/09/2026')
     })
+
+    it('ao trocar de enquete no dropdown, título calcula imediatamente a partir de activePoll (titulo, data_inicio e data_fim)', () => {
+      // Simula o comportamento do título da tela Enquetes.tsx
+      const calcularTituloTela = (
+        activePoll: {
+          titulo?: string
+          data_inicio?: string
+          data_fim?: string
+          status?: string
+        } | null,
+        jogos: Array<{ data: string; horario?: string }> = [],
+      ) => {
+        if (!activePoll) return ''
+        const dInicio = formatDataBR(activePoll.data_inicio)
+        const dFim = formatDataBR(activePoll.data_fim)
+        if (dInicio && dInicio !== '—' && dFim && dFim !== '—') {
+          return `Enquete Copa Coni — ${dInicio} a ${dFim}`
+        }
+        return formatEnqueteTituloDinamico({
+          titulo: activePoll.titulo,
+          data_inicio: activePoll.data_inicio,
+          data_fim: activePoll.data_fim,
+          status: activePoll.status,
+          jogos,
+          incluirStatus: false,
+        })
+      }
+
+      // Enquete inicial selecionada
+      const poll1 = {
+        id: '1',
+        titulo: 'Enquete Copa Coni — 27/09/2026 a 29/09/2026',
+        data_inicio: '2026-09-27',
+        data_fim: '2026-09-29',
+        status: 'aberta',
+      }
+      expect(calcularTituloTela(poll1)).toBe('Enquete Copa Coni — 27/09/2026 a 29/09/2026')
+
+      // Troca imediata no onChange para outra enquete selecionada
+      const poll2 = {
+        id: '2',
+        titulo: 'Enquete Copa Coni — 22/09/2026 a 06/10/2026',
+        data_inicio: '2026-09-22',
+        data_fim: '2026-10-06',
+        status: 'aberta',
+      }
+      // O título atualiza imediatamente sem esperar refetch de jogos
+      expect(calcularTituloTela(poll2)).toBe('Enquete Copa Coni — 22/09/2026 a 06/10/2026')
+      expect(calcularTituloTela(poll2)).not.toContain('27/09/2026')
+    })
   })
 })
