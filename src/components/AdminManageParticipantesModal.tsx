@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from 'react'
+import { useState, useMemo, useEffect, useRef, useCallback } from 'react'
 import {
   Users,
   Plus,
@@ -16,7 +16,6 @@ import {
   UserCheck,
   AlertTriangle,
   RefreshCw,
-  UserX,
 } from 'lucide-react'
 import pb from '@/lib/pocketbase/client'
 import type { Bolao, Participante } from '@/types/bolao'
@@ -68,6 +67,10 @@ export function AdminManageParticipantesModal({
   const [authUsers, setAuthUsers] = useState<AuthUserInfo[]>([])
   const [todosBoloes, setTodosBoloes] = useState<Bolao[]>(boloes)
   const [loading, setLoading] = useState(false)
+  const [erroCarregamento, setErroCarregamento] = useState<string | null>(null)
+
+  // Controle de requisição em voo para evitar sobreposição e duplicidade (ex: React StrictMode)
+  const fetchInProgressRef = useRef(false)
 
   // Formulário: Cadastrar novo participante
   const [novoNome, setNovoNome] = useState('')
@@ -100,7 +103,7 @@ export function AdminManageParticipantesModal({
   const [deletingVinculoId, setDeletingVinculoId] = useState<string | null>(null)
 
   // Carregar todos os bolões (ativos e encerrados/passados)
-  const carregarBoloesCompletos = async () => {
+  const carregarBoloesCompletos = useCallback(async () => {
     try {
       const records = await pb.collection('boloes').getFullList<Bolao>({
         sort: '-ativo,nome',
@@ -114,78 +117,105 @@ export function AdminManageParticipantesModal({
       console.warn('Erro ao carregar lista completa de bolões:', err)
       setTodosBoloes(boloes)
     }
-  }
+  }, [boloes])
 
   // Carregar participantes e usuários de autenticação
-  const carregarDados = async () => {
-    setLoading(true)
-    try {
-      await carregarBoloesCompletos()
-
-      // 1. Participantes
-      const records = await pb.collection('participantes').getFullList<Participante>({
-        sort: 'nome,bolao',
-      })
-      setParticipantes(records)
-
-      // 2. Usuários auth (via hook admin dedicado ou fallback SDK)
-      try {
-        const res = await pb.send('/backend/v1/admin/gerenciar-usuarios', {
-          method: 'POST',
-          body: { action: 'list' },
-        })
-        if (res && res.users) {
-          setAuthUsers(res.users)
-        }
-      } catch (adminHookErr) {
-        console.warn('Aviso ao consultar endpoint admin hook, usando fallback:', adminHookErr)
-        try {
-          const directUsers = await pb.collection('users').getFullList()
-          const sanitized = directUsers.map((u: any) => {
-            const email = u.email || ''
-            return {
-              id: u.id,
-              name: u.name || '',
-              email,
-              username: email.includes('@') ? email.split('@')[0] : email,
-              verified: u.verified,
-            }
-          })
-          setAuthUsers(sanitized)
-        } catch (uErr) {
-          console.error('Falha ao listar usuários auth:', uErr)
-        }
+  const carregarDados = useCallback(
+    async (options?: { force?: boolean }) => {
+      // Evita chamadas duplicadas simultâneas (ex: montagem em React StrictMode)
+      if (fetchInProgressRef.current && !options?.force) {
+        return
       }
-    } catch (err) {
-      console.error('Erro ao carregar participantes:', err)
-      toast({
-        title: 'Erro ao carregar participantes',
-        description: 'Não foi possível buscar a lista de participantes.',
-        variant: 'destructive',
-      })
-    } finally {
-      setLoading(false)
-    }
-  }
+      fetchInProgressRef.current = true
+      setLoading(true)
+      setErroCarregamento(null)
 
-  // Carregar ao abrir o modal
+      try {
+        await carregarBoloesCompletos()
+
+        // 1. Participantes (banco PocketBase local)
+        const records = await pb.collection('participantes').getFullList<Participante>({
+          sort: 'nome,bolao',
+        })
+        setParticipantes(records)
+
+        // 2. Usuários auth (via hook admin dedicado ou fallback SDK na collection 'users')
+        try {
+          const res = await pb.send('/backend/v1/admin/gerenciar-usuarios', {
+            method: 'POST',
+            body: { action: 'list' },
+          })
+          if (res && res.users) {
+            setAuthUsers(res.users)
+          }
+        } catch (adminHookErr) {
+          console.warn('Aviso ao consultar endpoint admin hook, usando fallback:', adminHookErr)
+          try {
+            const directUsers = await pb.collection('users').getFullList()
+            const sanitized = directUsers.map((u: any) => {
+              const email = u.email || ''
+              return {
+                id: u.id,
+                name: u.name || '',
+                email,
+                username: email.includes('@') ? email.split('@')[0] : email,
+                verified: u.verified,
+              }
+            })
+            setAuthUsers(sanitized)
+          } catch (uErr) {
+            console.error('Falha ao listar usuários auth:', uErr)
+          }
+        }
+      } catch (err: any) {
+        console.error('Erro ao carregar participantes:', err)
+        const msg = err?.message || 'Não foi possível buscar a lista de participantes.'
+        setErroCarregamento(msg)
+        toast({
+          title: 'Erro ao carregar participantes',
+          description: msg,
+          variant: 'destructive',
+        })
+      } finally {
+        fetchInProgressRef.current = false
+        setLoading(false)
+      }
+    },
+    [carregarBoloesCompletos, toast],
+  )
+
+  // Reseta os campos auxiliares do formulário
+  const resetFormState = useCallback(() => {
+    setErroCadastro(null)
+    setNovoNome('')
+    setNovoLogin('')
+    setNovaSenhaInicial('')
+    setCriarLoginJunto(false)
+    setNovoPontosImportados(0)
+    setEditingTarget(null)
+    setDeletingTarget(null)
+
+    // Por padrão, selecionar todos os bolões ativos
+    const listaFonte = todosBoloes.length > 0 ? todosBoloes : boloes
+    const ativos = listaFonte.filter((b) => b.ativo !== false).map((b) => b.id)
+    setBoloesSelecionados(ativos.length > 0 ? ativos : listaFonte.map((b) => b.id))
+  }, [todosBoloes, boloes])
+
+  // CARREGAMENTO AUTOMÁTICO NA ABERTURA (ON MOUNT/OPEN)
+  // Garante que o fetch seja disparado automaticamente assim que open = true
+  // e recarregue toda vez que o modal for fechado e reaberto.
+  useEffect(() => {
+    if (open) {
+      resetFormState()
+      carregarDados({ force: true })
+    }
+  }, [open, carregarDados, resetFormState])
+
+  // Trata mudanças no estado de abertura vindas do Dialog
   const handleOpenChange = (isOpen: boolean) => {
     onOpenChange(isOpen)
-    if (isOpen) {
-      carregarDados()
-      setErroCadastro(null)
-      setNovoNome('')
-      setNovoLogin('')
-      setNovaSenhaInicial('')
-      setCriarLoginJunto(false)
-      setNovoPontosImportados(0)
-      setEditingTarget(null)
-      setDeletingTarget(null)
-
-      // Por padrão, selecionar todos os bolões ativos
-      const listaFonte = todosBoloes.length > 0 ? todosBoloes : boloes
-      const ativos = listaFonte.filter((b) => b.ativo !== false).map((b) => b.id)
-      setBoloesSelecionados(ativos.length > 0 ? ativos : listaFonte.map((b) => b.id))
+    if (!isOpen) {
+      fetchInProgressRef.current = false
     }
   }
 
@@ -600,7 +630,7 @@ export function AdminManageParticipantesModal({
               <Button
                 variant="ghost"
                 size="sm"
-                onClick={carregarDados}
+                onClick={() => carregarDados({ force: true })}
                 disabled={loading}
                 className="h-8 text-xs text-slate-500 hover:text-slate-800"
                 title="Recarregar lista"
@@ -801,13 +831,40 @@ export function AdminManageParticipantesModal({
                 </span>
               </div>
 
+              {erroCarregamento && (
+                <div className="mb-3 flex items-start justify-between gap-2 rounded-lg border border-red-200 bg-red-50 p-3 text-xs text-red-800">
+                  <div className="flex items-start gap-2">
+                    <AlertCircle className="h-4 w-4 shrink-0 text-red-600 mt-0.5" />
+                    <div>
+                      <p className="font-semibold text-red-900">Falha ao carregar participantes</p>
+                      <p className="text-red-700">{erroCarregamento}</p>
+                    </div>
+                  </div>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => carregarDados({ force: true })}
+                    className="h-7 border-red-300 text-red-800 hover:bg-red-100 text-xs shrink-0"
+                  >
+                    <RefreshCw className="h-3 w-3 mr-1" />
+                    Tentar Novamente
+                  </Button>
+                </div>
+              )}
+
               {loading ? (
-                <div className="py-8 text-center text-xs text-slate-500 flex items-center justify-center gap-2">
-                  <Loader2 className="h-4 w-4 animate-spin text-slate-400" />
-                  Carregando participantes...
+                <div className="py-12 text-center text-xs text-slate-500 flex flex-col items-center justify-center gap-2 bg-slate-50/60 rounded-xl border border-slate-200">
+                  <Loader2 className="h-5 w-5 animate-spin text-emerald-600" />
+                  <span className="font-medium text-slate-700">
+                    Carregando participantes e dados...
+                  </span>
+                  <span className="text-[11px] text-slate-400">
+                    Consultando base de participantes e logins
+                  </span>
                 </div>
               ) : participantesAgrupados.length === 0 ? (
-                <div className="rounded-lg bg-slate-50 p-6 text-center text-xs text-slate-500">
+                <div className="rounded-lg bg-slate-50 p-6 text-center text-xs text-slate-500 border border-slate-200">
                   Nenhum participante encontrado.
                 </div>
               ) : (

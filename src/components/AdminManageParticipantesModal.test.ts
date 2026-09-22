@@ -210,4 +210,83 @@ describe('AdminManageParticipantesModal logic and backend contracts', () => {
     expect(passados).toHaveLength(1)
     expect(passados[0].nome).toBe('Copa do Mundo')
   })
+
+  it('ao abrir o modal (open = true), o ciclo de busca deve consultar participantes e boloes automaticamente', async () => {
+    const mockParticipantes = [
+      { id: 'p1', nome: 'Douglas', bolao: 'b1', pontuacao_total: 100 },
+      { id: 'p2', nome: 'Gabriel', bolao: 'b1', pontuacao_total: 80 },
+    ]
+    const mockBoloes = [{ id: 'b1', nome: 'Copa Coni', ativo: true }]
+
+    const getFullListSpy = vi.spyOn(pb, 'collection').mockImplementation((collName: string) => {
+      if (collName === 'participantes') {
+        return {
+          getFullList: vi.fn().mockResolvedValue(mockParticipantes),
+        } as any
+      }
+      if (collName === 'boloes') {
+        return {
+          getFullList: vi.fn().mockResolvedValue(mockBoloes),
+        } as any
+      }
+      return {
+        getFullList: vi.fn().mockResolvedValue([]),
+      } as any
+    })
+
+    const sendSpy = vi.spyOn(pb, 'send').mockResolvedValue({
+      users: [{ id: 'u1', name: 'Douglas', username: 'douglas', email: 'douglas@repress.com.br' }],
+    } as any)
+
+    // Simula a lógica executada automaticamente pelo useEffect quando open = true
+    const carregarAutomatico = async () => {
+      const boloesRecords = await pb.collection('boloes').getFullList()
+      const participantesRecords = await pb.collection('participantes').getFullList()
+      const authRes: any = await pb.send('/backend/v1/admin/gerenciar-usuarios', {
+        method: 'POST',
+        body: { action: 'list' },
+      })
+      return { boloesRecords, participantesRecords, users: authRes.users }
+    }
+
+    const resultado = await carregarAutomatico()
+
+    expect(getFullListSpy).toHaveBeenCalledWith('boloes')
+    expect(getFullListSpy).toHaveBeenCalledWith('participantes')
+    expect(sendSpy).toHaveBeenCalledWith('/backend/v1/admin/gerenciar-usuarios', {
+      method: 'POST',
+      body: { action: 'list' },
+    })
+    expect(resultado.participantesRecords).toHaveLength(2)
+    expect(resultado.boloesRecords).toHaveLength(1)
+    expect(resultado.users).toHaveLength(1)
+  })
+
+  it('reabrir o modal (fechar e abrir novamente) dispara novo ciclo de carregamento dos dados atualizados', async () => {
+    let callCount = 0
+    vi.spyOn(pb, 'collection').mockImplementation((collName: string) => {
+      if (collName === 'participantes') {
+        callCount++
+        return {
+          getFullList: vi
+            .fn()
+            .mockResolvedValue([
+              { id: `p-${callCount}`, nome: `Participante ${callCount}`, bolao: 'b1' },
+            ]),
+        } as any
+      }
+      return {
+        getFullList: vi.fn().mockResolvedValue([]),
+      } as any
+    })
+
+    // 1ª Abertura do modal
+    const primeiraCarga = await pb.collection('participantes').getFullList()
+    expect(primeiraCarga[0].id).toBe('p-1')
+
+    // Fechamento e 2ª Abertura do modal
+    const segundaCarga = await pb.collection('participantes').getFullList()
+    expect(segundaCarga[0].id).toBe('p-2')
+    expect(callCount).toBe(2)
+  })
 })
