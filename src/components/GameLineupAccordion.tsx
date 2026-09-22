@@ -2,16 +2,13 @@ import React, { useState, useEffect, useCallback } from 'react'
 import {
   ChevronDown,
   ChevronUp,
-  Shield,
   Users,
   CheckCircle2,
   HelpCircle,
   AlertCircle,
   Loader2,
-  RefreshCw,
 } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
-import { Button } from '@/components/ui/button'
 import { fetchGameLineup, LineupResponse, LineupTeam } from '@/services/escalacoes'
 
 interface GameLineupAccordionProps {
@@ -36,37 +33,34 @@ export const GameLineupAccordion: React.FC<GameLineupAccordionProps> = ({
   const [lineup, setLineup] = useState<LineupResponse | null>(null)
   const [activeTab, setActiveTab] = useState<'timeA' | 'timeB'>('timeA')
 
-  const loadLineup = useCallback(
-    async (force = false) => {
-      setLoading(true)
-      try {
-        // Regra de Proteção de Cota: leitura padrão prioritária do banco local sem forceRefresh desnecessário
-        const res = await fetchGameLineup({
-          jogoId,
-          fixtureId,
-          timeA,
-          timeB,
-          data,
-          forceRefresh: force,
-        })
-        setLineup(res)
-        if (onLineupLoaded) {
-          onLineupLoaded(res)
-        }
-      } catch (err) {
-        console.warn('Erro ao carregar escalação:', err)
-      } finally {
-        setLoading(false)
+  const loadLineup = useCallback(async () => {
+    setLoading(true)
+    try {
+      // Regra de Proteção de Cota: leitura padrão prioritária do banco local sem chamadas manuais à API externa
+      const res = await fetchGameLineup({
+        jogoId,
+        fixtureId,
+        timeA,
+        timeB,
+        data,
+        forceRefresh: false,
+      })
+      setLineup(res)
+      if (onLineupLoaded) {
+        onLineupLoaded(res)
       }
-    },
-    [jogoId, fixtureId, timeA, timeB, data, onLineupLoaded],
-  )
+    } catch (err) {
+      console.warn('Erro ao carregar escalação:', err)
+    } finally {
+      setLoading(false)
+    }
+  }, [jogoId, fixtureId, timeA, timeB, data, onLineupLoaded])
 
   const handleToggle = () => {
     const nextState = !isOpen
     setIsOpen(nextState)
     if (nextState && !lineup && !loading) {
-      loadLineup(false)
+      loadLineup()
     }
   }
 
@@ -132,23 +126,9 @@ export const GameLineupAccordion: React.FC<GameLineupAccordionProps> = ({
                 <HelpCircle className="h-4 w-4" />
               </div>
               <p className="text-xs font-semibold text-slate-700">
-                Escalações ainda não confirmadas pelas equipes
+                Escalações ainda não confirmadas. A atualização será realizada automaticamente assim
+                que divulgadas.
               </p>
-              <p className="text-[11px] text-slate-400 mt-0.5 max-w-xs mx-auto">
-                As escalações oficiais costumam ser confirmadas entre 30 e 60 minutos antes do apito
-                inicial.
-              </p>
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={() => loadLineup(true)}
-                disabled={loading}
-                className="mt-2.5 h-7 text-[11px] gap-1 border-slate-300 text-[#0F2A43]"
-              >
-                <RefreshCw className={`h-3 w-3 ${loading ? 'animate-spin' : ''}`} />
-                <span>Verificar novamente</span>
-              </Button>
             </div>
           ) : (
             <div className="space-y-3">
