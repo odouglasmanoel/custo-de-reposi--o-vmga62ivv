@@ -1,16 +1,22 @@
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useEffect } from 'react'
 import {
   Users,
   Plus,
   Trash2,
-  Edit2,
+  Edit,
   Check,
   X,
   Loader2,
   AlertCircle,
   Trophy,
-  CheckSquare,
-  Square,
+  Shield,
+  KeyRound,
+  Eye,
+  EyeOff,
+  UserCheck,
+  AlertTriangle,
+  RefreshCw,
+  UserX,
 } from 'lucide-react'
 import pb from '@/lib/pocketbase/client'
 import type { Bolao, Participante } from '@/types/bolao'
@@ -35,10 +41,19 @@ interface AdminManageParticipantesModalProps {
   onSuccess?: () => void
 }
 
-interface GroupedParticipante {
+export interface AuthUserInfo {
+  id: string
+  name: string
+  email: string
+  username: string
+  verified?: boolean
+}
+
+export interface GroupedParticipante {
   nome: string
-  registros: Participante[] // um por bolão em que participa
+  registros: Participante[] // um registro por bolão em que participa
   totalPontos: number
+  matchedUser?: AuthUserInfo | null
 }
 
 export function AdminManageParticipantesModal({
@@ -50,35 +65,97 @@ export function AdminManageParticipantesModal({
   const { toast } = useToast()
 
   const [participantes, setParticipantes] = useState<Participante[]>([])
+  const [authUsers, setAuthUsers] = useState<AuthUserInfo[]>([])
+  const [todosBoloes, setTodosBoloes] = useState<Bolao[]>(boloes)
   const [loading, setLoading] = useState(false)
 
   // Formulário: Cadastrar novo participante
   const [novoNome, setNovoNome] = useState('')
+  const [novoLogin, setNovoLogin] = useState('')
+  const [novaSenhaInicial, setNovaSenhaInicial] = useState('')
+  const [criarLoginJunto, setCriarLoginJunto] = useState(false)
   const [novoPontosImportados, setNovoPontosImportados] = useState<number>(0)
   const [boloesSelecionados, setBoloesSelecionados] = useState<string[]>([])
   const [cadastrando, setCadastrando] = useState(false)
   const [erroCadastro, setErroCadastro] = useState<string | null>(null)
 
-  // Gerenciamento de Bolões de um participante existente
-  const [managingParticipantName, setManagingParticipantName] = useState<string | null>(null)
-  const [managingBoloes, setManagingBoloes] = useState<string[]>([])
-  const [savingBoloes, setSavingBoloes] = useState(false)
+  // Sub-modal / Drawer: Edição Completa do Participante (Requisito 1, 2 e 3)
+  const [editingTarget, setEditingTarget] = useState<GroupedParticipante | null>(null)
+  const [editNome, setEditNome] = useState('')
+  const [editUsername, setEditUsername] = useState('')
+  const [editNovaSenha, setEditNovaSenha] = useState('')
+  const [showEditSenha, setShowEditSenha] = useState(false)
+  const [editBoloesSelecionados, setEditBoloesSelecionados] = useState<string[]>([])
+  const [salvandoEdicao, setSalvandoEdicao] = useState(false)
+  const [erroEdicao, setErroEdicao] = useState<string | null>(null)
 
-  // Edição rápida de nome
-  const [editingNameOriginal, setEditingNameOriginal] = useState<string | null>(null)
-  const [editingNameValue, setEditingNameValue] = useState('')
-  const [savingName, setSavingName] = useState(false)
+  // Modal / Diálogo de Confirmação de Exclusão / Desativação
+  const [deletingTarget, setDeletingTarget] = useState<GroupedParticipante | null>(null)
+  const [deleteOption, setDeleteOption] = useState<'remover_todos_boloes' | 'remover_sistema'>(
+    'remover_todos_boloes',
+  )
+  const [executandoExclusao, setExecutandoExclusao] = useState(false)
 
-  // Exclusão de vínculo
-  const [deletingId, setDeletingId] = useState<string | null>(null)
+  // Exclusão pontual de vínculo de um chip
+  const [deletingVinculoId, setDeletingVinculoId] = useState<string | null>(null)
 
-  const carregarParticipantes = async () => {
+  // Carregar todos os bolões (ativos e encerrados/passados)
+  const carregarBoloesCompletos = async () => {
+    try {
+      const records = await pb.collection('boloes').getFullList<Bolao>({
+        sort: '-ativo,nome',
+      })
+      if (records && records.length > 0) {
+        setTodosBoloes(records)
+      } else {
+        setTodosBoloes(boloes)
+      }
+    } catch (err) {
+      console.warn('Erro ao carregar lista completa de bolões:', err)
+      setTodosBoloes(boloes)
+    }
+  }
+
+  // Carregar participantes e usuários de autenticação
+  const carregarDados = async () => {
     setLoading(true)
     try {
+      await carregarBoloesCompletos()
+
+      // 1. Participantes
       const records = await pb.collection('participantes').getFullList<Participante>({
         sort: 'nome,bolao',
       })
       setParticipantes(records)
+
+      // 2. Usuários auth (via hook admin dedicado ou fallback SDK)
+      try {
+        const res = await pb.send('/backend/v1/admin/gerenciar-usuarios', {
+          method: 'POST',
+          body: { action: 'list' },
+        })
+        if (res && res.users) {
+          setAuthUsers(res.users)
+        }
+      } catch (adminHookErr) {
+        console.warn('Aviso ao consultar endpoint admin hook, usando fallback:', adminHookErr)
+        try {
+          const directUsers = await pb.collection('users').getFullList()
+          const sanitized = directUsers.map((u: any) => {
+            const email = u.email || ''
+            return {
+              id: u.id,
+              name: u.name || '',
+              email,
+              username: email.includes('@') ? email.split('@')[0] : email,
+              verified: u.verified,
+            }
+          })
+          setAuthUsers(sanitized)
+        } catch (uErr) {
+          console.error('Falha ao listar usuários auth:', uErr)
+        }
+      }
     } catch (err) {
       console.error('Erro ao carregar participantes:', err)
       toast({
@@ -95,17 +172,24 @@ export function AdminManageParticipantesModal({
   const handleOpenChange = (isOpen: boolean) => {
     onOpenChange(isOpen)
     if (isOpen) {
-      carregarParticipantes()
+      carregarDados()
       setErroCadastro(null)
       setNovoNome('')
+      setNovoLogin('')
+      setNovaSenhaInicial('')
+      setCriarLoginJunto(false)
       setNovoPontosImportados(0)
+      setEditingTarget(null)
+      setDeletingTarget(null)
+
       // Por padrão, selecionar todos os bolões ativos
-      const ativos = boloes.filter((b) => b.ativo !== false).map((b) => b.id)
-      setBoloesSelecionados(ativos.length > 0 ? ativos : boloes.map((b) => b.id))
+      const listaFonte = todosBoloes.length > 0 ? todosBoloes : boloes
+      const ativos = listaFonte.filter((b) => b.ativo !== false).map((b) => b.id)
+      setBoloesSelecionados(ativos.length > 0 ? ativos : listaFonte.map((b) => b.id))
     }
   }
 
-  // Agrupamento por nome
+  // Casar usuários auth com os participantes
   const participantesAgrupados = useMemo(() => {
     const map = new Map<string, Participante[]>()
     for (const p of participantes) {
@@ -118,20 +202,63 @@ export function AdminManageParticipantesModal({
     const result: GroupedParticipante[] = []
     map.forEach((registros, nome) => {
       const totalPontos = registros.reduce((acc, r) => acc + (r.pontuacao_total || 0), 0)
-      result.push({ nome, registros, totalPontos })
+
+      // Casar com usuário da collection 'users'
+      // 1) Match exato por nome
+      // 2) Match por apelido / prefixo
+      const nomeLower = nome.toLowerCase()
+      let matchedUser = authUsers.find((u) => u.name && u.name.trim().toLowerCase() === nomeLower)
+
+      if (!matchedUser) {
+        // Tentar por username (ex: "brunol" ou "brunox" para "Bruno Lopes" / "Bruno Xavier")
+        matchedUser = authUsers.find((u) => {
+          const uLogin = (u.username || '').toLowerCase()
+          const uName = (u.name || '').toLowerCase()
+          if (nomeLower.includes('lopes') && (uLogin.includes('brunol') || uName.includes('lopes')))
+            return true
+          if (
+            nomeLower.includes('xavier') &&
+            (uLogin.includes('brunox') || uName.includes('xavier'))
+          )
+            return true
+          if (
+            nomeLower.includes('douglas') &&
+            (uLogin.includes('douglas') || uName.includes('douglas'))
+          )
+            return true
+          if (
+            nomeLower.includes('gabriel') &&
+            (uLogin.includes('gabriel') || uName.includes('gabriel'))
+          )
+            return true
+          if (nomeLower.includes('davi') && (uLogin.includes('davi') || uName.includes('davi')))
+            return true
+          return false
+        })
+      }
+
+      result.push({
+        nome,
+        registros,
+        totalPontos,
+        matchedUser: matchedUser || null,
+      })
     })
 
     return result.sort((a, b) => a.nome.localeCompare(b.nome))
-  }, [participantes])
+  }, [participantes, authUsers])
 
-  // Bolões ativos mapeados por id para renderizar nome
+  // Bolões mapeados por id para renderizar nome rápido
   const boloesMap = useMemo(() => {
     const map = new Map<string, Bolao>()
-    for (const b of boloes) {
+    for (const b of todosBoloes) {
       map.set(b.id, b)
     }
+    for (const b of boloes) {
+      if (!map.has(b.id)) map.set(b.id, b)
+    }
     return map
-  }, [boloes])
+  }, [todosBoloes, boloes])
 
   // Submeter cadastro de novo participante
   const handleCadastrarNovo = async (e: React.FormEvent) => {
@@ -149,11 +276,43 @@ export function AdminManageParticipantesModal({
       return
     }
 
+    if (criarLoginJunto) {
+      if (!novoLogin.trim()) {
+        setErroCadastro('Informe o username/login de acesso do participante.')
+        return
+      }
+      if (!novaSenhaInicial.trim() || novaSenhaInicial.trim().length < 4) {
+        setErroCadastro('A senha inicial deve possuir no mínimo 4 caracteres.')
+        return
+      }
+    }
+
     setCadastrando(true)
     let criados = 0
     const erros: string[] = []
 
     try {
+      // 1. Criar usuário auth se solicitado
+      if (criarLoginJunto) {
+        try {
+          await pb.send('/backend/v1/admin/gerenciar-usuarios', {
+            method: 'POST',
+            body: {
+              action: 'create_user',
+              name: nomeTrim,
+              username: novoLogin.trim(),
+              password: novaSenhaInicial.trim(),
+            },
+          })
+        } catch (userErr: any) {
+          console.warn('Erro ao criar usuário auth via hook:', userErr)
+          erros.push(
+            `Aviso sobre login: ${userErr?.message || 'não foi possível criar credencial de acesso'}`,
+          )
+        }
+      }
+
+      // 2. Criar vínculos na collection participantes
       for (const bolaoId of boloesSelecionados) {
         try {
           await pb.collection('participantes').create({
@@ -176,11 +335,14 @@ export function AdminManageParticipantesModal({
       if (criados > 0) {
         toast({
           title: 'Participante cadastrado!',
-          description: `${nomeTrim} adicionado a ${criados} bolão(ões).`,
+          description: `${nomeTrim} adicionado com sucesso a ${criados} bolão(ões).`,
         })
         setNovoNome('')
+        setNovoLogin('')
+        setNovaSenhaInicial('')
+        setCriarLoginJunto(false)
         setNovoPontosImportados(0)
-        await carregarParticipantes()
+        await carregarDados()
         onSuccess?.()
       }
 
@@ -192,37 +354,110 @@ export function AdminManageParticipantesModal({
     }
   }
 
-  // Iniciar gerenciamento de bolões de um participante
-  const handleOpenGerenciarBoloes = (group: GroupedParticipante) => {
-    setManagingParticipantName(group.nome)
-    setManagingBoloes(group.registros.map((r) => r.bolao))
+  // ABRIR MODAL DE EDIÇÃO COMPLETA (Requisitos 1, 2 e 3)
+  const handleOpenEditModal = (group: GroupedParticipante) => {
+    setEditingTarget(group)
+    setEditNome(group.nome)
+    setEditUsername(group.matchedUser?.username || '')
+    setEditNovaSenha('')
+    setShowEditSenha(false)
+    setErroEdicao(null)
+    setEditBoloesSelecionados(group.registros.map((r) => r.bolao))
   }
 
-  // Salvar alteração de bolões (adicionar novos e remover desmarcados)
-  const handleSalvarBoloesParticipante = async () => {
-    if (!managingParticipantName) return
-    setSavingBoloes(true)
+  // SALVAR EDIÇÃO COMPLETA DO PARTICIPANTE
+  const handleSalvarEdicaoCompleta = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!editingTarget) return
+    setErroEdicao(null)
 
-    const currentRecords = participantes.filter(
-      (p) => p.nome.trim().toLowerCase() === managingParticipantName.trim().toLowerCase(),
-    )
-    const currentBolaoIds = new Set(currentRecords.map((r) => r.bolao))
-    const targetBolaoIds = new Set(managingBoloes)
+    const nomeOriginal = editingTarget.nome.trim()
+    const nomeFinal = editNome.trim()
+
+    if (!nomeFinal) {
+      setErroEdicao('O nome do participante não pode ficar em branco.')
+      return
+    }
+
+    if (editNovaSenha && editNovaSenha.length < 4) {
+      setErroEdicao('A nova senha deve ter no mínimo 4 caracteres.')
+      return
+    }
+
+    setSalvandoEdicao(true)
 
     try {
-      // 1. Remover dos bolões desmarcados
+      // 1. Atualizar credenciais de usuário (users) se houver usuário vinculado ou dados preenchidos
+      const matchedUserId = editingTarget.matchedUser?.id
+      if (matchedUserId || editUsername || editNovaSenha) {
+        try {
+          if (matchedUserId) {
+            await pb.send('/backend/v1/admin/gerenciar-usuarios', {
+              method: 'POST',
+              body: {
+                action: 'update_user',
+                user_id: matchedUserId,
+                name: nomeFinal,
+                username: editUsername.trim() || undefined,
+                password: editNovaSenha.trim() || undefined,
+              },
+            })
+          } else if (editUsername && editNovaSenha) {
+            // Se ainda não tinha usuário auth e o admin preencheu username + senha, criar a conta
+            await pb.send('/backend/v1/admin/gerenciar-usuarios', {
+              method: 'POST',
+              body: {
+                action: 'create_user',
+                name: nomeFinal,
+                username: editUsername.trim(),
+                password: editNovaSenha.trim(),
+              },
+            })
+          }
+        } catch (authUpdateErr: any) {
+          console.error('Erro ao atualizar usuário auth:', authUpdateErr)
+          throw new Error(authUpdateErr?.message || 'Falha ao atualizar dados de acesso/login.')
+        }
+      }
+
+      // 2. Renomear registros de participantes se o nome mudou
+      if (nomeFinal.toLowerCase() !== nomeOriginal.toLowerCase()) {
+        const registrosParaRenomear = participantes.filter(
+          (p) => p.nome.trim().toLowerCase() === nomeOriginal.toLowerCase(),
+        )
+        for (const reg of registrosParaRenomear) {
+          try {
+            await pb.collection('participantes').update(reg.id, {
+              nome: nomeFinal,
+            })
+          } catch (pUpdateErr: any) {
+            console.error(`Erro ao atualizar nome no participante ${reg.id}:`, pUpdateErr)
+          }
+        }
+      }
+
+      // 3. Atualizar vínculos com bolões (adicionar aos novos, remover dos desmarcados)
+      const currentRecords = participantes.filter(
+        (p) =>
+          p.nome.trim().toLowerCase() === nomeOriginal.toLowerCase() ||
+          p.nome.trim().toLowerCase() === nomeFinal.toLowerCase(),
+      )
+      const currentBolaoIds = new Set(currentRecords.map((r) => r.bolao))
+      const targetBolaoIds = new Set(editBoloesSelecionados)
+
+      // 3a. Remover dos bolões desmarcados
       for (const rec of currentRecords) {
         if (!targetBolaoIds.has(rec.bolao)) {
           await pb.collection('participantes').delete(rec.id)
         }
       }
 
-      // 2. Adicionar aos bolões recém-marcados
-      for (const bId of managingBoloes) {
+      // 3b. Adicionar aos bolões recém-marcados
+      for (const bId of editBoloesSelecionados) {
         if (!currentBolaoIds.has(bId)) {
           await pb.collection('participantes').create({
             bolao: bId,
-            nome: managingParticipantName,
+            nome: nomeFinal,
             pontos_importados: 0,
             pontuacao_total: 0,
           })
@@ -230,451 +465,792 @@ export function AdminManageParticipantesModal({
       }
 
       toast({
-        title: 'Vínculos atualizados!',
-        description: `Bolões de ${managingParticipantName} foram atualizados.`,
+        title: 'Participante atualizado!',
+        description: `Dados e vínculos de "${nomeFinal}" foram atualizados com sucesso.`,
       })
-      setManagingParticipantName(null)
-      await carregarParticipantes()
+
+      setEditingTarget(null)
+      await carregarDados()
       onSuccess?.()
     } catch (err: any) {
-      console.error('Erro ao atualizar bolões:', err)
-      toast({
-        title: 'Erro ao atualizar vínculos',
-        description: err?.message || 'Não foi possível salvar alterações.',
-        variant: 'destructive',
-      })
+      console.error('Erro geral ao salvar edição completa:', err)
+      setErroEdicao(err?.message || 'Ocorreu um erro ao salvar as alterações.')
     } finally {
-      setSavingBoloes(false)
+      setSalvandoEdicao(false)
     }
   }
 
-  // Salvar renomeação rápida
-  const handleSaveRename = async () => {
-    if (!editingNameOriginal || !editingNameValue.trim()) return
-    const novoNomeTrim = editingNameValue.trim()
-    if (novoNomeTrim.toLowerCase() === editingNameOriginal.toLowerCase()) {
-      setEditingNameOriginal(null)
-      return
-    }
+  // EXCLUSÃO / DESATIVAÇÃO COM CONFIRMAÇÃO (Requisito 3)
+  const handleConfirmarExclusao = async () => {
+    if (!deletingTarget) return
+    setExecutandoExclusao(true)
 
-    setSavingName(true)
     try {
-      const recordsToUpdate = participantes.filter(
-        (p) => p.nome.trim().toLowerCase() === editingNameOriginal.trim().toLowerCase(),
-      )
-      for (const rec of recordsToUpdate) {
-        await pb.collection('participantes').update(rec.id, {
-          nome: novoNomeTrim,
+      const targetName = deletingTarget.nome.trim()
+      const userId = deletingTarget.matchedUser?.id
+
+      if (deleteOption === 'remover_sistema') {
+        // Remover usuário do sistema (auth + vínculos)
+        await pb.send('/backend/v1/admin/gerenciar-usuarios', {
+          method: 'POST',
+          body: {
+            action: 'delete_user',
+            user_id: userId || undefined,
+            participant_name: targetName,
+            remover_participantes: true,
+          },
+        })
+
+        toast({
+          title: 'Usuário desativado/removido',
+          description: `"${targetName}" foi removido do sistema e de todas as competições.`,
+        })
+      } else {
+        // Apenas desvincular de todos os bolões (preserva palpites históricos/pontuações gravadas)
+        const registros = deletingTarget.registros
+        for (const reg of registros) {
+          try {
+            await pb.collection('participantes').delete(reg.id)
+          } catch (delErr) {
+            console.warn(`Aviso ao remover participante ${reg.id}:`, delErr)
+          }
+        }
+
+        toast({
+          title: 'Vínculos removidos',
+          description: `"${targetName}" foi removido de todas as tabelas e campeonatos ativos.`,
         })
       }
-      toast({
-        title: 'Nome atualizado!',
-        description: `Participante renomeado de "${editingNameOriginal}" para "${novoNomeTrim}".`,
-      })
-      setEditingNameOriginal(null)
-      await carregarParticipantes()
+
+      setDeletingTarget(null)
+      await carregarDados()
       onSuccess?.()
     } catch (err: any) {
-      console.error('Erro ao renomear participante:', err)
+      console.error('Erro na exclusão/desativação:', err)
       toast({
-        title: 'Erro ao renomear',
-        description: err?.message || 'Verifique se o novo nome já existe no bolão.',
+        title: 'Erro na exclusão',
+        description: err?.message || 'Não foi possível completar a operação.',
         variant: 'destructive',
       })
     } finally {
-      setSavingName(false)
+      setExecutandoExclusao(false)
     }
   }
 
-  // Excluir vínculo específico de participante em um bolão
-  const handleRemoverVinculo = async (participanteId: string, nomeBolao: string) => {
-    if (!window.confirm(`Remover este participante do bolão "${nomeBolao}"?`)) {
+  // Excluir vínculo pontual de um único bolão (clicando no X do chip)
+  const handleRemoverVinculoUnico = async (
+    participanteId: string,
+    nomeBolao: string,
+    nomeMembro: string,
+  ) => {
+    if (
+      !window.confirm(
+        `Remover "${nomeMembro}" da competição "${nomeBolao}"? Ele deixará de figurar na tabela deste campeonato.`,
+      )
+    ) {
       return
     }
 
-    setDeletingId(participanteId)
+    setDeletingVinculoId(participanteId)
     try {
       await pb.collection('participantes').delete(participanteId)
       toast({
         title: 'Participante removido do bolão',
-        description: `Vínculo com ${nomeBolao} excluído com sucesso.`,
+        description: `Vínculo com ${nomeBolao} removido com sucesso.`,
       })
-      await carregarParticipantes()
+      await carregarDados()
       onSuccess?.()
     } catch (err: any) {
-      console.error('Erro ao remover vínculo:', err)
+      console.error('Erro ao remover vínculo único:', err)
       toast({
         title: 'Erro ao remover',
         description: err?.message || 'Não foi possível remover o participante.',
         variant: 'destructive',
       })
     } finally {
-      setDeletingId(null)
+      setDeletingVinculoId(null)
     }
   }
 
-  // Helpers de seleção de bolões para o formulário de cadastro
+  // Helpers de seleção de bolões
   const toggleBolaoCadastro = (id: string) => {
     setBoloesSelecionados((prev) =>
       prev.includes(id) ? prev.filter((b) => b !== id) : [...prev, id],
     )
   }
 
-  const selectAllCadastro = () => {
-    setBoloesSelecionados(boloes.map((b) => b.id))
-  }
-
-  const deselectAllCadastro = () => {
-    setBoloesSelecionados([])
+  const toggleBolaoEdicao = (id: string) => {
+    setEditBoloesSelecionados((prev) =>
+      prev.includes(id) ? prev.filter((b) => b !== id) : [...prev, id],
+    )
   }
 
   return (
-    <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogContent className="max-w-2xl w-full max-h-[90vh] overflow-y-auto bg-white rounded-xl">
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2 text-lg font-bold text-[#0F172A]">
-            <div className="rounded-lg bg-emerald-100 p-2 text-emerald-700">
-              <Users className="h-5 w-5" />
+    <>
+      <Dialog open={open} onOpenChange={handleOpenChange}>
+        <DialogContent className="max-w-3xl w-full max-h-[92vh] overflow-y-auto bg-white rounded-xl p-6">
+          <DialogHeader className="border-b border-slate-100 pb-3">
+            <div className="flex items-center justify-between">
+              <DialogTitle className="flex items-center gap-2 text-lg font-bold text-[#0F172A]">
+                <div className="rounded-lg bg-emerald-100 p-2 text-emerald-700">
+                  <Users className="h-5 w-5" />
+                </div>
+                <span>Gerenciar Participantes</span>
+              </DialogTitle>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={carregarDados}
+                disabled={loading}
+                className="h-8 text-xs text-slate-500 hover:text-slate-800"
+                title="Recarregar lista"
+              >
+                <RefreshCw className={`h-3.5 w-3.5 mr-1 ${loading ? 'animate-spin' : ''}`} />
+                Atualizar
+              </Button>
             </div>
-            <span>Gerenciar Participantes</span>
-          </DialogTitle>
-          <DialogDescription className="text-xs text-[#64748B]">
-            Cadastre novos participantes, vincule-os a competições existentes e gerencie o status de
-            cada membro.
-          </DialogDescription>
-        </DialogHeader>
+            <DialogDescription className="text-xs text-[#64748B]">
+              Painel do Administrador (Douglas) com autonomia total: edite nomes, credenciais de
+              acesso (username e senha), gerencie vínculos de todas as copas ativas e passadas, ou
+              desative participantes.
+            </DialogDescription>
+          </DialogHeader>
 
-        <div className="space-y-6 pt-2">
-          {/* SEÇÃO A: Cadastrar Novo Participante */}
-          <div className="rounded-xl border border-emerald-200 bg-emerald-50/40 p-4">
-            <h3 className="flex items-center gap-2 text-sm font-bold text-emerald-950 mb-3">
-              <Plus className="h-4 w-4 text-emerald-600" />
-              <span>Cadastrar Novo Participante</span>
-            </h3>
+          <div className="space-y-6 pt-3">
+            {/* SEÇÃO A: Cadastrar Novo Participante */}
+            <div className="rounded-xl border border-emerald-200 bg-emerald-50/40 p-4 shadow-2xs">
+              <h3 className="flex items-center gap-2 text-sm font-bold text-emerald-950 mb-3">
+                <Plus className="h-4 w-4 text-emerald-600" />
+                <span>Cadastrar Novo Participante</span>
+              </h3>
 
-            {erroCadastro && (
-              <div className="mb-3 flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 p-2.5 text-xs text-red-800">
-                <AlertCircle className="h-4 w-4 shrink-0 text-red-600 mt-0.5" />
-                <span>{erroCadastro}</span>
-              </div>
-            )}
-
-            <form onSubmit={handleCadastrarNovo} className="space-y-3">
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                <div className="sm:col-span-2">
-                  <Label htmlFor="part-nome" className="text-xs font-semibold text-slate-700">
-                    Nome Completo ou Apelido
-                  </Label>
-                  <Input
-                    id="part-nome"
-                    placeholder="Ex: Lucas Silva"
-                    value={novoNome}
-                    onChange={(e) => setNovoNome(e.target.value)}
-                    className="mt-1 h-9 bg-white border-slate-300 text-xs"
-                  />
+              {erroCadastro && (
+                <div className="mb-3 flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 p-2.5 text-xs text-red-800">
+                  <AlertCircle className="h-4 w-4 shrink-0 text-red-600 mt-0.5" />
+                  <span>{erroCadastro}</span>
                 </div>
-                <div>
-                  <Label htmlFor="part-pontos" className="text-xs font-semibold text-slate-700">
-                    Pontos Iniciais (Importados)
-                  </Label>
-                  <Input
-                    id="part-pontos"
-                    type="number"
-                    min="0"
-                    placeholder="0"
-                    value={novoPontosImportados}
-                    onChange={(e) => setNovoPontosImportados(Number(e.target.value) || 0)}
-                    className="mt-1 h-9 bg-white border-slate-300 text-xs"
-                  />
-                </div>
-              </div>
+              )}
 
-              {/* Bolões a vincular */}
-              <div>
-                <div className="flex items-center justify-between mb-1.5">
-                  <Label className="text-xs font-semibold text-slate-700">
-                    Vincular aos Bolões:
-                  </Label>
-                  <div className="flex items-center gap-2 text-[11px]">
-                    <button
-                      type="button"
-                      onClick={selectAllCadastro}
-                      className="text-emerald-700 hover:underline font-medium"
-                    >
-                      Selecionar Todos
-                    </button>
-                    <span className="text-slate-300">•</span>
-                    <button
-                      type="button"
-                      onClick={deselectAllCadastro}
-                      className="text-slate-500 hover:underline"
-                    >
-                      Desmarcar Todos
-                    </button>
+              <form onSubmit={handleCadastrarNovo} className="space-y-3">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  <div className="sm:col-span-2">
+                    <Label htmlFor="part-nome" className="text-xs font-semibold text-slate-700">
+                      Nome Completo ou Apelido
+                    </Label>
+                    <Input
+                      id="part-nome"
+                      placeholder="Ex: Lucas Silva"
+                      value={novoNome}
+                      onChange={(e) => setNovoNome(e.target.value)}
+                      className="mt-1 h-9 bg-white border-slate-300 text-xs"
+                    />
+                  </div>
+                  <div>
+                    <Label htmlFor="part-pontos" className="text-xs font-semibold text-slate-700">
+                      Pontos Iniciais (Importados)
+                    </Label>
+                    <Input
+                      id="part-pontos"
+                      type="number"
+                      min="0"
+                      placeholder="0"
+                      value={novoPontosImportados}
+                      onChange={(e) => setNovoPontosImportados(Number(e.target.value) || 0)}
+                      className="mt-1 h-9 bg-white border-slate-300 text-xs"
+                    />
                   </div>
                 </div>
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 bg-white rounded-lg p-2.5 border border-slate-200 max-h-36 overflow-y-auto">
-                  {boloes.map((b) => {
-                    const checked = boloesSelecionados.includes(b.id)
-                    return (
-                      <label
-                        key={b.id}
-                        className="flex items-center gap-2 cursor-pointer rounded p-1 hover:bg-slate-50 text-xs"
-                      >
-                        <Checkbox
-                          checked={checked}
-                          onCheckedChange={() => toggleBolaoCadastro(b.id)}
+                {/* Opção para criar login simultâneo */}
+                <div className="rounded-lg border border-slate-200 bg-white p-3 space-y-2">
+                  <label className="flex items-center gap-2 cursor-pointer text-xs font-semibold text-slate-700">
+                    <Checkbox
+                      checked={criarLoginJunto}
+                      onCheckedChange={(checked) => setCriarLoginJunto(Boolean(checked))}
+                    />
+                    <span>Criar credencial de acesso ao sistema (Login / Senha)</span>
+                  </label>
+
+                  {criarLoginJunto && (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2">
+                      <div>
+                        <Label
+                          htmlFor="novo-login"
+                          className="text-[11px] font-semibold text-slate-600"
+                        >
+                          Username / Login de Acesso
+                        </Label>
+                        <Input
+                          id="novo-login"
+                          placeholder="Ex: lucassilva"
+                          value={novoLogin}
+                          onChange={(e) => setNovoLogin(e.target.value)}
+                          className="mt-1 h-8 text-xs bg-slate-50 border-slate-300"
                         />
-                        <span className="truncate text-slate-800">
-                          {b.nome} {b.ativo === false ? '(Encerrado)' : ''}
-                        </span>
-                      </label>
+                        <p className="mt-0.5 text-[10px] text-slate-400">
+                          O usuário poderá entrar com este login simplificado.
+                        </p>
+                      </div>
+                      <div>
+                        <Label
+                          htmlFor="nova-senha"
+                          className="text-[11px] font-semibold text-slate-600"
+                        >
+                          Senha Inicial (mínimo 4 dígitos)
+                        </Label>
+                        <Input
+                          id="nova-senha"
+                          type="password"
+                          placeholder="••••••"
+                          value={novaSenhaInicial}
+                          onChange={(e) => setNovaSenhaInicial(e.target.value)}
+                          className="mt-1 h-8 text-xs bg-slate-50 border-slate-300"
+                        />
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* Bolões a vincular (todas as copas ativas e passadas) */}
+                <div>
+                  <div className="flex items-center justify-between mb-1.5">
+                    <Label className="text-xs font-semibold text-slate-700">
+                      Vincular às Copas / Bolões:
+                    </Label>
+                    <div className="flex items-center gap-2 text-[11px]">
+                      <button
+                        type="button"
+                        onClick={() => setBoloesSelecionados(todosBoloes.map((b) => b.id))}
+                        className="text-emerald-700 hover:underline font-medium"
+                      >
+                        Selecionar Todos
+                      </button>
+                      <span className="text-slate-300">•</span>
+                      <button
+                        type="button"
+                        onClick={() => setBoloesSelecionados([])}
+                        className="text-slate-500 hover:underline"
+                      >
+                        Desmarcar Todos
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 bg-white rounded-lg p-2.5 border border-slate-200 max-h-36 overflow-y-auto">
+                    {todosBoloes.map((b) => {
+                      const checked = boloesSelecionados.includes(b.id)
+                      const isAtivo = b.ativo !== false
+                      return (
+                        <label
+                          key={b.id}
+                          className="flex items-center gap-2 cursor-pointer rounded p-1 hover:bg-slate-50 text-xs"
+                        >
+                          <Checkbox
+                            checked={checked}
+                            onCheckedChange={() => toggleBolaoCadastro(b.id)}
+                          />
+                          <span className="truncate text-slate-800">{b.nome}</span>
+                          {!isAtivo && (
+                            <span className="text-[10px] text-slate-400 bg-slate-100 rounded px-1.5 py-0.2">
+                              Passado
+                            </span>
+                          )}
+                        </label>
+                      )
+                    })}
+                  </div>
+                </div>
+
+                <div className="flex justify-end pt-1">
+                  <Button
+                    type="submit"
+                    size="sm"
+                    disabled={cadastrando}
+                    className="bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold h-8"
+                  >
+                    {cadastrando ? (
+                      <>
+                        <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                        Cadastrando...
+                      </>
+                    ) : (
+                      <>
+                        <Plus className="mr-1.5 h-3.5 w-3.5" />
+                        Cadastrar Participante
+                      </>
+                    )}
+                  </Button>
+                </div>
+              </form>
+            </div>
+
+            {/* SEÇÃO B: Lista de Participantes Cadastrados com Edição e Exclusão */}
+            <div>
+              <div className="flex items-center justify-between mb-2">
+                <div>
+                  <h3 className="text-sm font-bold text-slate-800">
+                    Participantes Cadastrados ({participantesAgrupados.length})
+                  </h3>
+                  <p className="text-[11px] text-slate-500">
+                    Clique no botão &quot;Editar&quot; de qualquer participante para alterar nome,
+                    login, redefinir senha ou ajustar copas.
+                  </p>
+                </div>
+                <span className="text-[11px] text-slate-500">
+                  Total de vínculos: {participantes.length}
+                </span>
+              </div>
+
+              {loading ? (
+                <div className="py-8 text-center text-xs text-slate-500 flex items-center justify-center gap-2">
+                  <Loader2 className="h-4 w-4 animate-spin text-slate-400" />
+                  Carregando participantes...
+                </div>
+              ) : participantesAgrupados.length === 0 ? (
+                <div className="rounded-lg bg-slate-50 p-6 text-center text-xs text-slate-500">
+                  Nenhum participante encontrado.
+                </div>
+              ) : (
+                <div className="divide-y divide-slate-100 rounded-xl border border-slate-200 overflow-hidden bg-white">
+                  {participantesAgrupados.map((group) => {
+                    const userAccount = group.matchedUser
+                    const isDouglasAdmin = group.nome.toLowerCase() === 'douglas'
+
+                    return (
+                      <div key={group.nome} className="p-3.5 hover:bg-slate-50/70 transition">
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                          {/* Nome e Login */}
+                          <div className="flex flex-wrap items-center gap-2 flex-1">
+                            <span className="font-bold text-sm text-[#0F172A]">{group.nome}</span>
+
+                            {userAccount ? (
+                              <Badge
+                                variant="outline"
+                                className="border-indigo-200 bg-indigo-50 text-indigo-700 text-[10px] font-mono flex items-center gap-1 py-0"
+                                title={`Login ativo: ${userAccount.username}`}
+                              >
+                                <UserCheck className="h-3 w-3 text-indigo-500" />
+                                <span>login: {userAccount.username}</span>
+                              </Badge>
+                            ) : (
+                              <Badge
+                                variant="outline"
+                                className="border-amber-200 bg-amber-50 text-amber-700 text-[10px] py-0"
+                                title="Sem conta auth vinculada"
+                              >
+                                sem login direto
+                              </Badge>
+                            )}
+
+                            {isDouglasAdmin && (
+                              <Badge className="bg-[#0F2A43] text-amber-300 text-[10px] py-0">
+                                <Shield className="h-3 w-3 mr-1" />
+                                Administrador
+                              </Badge>
+                            )}
+                          </div>
+
+                          {/* Ações: Editar e Excluir */}
+                          <div className="flex items-center gap-1.5">
+                            {/* Botão de Edição Completa (Requisito 1) */}
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="outline"
+                              onClick={() => handleOpenEditModal(group)}
+                              className="h-7 text-[11px] font-semibold border-slate-300 text-[#0F2A43] hover:bg-slate-100 hover:text-emerald-700"
+                            >
+                              <Edit className="h-3 w-3 mr-1 text-slate-500" />
+                              Editar
+                            </Button>
+
+                            {/* Botão de Exclusão / Desativação (Requisito 3) */}
+                            {!isDouglasAdmin && (
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="ghost"
+                                onClick={() => {
+                                  setDeletingTarget(group)
+                                  setDeleteOption('remover_todos_boloes')
+                                }}
+                                className="h-7 text-[11px] font-semibold text-red-600 hover:bg-red-50 hover:text-red-700 px-2"
+                                title="Remover ou desativar usuário"
+                              >
+                                <Trash2 className="h-3.5 w-3.5" />
+                              </Button>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Chips dos bolões vinculados */}
+                        <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                          {group.registros.length === 0 ? (
+                            <span className="text-[11px] text-slate-400 italic">
+                              Não participa de nenhum bolão no momento.
+                            </span>
+                          ) : (
+                            group.registros.map((reg) => {
+                              const bInfo = boloesMap.get(reg.bolao)
+                              const isAtivo = bInfo?.ativo !== false
+
+                              return (
+                                <Badge
+                                  key={reg.id}
+                                  variant="secondary"
+                                  className={`text-[11px] font-medium border flex items-center gap-1.5 py-0.5 ${
+                                    isAtivo
+                                      ? 'bg-slate-100 hover:bg-slate-200 text-slate-700 border-slate-200'
+                                      : 'bg-amber-50/60 text-slate-600 border-amber-200/80'
+                                  }`}
+                                >
+                                  <span>{bInfo?.nome || 'Bolão'}</span>
+                                  {!isAtivo && (
+                                    <span className="text-[9px] text-slate-400 uppercase font-semibold">
+                                      (Passado)
+                                    </span>
+                                  )}
+                                  <span className="font-bold text-[#0F2A43]">
+                                    ({reg.pontuacao_total} pts)
+                                  </span>
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      handleRemoverVinculoUnico(
+                                        reg.id,
+                                        bInfo?.nome || 'Bolão',
+                                        group.nome,
+                                      )
+                                    }
+                                    disabled={deletingVinculoId === reg.id}
+                                    className="text-slate-400 hover:text-red-600 ml-0.5"
+                                    title="Remover apenas deste bolão"
+                                  >
+                                    <X className="h-3 w-3" />
+                                  </button>
+                                </Badge>
+                              )
+                            })
+                          )}
+                        </div>
+                      </div>
                     )
                   })}
                 </div>
-              </div>
-
-              <div className="flex justify-end pt-1">
-                <Button
-                  type="submit"
-                  size="sm"
-                  disabled={cadastrando}
-                  className="bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold h-8"
-                >
-                  {cadastrando ? (
-                    <>
-                      <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
-                      Cadastrando...
-                    </>
-                  ) : (
-                    <>
-                      <Plus className="mr-1.5 h-3.5 w-3.5" />
-                      Cadastrar Participante
-                    </>
-                  )}
-                </Button>
-              </div>
-            </form>
+              )}
+            </div>
           </div>
+        </DialogContent>
+      </Dialog>
 
-          {/* SEÇÃO B: Lista de Participantes Cadastrados */}
-          <div>
-            <div className="flex items-center justify-between mb-2">
-              <h3 className="text-sm font-bold text-slate-800">
-                Participantes Cadastrados ({participantesAgrupados.length})
-              </h3>
-              <span className="text-[11px] text-slate-500">
-                Total de vínculos: {participantes.length}
-              </span>
+      {/* SUB-MODAL 1: EDIÇÃO COMPLETA DE USUÁRIO E VÍNCULOS (Requisitos 1 e 2) */}
+      <Dialog
+        open={Boolean(editingTarget)}
+        onOpenChange={(open) => !open && setEditingTarget(null)}
+      >
+        <DialogContent className="max-w-xl w-full max-h-[92vh] overflow-y-auto bg-white rounded-xl p-6">
+          <DialogHeader className="border-b border-slate-100 pb-3">
+            <DialogTitle className="flex items-center gap-2 text-base font-bold text-[#0F172A]">
+              <div className="rounded-lg bg-indigo-100 p-1.5 text-indigo-700">
+                <Edit className="h-4 w-4" />
+              </div>
+              <span>Editar Participante: {editingTarget?.nome}</span>
+            </DialogTitle>
+            <DialogDescription className="text-xs text-[#64748B]">
+              Altere nome, credenciais de login (username e senha) e marque ou desmarque a
+              participação em todas as Copas ativas e passadas do sistema.
+            </DialogDescription>
+          </DialogHeader>
+
+          {erroEdicao && (
+            <div className="my-2 flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 p-2.5 text-xs text-red-800">
+              <AlertCircle className="h-4 w-4 shrink-0 text-red-600 mt-0.5" />
+              <span>{erroEdicao}</span>
+            </div>
+          )}
+
+          <form onSubmit={handleSalvarEdicaoCompleta} className="space-y-4 pt-1">
+            {/* Bloco 1: Nome e Credenciais de Acesso */}
+            <div className="rounded-lg border border-slate-200 bg-slate-50/50 p-3.5 space-y-3">
+              <h4 className="text-xs font-bold uppercase tracking-wider text-slate-700 flex items-center gap-1.5">
+                <KeyRound className="h-3.5 w-3.5 text-indigo-600" />
+                <span>Dados Cadastrais e de Acesso</span>
+              </h4>
+
+              <div>
+                <Label htmlFor="edit-nome" className="text-xs font-semibold text-slate-700">
+                  Nome Completo ou Apelido
+                </Label>
+                <Input
+                  id="edit-nome"
+                  value={editNome}
+                  onChange={(e) => setEditNome(e.target.value)}
+                  placeholder="Ex: Bruno Lopes"
+                  className="mt-1 h-9 bg-white text-xs"
+                />
+                <p className="mt-0.5 text-[10px] text-slate-400">
+                  A alteração do nome é sincronizada automaticamente na lista de participantes e
+                  tabelas de classificação.
+                </p>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <Label htmlFor="edit-username" className="text-xs font-semibold text-slate-700">
+                    Username / Login de Acesso
+                  </Label>
+                  <Input
+                    id="edit-username"
+                    value={editUsername}
+                    onChange={(e) => setEditUsername(e.target.value)}
+                    placeholder="Ex: brunol"
+                    className="mt-1 h-9 bg-white text-xs font-mono"
+                  />
+                  <p className="mt-0.5 text-[10px] text-slate-400">
+                    Identificador utilizado para entrar no app.
+                  </p>
+                </div>
+
+                <div>
+                  <Label htmlFor="edit-senha" className="text-xs font-semibold text-slate-700">
+                    Redefinir / Nova Senha
+                  </Label>
+                  <div className="relative mt-1">
+                    <Input
+                      id="edit-senha"
+                      type={showEditSenha ? 'text' : 'password'}
+                      value={editNovaSenha}
+                      onChange={(e) => setEditNovaSenha(e.target.value)}
+                      placeholder="Deixe vazio para manter"
+                      className="h-9 bg-white text-xs pr-8"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowEditSenha(!showEditSenha)}
+                      className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                      tabIndex={-1}
+                    >
+                      {showEditSenha ? (
+                        <EyeOff className="h-3.5 w-3.5" />
+                      ) : (
+                        <Eye className="h-3.5 w-3.5" />
+                      )}
+                    </button>
+                  </div>
+                  <p className="mt-0.5 text-[10px] text-slate-400">
+                    Preencha apenas caso deseje definir uma nova senha para este usuário.
+                  </p>
+                </div>
+              </div>
             </div>
 
-            {loading ? (
-              <div className="py-8 text-center text-xs text-slate-500 flex items-center justify-center gap-2">
-                <Loader2 className="h-4 w-4 animate-spin text-slate-400" />
-                Carregando participantes...
+            {/* Bloco 2: Gestão de Vínculos com Bolões / Copas (Requisito 2) */}
+            <div className="rounded-lg border border-slate-200 bg-white p-3.5 space-y-2">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h4 className="text-xs font-bold uppercase tracking-wider text-slate-700 flex items-center gap-1.5">
+                    <Trophy className="h-3.5 w-3.5 text-amber-500" />
+                    <span>Copas e Campeonatos Vinculados</span>
+                  </h4>
+                  <p className="text-[10px] text-slate-500">
+                    Ao desmarcar um bolão e salvar, o participante é removido do campeonato
+                    escolhido (e da tabela de classificação correspondente).
+                  </p>
+                </div>
+                <div className="flex items-center gap-2 text-[11px] shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => setEditBoloesSelecionados(todosBoloes.map((b) => b.id))}
+                    className="text-indigo-600 hover:underline font-medium"
+                  >
+                    Marcar Todas
+                  </button>
+                  <span className="text-slate-300">•</span>
+                  <button
+                    type="button"
+                    onClick={() => setEditBoloesSelecionados([])}
+                    className="text-slate-500 hover:underline"
+                  >
+                    Desmarcar Todas
+                  </button>
+                </div>
               </div>
-            ) : participantesAgrupados.length === 0 ? (
-              <div className="rounded-lg bg-slate-50 p-6 text-center text-xs text-slate-500">
-                Nenhum participante encontrado.
-              </div>
-            ) : (
-              <div className="divide-y divide-slate-100 rounded-xl border border-slate-200 overflow-hidden bg-white">
-                {participantesAgrupados.map((group) => {
-                  const isEditing = editingNameOriginal === group.nome
-                  const isManagingThis = managingParticipantName === group.nome
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-52 overflow-y-auto pt-1">
+                {todosBoloes.map((b) => {
+                  const isChecked = editBoloesSelecionados.includes(b.id)
+                  const isAtivo = b.ativo !== false
 
                   return (
-                    <div key={group.nome} className="p-3.5 hover:bg-slate-50/60 transition">
-                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                        {/* Nome ou Input de Edição */}
-                        <div className="flex items-center gap-2 flex-1">
-                          {isEditing ? (
-                            <div className="flex items-center gap-1.5 flex-1 max-w-sm">
-                              <Input
-                                value={editingNameValue}
-                                onChange={(e) => setEditingNameValue(e.target.value)}
-                                className="h-8 text-xs bg-white"
-                                autoFocus
-                              />
-                              <Button
-                                size="sm"
-                                variant="ghost"
-                                onClick={handleSaveRename}
-                                disabled={savingName}
-                                className="h-8 w-8 p-0 text-emerald-600 hover:bg-emerald-50"
-                                title="Salvar nome"
-                              >
-                                {savingName ? (
-                                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                                ) : (
-                                  <Check className="h-4 w-4" />
-                                )}
-                              </Button>
-                              <Button
-                                size="sm"
-                                variant="ghost"
-                                onClick={() => setEditingNameOriginal(null)}
-                                className="h-8 w-8 p-0 text-slate-400 hover:bg-slate-100"
-                                title="Cancelar"
-                              >
-                                <X className="h-4 w-4" />
-                              </Button>
-                            </div>
-                          ) : (
-                            <div className="flex items-center gap-2">
-                              <span className="font-bold text-sm text-[#0F172A]">{group.nome}</span>
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setEditingNameOriginal(group.nome)
-                                  setEditingNameValue(group.nome)
-                                }}
-                                className="text-slate-400 hover:text-slate-600 p-0.5 rounded"
-                                title="Editar nome"
-                              >
-                                <Edit2 className="h-3 w-3" />
-                              </button>
-                            </div>
-                          )}
-                        </div>
-
-                        {/* Ações */}
-                        <div className="flex items-center gap-2">
-                          <Button
-                            type="button"
-                            size="sm"
-                            variant="outline"
-                            onClick={() =>
-                              isManagingThis
-                                ? setManagingParticipantName(null)
-                                : handleOpenGerenciarBoloes(group)
-                            }
-                            className="h-7 text-[11px] font-semibold border-slate-300 text-[#0F2A43] hover:bg-slate-100"
-                          >
-                            <Trophy className="h-3 w-3 mr-1 text-amber-500" />
-                            {isManagingThis ? 'Fechar' : 'Gerenciar Bolões'}
-                          </Button>
-                        </div>
+                    <label
+                      key={b.id}
+                      className={`flex items-center justify-between gap-2 cursor-pointer rounded-lg border p-2 text-xs transition ${
+                        isChecked
+                          ? 'border-indigo-300 bg-indigo-50/50 text-[#0F2A43]'
+                          : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
+                      }`}
+                    >
+                      <div className="flex items-center gap-2 truncate">
+                        <Checkbox
+                          checked={isChecked}
+                          onCheckedChange={() => toggleBolaoEdicao(b.id)}
+                        />
+                        <span className="font-medium truncate">{b.nome}</span>
                       </div>
-
-                      {/* Chips dos bolões vinculados */}
-                      <div className="mt-2 flex flex-wrap items-center gap-1.5">
-                        {group.registros.map((reg) => {
-                          const bInfo = boloesMap.get(reg.bolao)
-                          return (
-                            <Badge
-                              key={reg.id}
-                              variant="secondary"
-                              className="bg-slate-100 hover:bg-slate-200 text-slate-700 text-[11px] font-medium border border-slate-200 flex items-center gap-1.5 py-0.5"
-                            >
-                              <span>{bInfo?.nome || 'Bolão'}</span>
-                              <span className="font-bold text-[#0F2A43]">
-                                ({reg.pontuacao_total} pts)
-                              </span>
-                              <button
-                                type="button"
-                                onClick={() => handleRemoverVinculo(reg.id, bInfo?.nome || 'Bolão')}
-                                disabled={deletingId === reg.id}
-                                className="text-slate-400 hover:text-red-600 ml-0.5"
-                                title="Remover deste bolão"
-                              >
-                                <X className="h-3 w-3" />
-                              </button>
-                            </Badge>
-                          )
-                        })}
-                      </div>
-
-                      {/* Painel expandido de gerenciamento de bolões do participante */}
-                      {isManagingThis && (
-                        <div className="mt-3 p-3 bg-slate-50 rounded-lg border border-slate-200 animate-in fade-in-50">
-                          <div className="flex items-center justify-between mb-2">
-                            <span className="text-xs font-bold text-slate-700">
-                              Vincular / Desvincular bolões de {group.nome}:
-                            </span>
-                            <div className="flex gap-2">
-                              <button
-                                type="button"
-                                onClick={() => setManagingBoloes(boloes.map((b) => b.id))}
-                                className="text-[11px] text-emerald-700 hover:underline font-medium"
-                              >
-                                Marcar Todos
-                              </button>
-                              <span className="text-slate-300">•</span>
-                              <button
-                                type="button"
-                                onClick={() => setManagingBoloes([])}
-                                className="text-[11px] text-slate-500 hover:underline"
-                              >
-                                Desmarcar Todos
-                              </button>
-                            </div>
-                          </div>
-
-                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mb-3">
-                            {boloes.map((b) => {
-                              const isChecked = managingBoloes.includes(b.id)
-                              return (
-                                <label
-                                  key={b.id}
-                                  className="flex items-center gap-2 cursor-pointer bg-white rounded border border-slate-200 p-2 text-xs"
-                                >
-                                  <Checkbox
-                                    checked={isChecked}
-                                    onCheckedChange={(checked) => {
-                                      if (checked) {
-                                        setManagingBoloes((prev) => [...prev, b.id])
-                                      } else {
-                                        setManagingBoloes((prev) =>
-                                          prev.filter((id) => id !== b.id),
-                                        )
-                                      }
-                                    }}
-                                  />
-                                  <span className="truncate">
-                                    {b.nome} {b.ativo === false ? '(Encerrado)' : ''}
-                                  </span>
-                                </label>
-                              )
-                            })}
-                          </div>
-
-                          <div className="flex justify-end gap-2">
-                            <Button
-                              size="sm"
-                              variant="ghost"
-                              onClick={() => setManagingParticipantName(null)}
-                              className="h-7 text-xs"
-                            >
-                              Cancelar
-                            </Button>
-                            <Button
-                              size="sm"
-                              onClick={handleSalvarBoloesParticipante}
-                              disabled={savingBoloes}
-                              className="h-7 bg-[#0F2A43] hover:bg-[#1B3A5C] text-white text-xs font-semibold"
-                            >
-                              {savingBoloes ? (
-                                <>
-                                  <Loader2 className="mr-1 h-3 w-3 animate-spin" />
-                                  Salvando...
-                                </>
-                              ) : (
-                                'Salvar Vínculos'
-                              )}
-                            </Button>
-                          </div>
-                        </div>
-                      )}
-                    </div>
+                      <Badge
+                        variant="secondary"
+                        className={`text-[9px] px-1 py-0 ${
+                          isAtivo
+                            ? 'bg-emerald-100 text-emerald-800'
+                            : 'bg-slate-100 text-slate-500'
+                        }`}
+                      >
+                        {isAtivo ? 'Ativo' : 'Passado'}
+                      </Badge>
+                    </label>
                   )
                 })}
               </div>
-            )}
+            </div>
+
+            <div className="flex justify-end gap-2 pt-2 border-t border-slate-100">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => setEditingTarget(null)}
+                disabled={salvandoEdicao}
+                className="h-8 text-xs"
+              >
+                Cancelar
+              </Button>
+              <Button
+                type="submit"
+                size="sm"
+                disabled={salvandoEdicao}
+                className="h-8 bg-[#0F2A43] hover:bg-[#1B3A5C] text-white text-xs font-semibold"
+              >
+                {salvandoEdicao ? (
+                  <>
+                    <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                    Salvando Alterações...
+                  </>
+                ) : (
+                  <>
+                    <Check className="mr-1.5 h-3.5 w-3.5 text-emerald-400" />
+                    Salvar Alterações
+                  </>
+                )}
+              </Button>
+            </div>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* SUB-MODAL 2: CONFIRMAÇÃO DE EXCLUSÃO / DESATIVAÇÃO (Requisito 3) */}
+      <Dialog
+        open={Boolean(deletingTarget)}
+        onOpenChange={(open) => !open && setDeletingTarget(null)}
+      >
+        <DialogContent className="max-w-md w-full bg-white rounded-xl p-6">
+          <DialogHeader className="border-b border-slate-100 pb-3">
+            <DialogTitle className="flex items-center gap-2 text-base font-bold text-red-600">
+              <AlertTriangle className="h-5 w-5 text-red-500" />
+              <span>Remover / Desativar Usuário</span>
+            </DialogTitle>
+            <DialogDescription className="text-xs text-[#64748B]">
+              Selecione o nível de remoção desejado para <strong>{deletingTarget?.nome}</strong>.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-3 py-2">
+            <div
+              onClick={() => setDeleteOption('remover_todos_boloes')}
+              className={`cursor-pointer rounded-lg border p-3 transition ${
+                deleteOption === 'remover_todos_boloes'
+                  ? 'border-indigo-500 bg-indigo-50/50'
+                  : 'border-slate-200 hover:bg-slate-50'
+              }`}
+            >
+              <div className="flex items-start gap-2">
+                <input
+                  type="radio"
+                  name="delete-option"
+                  checked={deleteOption === 'remover_todos_boloes'}
+                  onChange={() => setDeleteOption('remover_todos_boloes')}
+                  className="mt-0.5 text-indigo-600"
+                />
+                <div>
+                  <p className="text-xs font-bold text-slate-800">
+                    Desvincular de todos os Bolões (Recomendado)
+                  </p>
+                  <p className="text-[11px] text-slate-600 mt-0.5">
+                    Remove o participante de todas as tabelas de classificação vigentes, mantendo a
+                    credencial de login e os registros de palpites históricos preservados.
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <div
+              onClick={() => setDeleteOption('remover_sistema')}
+              className={`cursor-pointer rounded-lg border p-3 transition ${
+                deleteOption === 'remover_sistema'
+                  ? 'border-red-500 bg-red-50/60'
+                  : 'border-slate-200 hover:bg-slate-50'
+              }`}
+            >
+              <div className="flex items-start gap-2">
+                <input
+                  type="radio"
+                  name="delete-option"
+                  checked={deleteOption === 'remover_sistema'}
+                  onChange={() => setDeleteOption('remover_sistema')}
+                  className="mt-0.5 text-red-600"
+                />
+                <div>
+                  <p className="text-xs font-bold text-red-700">
+                    Remover do Sistema / Excluir Login
+                  </p>
+                  <p className="text-[11px] text-red-600/90 mt-0.5">
+                    Exclui a conta de acesso (login) e retira o participante das competições.
+                  </p>
+                </div>
+              </div>
+            </div>
           </div>
-        </div>
-      </DialogContent>
-    </Dialog>
+
+          <div className="flex justify-end gap-2 pt-2 border-t border-slate-100">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => setDeletingTarget(null)}
+              disabled={executandoExclusao}
+              className="h-8 text-xs"
+            >
+              Cancelar
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant="destructive"
+              disabled={executandoExclusao}
+              onClick={handleConfirmarExclusao}
+              className="h-8 text-xs font-semibold"
+            >
+              {executandoExclusao ? (
+                <>
+                  <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                  Processando...
+                </>
+              ) : (
+                'Confirmar Remoção'
+              )}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+    </>
   )
 }
