@@ -146,6 +146,7 @@ export default function Enquetes() {
   const [loadingDetalhes, setLoadingDetalhes] = useState(
     !hasInitialCache && Boolean(activePoll?.id),
   )
+  const loading = isLoadingEnquetes || (loadingDetalhes && !activePoll)
   const [votandoJogoId, setVotandoJogoId] = useState<string | null>(null)
 
   // Paginação incremental / Lazy Loading de Cards de Jogos para alta performance de renderização
@@ -2181,30 +2182,53 @@ export default function Enquetes() {
               </div>
             )}
 
-            {/* Grade de Confrontos para Votação com Lazy Loading / Paginação Incremental */}
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-              {jogosVisiveis.map((jogo) => {
-                const votado = meusVotosIds.has(jogo.id)
-                const isTop4 = top4JogosIds.has(jogo.id)
-                const isBlocked = !votado && limiteAtingido
+            {/* Skeleton de carregamento de jogos se estiver buscando detalhes e ainda não temos confrontos */}
+            {loadingDetalhes && jogosEnquete.length === 0 ? (
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                {[1, 2, 3, 4, 5, 6].map((i) => (
+                  <Card key={i} className="border-slate-200 bg-white p-4">
+                    <div className="flex justify-between border-b border-slate-100 pb-2">
+                      <Skeleton className="h-3 w-24" />
+                      <Skeleton className="h-3 w-20" />
+                    </div>
+                    <div className="my-3 flex items-center justify-between gap-2">
+                      <Skeleton className="h-6 w-24" />
+                      <Skeleton className="h-4 w-4 rounded-full" />
+                      <Skeleton className="h-6 w-24" />
+                    </div>
+                    <div className="flex justify-between border-t border-slate-100 pt-2">
+                      <Skeleton className="h-4 w-28" />
+                      <Skeleton className="h-4 w-16" />
+                    </div>
+                  </Card>
+                ))}
+              </div>
+            ) : (
+              /* Grade de Confrontos para Votação com Lazy Loading / Paginação Incremental */
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                {jogosVisiveis.map((jogo) => {
+                  const votado = meusVotosIds.has(jogo.id)
+                  const isTop4 = top4JogosIds.has(jogo.id)
+                  const isBlocked = !votado && limiteAtingido
 
-                return (
-                  <EnqueteJogoVotacaoCard
-                    key={jogo.id}
-                    jogo={jogo}
-                    votado={votado}
-                    isTop4={isTop4}
-                    isBlocked={isBlocked}
-                    statusEnquete={isVotacaoEncerrada ? 'encerrada' : activePoll.status}
-                    participantName={participantName}
-                    isAdmin={isAdmin}
-                    onToggleVoto={handleToggleVoto}
-                    onEditar={handleAbrirModalEditarJogo}
-                    onExcluir={handleAbrirModalExcluirJogo}
-                  />
-                )
-              })}
-            </div>
+                  return (
+                    <EnqueteJogoVotacaoCard
+                      key={jogo.id}
+                      jogo={jogo}
+                      votado={votado}
+                      isTop4={isTop4}
+                      isBlocked={isBlocked}
+                      statusEnquete={isVotacaoEncerrada ? 'encerrada' : activePoll.status}
+                      participantName={participantName}
+                      isAdmin={isAdmin}
+                      onToggleVoto={handleToggleVoto}
+                      onEditar={handleAbrirModalEditarJogo}
+                      onExcluir={handleAbrirModalExcluirJogo}
+                    />
+                  )
+                })}
+              </div>
+            )}
 
             {/* Botão para carregar mais jogos se houver mais que o visível */}
             {jogosFiltradosVotacao.length > visibleCount && (
