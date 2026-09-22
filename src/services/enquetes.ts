@@ -357,6 +357,8 @@ export function invalidateEnqueteCache(enqueteId?: string): void {
 export async function listarEnquetes(): Promise<EnqueteModel[]> {
   const records = await pb.collection('enquetes').getFullList<EnqueteModel>({
     sort: '-created',
+    fields:
+      'id,titulo,descricao,data_inicio,data_fim,status,limite_votos,data_limite_votacao,criado_por',
   })
   writeListaEnquetesCache(records)
   return records

@@ -142,7 +142,10 @@ export default function Enquetes() {
   })
   // Se tínhamos cache inicial para a enquete ativa, não bloqueia a tela!
   const hasInitialCache = Boolean(activePoll?.id && jogosEnquete.length > 0)
-  const [loading, setLoading] = useState(!hasInitialCache)
+  const [isLoadingEnquetes, setIsLoadingEnquetes] = useState(enquetes.length === 0)
+  const [loadingDetalhes, setLoadingDetalhes] = useState(
+    !hasInitialCache && Boolean(activePoll?.id),
+  )
   const [votandoJogoId, setVotandoJogoId] = useState<string | null>(null)
 
   // Paginação incremental / Lazy Loading de Cards de Jogos para alta performance de renderização
@@ -267,48 +270,49 @@ export default function Enquetes() {
     carregarListaEnquetes(false)
   })
 
-  // Carrega lista de enquetes com SWR
-  const carregarListaEnquetes = useCallback(
-    async (selectFirst = true) => {
-      // 1. Tenta cache imediato se ainda não tivermos lista
-      const cached = readListaEnquetesCache()
-      if (cached && cached.length > 0) {
-        setEnquetes((prev) => (prev.length === 0 ? cached : prev))
-      }
+  // Carrega lista de enquetes com SWR e memoização segura
+  const carregarListaEnquetes = useCallback(async (selectFirst = true) => {
+    // 1. Tenta cache imediato se ainda não tivermos lista
+    const cached = readListaEnquetesCache()
+    if (cached && cached.length > 0) {
+      setEnquetes((prev) => (prev.length === 0 ? cached : prev))
+    }
 
-      try {
-        const lista = await listarEnquetes()
-        setEnquetes(lista)
-        if (lista.length > 0) {
-          if (selectFirst || !activePoll) {
+    try {
+      const lista = await listarEnquetes()
+      setEnquetes(lista)
+      if (lista.length > 0) {
+        setActivePoll((prevActive) => {
+          if (selectFirst || !prevActive) {
             // Verifica se há enquete indicada na URL
-            const urlParams = new URLSearchParams(window.location.search)
-            const idFromUrl = urlParams.get('id')
+            const urlParams =
+              typeof window !== 'undefined' ? new URLSearchParams(window.location.search) : null
+            const idFromUrl = urlParams?.get('id')
             const correspondenteUrl = idFromUrl ? lista.find((e) => e.id === idFromUrl) : null
 
             // Seleciona a enquete da URL, a primeira aberta ou a mais recente (lista[0])
             const selecionada =
               correspondenteUrl || lista.find((e) => e.status === 'aberta') || lista[0]
-            setActivePoll(selecionada)
+            return selecionada
           } else {
             // Sincroniza activePoll com os dados mais recentes da lista revalidada
-            const atualizada = lista.find((e) => e.id === activePoll.id)
+            const atualizada = lista.find((e) => e.id === prevActive.id)
             if (atualizada) {
-              setActivePoll((prev) => ({ ...prev, ...atualizada }))
+              return { ...prevActive, ...atualizada }
             }
+            return prevActive
           }
-        } else {
-          setActivePoll(null)
-          setJogosEnquete([])
-        }
-      } catch (err) {
-        console.error('Erro ao carregar enquetes:', err)
-      } finally {
-        setLoading(false)
+        })
+      } else {
+        setActivePoll(null)
+        setJogosEnquete([])
       }
-    },
-    [activePoll],
-  )
+    } catch (err) {
+      console.error('Erro ao carregar enquetes:', err)
+    } finally {
+      setIsLoadingEnquetes(false)
+    }
+  }, [])
 
   // Carrega detalhes da enquete selecionada com SWR
   const carregarDetalhesEnquete = useCallback(
@@ -323,9 +327,9 @@ export default function Enquetes() {
         )
         setJogosEnquete(cached.jogos)
         setMeusVotosIds(cached.meusVotosIds)
-        setLoading(false) // Dados exibidos instantaneamente!
+        setLoadingDetalhes(false) // Dados exibidos instantaneamente!
       } else if (showSpinner) {
-        setLoading(true)
+        setLoadingDetalhes(true)
       }
 
       try {
@@ -356,7 +360,7 @@ export default function Enquetes() {
       } catch (err) {
         console.error('Erro ao obter detalhes da enquete:', err)
       } finally {
-        setLoading(false)
+        setLoadingDetalhes(false)
       }
     },
     [user?.id],
