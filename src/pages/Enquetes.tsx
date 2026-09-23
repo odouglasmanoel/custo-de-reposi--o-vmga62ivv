@@ -1812,18 +1812,6 @@ export default function Enquetes() {
             </div>
           )}
 
-          {/* Botão de Compartilhar no WhatsApp */}
-          <Button
-            type="button"
-            onClick={handleCompartilharWhatsApp}
-            size="sm"
-            className="z-10 inline-flex items-center gap-1.5 bg-[#25D366] px-3 font-bold text-white shadow-xs hover:bg-[#20bd5a] focus:ring-2 focus:ring-[#25D366]/40 focus:outline-none"
-            title="Compartilhar enquete no WhatsApp"
-          >
-            <WhatsAppIcon className="h-4 w-4 shrink-0" />
-            <span>Compartilhar no WhatsApp</span>
-          </Button>
-
           {/* Botão Admin: Nova Enquete */}
           {isAdmin && (
             <Button
@@ -2061,7 +2049,8 @@ export default function Enquetes() {
                   onClick={handleAbrirModalAdicionarManualAtiva}
                   className="h-8 bg-amber-600 text-xs font-bold text-white hover:bg-amber-700 shadow-xs"
                 >
-                  <Plus className="mr-1.5 h-3.5 w-3.5" />+ Adicionar Jogo Manual
+                  <Plus className="mr-1.5 h-3.5 w-3.5" />
+                  Adicionar Jogo Manual
                 </Button>
 
                 {!isVotacaoEncerrada && activePoll.status === 'aberta' ? (
@@ -3627,6 +3616,27 @@ export default function Enquetes() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Botão Flutuante (FAB) para Adicionar Jogo Manual na Enquete Ativa (apenas Admin) */}
+      {isAdmin &&
+        activePoll &&
+        !dialogAdicionarManualAtivaOpen &&
+        !dialogNovaEnqueteOpen &&
+        !dialogEditarJogoOpen &&
+        !dialogExcluirJogoOpen &&
+        !dialogExcluirOpen &&
+        !dialogReabrirOpen &&
+        !confirmCadastrarOpen && (
+          <button
+            type="button"
+            onClick={handleAbrirModalAdicionarManualAtiva}
+            className="fixed bottom-6 right-6 z-40 flex h-14 w-14 items-center justify-center rounded-full bg-linear-to-r from-[#10B981] to-emerald-600 text-white shadow-lg shadow-emerald-950/25 transition-all duration-200 hover:scale-105 hover:from-emerald-500 hover:to-emerald-700 hover:shadow-xl active:scale-95 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:ring-offset-2"
+            aria-label="Adicionar Jogo Manual"
+            title="+ Adicionar Jogo Manual"
+          >
+            <Plus className="h-7 w-7 stroke-[2.5]" />
+          </button>
+        )}
     </div>
   )
 }
