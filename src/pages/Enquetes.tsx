@@ -1873,7 +1873,7 @@ export default function Enquetes() {
       {activePoll && (
         <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
           {/* Contador de Votos Pessoais */}
-          <Card className="border-emerald-200 bg-linear-to-br from-emerald-50/60 to-white shadow-xs">
+          <Card className="border-emerald-200 bg-gradient-to-br from-emerald-50/60 to-white shadow-xs">
             <CardContent className="p-4">
               <div className="flex items-center justify-between">
                 <div>
@@ -1976,7 +1976,7 @@ export default function Enquetes() {
           </Card>
 
           {/* Resumo do Apurador / Seleção */}
-          <Card className="border-indigo-200 bg-linear-to-br from-indigo-50/60 to-white shadow-xs">
+          <Card className="border-indigo-200 bg-gradient-to-br from-indigo-50/60 to-white shadow-xs">
             <CardContent className="flex items-center justify-between p-4">
               <div>
                 <span className="text-xs font-semibold uppercase tracking-wider text-indigo-800">
@@ -2242,7 +2242,7 @@ export default function Enquetes() {
           {/* ABA 2: Apurador e Decisão do Admin */}
           <TabsContent value="apurador" className="mt-4 space-y-4">
             {/* Painel do Apurador e Ação de Cadastro na Copa Coni */}
-            <div className="flex flex-col justify-between gap-4 rounded-xl border border-indigo-200 bg-linear-to-r from-indigo-50/60 via-white to-amber-50/40 p-4 shadow-xs sm:flex-row sm:items-center">
+            <div className="flex flex-col justify-between gap-4 rounded-xl border border-indigo-200 bg-gradient-to-r from-indigo-50/60 via-white to-amber-50/40 p-4 shadow-xs sm:flex-row sm:items-center">
               <div>
                 <div className="flex items-center gap-2">
                   <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-indigo-600 text-white">
@@ -3630,11 +3630,11 @@ export default function Enquetes() {
           <button
             type="button"
             onClick={handleAbrirModalAdicionarManualAtiva}
-            className="fixed bottom-6 right-6 z-40 flex h-14 w-14 items-center justify-center rounded-full bg-linear-to-r from-[#10B981] to-emerald-600 text-white shadow-lg shadow-emerald-950/25 transition-all duration-200 hover:scale-105 hover:from-emerald-500 hover:to-emerald-700 hover:shadow-xl active:scale-95 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:ring-offset-2"
+            className="fixed bottom-6 right-6 z-40 flex h-14 w-14 items-center justify-center rounded-full bg-amber-600 text-white shadow-lg shadow-amber-950/25 transition-all duration-200 hover:scale-105 hover:bg-amber-700 hover:shadow-xl active:scale-95 focus:outline-none focus:ring-2 focus:ring-amber-500 focus:ring-offset-2"
             aria-label="Adicionar Jogo Manual"
             title="+ Adicionar Jogo Manual"
           >
-            <Plus className="h-7 w-7 stroke-[2.5]" />
+            <Plus className="h-7 w-7 stroke-[2.5] text-white" />
           </button>
         )}
     </div>

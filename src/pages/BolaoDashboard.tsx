@@ -1792,7 +1792,7 @@ export default function BolaoDashboard() {
               navigate('/bolao/enquetes')
             }
           }}
-          className="group cursor-pointer rounded-[14px] border-emerald-200 bg-linear-to-br from-emerald-50/40 via-white to-white p-4 shadow-xs transition duration-200 hover:-translate-y-0.5 hover:border-emerald-400 hover:shadow-md focus:outline-none focus:ring-2 focus:ring-emerald-400"
+          className="group cursor-pointer rounded-[14px] border-emerald-200 bg-gradient-to-br from-emerald-50/40 via-white to-white p-4 shadow-xs transition duration-200 hover:-translate-y-0.5 hover:border-emerald-400 hover:shadow-md focus:outline-none focus:ring-2 focus:ring-emerald-400"
           title="Acessar módulo de Enquetes da Copa Coni"
         >
           <div className="flex items-center justify-between">
