@@ -65,13 +65,6 @@ const NAV_ITEMS: NavItem[] = [
     aliases: ['/bolao/palpites', '/meus-palpites'],
   },
   {
-    id: 'jogos-do-dia',
-    label: 'Jogos do Dia',
-    path: '/bolao/jogos-do-dia',
-    icon: CalendarDays,
-    aliases: ['/jogos-do-dia'],
-  },
-  {
     id: 'enquetes',
     label: 'Enquetes',
     path: '/bolao/enquetes',
@@ -155,7 +148,6 @@ export default function Layout({ children }: LayoutProps) {
     location.pathname.startsWith('/bolao') ||
     location.pathname === '/inicio' ||
     location.pathname === '/meus-palpites' ||
-    location.pathname === '/jogos-do-dia' ||
     location.pathname === '/enquetes' ||
     location.pathname === '/historico' ||
     location.pathname === '/estatisticas' ||
@@ -166,8 +158,6 @@ export default function Layout({ children }: LayoutProps) {
     location.pathname === '/bolao/chat' ||
     location.pathname === '/chat' ||
     location.pathname === '/assistente' ||
-    location.pathname === '/bolao/jogos-do-dia' ||
-    location.pathname === '/jogos-do-dia' ||
     location.pathname === '/bolao/enquetes' ||
     location.pathname === '/enquetes' ||
     location.pathname === '/bolao/palpites' ||
@@ -192,8 +182,6 @@ export default function Layout({ children }: LayoutProps) {
       location.pathname === '/bolao/chat' ||
       location.pathname === '/chat' ||
       location.pathname === '/assistente' ||
-      location.pathname === '/bolao/jogos-do-dia' ||
-      location.pathname === '/jogos-do-dia' ||
       location.pathname === '/bolao/enquetes' ||
       location.pathname === '/enquetes' ||
       location.pathname === '/bolao/palpites' ||
@@ -313,17 +301,15 @@ export default function Layout({ children }: LayoutProps) {
                     className={`h-5 w-5 shrink-0 transition-transform group-hover:scale-110 ${
                       active
                         ? 'text-white'
-                        : item.id === 'jogos-do-dia'
-                          ? 'text-sky-400'
-                          : item.id === 'enquetes'
-                            ? 'text-emerald-400'
-                            : item.id === 'estatisticas'
-                              ? 'text-amber-400'
-                              : item.id === 'chat'
-                                ? 'text-teal-400'
-                                : item.id === 'admin'
-                                  ? 'text-amber-300'
-                                  : 'text-slate-400'
+                        : item.id === 'enquetes'
+                          ? 'text-emerald-400'
+                          : item.id === 'estatisticas'
+                            ? 'text-amber-400'
+                            : item.id === 'chat'
+                              ? 'text-teal-400'
+                              : item.id === 'admin'
+                                ? 'text-amber-300'
+                                : 'text-slate-400'
                     }`}
                   />
                   {!collapsed && <span className="truncate">{item.label}</span>}
@@ -488,17 +474,15 @@ export default function Layout({ children }: LayoutProps) {
                       className={`h-5 w-5 shrink-0 ${
                         active
                           ? 'text-white'
-                          : item.id === 'jogos-do-dia'
-                            ? 'text-sky-400'
-                            : item.id === 'enquetes'
-                              ? 'text-emerald-400'
-                              : item.id === 'estatisticas'
-                                ? 'text-amber-400'
-                                : item.id === 'chat'
-                                  ? 'text-teal-400'
-                                  : item.id === 'admin'
-                                    ? 'text-amber-300'
-                                    : 'text-slate-400'
+                          : item.id === 'enquetes'
+                            ? 'text-emerald-400'
+                            : item.id === 'estatisticas'
+                              ? 'text-amber-400'
+                              : item.id === 'chat'
+                                ? 'text-teal-400'
+                                : item.id === 'admin'
+                                  ? 'text-amber-300'
+                                  : 'text-slate-400'
                       }`}
                     />
                     <span className="truncate">{item.label}</span>

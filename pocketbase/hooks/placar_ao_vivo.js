@@ -820,9 +820,11 @@ routerAdd('GET', '/backend/v1/placar-ao-vivo', (e) => {
     }
 
     // RESOLUÇÃO DE FIXTURE_ID VIA API-FOOTBALL (/v3/fixtures?date=) PARA JOGOS DO BOLÃO COM FIXTURE_ID VAZIO OU TSDB_*
-    // 1 chamada/dia por data com jogos pendentes.
-    // Similaridade de nome >= 0.85 (com normalização de partículas/acentos/PSG). Persiste fixture_id na collection jogos.
+    // REGRA DE ESCOPO EXCLUSIVO: API-Football NÃO deve ser chamada para busca por data no placar ao vivo.
+    // Cota zero consumida.
+    var permitirResolucaoDataApiFootball = false
     if (
+      permitirResolucaoDataApiFootball &&
       apiKey &&
       provedor === 'api_football' &&
       (jogosSemFixtureId.length > 0 ||
@@ -1126,8 +1128,13 @@ routerAdd('GET', '/backend/v1/placar-ao-vivo', (e) => {
     var directFixtures = []
     var seenDirectIds = {}
 
+    // REGRA DE ESCOPO EXCLUSIVO: A API-Football tem uso EXCLUSIVO para as escalações pontuais pré-jogo do bolão (~20 min antes).
+    // As chamadas de placar ao vivo /fixtures?id=... e /fixtures?live=all via API-Football foram desativadas.
+    // O placar ao vivo das partidas cadastradas no bolão é consultado via fonte gratuita alternativa (TheSportsDB) com fail-safe.
+    var permitirPlacarAoVivoApiFootball = false
+
     // Executa busca direta de fixtures restritas ao escopo cadastrado e janela
-    if (!rateLimitDetected) {
+    if (permitirPlacarAoVivoApiFootball && !rateLimitDetected) {
       for (var fxi = 0; fxi < directFixtureIdsRestritos.length; fxi++) {
         var targetFixtureId = directFixtureIdsRestritos[fxi]
         if (!targetFixtureId || seenDirectIds[targetFixtureId]) continue
@@ -1192,7 +1199,7 @@ routerAdd('GET', '/backend/v1/placar-ao-vivo', (e) => {
 
     let liveFixtures = []
     // Consulta /fixtures?live=all somente se houver partidas cadastradas dentro da janela
-    if (!rateLimitDetected && fixturesDentroJanela.length > 0) {
+    if (permitirPlacarAoVivoApiFootball && !rateLimitDetected && fixturesDentroJanela.length > 0) {
       try {
         const { enviarRequisicaoApiFootball } = require(`${__hooks}/api_football_limiter.js`)
         const resLive = enviarRequisicaoApiFootball(urlLive, { headers: headers, timeout: 8 }, 1)
@@ -1361,8 +1368,211 @@ routerAdd('GET', '/backend/v1/placar-ao-vivo', (e) => {
     // REGRA ANTIFALHA: Nunca sobrescreve jogos já finalizados (resultado_finalizado = true)
     // e nunca força 0x0 por erro de API.
     // =============================================================
+    // CONSULTA AO VIVO VIA FONTE GRATUITA ALTERNATIVA (TheSportsDB / fail-safe)
+    // A API-Football NÃO é consultada para placar ao vivo (cota zero consumida).
+    // Esta rotina busca SOMENTE para partidas do bolão (coleção 'jogos').
+    // =============================================================
+    var tsdbLiveList = []
     try {
-      var allIncomingFixtures = []
+      var tsdbKey = ''
+      try {
+        var cfgTsdb = $app.findFirstRecordByData('config_integracoes', 'chave', 'thesportsdb')
+        if (cfgTsdb) {
+          tsdbKey = (cfgTsdb.getString('api_key') || '').trim()
+        }
+      } catch (_) {}
+      if (!tsdbKey) {
+        try {
+          if ($secrets && $secrets.has && $secrets.has('THESPORTSDB_KEY')) {
+            tsdbKey = $secrets.get('THESPORTSDB_KEY')
+          } else if ($os && $os.getenv) {
+            tsdbKey = $os.getenv('THESPORTSDB_KEY') || ''
+          }
+        } catch (_) {}
+      }
+      var tsdbKeyToUse = tsdbKey || '3'
+
+      if (dateQuery && /^\d{4}-\d{2}-\d{2}$/.test(dateQuery)) {
+        var urlTsdbDay =
+          'https://www.thesportsdb.com/api/v1/json/' +
+          encodeURIComponent(tsdbKeyToUse) +
+          '/eventsday.php?d=' +
+          encodeURIComponent(dateQuery) +
+          '&s=Soccer'
+
+        try {
+          var resTsdbLive = $http.send({
+            url: urlTsdbDay,
+            method: 'GET',
+            timeout: 7,
+          })
+          if (
+            resTsdbLive &&
+            resTsdbLive.statusCode === 200 &&
+            resTsdbLive.json &&
+            Array.isArray(resTsdbLive.json.events)
+          ) {
+            var rawTsdbEvents = resTsdbLive.json.events
+            for (var tei = 0; tei < rawTsdbEvents.length; tei++) {
+              var evT = rawTsdbEvents[tei]
+              var evHome = (evT.strHomeTeam || '').trim()
+              var evAway = (evT.strAwayTeam || '').trim()
+              if (!evHome || !evAway) continue
+
+              var evHomeScore =
+                evT.intHomeScore !== null &&
+                evT.intHomeScore !== '' &&
+                evT.intHomeScore !== undefined
+                  ? parseInt(evT.intHomeScore, 10)
+                  : null
+              var evAwayScore =
+                evT.intAwayScore !== null &&
+                evT.intAwayScore !== '' &&
+                evT.intAwayScore !== undefined
+                  ? parseInt(evT.intAwayScore, 10)
+                  : null
+
+              var rawTsdbStatus = (evT.strStatus || '').trim().toUpperCase()
+              var shortSt = 'NS'
+              var isLiveSt = false
+              var isFinSt = false
+
+              if (
+                rawTsdbStatus === 'FT' ||
+                rawTsdbStatus === 'AOT' ||
+                /match finished|finished/i.test(rawTsdbStatus)
+              ) {
+                shortSt = 'FT'
+                isFinSt = true
+              } else if (
+                /1h|2h|ht|live|in progress|halftime/i.test(rawTsdbStatus) ||
+                (evHomeScore !== null &&
+                  evAwayScore !== null &&
+                  !isFinSt &&
+                  rawTsdbStatus !== 'POSTPONED' &&
+                  rawTsdbStatus !== 'CANCELLED')
+              ) {
+                shortSt = /ht|halftime/i.test(rawTsdbStatus)
+                  ? 'HT'
+                  : /2h/i.test(rawTsdbStatus)
+                    ? '2H'
+                    : '1H'
+                isLiveSt = true
+              } else if (/postp/i.test(rawTsdbStatus)) {
+                shortSt = 'PST'
+              } else if (/canc/i.test(rawTsdbStatus)) {
+                shortSt = 'CANC'
+              }
+
+              var fidGenerated = 'tsdb_' + (evT.idEvent || tei)
+
+              var tsdbMapped = {
+                fixture: {
+                  id: fidGenerated,
+                  date: evT.strTimestamp || evT.dateEvent + 'T' + (evT.strTime || '20:00:00') + 'Z',
+                  timestamp:
+                    Math.floor(new Date(evT.strTimestamp || evT.dateEvent).getTime() / 1000) || 0,
+                  status: {
+                    short: shortSt,
+                    long: evT.strStatus || 'Agendado',
+                    elapsed: null,
+                  },
+                },
+                league: {
+                  id: parseInt(evT.idLeague, 10) || 0,
+                  name: evT.strLeague || '',
+                  logo: evT.strLeagueBadge || '',
+                },
+                teams: {
+                  home: {
+                    id: parseInt(evT.idHomeTeam, 10) || 0,
+                    name: evHome,
+                    logo: evT.strHomeTeamBadge || '',
+                  },
+                  away: {
+                    id: parseInt(evT.idAwayTeam, 10) || 0,
+                    name: evAway,
+                    logo: evT.strAwayTeamBadge || '',
+                  },
+                },
+                goals: {
+                  home: evHomeScore,
+                  away: evAwayScore,
+                },
+                score: {
+                  fulltime: { home: evHomeScore, away: evAwayScore },
+                },
+                isLive: isLiveSt,
+                scorers: [],
+                provider: 'thesportsdb_free',
+              }
+              tsdbLiveList.push(tsdbMapped)
+
+              // Cruza diretamente com jogos cadastrados no bolão para atualizar placar
+              for (var cfi3 = 0; cfi3 < cadastradosFixtureIds.length; cfi3++) {
+                var cFid3 = cadastradosFixtureIds[cfi3]
+                var candJogoRec = cadastradosRecordsMap[cFid3]
+                if (!candJogoRec || candJogoRec.getBool('resultado_finalizado')) continue
+
+                var jTA = (candJogoRec.getString('time_a') || '').trim()
+                var jTB = (candJogoRec.getString('time_b') || '').trim()
+
+                var isDirectMatch = timesCoincidem(jTA, evHome) && timesCoincidem(jTB, evAway)
+                var isInvertedMatch = timesCoincidem(jTA, evAway) && timesCoincidem(jTB, evHome)
+
+                if (isDirectMatch || isInvertedMatch) {
+                  var pA = isDirectMatch ? evHomeScore : evAwayScore
+                  var pB = isDirectMatch ? evAwayScore : evHomeScore
+
+                  if (pA !== null && pB !== null && !isNaN(pA) && !isNaN(pB)) {
+                    candJogoRec.set('placar_a', pA)
+                    candJogoRec.set('placar_b', pB)
+                  }
+
+                  if (isFinSt && pA !== null && pB !== null) {
+                    candJogoRec.set('resultado_finalizado', true)
+                    candJogoRec.set('status', 'finalizado')
+                  } else if (isLiveSt) {
+                    candJogoRec.set('status', 'ao_vivo')
+                  }
+
+                  try {
+                    $app.save(candJogoRec)
+                    console.log(
+                      '[placar-ao-vivo TheSportsDB] Jogo ' +
+                        candJogoRec.id +
+                        ' (' +
+                        jTA +
+                        ' x ' +
+                        jTB +
+                        ') atualizado via TheSportsDB: ' +
+                        pA +
+                        'x' +
+                        pB +
+                        ' (Status: ' +
+                        shortSt +
+                        ')',
+                    )
+                  } catch (errSaveTsdb) {
+                    console.log('[placar-ao-vivo TheSportsDB] Falha ao salvar jogo:', errSaveTsdb)
+                  }
+                }
+              }
+            }
+          }
+        } catch (errHttpTsdb) {
+          console.log(
+            '[placar-ao-vivo TheSportsDB] Indisponibilidade na fonte alternativa (fail-safe ativo):',
+            errHttpTsdb ? errHttpTsdb.message || errHttpTsdb : errHttpTsdb,
+          )
+        }
+      }
+    } catch (errAltSource) {
+      console.log('[placar-ao-vivo] Fail-safe fonte alternativa:', errAltSource)
+    }
+
+    try {
+      var allIncomingFixtures = [].concat(tsdbLiveList)
       if (Array.isArray(directFixtures)) {
         for (var dif = 0; dif < directFixtures.length; dif++)
           allIncomingFixtures.push(directFixtures[dif])
@@ -1534,10 +1744,7 @@ routerAdd('GET', '/backend/v1/placar-ao-vivo', (e) => {
   }
 })
 
-// -------------------------------------------------------------
-// GET /backend/v1/jogos-do-dia
-// -------------------------------------------------------------
-routerAdd('GET', '/backend/v1/jogos-do-dia', (e) => {
+var _desativado_routerJogosDoDia_legacy = function (e) {
   // Helper para carregar e converter registros de jogos_do_dia do banco para formato fixture da API
   var formatarRecordJogosDoDia = function (rec) {
     var raw = null
@@ -2995,7 +3202,7 @@ routerAdd('GET', '/backend/v1/jogos-do-dia', (e) => {
           : 'Não foi possível carregar as partidas agora. Tente novamente mais tarde.',
     })
   }
-})
+}
 
 // -------------------------------------------------------------
 // GET /backend/v1/placar-ao-vivo/config

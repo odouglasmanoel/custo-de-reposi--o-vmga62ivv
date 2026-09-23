@@ -1425,83 +1425,8 @@ routerAdd(
         }
       }
 
-      // 4) API-Football só como último recurso (com breaker exclusivo de escudos)
-      if (!badgeFound) {
-        var badgeBreakerStatus = checkBadgeCircuitBreaker()
-        if (!badgeBreakerStatus.shouldSkip) {
-          var afKey = ''
-          var isRapid = false
-          try {
-            var cfg = $app.findFirstRecordByData('config_integracoes', 'chave', 'placar_ao_vivo')
-            if (cfg) {
-              afKey = (cfg.getString('api_key') || '').trim()
-            }
-          } catch (_) {}
-          if (!afKey) {
-            try {
-              if ($secrets && $secrets.has && $secrets.has('API_FOOTBALL_KEY')) {
-                afKey = $secrets.get('API_FOOTBALL_KEY')
-              } else if ($secrets && $secrets.has && $secrets.has('RAPIDAPI_KEY')) {
-                afKey = $secrets.get('RAPIDAPI_KEY')
-                isRapid = true
-              } else if ($os && $os.getenv) {
-                afKey = $os.getenv('API_FOOTBALL_KEY') || $os.getenv('RAPIDAPI_KEY') || ''
-                if ($os.getenv('RAPIDAPI_KEY')) isRapid = true
-              }
-            } catch (_) {}
-          }
-          if (afKey.length > 40) isRapid = true
-
-          if (afKey) {
-            try {
-              var urlAF = isRapid
-                ? 'https://api-football-v1.p.rapidapi.com/v3/teams?search=' +
-                  encodeURIComponent(teamName)
-                : 'https://v3.football.api-sports.io/teams?search=' + encodeURIComponent(teamName)
-              var hdrs = isRapid
-                ? { 'x-rapidapi-key': afKey, 'x-rapidapi-host': 'api-football-v1.p.rapidapi.com' }
-                : { 'x-apisports-key': afKey }
-
-              var resAF = $http.send({
-                url: urlAF,
-                method: 'GET',
-                headers: hdrs,
-                timeout: 4,
-              })
-
-              if (isRateLimitErrorHelper(resAF.statusCode, resAF.json || resAF.raw)) {
-                tripBadgeCircuitBreaker('Rate limit 429 ao buscar escudo de time ' + teamName)
-              } else if (
-                resAF.statusCode === 200 &&
-                resAF.json &&
-                Array.isArray(resAF.json.response) &&
-                resAF.json.response.length > 0
-              ) {
-                resetBadgeCircuitBreaker()
-                for (var afi = 0; afi < resAF.json.response.length; afi++) {
-                  var tAfObj = resAF.json.response[afi]
-                  var tNameAf = (tAfObj && tAfObj.team && tAfObj.team.name) || ''
-                  if (
-                    similaridadeEscudo(teamName, tNameAf) >= 0.85 &&
-                    tAfObj.team &&
-                    tAfObj.team.logo
-                  ) {
-                    badgeFound = String(tAfObj.team.logo).trim()
-                    if (badgeFound) break
-                  }
-                }
-              }
-            } catch (errAF) {
-              console.log(
-                '[API-Football Escudo endpoint] Erro na busca por ' + teamName + ':',
-                errAF,
-              )
-            }
-          }
-        } else {
-          console.log('[Escudo] Pulando API-Football pois badgeCircuitBreaker está ativo.')
-        }
-      }
+      // 4) API-Football DESATIVADA para busca de escudos (uso EXCLUSIVO nas escalações pré-jogo)
+      // Preserva 100% da cota da API-Football.
 
       if (typeof globalThis !== 'undefined' && globalThis.__tsdbBadgeCache) {
         globalThis.__tsdbBadgeCache[cleanKey] = badgeFound

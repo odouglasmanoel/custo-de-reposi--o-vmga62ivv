@@ -487,7 +487,16 @@ routerAdd(
       // =============================================================
       var cbCheckDet = checkApiFootballCircuitBreaker()
 
-      if (apiKey && !isDirectNumeric && (isTsdbId || (timeA && timeB)) && !cbCheckDet.shouldSkip) {
+      // REGRA: API-Football tem uso EXCLUSIVO para escalações pré-jogo do bolão.
+      // Desativada qualquer busca reversa por data aqui.
+      var permitirBuscaReversaApiFootball = false
+      if (
+        permitirBuscaReversaApiFootball &&
+        apiKey &&
+        !isDirectNumeric &&
+        (isTsdbId || (timeA && timeB)) &&
+        !cbCheckDet.shouldSkip
+      ) {
         try {
           var resolveDateParam = dataParam
           if (!resolveDateParam && matchingJogoRecord) {
@@ -597,7 +606,10 @@ routerAdd(
       }
 
       // 1. FONTE 1: API-Football (fixtures?id=...)
-      if (podeChamarApiFootball) {
+      // REGRA: A API-Football tem uso EXCLUSIVO para as escalações pontuais pré-jogo do bolão (~20 min antes).
+      // Desativado aqui para não consumir cota na ficha técnica de detalhes sob demanda.
+      var permitirChamadaDetalhesApiFootball = false
+      if (permitirChamadaDetalhesApiFootball && podeChamarApiFootball) {
         try {
           var isRapid = apiKey.length > 40
           var url = isRapid
