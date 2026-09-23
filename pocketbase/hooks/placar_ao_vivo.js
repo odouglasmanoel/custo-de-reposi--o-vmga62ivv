@@ -1538,6 +1538,100 @@ routerAdd('GET', '/backend/v1/placar-ao-vivo', (e) => {
 // GET /backend/v1/jogos-do-dia
 // -------------------------------------------------------------
 routerAdd('GET', '/backend/v1/jogos-do-dia', (e) => {
+  // Helper para carregar e converter registros de jogos_do_dia do banco para formato fixture da API
+  var formatarRecordJogosDoDia = function (rec) {
+    var raw = null
+    try {
+      raw = rec.get('raw_payload')
+    } catch (_) {
+      raw = null
+    }
+    if (raw && typeof raw === 'object' && raw.fixture && raw.teams) {
+      return raw
+    }
+
+    var fid = rec.getString('fixture_id') || rec.id
+    var dateIso =
+      rec.getString('data_hora_iso') ||
+      rec.getString('data') + 'T' + (rec.getString('horario') || '16:00') + ':00-03:00'
+    var stShort = rec.getString('status_short') || 'NS'
+    var stLong = rec.getString('status_long') || 'Agendado'
+    var stElapsed = rec.getInt('status_elapsed') || null
+    var isLive = ['1H', 'HT', '2H', 'ET', 'BT', 'P', 'LIVE'].indexOf(stShort) !== -1
+
+    var scorers = []
+    try {
+      scorers = rec.get('scorers') || []
+    } catch (_) {
+      scorers = []
+    }
+    var events = []
+    try {
+      events = rec.get('events') || []
+    } catch (_) {
+      events = []
+    }
+
+    return {
+      fixture: {
+        id: /^\d+$/.test(fid) ? Number(fid) : fid,
+        date: dateIso,
+        timestamp: Math.floor(new Date(dateIso).getTime() / 1000) || 0,
+        status: {
+          short: stShort,
+          long: stLong,
+          elapsed: stElapsed,
+        },
+      },
+      league: {
+        id: rec.getInt('league_id') || 0,
+        name: rec.getString('campeonato') || '',
+        country: rec.getString('pais') || '',
+        logo: rec.getString('campeonato_logo') || '',
+        flag: '',
+        round: rec.getString('round') || '',
+        region: rec.getString('regiao') || 'Outros',
+      },
+      teams: {
+        home: {
+          id: 0,
+          name: rec.getString('time_casa') || '',
+          logo: rec.getString('logo_casa') || '',
+        },
+        away: {
+          id: 0,
+          name: rec.getString('time_visitante') || '',
+          logo: rec.getString('logo_visitante') || '',
+        },
+      },
+      goals: {
+        home:
+          rec.get('placar_casa') !== null && rec.get('placar_casa') !== undefined
+            ? rec.getInt('placar_casa')
+            : null,
+        away:
+          rec.get('placar_visitante') !== null && rec.get('placar_visitante') !== undefined
+            ? rec.getInt('placar_visitante')
+            : null,
+      },
+      score: {
+        halftime: { home: null, away: null },
+        fulltime: {
+          home:
+            rec.get('placar_casa') !== null && rec.get('placar_casa') !== undefined
+              ? rec.getInt('placar_casa')
+              : null,
+          away:
+            rec.get('placar_visitante') !== null && rec.get('placar_visitante') !== undefined
+              ? rec.getInt('placar_visitante')
+              : null,
+        },
+      },
+      scorers: scorers,
+      events: events,
+      isLive: isLive,
+    }
+  }
   try {
     var dateQuery = (e.requestInfo().query.date || '').trim()
     var forceRefresh = e.requestInfo().query.refresh === '1'
@@ -1987,107 +2081,101 @@ routerAdd('GET', '/backend/v1/jogos-do-dia', (e) => {
     // Provedor ÚNICO: API-Football (sem contingências ou provedores secundários)
     var apiFootballKey = apiKey
 
-    if (typeof globalThis !== 'undefined' && !globalThis.__apiFootballThrottle) {
-      globalThis.__apiFootballThrottle = { lastCallTimestamp: 0, minIntervalMs: 15 * 60 * 1000 }
-    }
-    var checkApiFootballThrottle = function () {
-      if (typeof globalThis === 'undefined' || !globalThis.__apiFootballThrottle) {
-        return { canCall: true, waitMs: 0 }
-      }
-      var now = Date.now()
-      var diff = now - (globalThis.__apiFootballThrottle.lastCallTimestamp || 0)
-      var interval = globalThis.__apiFootballThrottle.minIntervalMs || 900000
-      if (diff < interval) {
-        return { canCall: false, waitMs: interval - diff }
-      }
-      return { canCall: true, waitMs: 0 }
-    }
-    var recordApiFootballCall = function () {
-      if (typeof globalThis !== 'undefined' && globalThis.__apiFootballThrottle) {
-        globalThis.__apiFootballThrottle.lastCallTimestamp = Date.now()
-      }
-    }
-
-    // CIRCUIT BREAKER CHECK para jogos-do-dia:
-    var API_FOOTBALL_BACKOFF_DURATION_MS = 60 * 60 * 1000 // 1 HORA
-
-    var checkApiFootballCircuitBreaker = function () {
-      if (typeof globalThis === 'undefined' || !globalThis.__apiFootballCircuitBreaker) {
-        return { shouldSkip: false, isProbe: false }
-      }
-      var cb = globalThis.__apiFootballCircuitBreaker
-      if (!cb.isBlocked) {
-        return { shouldSkip: false, isProbe: false }
-      }
-      var now = Date.now()
-      if (now < cb.blockedUntil) {
-        return {
-          shouldSkip: true,
-          reason: cb.reason || 'Cota da API-Football esgotada (Circuit Breaker ativo)',
+    // =========================================================================
+    // REGRA 1.b: CACHE-FIRST VIA BANCO DE DADOS (jogos_do_dia)
+    // Antes de chamar a API, consultar a collection jogos_do_dia pela data pedida.
+    // Se já houver registros OU marca de data_consultada do dia, responder direto do banco!
+    // =========================================================================
+    var dbFixturesDaData = []
+    var dataJaConsultadaComZeroJogos = false
+    try {
+      var colJogosDoDia = $app.findCollectionByNameOrId('jogos_do_dia')
+      var recsData = $app.findRecordsByFilter(
+        'jogos_do_dia',
+        "data = '" + dateQuery + "'",
+        'horario',
+        500,
+        0,
+      )
+      for (var rdi = 0; rdi < recsData.length; rdi++) {
+        var rItem = recsData[rdi]
+        var fIdStr = rItem.getString('fixture_id') || ''
+        if (fIdStr === '__data_consultada_zero_jogos__') {
+          dataJaConsultadaComZeroJogos = true
+        } else {
+          dbFixturesDaData.push(formatarRecordJogosDoDia(rItem))
         }
       }
-      if (!cb.probing) {
-        cb.probing = true
-        return { shouldSkip: false, isProbe: true }
-      }
-      return { shouldSkip: true, reason: 'Circuit Breaker em sondagem por outra requisição' }
+    } catch (errDbJdd) {
+      console.log('[jogos-do-dia] Erro ao consultar collection jogos_do_dia:', errDbJdd)
     }
 
-    var tripApiFootballCircuitBreaker = function (reason) {
-      if (typeof globalThis === 'undefined') return
-      if (!globalThis.__apiFootballCircuitBreaker) {
-        globalThis.__apiFootballCircuitBreaker = {
-          isBlocked: false,
-          blockedUntil: 0,
-          probing: false,
-          reason: '',
+    // Se já temos partidas persistidas para a data OU a marca de 0 jogos já foi salva hoje:
+    if (dbFixturesDaData.length > 0 || dataJaConsultadaComZeroJogos) {
+      console.log(
+        '[jogos-do-dia cache-first banco] Data ' +
+          dateQuery +
+          ' encontrada no banco (jogos: ' +
+          dbFixturesDaData.length +
+          ', marcaZero: ' +
+          dataJaConsultadaComZeroJogos +
+          '). Retornando direto do banco!',
+      )
+      var combinedDbList = mergeManualFixturesOnTop(liveManualFixtures, dbFixturesDaData)
+      var dbHasLive = combinedDbList.some(function (m) {
+        return m.isLive
+      })
+
+      var respDb = {
+        configured: true,
+        date: dateQuery,
+        total: combinedDbList.length,
+        hasLive: dbHasLive,
+        fixtures: combinedDbList,
+        cached: true,
+        from_database: true,
+      }
+
+      // Sincroniza também no cache em memória para leituras subsequentes ultra rápidas
+      if (dayStore) {
+        dayStore[dateQuery] = {
+          timestamp: Date.now(),
+          payload: respDb,
+          fetching: 0,
         }
       }
-      var cb = globalThis.__apiFootballCircuitBreaker
-      cb.isBlocked = true
-      cb.blockedUntil = Date.now() + API_FOOTBALL_BACKOFF_DURATION_MS
-      cb.probing = false
-      cb.reason = reason || 'Rate limit / quota exceeded (429)'
-      console.log(
-        '[CircuitBreaker API-Football] TRIP ATIVADO por 60 minutos até ' +
-          new Date(cb.blockedUntil).toISOString() +
-          '. Motivo: ' +
-          cb.reason,
-      )
+
+      return e.json(200, respDb)
     }
 
-    var resetApiFootballCircuitBreaker = function () {
-      if (typeof globalThis === 'undefined' || !globalThis.__apiFootballCircuitBreaker) return
-      var cb = globalThis.__apiFootballCircuitBreaker
-      if (cb.isBlocked || cb.probing) {
-        console.log('[CircuitBreaker API-Football] RESET: Conexão normalizada com resposta 200.')
-      }
-      cb.isBlocked = false
-      cb.probing = false
-      cb.blockedUntil = 0
-      cb.reason = ''
+    // =========================================================================
+    // REGRA 1.c: TRAVA ANTI-RETRY
+    // Se a última chamada à API falhou ou a cota diária de 15 foi atingida,
+    // bloquear sincronizações automáticas até o reset das 21h.
+    // =========================================================================
+    var limiterMod = null
+    try {
+      limiterMod = require(`${__hooks}/api_football_limiter.js`)
+    } catch (_) {
+      limiterMod = null
     }
 
-    var cbStatusDay = checkApiFootballCircuitBreaker()
-    var throttleStatusDay = checkApiFootballThrottle()
-    var skipApiFootballDay = cbStatusDay.shouldSkip || !throttleStatusDay.canCall
+    var limiterStatus =
+      limiterMod && typeof limiterMod.obterStatusLimiter === 'function'
+        ? limiterMod.obterStatusLimiter()
+        : { waiting_reset: false, count: 0 }
 
-    if (cbStatusDay.shouldSkip) {
+    if (
+      limiterStatus.waiting_reset ||
+      (typeof globalThis !== 'undefined' &&
+        globalThis.__apiFootballCircuitBreaker &&
+        globalThis.__apiFootballCircuitBreaker.isBlocked)
+    ) {
       console.log(
-        '[jogos-do-dia] Circuit breaker ativo — pulando API-Football diretamente para fallback. Motivo:',
-        cbStatusDay.reason,
+        '[jogos-do-dia trava anti-retry] Cota atingida ou falha recente travada até reset das 21h.',
       )
       rateLimitHit = true
-    } else if (!throttleStatusDay.canCall) {
-      console.log(
-        '[jogos-do-dia] Throttle ativo de 15min — repouso de cota API-Football (aguardar ' +
-          Math.round(throttleStatusDay.waitMs / 1000) +
-          's). Redirecionando para contingência.',
-      )
-      rateLimitHit = true
-    } else if (apiFootballKey && apiFootballKey !== fallbackApiKey) {
-      // EDIÇÃO 3: NUNCA chamar /fixtures?date= na API-Football para poupar cota diária.
-      // Carrega os IDs dos jogos cadastrados no banco para a data e consulta exclusivamente por esses IDs!
+    } else if (apiFootballKey) {
       var baseUrl = isRapidApi
         ? 'https://api-football-v1.p.rapidapi.com/v3/fixtures'
         : 'https://v3.football.api-sports.io/fixtures'
@@ -2101,7 +2189,7 @@ routerAdd('GET', '/backend/v1/jogos-do-dia', (e) => {
             'x-apisports-key': apiFootballKey,
           }
 
-      // Buscar fixture_ids dos jogos cadastrados para a data
+      // Buscar fixture_ids dos jogos cadastrados para a data (se houver no bolão)
       var fixtureIdsParaData = []
       try {
         var jogosDataRecs = $app.findRecordsByFilter(
@@ -2127,11 +2215,14 @@ routerAdd('GET', '/backend/v1/jogos-do-dia', (e) => {
           var callUrl =
             baseUrl + '?id=' + encodeURIComponent(targetFid) + '&timezone=America%2FSao_Paulo'
           try {
-            var { enviarRequisicaoApiFootball } = require(`${__hooks}/api_football_limiter.js`)
-            var resp = enviarRequisicaoApiFootball(callUrl, { headers: headers, timeout: 8 }, 3)
+            var resp = limiterMod.enviarRequisicaoApiFootball(
+              callUrl,
+              { headers: headers, timeout: 8 },
+              2,
+            )
 
             if (resp.blocked) {
-              console.log('[jogos-do-dia legacy] Chamada suprimida pelo limiter:', resp.reason)
+              console.log('[jogos-do-dia] Chamada suprimida pelo limiter:', resp.reason)
               rateLimitHit = true
               break
             } else if (
@@ -2140,24 +2231,80 @@ routerAdd('GET', '/backend/v1/jogos-do-dia', (e) => {
               resp.json &&
               Array.isArray(resp.json.response)
             ) {
-              recordApiFootballCall()
-              resetApiFootballCircuitBreaker()
+              console.log(
+                '[jogos-do-dia] Payload retornado da API (auditoria):',
+                JSON.stringify(resp.json.response),
+              )
               if (!allFixtures) allFixtures = []
               for (var ari = 0; ari < resp.json.response.length; ari++) {
                 allFixtures.push(resp.json.response[ari])
               }
+            } else {
+              // Falha na chamada -> trava anti-retry para não reintentar em loop
+              if (typeof globalThis !== 'undefined') {
+                if (!globalThis.__apiFootballCircuitBreaker) {
+                  globalThis.__apiFootballCircuitBreaker = {}
+                }
+                globalThis.__apiFootballCircuitBreaker.isBlocked = true
+                globalThis.__apiFootballCircuitBreaker.reason =
+                  'Falha na resposta da API: HTTP ' + (resp ? resp.statusCode : 'erro')
+              }
             }
           } catch (eH) {
             console.log('Aviso ao consultar fixture ' + targetFid + ' na API-Football:', eH)
+            if (typeof globalThis !== 'undefined') {
+              if (!globalThis.__apiFootballCircuitBreaker) {
+                globalThis.__apiFootballCircuitBreaker = {}
+              }
+              globalThis.__apiFootballCircuitBreaker.isBlocked = true
+              globalThis.__apiFootballCircuitBreaker.reason = 'Exceção de rede na chamada'
+            }
           }
         }
       } else {
-        // Zero jogos com ID cadastrado para a data: não consome nenhuma chamada à API-Football!
-        console.log(
-          '[jogos-do-dia] Sem fixture_id cadastrado para a data ' +
-            dateQuery +
-            '. Zero chamadas à API-Football.',
-        )
+        // Chamada diária para a data
+        var callUrlDate =
+          baseUrl + '?date=' + encodeURIComponent(dateQuery) + '&timezone=America%2FSao_Paulo'
+        try {
+          var respDate = limiterMod.enviarRequisicaoApiFootball(
+            callUrlDate,
+            { headers: headers, timeout: 10 },
+            3,
+          )
+          if (respDate.blocked) {
+            console.log('[jogos-do-dia date] Chamada suprimida pelo limiter:', respDate.reason)
+            rateLimitHit = true
+          } else if (
+            respDate &&
+            respDate.statusCode === 200 &&
+            respDate.json &&
+            Array.isArray(respDate.json.response)
+          ) {
+            console.log(
+              '[jogos-do-dia date] Payload retornado da API (auditoria):',
+              JSON.stringify(respDate.json.response),
+            )
+            allFixtures = respDate.json.response
+          } else {
+            // Falha -> trava anti-retry
+            if (typeof globalThis !== 'undefined') {
+              if (!globalThis.__apiFootballCircuitBreaker) {
+                globalThis.__apiFootballCircuitBreaker = {}
+              }
+              globalThis.__apiFootballCircuitBreaker.isBlocked = true
+              globalThis.__apiFootballCircuitBreaker.reason = 'Falha na resposta da API date'
+            }
+          }
+        } catch (eDate) {
+          console.log('[jogos-do-dia date] Erro na requisição:', eDate)
+          if (typeof globalThis !== 'undefined') {
+            if (!globalThis.__apiFootballCircuitBreaker) {
+              globalThis.__apiFootballCircuitBreaker = {}
+            }
+            globalThis.__apiFootballCircuitBreaker.isBlocked = true
+            globalThis.__apiFootballCircuitBreaker.reason = 'Exceção na requisição date'
+          }
+        }
       }
     } else {
       rateLimitHit = true
@@ -2560,37 +2707,181 @@ routerAdd('GET', '/backend/v1/jogos-do-dia', (e) => {
       })
     }
 
-    // REGRA DE OURO: "Se a API retornar 0 partidas ou erro, NUNCA grave esse resultado no cache."
+    // REGRA 1.b: em resposta 200 OK com lista vazia, GRAVAR a marca "data consultada, 0 jogos" com timestamp
     if (rawFixtures.length === 0) {
       console.log(
-        '[Aviso Jogos-do-Dia] API retornou 0 partidas. Não gravando no cache e mantendo anterior se houver.',
+        '[Jogos-do-Dia] API retornou 0 partidas com sucesso. Gravando marca de data consultada no banco para não repetir hoje.',
       )
-      if (
-        dayEntry &&
-        dayEntry.payload &&
-        Array.isArray(dayEntry.payload.fixtures) &&
-        dayEntry.payload.fixtures.length > 0
-      ) {
-        return e.json(
-          200,
-          Object.assign({}, dayEntry.payload, {
-            cached: true,
-            stale: true,
-            warning: 'API retornou 0 partidas; mantendo último resultado válido em cache.',
-          }),
-        )
+      try {
+        var colJddZero = $app.findCollectionByNameOrId('jogos_do_dia')
+        var recZero = null
+        try {
+          recZero = $app.findFirstRecordByFilter(
+            'jogos_do_dia',
+            "data = '" + dateQuery + "' && fixture_id = '__data_consultada_zero_jogos__'",
+          )
+        } catch (_) {
+          recZero = new Record(colJddZero)
+          recZero.set('fixture_id', '__data_consultada_zero_jogos__')
+          recZero.set('data', dateQuery)
+        }
+        recZero.set('campeonato', 'Data Consultada (0 Jogos)')
+        recZero.set('time_casa', 'Nenhum')
+        recZero.set('time_visitante', 'Nenhum')
+        recZero.set('raw_payload', {
+          consultado_em: new Date().toISOString(),
+          zero_jogos: true,
+        })
+        $app.save(recZero)
+      } catch (errSaveZero) {
+        console.log('[Jogos-do-Dia] Erro ao gravar marca de zero jogos:', errSaveZero)
       }
 
-      // Se não havia cache anterior, entrega resposta com flag temporária sem salvar no cache store!
-      return e.json(200, {
+      var emptyManuals = fetchManualGamesForDate(dateQuery)
+      var emptyPayload = {
         configured: true,
         date: dateQuery,
-        total: 0,
-        hasLive: false,
-        fixtures: [],
-        cached: false,
-        warning: 'Nenhuma partida encontrada para a data informada.',
-      })
+        total: emptyManuals.length,
+        hasLive: emptyManuals.some(function (m) {
+          return m.isLive
+        }),
+        fixtures: emptyManuals,
+        cached: true,
+        warning:
+          emptyManuals.length > 0 ? null : 'Nenhuma partida encontrada para a data informada.',
+      }
+
+      if (dayStore) {
+        dayStore[dateQuery] = {
+          timestamp: Date.now(),
+          payload: emptyPayload,
+          fetching: 0,
+        }
+      }
+
+      return e.json(200, emptyPayload)
+    }
+
+    // REGRA 1.b: Em qualquer resposta com jogos, PERSISTIR IMEDIATAMENTE na collection jogos_do_dia
+    // (e vincular por fixture_id na jogos quando for partida do bolão)
+    try {
+      var colJddPersist = $app.findCollectionByNameOrId('jogos_do_dia')
+      for (var pidx = 0; pidx < rawFixtures.length; pidx++) {
+        var fixItem = rawFixtures[pidx]
+        var fixObj = fixItem.fixture || {}
+        var fidStr = String(fixObj.id)
+        if (!fidStr || fidStr === 'undefined') continue
+
+        var tCasaName = (fixItem.teams && fixItem.teams.home && fixItem.teams.home.name) || ''
+        var tVisName = (fixItem.teams && fixItem.teams.away && fixItem.teams.away.name) || ''
+        var rawDateIso = fixObj.date || ''
+        var horaStr = '16:00'
+        try {
+          if (rawDateIso) {
+            var dIso = new Date(rawDateIso)
+            var spIsoTime = new Date(dIso.getTime() - 3 * 3600 * 1000)
+            horaStr =
+              ('0' + spIsoTime.getUTCHours()).slice(-2) +
+              ':' +
+              ('0' + spIsoTime.getUTCMinutes()).slice(-2)
+          }
+        } catch (_) {}
+
+        var recJdd = null
+        try {
+          recJdd = $app.findFirstRecordByFilter(
+            'jogos_do_dia',
+            "data = '" + dateQuery + "' && fixture_id = '" + fidStr + "'",
+          )
+        } catch (_) {
+          recJdd = new Record(colJddPersist)
+          recJdd.set('fixture_id', fidStr)
+          recJdd.set('data', dateQuery)
+        }
+
+        recJdd.set('horario', horaStr)
+        recJdd.set('data_hora_iso', rawDateIso)
+        recJdd.set('campeonato', (fixItem.league && fixItem.league.name) || 'Futebol')
+        recJdd.set('campeonato_logo', (fixItem.league && fixItem.league.logo) || '')
+        recJdd.set('league_id', (fixItem.league && Number(fixItem.league.id)) || 0)
+        recJdd.set('round', (fixItem.league && fixItem.league.round) || '')
+        recJdd.set('regiao', (fixItem.league && fixItem.league.region) || 'Outros')
+        recJdd.set('pais', (fixItem.league && fixItem.league.country) || '')
+        recJdd.set('time_casa', tCasaName || 'Casa')
+        recJdd.set('time_visitante', tVisName || 'Visitante')
+        recJdd.set(
+          'logo_casa',
+          (fixItem.teams && fixItem.teams.home && fixItem.teams.home.logo) || '',
+        )
+        recJdd.set(
+          'logo_visitante',
+          (fixItem.teams && fixItem.teams.away && fixItem.teams.away.logo) || '',
+        )
+        recJdd.set(
+          'placar_casa',
+          fixItem.goals && fixItem.goals.home != null ? fixItem.goals.home : null,
+        )
+        recJdd.set(
+          'placar_visitante',
+          fixItem.goals && fixItem.goals.away != null ? fixItem.goals.away : null,
+        )
+        recJdd.set('status_short', (fixObj.status && fixObj.status.short) || 'NS')
+        recJdd.set('status_long', (fixObj.status && fixObj.status.long) || 'Agendado')
+        recJdd.set(
+          'status_elapsed',
+          fixObj.status && fixObj.status.elapsed != null ? fixObj.status.elapsed : null,
+        )
+        recJdd.set('scorers', fixItem.scorers || [])
+        recJdd.set('events', fixItem.events || [])
+        recJdd.set('raw_payload', fixItem)
+        $app.save(recJdd)
+
+        // Vincular por fixture_id na coleção 'jogos' quando for partida do bolão
+        try {
+          var bolaoJogos = $app.findRecordsByFilter(
+            'jogos',
+            "data ~ '" + dateQuery + "' && fixture_id = '" + fidStr + "'",
+            'hora',
+            5,
+            0,
+          )
+          for (var bji = 0; bji < bolaoJogos.length; bji++) {
+            var bRec = bolaoJogos[bji]
+            var alterouBolao = false
+            if (
+              fixItem.goals &&
+              fixItem.goals.home != null &&
+              bRec.get('placar_casa') !== fixItem.goals.home
+            ) {
+              bRec.set('placar_casa', fixItem.goals.home)
+              alterouBolao = true
+            }
+            if (
+              fixItem.goals &&
+              fixItem.goals.away != null &&
+              bRec.get('placar_visitante') !== fixItem.goals.away
+            ) {
+              bRec.set('placar_visitante', fixItem.goals.away)
+              alterouBolao = true
+            }
+            var bStatus = (fixObj.status && fixObj.status.short) || ''
+            if (bStatus && bRec.getString('status') !== bStatus) {
+              bRec.set('status', bStatus)
+              alterouBolao = true
+            }
+            if (alterouBolao) {
+              $app.save(bRec)
+            }
+          }
+        } catch (errLinkBolao) {
+          console.log('[jogos-do-dia] Aviso ao vincular com bolão:', errLinkBolao)
+        }
+      }
+    } catch (errPersistJdd) {
+      console.log(
+        '[jogos-do-dia] Erro ao persistir fixtures na collection jogos_do_dia:',
+        errPersistJdd,
+      )
     }
 
     var payload = {
@@ -2758,6 +3049,21 @@ routerAdd('GET', '/backend/v1/placar-ao-vivo/config', (e) => {
       }
     } catch (_) {}
 
+    let apiValidada = null
+    try {
+      const valRec = $app.findFirstRecordByData('config_integracoes', 'chave', 'api_validada')
+      if (valRec) {
+        const raw = valRec.getString('api_key') || ''
+        try {
+          apiValidada = JSON.parse(raw)
+        } catch (_) {
+          apiValidada = { timestamp: raw }
+        }
+      }
+    } catch (_) {
+      apiValidada = null
+    }
+
     return e.json(200, {
       provedor: 'api_football',
       hasKey: hasDbKey || hasSecretFallback,
@@ -2771,6 +3077,7 @@ routerAdd('GET', '/backend/v1/placar-ao-vivo/config', (e) => {
       hasTsdbDbKey: false,
       maskedTsdbKey: '',
       ativo: ativo,
+      api_validada: apiValidada,
     })
   } catch (err) {
     return e.json(500, {
@@ -2930,50 +3237,65 @@ routerAdd('POST', '/backend/v1/placar-ao-vivo/test', (e) => {
     }
 
     try {
-      console.log('[placar-ao-vivo/test] Executando teste controlado de conexão: ' + urlTest)
-      var { enviarRequisicaoApiFootball, obterStatusLimiter } = require(
-        `${__hooks}/api_football_limiter.js`,
+      console.log(
+        '[placar-ao-vivo/test] Executando teste direto de conexão via $http.send (sem consumir cota): ' +
+          urlTest,
       )
-      var limStatus = obterStatusLimiter()
-      if (limStatus.waiting_reset) {
-        return e.json(200, {
-          success: false,
-          rate_limited: true,
-          waiting_reset: true,
-          usage: limStatus,
-          message:
-            'Limite diário de 15 requisições já atingido hoje (UTC). Requisição de teste bloqueada.',
-        })
+
+      const res = $http.send({
+        url: urlTest,
+        method: 'GET',
+        headers: headersTest,
+        timeout: 10,
+      })
+
+      var resJson = {}
+      try {
+        resJson = res.json || {}
+      } catch (_) {
+        resJson = {}
       }
 
-      var limiterRes = enviarRequisicaoApiFootball(
-        urlTest,
-        { headers: headersTest, timeout: 10 },
-        1,
-      )
-      if (limiterRes.blocked) {
-        return e.json(200, {
-          success: false,
-          rate_limited: true,
-          waiting_reset: true,
-          usage: limiterRes.usage,
-          message: 'Limite diário de 15 requisições atingido para hoje. Bloqueio preventivo.',
-        })
-      }
-
-      const res = limiterRes.rawResponse || { statusCode: limiterRes.statusCode }
-      var resJson = limiterRes.json || {}
-      var hasErrorAccess = resJson.errors && (resJson.errors.access || resJson.errors.requests)
+      var hasErrorAccess =
+        resJson.errors && (resJson.errors.access || resJson.errors.requests || resJson.errors.token)
       if (res.statusCode === 200 && !hasErrorAccess) {
+        // Gravar em config_integracoes api_validada com timestamp SEM incrementar cota
+        try {
+          const colInteg = $app.findCollectionByNameOrId('config_integracoes')
+          let valRec = null
+          try {
+            valRec = $app.findFirstRecordByData('config_integracoes', 'chave', 'api_validada')
+          } catch (_) {
+            valRec = new Record(colInteg)
+            valRec.set('chave', 'api_validada')
+            valRec.set('provedor', 'api_football')
+          }
+          valRec.set('ativo', true)
+          valRec.set(
+            'api_key',
+            JSON.stringify({
+              validada: true,
+              timestamp: new Date().toISOString(),
+              endpoint_testado: urlTest,
+              status_code: 200,
+            }),
+          )
+          $app.save(valRec)
+        } catch (errSaveVal) {
+          console.log('[placar-ao-vivo/test] Aviso ao salvar api_validada:', errSaveVal)
+        }
+
         return e.json(200, {
           success: true,
           provider: 'api_football',
           statusCode: res.statusCode,
           response: resJson,
-          message: 'Conexão com API-Football bem-sucedida! Conta ativa e autorizada.',
+          message: 'Conexão com API-Football bem-sucedida! Conta ativa, autorizada e validada.',
         })
       } else if (res.statusCode === 200 && hasErrorAccess) {
-        var errMsg = String(resJson.errors.access || resJson.errors.requests)
+        var errMsg = String(
+          resJson.errors.access || resJson.errors.requests || resJson.errors.token,
+        )
         return e.json(200, {
           success: false,
           account_suspended: errMsg.indexOf('suspended') !== -1,
@@ -3001,11 +3323,11 @@ routerAdd('POST', '/backend/v1/placar-ao-vivo/test', (e) => {
         })
       }
     } catch (errReq) {
-      return e.json(500, {
+      return e.json(200, {
         success: false,
         provider: 'api_football',
         message:
-          'Erro ao conectar à API-Football: ' +
+          'Não foi possível conectar à API-Football: ' +
           (errReq ? errReq.message : 'Timeout ou erro de rede'),
       })
     }

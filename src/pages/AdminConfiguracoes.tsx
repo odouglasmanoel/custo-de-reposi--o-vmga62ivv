@@ -35,6 +35,13 @@ import {
 } from '@/components/ui/alert-dialog'
 import { useToast } from '@/hooks/use-toast'
 
+interface ApiValidadaInfo {
+  validada?: boolean
+  timestamp?: string
+  endpoint_testado?: string
+  status_code?: number
+}
+
 interface ConfigState {
   provedor: 'api_football'
   hasKey: boolean
@@ -42,6 +49,7 @@ interface ConfigState {
   hasSecretFallback: boolean
   maskedKey: string
   ativo: boolean
+  api_validada?: ApiValidadaInfo | null
 }
 
 export default function AdminConfiguracoes() {
@@ -98,6 +106,7 @@ export default function AdminConfiguracoes() {
           hasSecretFallback: Boolean(data.hasSecretFallback),
           maskedKey: data.maskedKey || '',
           ativo: data.ativo !== false,
+          api_validada: data.api_validada || null,
         })
         setAtivoInput(data.ativo !== false)
         if (data.usage) {
@@ -428,6 +437,38 @@ export default function AdminConfiguracoes() {
                         </Badge>
                       )}
                     </div>
+
+                    {/* Exibição do estado 'API validada' com timestamp persistido */}
+                    <div className="mt-2.5 flex items-center justify-between border-t border-slate-200/80 pt-2 text-[11px]">
+                      <div className="flex items-center gap-1.5">
+                        <CheckCircle2
+                          className={`h-3.5 w-3.5 ${
+                            config.api_validada ? 'text-emerald-600' : 'text-slate-400'
+                          }`}
+                        />
+                        <span className="font-semibold text-slate-700">API validada:</span>
+                        {config.api_validada ? (
+                          <span className="text-emerald-700 font-medium">
+                            Sim{' '}
+                            {config.api_validada.timestamp && (
+                              <span className="text-slate-500 font-normal">
+                                ({new Date(config.api_validada.timestamp).toLocaleString('pt-BR')})
+                              </span>
+                            )}
+                          </span>
+                        ) : (
+                          <span className="text-slate-400 italic">Não validada recentemente</span>
+                        )}
+                      </div>
+                      {config.api_validada && (
+                        <Badge
+                          variant="secondary"
+                          className="bg-emerald-50 text-emerald-800 border-emerald-200 text-[9px] font-semibold"
+                        >
+                          Validada no Banco
+                        </Badge>
+                      )}
+                    </div>
                   </div>
 
                   {/* Campo de texto da Chave de API */}
@@ -649,15 +690,16 @@ export default function AdminConfiguracoes() {
             </div>
             <AlertDialogDescription className="text-xs text-slate-600 leading-relaxed pt-2 space-y-2">
               <p>
-                Este teste executa <strong>1 requisição real</strong> para o endpoint{' '}
+                Este teste executa a validação direta de credenciais no endpoint{' '}
                 <code className="rounded bg-slate-100 px-1 py-0.5 text-slate-800">/status</code> da
-                API-Football e <strong>consome a cota diária</strong> do Bolão.
+                API-Football. Chamadas de teste /status são <strong>isentas da cota diária</strong>{' '}
+                do Bolão e gravam o registro <code>api_validada</code> no banco.
               </p>
-              <div className="rounded-lg bg-amber-50 border border-amber-200 p-2.5 text-amber-900 font-medium">
-                Trava dura de segurança: máx <strong>15 requisições/dia</strong>.
+              <div className="rounded-lg bg-emerald-50 border border-emerald-200 p-2.5 text-emerald-900 font-medium">
+                Trava dura de segurança: máx <strong>15 requisições de dados/dia</strong>.
                 {dailyUsageInfo && (
-                  <div className="mt-1 text-[11px] font-normal">
-                    Consumo hoje:{' '}
+                  <div className="mt-1 text-[11px] font-normal text-emerald-800">
+                    Consumo de dados hoje:{' '}
                     <strong>
                       {dailyUsageInfo.count} / {dailyUsageInfo.max_limit}
                     </strong>
@@ -665,7 +707,7 @@ export default function AdminConfiguracoes() {
                   </div>
                 )}
               </div>
-              <p>Deseja realmente disparar a requisição agora?</p>
+              <p>Deseja testar e validar a conexão agora?</p>
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

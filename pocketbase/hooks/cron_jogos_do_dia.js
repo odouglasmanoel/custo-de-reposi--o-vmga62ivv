@@ -6,11 +6,12 @@
  * Sem re-tentativas.
  * Roteada pelo limitador centralizador api_football_limiter (Prioridade 3).
  * Se o uso no dia já estiver >= 10, o limiter suprime preventivamente para preservar cota ao bolão.
- *
- * REGRA DO POCKETBASE JSVM:
- * Funções declaradas FORA do callback do cron não são acessíveis em tempo de execução
- * (VM pool isolado). Toda a lógica do cronAdd DEVE estar 100% inline dentro do callback.
  */
+
+// Import estático no nível do módulo (padrão estável no runtime Goja)
+const { enviarRequisicaoApiFootball: enviarRequisicaoApiFootballModulo } = require(
+  `${__hooks}/api_football_limiter.js`,
+)
 
 // -------------------------------------------------------------
 // Endpoint seguro para acionamento/teste interno da rotina
@@ -18,7 +19,7 @@
 // Permite que admins ou testes locais disparem a rotina sob demanda
 // -------------------------------------------------------------
 routerAdd('POST', '/backend/v1/jogos-do-dia/sincronizar-matinal', (e) => {
-  const { enviarRequisicaoApiFootball } = require(`${__hooks}/api_football_limiter.js`)
+  const enviarRequisicaoApiFootball = enviarRequisicaoApiFootballModulo
 
   const classificarRegiao = function (leagueId, leagueName, countryName) {
     const id = Number(leagueId)
@@ -360,7 +361,7 @@ routerAdd('POST', '/backend/v1/jogos-do-dia/sincronizar-matinal', (e) => {
 // 100% DAS FUNÇÕES E VARIÁVEIS INLINE DENTRO DO CORPO DO CALLBACK
 // -------------------------------------------------------------
 cronAdd('jogos_do_dia_sync_matinal', '0 10 * * *', () => {
-  const { enviarRequisicaoApiFootball } = require(`${__hooks}/api_football_limiter.js`)
+  const enviarRequisicaoApiFootball = enviarRequisicaoApiFootballModulo
 
   const classificarRegiao = function (leagueId, leagueName, countryName) {
     const id = Number(leagueId)

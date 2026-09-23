@@ -109,9 +109,50 @@ function incrementarUso(rec, usageData) {
  */
 function enviarRequisicaoApiFootball(url, options, prioridade) {
   const prio = Number(prioridade) || 1
+  const isTestOrStatus =
+    Boolean(options && options.isTest) || (url && url.indexOf('/status') !== -1)
   const { rec, usageData } = obterOuCriarRegistroUso()
   const hojeUtc = usageData.date_utc
   const currentCount = Number(usageData.count) || 0
+
+  // Chamadas de teste /status não consomem a cota diária
+  if (isTestOrStatus) {
+    try {
+      const sendOptions = Object.assign(
+        {
+          method: 'GET',
+          timeout: 10,
+        },
+        options || {},
+      )
+      delete sendOptions.isTest
+
+      console.log(`[API-Football Limiter] Teste de conexão isento de cota: ${url}`)
+      const res = $http.send(Object.assign({ url }, sendOptions))
+      let jsonBody = null
+      try {
+        jsonBody = res.json
+      } catch (e) {
+        jsonBody = null
+      }
+
+      return {
+        blocked: false,
+        statusCode: res.statusCode,
+        rawResponse: res,
+        json: jsonBody,
+        usage: usageData,
+      }
+    } catch (err) {
+      console.error(`[API-Football Limiter] Exceção no teste de conexão (${url}):`, err)
+      return {
+        blocked: true,
+        error: String(err),
+        statusCode: 500,
+        usage: usageData,
+      }
+    }
+  }
 
   // 1. TRAVA DURA: se count >= 15, bloqueia IMEDIATAMENTE antes do $http.send
   if (currentCount >= DAILY_LIMIT) {
@@ -223,19 +264,52 @@ function enviarRequisicaoApiFootball(url, options, prioridade) {
  */
 function obterStatusLimiter() {
   const { usageData } = obterOuCriarRegistroUso()
+  const count = Number(usageData.count) || 0
+
+  let apiValidada = null
+  try {
+    const valRec = $app.findFirstRecordByFilter('config_integracoes', "chave = 'api_validada'")
+    if (valRec) {
+      const raw = valRec.getString('api_key') || ''
+      try {
+        apiValidada = JSON.parse(raw)
+      } catch (_) {
+        apiValidada = { timestamp: raw }
+      }
+    }
+  } catch (_) {
+    apiValidada = null
+  }
+
   return {
     date_utc: usageData.date_utc,
-    count: Number(usageData.count) || 0,
+    count: count,
     max_limit: DAILY_LIMIT,
-    remaining: Math.max(0, DAILY_LIMIT - (Number(usageData.count) || 0)),
-    waiting_reset: (Number(usageData.count) || 0) >= DAILY_LIMIT,
+    remaining: Math.max(0, DAILY_LIMIT - count),
+    waiting_reset: count >= DAILY_LIMIT,
+    blocked: count >= DAILY_LIMIT,
     last_reset_utc: usageData.last_reset_utc,
     last_request_utc: usageData.last_request_utc,
+    api_validada: apiValidada,
+  }
+}
+
+function checarApiValidadaECota() {
+  const status = obterStatusLimiter()
+  return {
+    validada: Boolean(status.api_validada),
+    api_validada: status.api_validada,
+    cota_disponivel: !status.waiting_reset,
+    count: status.count,
+    max_limit: status.max_limit,
+    remaining: status.remaining,
+    waiting_reset: status.waiting_reset,
   }
 }
 
 module.exports = {
   enviarRequisicaoApiFootball,
   obterStatusLimiter,
+  checarApiValidadaECota,
   DAILY_LIMIT,
 }
