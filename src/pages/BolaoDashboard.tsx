@@ -1905,8 +1905,8 @@ export default function BolaoDashboard() {
                                 {bolaoOrigem.nome.replace('Copa ', '')}
                               </Badge>
                             )}
-                            <div className="flex items-center gap-1.5 min-w-0 truncate">
-                              <span className="flex items-center gap-1 min-w-0 truncate">
+                            <div className="flex items-center gap-1.5 min-w-0 flex-1">
+                              <span className="flex items-center gap-1 min-w-0 flex-1">
                                 <TeamShield
                                   escudo={logoCasa}
                                   nomeTime={jogo.time_a}
@@ -1914,12 +1914,15 @@ export default function BolaoDashboard() {
                                   sizeClass="h-5 w-5"
                                   textClass="text-[8px] font-black"
                                 />
-                                <span className="font-bold text-[#0F172A] truncate">
+                                <span
+                                  className="font-bold text-[#0F172A] min-w-0 line-clamp-2 leading-tight"
+                                  title={jogo.time_a}
+                                >
                                   {jogo.time_a}
                                 </span>
                               </span>
                               <span className="text-slate-400 font-bold px-0.5 shrink-0">x</span>
-                              <span className="flex items-center gap-1 min-w-0 truncate">
+                              <span className="flex items-center gap-1 min-w-0 flex-1">
                                 <TeamShield
                                   escudo={logoVisitante}
                                   nomeTime={jogo.time_b}
@@ -1927,7 +1930,10 @@ export default function BolaoDashboard() {
                                   sizeClass="h-5 w-5"
                                   textClass="text-[8px] font-black"
                                 />
-                                <span className="font-bold text-[#0F172A] truncate">
+                                <span
+                                  className="font-bold text-[#0F172A] min-w-0 line-clamp-2 leading-tight"
+                                  title={jogo.time_b}
+                                >
                                   {jogo.time_b}
                                 </span>
                               </span>

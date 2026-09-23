@@ -279,8 +279,11 @@ export function ParticipantBetsModal({
                         >
                           {/* Cabeçalho do Confronto */}
                           <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-2.5">
-                            <div className="flex items-center gap-2">
-                              <span className="text-sm font-bold text-[#0F172A]">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span
+                                className="text-sm font-bold text-[#0F172A] line-clamp-2 leading-tight"
+                                title={`${jogo.time_a} x ${jogo.time_b}`}
+                              >
                                 {jogo.time_a} x {jogo.time_b}
                               </span>
                               {jogo.competicao && (

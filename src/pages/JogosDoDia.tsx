@@ -253,9 +253,10 @@ const MatchRowItem = React.memo(
                     <div className="flex flex-1 flex-col items-end text-right min-w-0">
                       <div className="flex items-center justify-end gap-2.5 w-full">
                         <span
-                          className={`text-sm font-bold sm:text-base truncate ${
+                          className={`text-sm font-bold sm:text-base line-clamp-2 leading-tight min-w-0 ${
                             isPstOrCanc ? 'text-slate-600' : 'text-[#0F172A]'
                           }`}
+                          title={match.teams.home.name}
                         >
                           {match.teams.home.name}
                         </span>
@@ -366,9 +367,10 @@ const MatchRowItem = React.memo(
                           )}
                         </div>
                         <span
-                          className={`text-sm font-bold sm:text-base truncate ${
+                          className={`text-sm font-bold sm:text-base line-clamp-2 leading-tight min-w-0 ${
                             isPstOrCanc ? 'text-slate-600' : 'text-[#0F172A]'
                           }`}
+                          title={match.teams.away.name}
                         >
                           {match.teams.away.name}
                         </span>

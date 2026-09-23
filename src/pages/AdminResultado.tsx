@@ -407,7 +407,10 @@ export default function AdminResultado() {
                 <Shield className="h-5 w-5" />
               </span>
               <div className="flex flex-wrap items-center gap-2">
-                <h1 className="text-xl font-bold tracking-tight text-[#0F172A] sm:text-2xl">
+                <h1
+                  className="text-xl font-bold tracking-tight text-[#0F172A] sm:text-2xl line-clamp-2 leading-tight"
+                  title={`${jogo.time_a} x ${jogo.time_b}`}
+                >
                   {jogo.time_a} x {jogo.time_b}
                 </h1>
                 {jogo.competicao && (

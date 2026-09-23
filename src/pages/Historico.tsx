@@ -722,15 +722,21 @@ export default function Historico() {
                         <div key={jogo.id} className="p-4 bg-white hover:bg-slate-50/70">
                           <div className="flex flex-wrap items-center justify-between gap-2">
                             <div className="flex flex-wrap items-center gap-2">
-                              <span className="font-bold text-sm text-[#0F172A]">
+                              <span
+                                className="font-bold text-sm text-[#0F172A] line-clamp-2 leading-tight"
+                                title={jogo.time_a}
+                              >
                                 {jogo.time_a}
                               </span>
-                              <span className="rounded bg-slate-900 px-2 py-0.5 text-xs font-black text-white">
+                              <span className="rounded bg-slate-900 px-2 py-0.5 text-xs font-black text-white shrink-0">
                                 {jogo.resultado_finalizado && jogo.placar_a !== null
                                   ? `${jogo.placar_a} x ${jogo.placar_b}`
                                   : 'A definir'}
                               </span>
-                              <span className="font-bold text-sm text-[#0F172A]">
+                              <span
+                                className="font-bold text-sm text-[#0F172A] line-clamp-2 leading-tight"
+                                title={jogo.time_b}
+                              >
                                 {jogo.time_b}
                               </span>
                               {jogo.competicao && (

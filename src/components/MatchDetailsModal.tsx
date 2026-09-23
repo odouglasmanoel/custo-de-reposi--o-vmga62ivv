@@ -566,7 +566,10 @@ export function MatchDetailsModal({ isOpen, onClose, match }: MatchDetailsModalP
                   <Shield className="h-6 w-6 text-white/70" />
                 </div>
               )}
-              <span className="font-bold text-sm leading-tight text-white line-clamp-2">
+              <span
+                className="font-bold text-sm leading-tight text-white line-clamp-2"
+                title={homeName}
+              >
                 {homeName}
               </span>
             </div>
@@ -599,7 +602,10 @@ export function MatchDetailsModal({ isOpen, onClose, match }: MatchDetailsModalP
                   <Shield className="h-6 w-6 text-white/70" />
                 </div>
               )}
-              <span className="font-bold text-sm leading-tight text-white line-clamp-2">
+              <span
+                className="font-bold text-sm leading-tight text-white line-clamp-2"
+                title={awayName}
+              >
                 {awayName}
               </span>
             </div>
@@ -771,7 +777,8 @@ export function MatchDetailsModal({ isOpen, onClose, match }: MatchDetailsModalP
                     <button
                       type="button"
                       onClick={() => setLineupTab('home')}
-                      className={`py-1.5 px-2 rounded-md text-xs font-bold truncate transition ${
+                      title={`${teamHome?.teamName || homeName}${teamHome?.formation ? ` (${teamHome.formation})` : ''}`}
+                      className={`py-1.5 px-2 rounded-md text-xs font-bold line-clamp-2 leading-tight transition min-w-0 ${
                         lineupTab === 'home'
                           ? 'bg-white text-slate-900 shadow-xs'
                           : 'text-slate-600 hover:text-slate-900'
@@ -783,7 +790,8 @@ export function MatchDetailsModal({ isOpen, onClose, match }: MatchDetailsModalP
                     <button
                       type="button"
                       onClick={() => setLineupTab('away')}
-                      className={`py-1.5 px-2 rounded-md text-xs font-bold truncate transition ${
+                      title={`${teamAway?.teamName || awayName}${teamAway?.formation ? ` (${teamAway.formation})` : ''}`}
+                      className={`py-1.5 px-2 rounded-md text-xs font-bold line-clamp-2 leading-tight transition min-w-0 ${
                         lineupTab === 'away'
                           ? 'bg-white text-slate-900 shadow-xs'
                           : 'text-slate-600 hover:text-slate-900'

@@ -386,9 +386,11 @@ export function ParticipantScorersView({
           <div className="space-y-4 py-2 text-xs">
             {/* Bloco Time A */}
             <div className="rounded-lg border border-slate-200 bg-slate-50/70 p-3">
-              <div className="flex items-center justify-between mb-2 pb-1.5 border-b border-slate-200">
-                <span className="font-bold text-[#0F172A]">{timeA}</span>
-                <Badge variant="outline" className="text-[10px] font-semibold">
+              <div className="flex items-center justify-between mb-2 pb-1.5 border-b border-slate-200 gap-2">
+                <span className="font-bold text-[#0F172A] line-clamp-2 leading-tight" title={timeA}>
+                  {timeA}
+                </span>
+                <Badge variant="outline" className="text-[10px] font-semibold shrink-0">
                   {placarA} gol{placarA === 1 ? '' : 's'}
                 </Badge>
               </div>
@@ -435,9 +437,11 @@ export function ParticipantScorersView({
 
             {/* Bloco Time B */}
             <div className="rounded-lg border border-slate-200 bg-slate-50/70 p-3">
-              <div className="flex items-center justify-between mb-2 pb-1.5 border-b border-slate-200">
-                <span className="font-bold text-[#0F172A]">{timeB}</span>
-                <Badge variant="outline" className="text-[10px] font-semibold">
+              <div className="flex items-center justify-between mb-2 pb-1.5 border-b border-slate-200 gap-2">
+                <span className="font-bold text-[#0F172A] line-clamp-2 leading-tight" title={timeB}>
+                  {timeB}
+                </span>
+                <Badge variant="outline" className="text-[10px] font-semibold shrink-0">
                   {placarB} gol{placarB === 1 ? '' : 's'}
                 </Badge>
               </div>

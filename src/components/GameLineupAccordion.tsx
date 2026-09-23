@@ -158,11 +158,12 @@ export const GameLineupAccordion: React.FC<GameLineupAccordionProps> = ({
               </div>
 
               {/* Seletor de time (Tabs Mandante / Visitante) */}
-              <div className="grid grid-cols-2 gap-1 rounded-lg bg-slate-100 p-0.5 text-center">
+              <div className="grid grid-cols-2 gap-1 rounded-lg bg-slate-100 p-0.5 text-center items-center">
                 <button
                   type="button"
                   onClick={() => setActiveTab('timeA')}
-                  className={`py-1 px-2 rounded-md font-bold text-[11px] transition truncate ${
+                  title={timeA}
+                  className={`py-1 px-2 rounded-md font-bold text-[11px] transition line-clamp-2 leading-tight min-w-0 ${
                     activeTab === 'timeA'
                       ? 'bg-white text-[#0F2A43] shadow-2xs font-extrabold'
                       : 'text-slate-600 hover:text-slate-900'
@@ -173,7 +174,8 @@ export const GameLineupAccordion: React.FC<GameLineupAccordionProps> = ({
                 <button
                   type="button"
                   onClick={() => setActiveTab('timeB')}
-                  className={`py-1 px-2 rounded-md font-bold text-[11px] transition truncate ${
+                  title={timeB}
+                  className={`py-1 px-2 rounded-md font-bold text-[11px] transition line-clamp-2 leading-tight min-w-0 ${
                     activeTab === 'timeB'
                       ? 'bg-white text-[#0F2A43] shadow-2xs font-extrabold'
                       : 'text-slate-600 hover:text-slate-900'
