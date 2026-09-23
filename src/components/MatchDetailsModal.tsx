@@ -8,10 +8,20 @@ import {
 } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
-import { Loader2, AlertCircle, RefreshCw, Shield, Users, HelpCircle } from 'lucide-react'
+import {
+  Loader2,
+  AlertCircle,
+  Shield,
+  Users,
+  MapPin,
+  UserCheck,
+  Calendar,
+  Clock,
+  Info,
+} from 'lucide-react'
 import pb from '@/lib/pocketbase/client'
+import { useRealtime } from '@/hooks/use-realtime'
 import { isFixtureLive } from '@/lib/apiFootballMatcher'
-import { fetchGameLineup, LineupResponse, LineupTeam } from '@/services/escalacoes'
 import type { DayFixture } from '@/pages/JogosDoDia'
 import { setWithBoundedCapacity } from '@/lib/cacheManager'
 
@@ -33,9 +43,35 @@ export interface MatchEventItem {
     id?: string | number | null
     name?: string | null
   }
-  type?: string | null // 'Goal' | 'Card' | 'subst' | etc.
-  detail?: string | null // 'Normal Goal' | 'Yellow Card' | 'Red Card' | 'Substitution 1' | etc.
+  type?: string | null
+  detail?: string | null
   comments?: string | null
+}
+
+export interface LineupPlayerItem {
+  id?: string
+  name: string
+  number?: number | null
+  pos?: string
+  grid?: string | null
+}
+
+export interface LineupTeamItem {
+  teamId?: string
+  teamName: string
+  teamLogo?: string
+  formation?: string
+  coach?: string
+  starters: LineupPlayerItem[]
+  substitutes: LineupPlayerItem[]
+}
+
+export interface LineupData {
+  status: 'confirmada' | 'provavel' | 'indisponivel'
+  provider?: string
+  fixtureId?: string
+  teams: LineupTeamItem[]
+  updatedAt?: string
 }
 
 interface MatchDetailsModalProps {
@@ -44,361 +80,292 @@ interface MatchDetailsModalProps {
   match: DayFixture | null
 }
 
-// -------------------------------------------------------------
-// CACHE LOCAL EM MEMÓRIA DE FICHAS DETALHADAS (MATCH DETAILS)
-// Evita requisições de rede repetitivas ao clicar consecutivamente
-// em "Exibir Detalhes". TTL: 15s para ao vivo, 30 min para agendados/finalizados.
-// -------------------------------------------------------------
-interface CachedDetailsEntry {
+// Cache local em memória (PocketBase cache-first) para evitar leituras repetidas desnecessárias
+interface CachedPBDetails {
   events: MatchEventItem[]
+  lineup: LineupData | null
+  estadio: string | null
+  arbitro: string | null
+  statusInfo: { short: string; long: string; elapsed?: number | null }
   timestamp: number
-  isLive: boolean
 }
 
-const matchDetailsMemoryCache = new Map<string, CachedDetailsEntry>()
+const pbDetailsMemoryCache = new Map<string, CachedPBDetails>()
 
-const getMatchDetailsCacheKey = (match: DayFixture | null): string => {
+function getCacheKey(match: DayFixture | null): string {
   if (!match) return ''
   const fixId = match.fixture?.id ? String(match.fixture.id).trim() : ''
-  if (fixId) return `details_${fixId}`
+  if (fixId) return `pb_details_${fixId}`
   const h = (match.teams?.home?.name || '').trim().toLowerCase()
   const a = (match.teams?.away?.name || '').trim().toLowerCase()
   const d = (match.fixture?.date || '').split('T')[0] || ''
-  return `details_${h}__${a}__${d}`
+  return `pb_details_${h}__${a}__${d}`
 }
 
 export function MatchDetailsModal({ isOpen, onClose, match }: MatchDetailsModalProps) {
-  const [activeTab, setActiveTab] = useState<'timeline' | 'escalacoes'>('timeline')
+  const [activeTab, setActiveTab] = useState<'ficha' | 'escalacoes'>('ficha')
   const [loading, setLoading] = useState(false)
   const [events, setEvents] = useState<MatchEventItem[]>([])
-  const [errorMessage, setErrorMessage] = useState<string | null>(null)
-  const [loadedFixtureId, setLoadedFixtureId] = useState<string | number | null>(null)
-
-  // Estado das Escalações Integradas no Modal
-  const [lineupLoading, setLineupLoading] = useState(false)
-  const [lineup, setLineup] = useState<LineupResponse | null>(null)
+  const [lineup, setLineup] = useState<LineupData | null>(null)
   const [lineupTab, setLineupTab] = useState<'home' | 'away'>('home')
 
-  const fetchDetails = useCallback(
-    async (currentMatch: DayFixture, silent = false, force = false) => {
-      if (!currentMatch) return
-      const fixtureId = currentMatch.fixture?.id
-      const timeA = currentMatch.teams?.home?.name || ''
-      const timeB = currentMatch.teams?.away?.name || ''
-      const rawDate = currentMatch.fixture?.date || ''
-      const datePart = rawDate.split('T')[0] || ''
-      const st = (currentMatch.fixture?.status?.short || '').toUpperCase().trim()
-      const live = Boolean(currentMatch.isLive || isFixtureLive(st))
+  // Metadados da Ficha Técnica (Estádio, Árbitro, Status)
+  const [estadio, setEstadio] = useState<string | null>(null)
+  const [arbitro, setArbitro] = useState<string | null>(null)
+  const [partidaStatus, setPartidaStatus] = useState<{
+    short: string
+    long: string
+    elapsed?: number | null
+  }>({
+    short: match?.fixture?.status?.short || 'NS',
+    long: match?.fixture?.status?.long || 'Agendado',
+    elapsed: match?.fixture?.status?.elapsed ?? null,
+  })
 
-      const cacheKey = getMatchDetailsCacheKey(currentMatch)
-      const now = Date.now()
+  // Leitura EXCLUSIVAMENTE do PocketBase (cache-first local). NUNCA chama APIs externas.
+  const loadFromPocketBase = useCallback(async (currentMatch: DayFixture, force = false) => {
+    if (!currentMatch) return
+    const fixtureId = currentMatch.fixture?.id ? String(currentMatch.fixture.id).trim() : ''
+    const timeA = (currentMatch.teams?.home?.name || '').trim()
+    const timeB = (currentMatch.teams?.away?.name || '').trim()
 
-      // 1. Verificação no cache em memória para evitar chamadas de rede redundantes
-      if (!force && cacheKey && matchDetailsMemoryCache.has(cacheKey)) {
-        const cached = matchDetailsMemoryCache.get(cacheKey)!
-        const maxAge = cached.isLive ? 15000 : 30 * 60 * 1000
-        if (now - cached.timestamp < maxAge) {
-          setEvents(cached.events)
-          setLoadedFixtureId(fixtureId)
-          setErrorMessage(null)
-          return
-        }
+    const cacheKey = getCacheKey(currentMatch)
+    const now = Date.now()
+
+    // 1. Verifica cache local em memória (30s de TTL se ao vivo, 5min se agendado/finalizado)
+    if (!force && cacheKey && pbDetailsMemoryCache.has(cacheKey)) {
+      const cached = pbDetailsMemoryCache.get(cacheKey)!
+      const isLive = isFixtureLive(cached.statusInfo.short)
+      const maxAge = isLive ? 30000 : 5 * 60 * 1000
+      if (now - cached.timestamp < maxAge) {
+        setEvents(cached.events)
+        setLineup(cached.lineup)
+        setEstadio(cached.estadio)
+        setArbitro(cached.arbitro)
+        setPartidaStatus(cached.statusInfo)
+        return
+      }
+    }
+
+    setLoading(true)
+
+    try {
+      let resolvedLineup: LineupData | null = null
+      let resolvedEvents: MatchEventItem[] = Array.isArray(currentMatch.events)
+        ? [...currentMatch.events]
+        : []
+      let resolvedEstadio: string | null = null
+      let resolvedArbitro: string | null = null
+      let resolvedStatus = {
+        short: currentMatch.fixture?.status?.short || 'NS',
+        long: currentMatch.fixture?.status?.long || 'Agendado',
+        elapsed: currentMatch.fixture?.status?.elapsed ?? null,
       }
 
-      if (!silent) {
-        setLoading(true)
-        setErrorMessage(null)
-      }
-
-      try {
-        const headers: Record<string, string> = {
-          'X-Cascade-Priority': 'db-fallback-first',
-        }
-        if (pb.authStore.token) {
-          headers['Authorization'] = pb.authStore.token
-        }
-
-        const queryParams = new URLSearchParams()
-        if (fixtureId) queryParams.set('fixture_id', String(fixtureId))
-        if (timeA) queryParams.set('time_a', timeA)
-        if (timeB) queryParams.set('time_b', timeB)
-        if (datePart) queryParams.set('data', datePart)
-        if (st) queryParams.set('status', st)
-        if (live) queryParams.set('isLive', 'true')
-        if (silent || force) queryParams.set('refresh', '1')
-        queryParams.set('cascade', 'graceful')
-
-        const url = `${import.meta.env.VITE_POCKETBASE_URL}/backend/v1/detalhes-partida?${queryParams.toString()}`
-        const res = await fetch(url, { headers })
-
-        if (!res.ok) {
-          throw new Error(`Erro na consulta (${res.status})`)
-        }
-
-        const data = await res.json()
-        let rawEvents: MatchEventItem[] = Array.isArray(data.events) ? data.events : []
-
-        // Se a resposta da API externa vier incompleta ou vazia, consolidar com dados locais do PocketBase (jogos.ficha_detalhes)
-        if (
-          rawEvents.length === 0 ||
-          !rawEvents.some((ev) => (ev.type || '').toLowerCase().includes('goal'))
-        ) {
-          try {
-            const pbFilter = fixtureId
-              ? `fixture_id = "${String(fixtureId)}"`
-              : timeA && timeB
-                ? `time_a ~ "${timeA.slice(0, 5)}" && time_b ~ "${timeB.slice(0, 5)}"`
-                : ''
-            if (pbFilter) {
-              const localGames = await pb.collection('jogos').getList(1, 1, {
-                filter: pbFilter,
-                requestKey: null,
-              })
-              if (localGames.items.length > 0) {
-                const lg = localGames.items[0]
-                const fichaRaw = lg.ficha_detalhes
-                if (fichaRaw) {
-                  const fichaObj = typeof fichaRaw === 'string' ? JSON.parse(fichaRaw) : fichaRaw
-                  if (Array.isArray(fichaObj.events) && fichaObj.events.length > 0) {
-                    // Mescla eventos salvos que não estejam presentes
-                    const existingSignatures = new Set(
-                      rawEvents.map(
-                        (e) => `${e.time?.elapsed || ''}_${e.player?.name || ''}_${e.type || ''}`,
-                      ),
-                    )
-                    for (const fe of fichaObj.events) {
-                      const sig = `${fe.time?.elapsed || ''}_${fe.player?.name || ''}_${fe.type || ''}`
-                      if (!existingSignatures.has(sig)) {
-                        rawEvents.push(fe)
-                        existingSignatures.add(sig)
-                      }
-                    }
-                  }
-                }
+      // Consulta 1: Tenta ler registro na collection `jogos_do_dia`
+      // para capturar estádio, árbitro, status atualizado e raw_payload
+      if (fixtureId) {
+        try {
+          const jddRecords = await pb.collection('jogos_do_dia').getList(1, 1, {
+            filter: `fixture_id = '${fixtureId.replace(/'/g, "\\'")}'`,
+            requestKey: null,
+          })
+          if (jddRecords.items.length > 0) {
+            const jdd = jddRecords.items[0] as any
+            if (jdd.status_short) {
+              resolvedStatus = {
+                short: jdd.status_short,
+                long: jdd.status_long || resolvedStatus.long,
+                elapsed: jdd.status_elapsed != null ? jdd.status_elapsed : resolvedStatus.elapsed,
               }
             }
-          } catch {
-            /* intentionally ignored */
-          }
-        }
-
-        let resolvedEvents = rawEvents
-
-        // Injetar scorers conhecidos (match.scorers) quando events não contiver gols,
-        // garantindo que a lista de gols nunca fique vazia enquanto o placar indicar gols marcados
-        const hasGoalEvents = resolvedEvents.some((ev) => {
-          const t = (ev.type || '').toLowerCase()
-          const d = (ev.detail || '').toLowerCase()
-          return t.includes('goal') || d.includes('goal')
-        })
-
-        const homeGoalsCount = Number(currentMatch.goals?.home ?? 0)
-        const awayGoalsCount = Number(currentMatch.goals?.away ?? 0)
-        const totalPlacar =
-          (homeGoalsCount > 0 ? homeGoalsCount : 0) + (awayGoalsCount > 0 ? awayGoalsCount : 0)
-
-        if (!hasGoalEvents && totalPlacar > 0) {
-          if (Array.isArray(currentMatch.scorers) && currentMatch.scorers.length > 0) {
-            const scorersEvents: MatchEventItem[] = currentMatch.scorers.map((sc) => ({
-              time: { elapsed: sc.minute ?? null, extra: sc.extraMinute ?? null },
-              team: {
-                id: sc.teamId ?? null,
-                name:
-                  sc.teamName ??
-                  (sc.teamSide === 'home'
-                    ? currentMatch.teams?.home?.name || ''
-                    : currentMatch.teams?.away?.name || ''),
-              },
-              player: { name: sc.name },
-              type: 'Goal',
-              detail: 'Normal Goal',
-            }))
-            resolvedEvents = [...scorersEvents, ...resolvedEvents]
-          } else {
-            // Se não há scorers nominais conhecidos, gera representação pelo placar
-            const placeholderGols: MatchEventItem[] = []
-            for (let i = 0; i < homeGoalsCount; i++) {
-              placeholderGols.push({
-                time: { elapsed: null, extra: null },
-                team: { name: currentMatch.teams?.home?.name || 'Mandante' },
-                player: { name: `Gol (${currentMatch.teams?.home?.name || 'Mandante'})` },
-                type: 'Goal',
-                detail: 'Normal Goal',
-              })
+            if (Array.isArray(jdd.events) && jdd.events.length > 0) {
+              resolvedEvents = jdd.events
             }
-            for (let i = 0; i < awayGoalsCount; i++) {
-              placeholderGols.push({
-                time: { elapsed: null, extra: null },
-                team: { name: currentMatch.teams?.away?.name || 'Visitante' },
-                player: { name: `Gol (${currentMatch.teams?.away?.name || 'Visitante'})` },
-                type: 'Goal',
-                detail: 'Normal Goal',
-              })
-            }
-            resolvedEvents = [...placeholderGols, ...resolvedEvents]
-          }
-        }
 
-        setEvents(resolvedEvents)
-        setLoadedFixtureId(fixtureId)
-
-        // Salva no cache local em memória com limite de 200 entradas e evicção dos mais antigos
-        if (cacheKey) {
-          setWithBoundedCapacity(
-            matchDetailsMemoryCache,
-            cacheKey,
-            {
-              events: resolvedEvents,
-              timestamp: now,
-              isLive: live,
-            },
-            200,
-          )
-        }
-      } catch (err: any) {
-        // Fallback gracioso usando scorers já conhecidos da partida
-        if (Array.isArray(currentMatch.scorers) && currentMatch.scorers.length > 0) {
-          const fallbackGols: MatchEventItem[] = currentMatch.scorers.map((sc) => ({
-            time: { elapsed: sc.minute ?? null, extra: sc.extraMinute ?? null },
-            team: {
-              name:
-                sc.teamName ??
-                (sc.teamSide === 'home'
-                  ? currentMatch.teams?.home?.name || ''
-                  : currentMatch.teams?.away?.name || ''),
-            },
-            player: { name: sc.name },
-            type: 'Goal',
-            detail: 'Normal Goal',
-          }))
-          setEvents(fallbackGols)
-          setLoadedFixtureId(fixtureId)
-        } else {
-          // Se não há eventos nem scorers, mantém lista vazia sem explodir banner agressivo se tiver placar
-          setEvents([])
-          setLoadedFixtureId(fixtureId)
-        }
-      } finally {
-        setLoading(false)
-      }
-    },
-    [],
-  )
-
-  // Busca de escalação sob demanda para a aba "Escalações"
-  const loadModalLineup = useCallback(async (currentMatch: DayFixture, force = false) => {
-    if (!currentMatch) return
-    setLineupLoading(true)
-    try {
-      const rawDate = currentMatch.fixture?.date || ''
-      const datePart = rawDate.split('T')[0] || ''
-      const fixId = currentMatch.fixture?.id ? String(currentMatch.fixture.id) : undefined
-
-      let res = await fetchGameLineup({
-        jogoId: fixId || 'dia_match',
-        fixtureId: fixId,
-        timeA: currentMatch.teams?.home?.name || '',
-        timeB: currentMatch.teams?.away?.name || '',
-        data: datePart,
-        forceRefresh: force,
-      })
-
-      // Se a resposta vier truncada ou indisponível, tenta consolidar com dados já salvos no PocketBase (jogos.escalacoes)
-      const hasFewPlayers =
-        !res ||
-        !Array.isArray(res.teams) ||
-        res.teams.length === 0 ||
-        res.teams.some((t) => (t.starters?.length || 0) < 5)
-
-      if (hasFewPlayers) {
-        try {
-          const pbFilter = fixId
-            ? `fixture_id = "${String(fixId)}"`
-            : currentMatch.teams?.home?.name && currentMatch.teams?.away?.name
-              ? `time_a ~ "${currentMatch.teams.home.name.slice(0, 5)}" && time_b ~ "${currentMatch.teams.away.name.slice(0, 5)}"`
-              : ''
-          if (pbFilter) {
-            const localGames = await pb.collection('jogos').getList(1, 1, {
-              filter: pbFilter,
-              requestKey: null,
-            })
-            if (localGames.items.length > 0) {
-              const savedEscRaw = localGames.items[0].escalacoes
-              if (savedEscRaw) {
-                const savedObj =
-                  typeof savedEscRaw === 'string' ? JSON.parse(savedEscRaw) : savedEscRaw
-                if (
-                  savedObj &&
-                  Array.isArray(savedObj.teams) &&
-                  savedObj.teams.length > 0 &&
-                  (savedObj.teams[0]?.starters?.length || 0) >
-                    (res?.teams?.[0]?.starters?.length || 0)
-                ) {
-                  res = savedObj
+            // Metadados do estádio e árbitro do raw_payload gravado no banco
+            const raw = jdd.raw_payload || {}
+            if (raw.fixture) {
+              if (raw.fixture.referee && typeof raw.fixture.referee === 'string') {
+                resolvedArbitro = raw.fixture.referee.trim()
+              }
+              if (raw.fixture.venue) {
+                const vName = raw.fixture.venue.name || ''
+                const vCity = raw.fixture.venue.city || ''
+                if (vName && vCity) {
+                  resolvedEstadio = `${vName} (${vCity})`
+                } else if (vName) {
+                  resolvedEstadio = vName
                 }
               }
             }
           }
         } catch {
-          /* intentionally ignored */
+          /* ignore error */
         }
       }
 
-      if (res && Array.isArray(res.teams)) {
-        // Assegura PSG oficial nos logos de escalações
-        for (const t of res.teams) {
-          if (t && t.teamName) {
-            const tLower = t.teamName.toLowerCase()
-            if (tLower.includes('paris') || tLower === 'psg') {
-              t.teamLogo = 'https://media.api-sports.io/football/teams/85.png'
+      // Consulta 2: Tenta ler escalações da collection `jogos` do PocketBase
+      // Gravadas pelo cron de escalações (`cron_escalacoes_pre_jogo_5m`)
+      let pbJogoFilter = ''
+      if (fixtureId) {
+        pbJogoFilter = `fixture_id = '${fixtureId.replace(/'/g, "\\'")}'`
+      } else if (timeA && timeB) {
+        pbJogoFilter = `time_a ~ '${timeA.slice(0, 5).replace(/'/g, "\\'")}' && time_b ~ '${timeB.slice(0, 5).replace(/'/g, "\\'")}'`
+      }
+
+      if (pbJogoFilter) {
+        try {
+          const jogosRecords = await pb.collection('jogos').getList(1, 1, {
+            filter: pbJogoFilter,
+            fields: 'id,fixture_id,time_a,time_b,escalacoes,ficha_detalhes,resultado_finalizado',
+            requestKey: null,
+          })
+          if (jogosRecords.items.length > 0) {
+            const jRec = jogosRecords.items[0] as any
+            const rawEsc = jRec.escalacoes
+            if (rawEsc) {
+              const parsedEsc = typeof rawEsc === 'string' ? JSON.parse(rawEsc) : rawEsc
+              if (
+                parsedEsc &&
+                Array.isArray(parsedEsc.teams) &&
+                parsedEsc.teams.length > 0 &&
+                (parsedEsc.teams[0]?.starters?.length > 0 ||
+                  parsedEsc.teams[1]?.starters?.length > 0)
+              ) {
+                resolvedLineup = parsedEsc
+              }
+            }
+
+            // Mescla ficha técnica adicional se presente
+            const rawFicha = jRec.ficha_detalhes
+            if (rawFicha) {
+              const parsedFicha = typeof rawFicha === 'string' ? JSON.parse(rawFicha) : rawFicha
+              if (
+                parsedFicha &&
+                Array.isArray(parsedFicha.events) &&
+                parsedFicha.events.length > 0
+              ) {
+                if (resolvedEvents.length === 0) {
+                  resolvedEvents = parsedFicha.events
+                }
+              }
+              if (parsedFicha?.referee && !resolvedArbitro) {
+                resolvedArbitro = String(parsedFicha.referee)
+              }
+              if (parsedFicha?.venue && !resolvedEstadio) {
+                resolvedEstadio = String(parsedFicha.venue)
+              }
             }
           }
+        } catch {
+          /* ignore error */
         }
       }
-      setLineup(res)
-    } catch (e) {
-      console.warn('Erro ao carregar escalação no modal:', e)
+
+      // Se ainda não temos eventos de gols, injeta os marcadores conhecidos do registro
+      const hasGoalEvents = resolvedEvents.some((ev) => {
+        const t = (ev.type || '').toLowerCase()
+        const d = (ev.detail || '').toLowerCase()
+        return t.includes('goal') || d.includes('goal')
+      })
+
+      const homeGoalsCount = Number(currentMatch.goals?.home ?? 0)
+      const awayGoalsCount = Number(currentMatch.goals?.away ?? 0)
+      const totalPlacar =
+        (homeGoalsCount > 0 ? homeGoalsCount : 0) + (awayGoalsCount > 0 ? awayGoalsCount : 0)
+
+      if (!hasGoalEvents && totalPlacar > 0 && Array.isArray(currentMatch.scorers)) {
+        const scorersEvents: MatchEventItem[] = currentMatch.scorers.map((sc) => ({
+          time: { elapsed: sc.minute ?? null, extra: sc.extraMinute ?? null },
+          team: {
+            id: sc.teamId ?? null,
+            name:
+              sc.teamName ??
+              (sc.teamSide === 'home'
+                ? currentMatch.teams?.home?.name || ''
+                : currentMatch.teams?.away?.name || ''),
+          },
+          player: { name: sc.name },
+          type: 'Goal',
+          detail: 'Normal Goal',
+        }))
+        resolvedEvents = [...scorersEvents, ...resolvedEvents]
+      }
+
+      setEvents(resolvedEvents)
+      setLineup(resolvedLineup)
+      setEstadio(resolvedEstadio)
+      setArbitro(resolvedArbitro)
+      setPartidaStatus(resolvedStatus)
+
+      // Atualiza o cache local em memória
+      if (cacheKey) {
+        setWithBoundedCapacity(
+          pbDetailsMemoryCache,
+          cacheKey,
+          {
+            events: resolvedEvents,
+            lineup: resolvedLineup,
+            estadio: resolvedEstadio,
+            arbitro: resolvedArbitro,
+            statusInfo: resolvedStatus,
+            timestamp: now,
+          },
+          100,
+        )
+      }
     } finally {
-      setLineupLoading(false)
+      setLoading(false)
     }
   }, [])
 
+  // Efeito ao abrir o modal: lê exclusivamente do PocketBase
   useEffect(() => {
     if (isOpen && match) {
-      if (loadedFixtureId !== match.fixture?.id) {
-        setEvents([])
-        setErrorMessage(null)
-        setLineup(null)
-        setActiveTab('timeline')
-      }
-      fetchDetails(match, false, false)
+      loadFromPocketBase(match, false)
     } else if (!isOpen) {
       setEvents([])
-      setErrorMessage(null)
-      setLoadedFixtureId(null)
       setLineup(null)
+      setEstadio(null)
+      setArbitro(null)
     }
-  }, [isOpen, match, loadedFixtureId, fetchDetails])
+  }, [isOpen, match, loadFromPocketBase])
 
-  // Carrega escalação quando o usuário alternar para a aba 'escalacoes'
-  useEffect(() => {
-    if (isOpen && match && activeTab === 'escalacoes' && !lineup && !lineupLoading) {
-      loadModalLineup(match, false)
-    }
-  }, [isOpen, match, activeTab, lineup, lineupLoading, loadModalLineup])
+  // Sincronização em tempo real com PocketBase:
+  // Se o cron `cron_escalacoes_pre_jogo_5m` salvar a escalação na collection `jogos`
+  // enquanto o modal estiver aberto, atualiza imediatamente sem polling
+  useRealtime(
+    'jogos',
+    () => {
+      if (isOpen && match) {
+        loadFromPocketBase(match, true)
+      }
+    },
+    isOpen,
+  )
+
+  useRealtime(
+    'jogos_do_dia',
+    () => {
+      if (isOpen && match) {
+        loadFromPocketBase(match, true)
+      }
+    },
+    isOpen,
+  )
 
   if (!match) return null
 
   const homeName = match.teams?.home?.name || 'Mandante'
   const awayName = match.teams?.away?.name || 'Visitante'
-  const homeScore = match.goals?.home ?? '-'
-  const awayScore = match.goals?.away ?? '-'
-  const isFinished = ['FT', 'AET', 'PEN', 'FINISHED'].includes(
-    (match.fixture?.status?.short || '').toUpperCase(),
-  )
-  const isLive = Boolean(match.isLive)
+  const homeScore = match.goals?.home ?? '—'
+  const awayScore = match.goals?.away ?? '—'
+  const stShort = (partidaStatus.short || match.fixture?.status?.short || '').toUpperCase()
+  const isFinished = ['FT', 'AET', 'PEN', 'FINISHED'].includes(stShort)
+  const isLive = Boolean(match.isLive || isFixtureLive(stShort))
 
-  // Resolução definitiva de escudo do PSG na modal
+  // Resolução definitiva de escudo PSG se necessário
   const resolveTeamLogo = (teamName: string, originalLogo?: string | null): string => {
     const t = (teamName || '').toLowerCase()
     if (t.includes('paris') || t === 'psg') {
@@ -409,12 +376,50 @@ export function MatchDetailsModal({ isOpen, onClose, match }: MatchDetailsModalP
   const homeLogo = resolveTeamLogo(homeName, match.teams?.home?.logo)
   const awayLogo = resolveTeamLogo(awayName, match.teams?.away?.logo)
 
-  // Separar e formatar os eventos
+  // Formatação de data/hora de Brasília
+  const formatKickoffBR = () => {
+    const dStr = match.fixture?.date
+    if (!dStr) return null
+    try {
+      const d = new Date(dStr)
+      if (isNaN(d.getTime())) return null
+      return d.toLocaleTimeString('pt-BR', {
+        hour: '2-digit',
+        minute: '2-digit',
+        timeZone: 'America/Sao_Paulo',
+      })
+    } catch {
+      return null
+    }
+  }
+  const horaBR = formatKickoffBR()
+
+  // Separar eventos por categoria
+  const golsList = events.filter((ev) => {
+    const t = (ev.type || '').toLowerCase()
+    const d = (ev.detail || '').toLowerCase()
+    const isCard =
+      t.includes('card') || d.includes('card') || d.includes('yellow') || d.includes('red')
+    const isSub = t.includes('sub') || d.includes('sub')
+    return t.includes('goal') || d.includes('goal') || t.includes('gol') || (!isCard && !isSub)
+  })
+
+  const cartoesList = events.filter((ev) => {
+    const t = (ev.type || '').toLowerCase()
+    const d = (ev.detail || '').toLowerCase()
+    return t.includes('card') || d.includes('card') || d.includes('yellow') || d.includes('red')
+  })
+
+  const subsList = events.filter((ev) => {
+    const t = (ev.type || '').toLowerCase()
+    const d = (ev.detail || '').toLowerCase()
+    return t.includes('sub') || d.includes('sub')
+  })
+
   const renderEventItem = (ev: MatchEventItem, idx: number) => {
     const elapsed = ev.time?.elapsed
     const extra = ev.time?.extra
     const minuteDisplay = elapsed != null ? (extra ? `${elapsed}+${extra}'` : `${elapsed}'`) : ''
-
     const typeLower = (ev.type || '').toLowerCase()
     const detailLower = (ev.detail || '').toLowerCase()
     const playerName = ev.player?.name?.trim() || ''
@@ -436,7 +441,6 @@ export function MatchDetailsModal({ isOpen, onClose, match }: MatchDetailsModalP
       subInfo = isRed ? 'Cartão Vermelho' : 'Cartão Amarelo'
     } else if (typeLower.includes('sub') || detailLower.includes('sub')) {
       icon = '🔄'
-      // Na API-Football: player é quem sai, assist é quem entra (ou vice-versa dependendo do formato)
       if (playerName && assistOrIn) {
         eventTitle = `Entra: ${assistOrIn}`
         subInfo = `Sai: ${playerName}`
@@ -445,7 +449,6 @@ export function MatchDetailsModal({ isOpen, onClose, match }: MatchDetailsModalP
         subInfo = 'Substituição'
       }
     } else {
-      // Gols
       icon = '⚽'
       const isOwn = detailLower.includes('own') || detailLower.includes('contra')
       const isPen = detailLower.includes('penal')
@@ -461,7 +464,6 @@ export function MatchDetailsModal({ isOpen, onClose, match }: MatchDetailsModalP
       }
     }
 
-    // Identifica se é do time mandante ou visitante
     const teamName = ev.team?.name || ''
     const isHome =
       teamName &&
@@ -477,7 +479,7 @@ export function MatchDetailsModal({ isOpen, onClose, match }: MatchDetailsModalP
         key={idx}
         className="flex items-center gap-3 rounded-lg border border-slate-100 bg-white p-2.5 shadow-2xs hover:border-slate-200 transition"
       >
-        <span className="text-lg shrink-0" role="img" aria-label="evento">
+        <span className="text-base shrink-0" role="img" aria-label="evento">
           {icon}
         </span>
         <div className="flex-1 min-w-0">
@@ -509,28 +511,9 @@ export function MatchDetailsModal({ isOpen, onClose, match }: MatchDetailsModalP
     )
   }
 
-  // Filtragem dos eventos em categorias
-  const cartoesList = events.filter((ev) => {
-    const t = (ev.type || '').toLowerCase()
-    const d = (ev.detail || '').toLowerCase()
-    return t.includes('card') || d.includes('card') || d.includes('yellow') || d.includes('red')
-  })
-
-  const subsList = events.filter((ev) => {
-    const t = (ev.type || '').toLowerCase()
-    const d = (ev.detail || '').toLowerCase()
-    return t.includes('sub') || d.includes('sub')
-  })
-
-  const golsList = events.filter((ev) => {
-    const t = (ev.type || '').toLowerCase()
-    const d = (ev.detail || '').toLowerCase()
-    // Evento é gol se explicitamente contiver 'goal' ou 'gol', ou se não for cartão nem substituição
-    const isCard =
-      t.includes('card') || d.includes('card') || d.includes('yellow') || d.includes('red')
-    const isSub = t.includes('sub') || d.includes('sub')
-    return t.includes('goal') || d.includes('goal') || t.includes('gol') || (!isCard && !isSub)
-  })
+  const hasLineupTeams =
+    Boolean(lineup && Array.isArray(lineup.teams) && lineup.teams.length > 0) &&
+    (lineup!.teams[0]?.starters?.length > 0 || lineup!.teams[1]?.starters?.length > 0)
 
   return (
     <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
@@ -545,7 +528,7 @@ export function MatchDetailsModal({ isOpen, onClose, match }: MatchDetailsModalP
               </span>
               {isLive ? (
                 <Badge className="bg-emerald-500 hover:bg-emerald-600 text-white text-[10px] font-bold">
-                  AO VIVO {match.fixture?.status?.elapsed ? `${match.fixture.status.elapsed}'` : ''}
+                  AO VIVO {partidaStatus.elapsed ? `${partidaStatus.elapsed}'` : ''}
                 </Badge>
               ) : isFinished ? (
                 <Badge variant="secondary" className="bg-white/20 text-white text-[10px] font-bold">
@@ -553,15 +536,15 @@ export function MatchDetailsModal({ isOpen, onClose, match }: MatchDetailsModalP
                 </Badge>
               ) : (
                 <Badge variant="secondary" className="bg-white/20 text-white text-[10px] font-bold">
-                  {match.fixture?.status?.short || 'Agendado'}
+                  {horaBR ? `${horaBR} (Brasília)` : partidaStatus.short || 'Agendado'}
                 </Badge>
               )}
             </div>
             <DialogTitle className="sr-only">
-              Detalhes de {homeName} x {awayName}
+              Ficha do Jogo: {homeName} x {awayName}
             </DialogTitle>
             <DialogDescription className="sr-only">
-              Linha do tempo e eventos da partida de futebol
+              Ficha do jogo, escalações oficiais, estádio, árbitro e status
             </DialogDescription>
           </DialogHeader>
 
@@ -596,7 +579,7 @@ export function MatchDetailsModal({ isOpen, onClose, match }: MatchDetailsModalP
                 <span>{awayScore}</span>
               </div>
               <span className="text-[10px] font-medium text-slate-300 mt-1">
-                {match.fixture?.status?.long || 'Ficha do Jogo'}
+                {partidaStatus.long || 'Ficha do Jogo'}
               </span>
             </div>
 
@@ -622,18 +605,32 @@ export function MatchDetailsModal({ isOpen, onClose, match }: MatchDetailsModalP
             </div>
           </div>
 
-          {/* Abas Superiores: Lances e Ficha vs Escalações */}
-          <div className="flex items-center gap-2 mt-4 pt-3 border-t border-white/10">
+          {/* Informações Rápidas de Ficha Técnica (Estádio e Árbitro) */}
+          <div className="mt-4 pt-3 border-t border-white/10 grid grid-cols-1 sm:grid-cols-2 gap-2 text-[11px] text-slate-300">
+            <div className="flex items-center gap-1.5 truncate">
+              <MapPin className="h-3.5 w-3.5 text-slate-400 shrink-0" />
+              <span className="text-slate-400">Estádio:</span>
+              <span className="font-semibold text-white truncate">{estadio || '—'}</span>
+            </div>
+            <div className="flex items-center gap-1.5 truncate">
+              <UserCheck className="h-3.5 w-3.5 text-slate-400 shrink-0" />
+              <span className="text-slate-400">Árbitro:</span>
+              <span className="font-semibold text-white truncate">{arbitro || '—'}</span>
+            </div>
+          </div>
+
+          {/* Abas Superiores: Ficha e Lances vs Escalações */}
+          <div className="flex items-center gap-2 mt-3 pt-3 border-t border-white/10">
             <button
               type="button"
-              onClick={() => setActiveTab('timeline')}
+              onClick={() => setActiveTab('ficha')}
               className={`flex-1 py-1.5 px-3 rounded-lg text-xs font-semibold transition flex items-center justify-center gap-1.5 ${
-                activeTab === 'timeline'
+                activeTab === 'ficha'
                   ? 'bg-white text-[#0F2A43] shadow-xs'
                   : 'text-white/80 hover:bg-white/10'
               }`}
             >
-              <span>⚽</span> Lances e Ficha
+              <span>📋</span> Ficha e Lances
             </button>
             <button
               type="button"
@@ -645,109 +642,130 @@ export function MatchDetailsModal({ isOpen, onClose, match }: MatchDetailsModalP
               }`}
             >
               <Users className="h-3.5 w-3.5" /> Escalações
-              {lineup?.status === 'confirmada' && (
-                <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
-              )}
+              {hasLineupTeams && <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />}
             </button>
           </div>
         </div>
 
-        {/* Conteúdo dinâmico de acordo com a aba ativa */}
-        <div className="p-5 max-h-[60vh] overflow-y-auto space-y-5 bg-slate-50/50">
-          {activeTab === 'timeline' ? (
-            /* ABA 1: LANCES E FICHA */
-            loading ? (
-              <div className="py-12 text-center flex flex-col items-center justify-center gap-2">
-                <Loader2 className="h-7 w-7 animate-spin text-[#0F2A43]" />
-                <p className="text-xs font-semibold text-slate-600">
-                  Carregando ficha e lances da partida...
-                </p>
-              </div>
-            ) : errorMessage && events.length === 0 ? (
-              <div className="py-10 text-center flex flex-col items-center justify-center gap-3">
-                <AlertCircle className="h-8 w-8 text-amber-500" />
-                <p className="text-xs text-slate-600 max-w-xs">
-                  {errorMessage || 'Nenhum lance registrado no banco local no momento.'}
-                </p>
-              </div>
-            ) : events.length === 0 ? (
-              <div className="py-10 text-center">
-                <p className="text-xs text-slate-500 font-medium">
-                  Nenhum lance registrado até o momento para esta partida.
-                </p>
-              </div>
-            ) : (
-              <div className="space-y-4">
-                {/* Seção de Gols */}
-                {golsList.length > 0 && (
-                  <div>
-                    <h4 className="text-xs font-bold uppercase tracking-wider text-slate-600 mb-2 flex items-center gap-1.5">
-                      <span>⚽</span> Gols e Marcadores ({golsList.length})
-                    </h4>
-                    <div className="space-y-1.5">
-                      {golsList.map((ev, idx) => renderEventItem(ev, idx))}
-                    </div>
-                  </div>
-                )}
-
-                {/* Seção de Cartões */}
-                {cartoesList.length > 0 && (
-                  <div>
-                    <h4 className="text-xs font-bold uppercase tracking-wider text-slate-600 mb-2 flex items-center gap-1.5">
-                      <span>🟨 / 🟥</span> Cartões ({cartoesList.length})
-                    </h4>
-                    <div className="space-y-1.5">
-                      {cartoesList.map((ev, idx) => renderEventItem(ev, idx))}
-                    </div>
-                  </div>
-                )}
-
-                {/* Seção de Substituições */}
-                {subsList.length > 0 && (
-                  <div>
-                    <h4 className="text-xs font-bold uppercase tracking-wider text-slate-600 mb-2 flex items-center gap-1.5">
-                      <span>🔄</span> Substituições ({subsList.length})
-                    </h4>
-                    <div className="space-y-1.5">
-                      {subsList.map((ev, idx) => renderEventItem(ev, idx))}
-                    </div>
-                  </div>
-                )}
-
-                {/* Atualização e fonte */}
-                <div className="pt-2 flex items-center justify-between text-[10px] text-slate-400">
-                  <span>Total de {events.length} evento(s) registrado(s)</span>
-                </div>
-              </div>
-            )
-          ) : /* ABA 2: ESCALAÇÕES */
-          lineupLoading ? (
+        {/* Conteúdo dinâmico da modal */}
+        <div className="p-5 max-h-[60vh] overflow-y-auto space-y-4 bg-slate-50/50">
+          {loading ? (
             <div className="py-12 text-center flex flex-col items-center justify-center gap-2">
               <Loader2 className="h-7 w-7 animate-spin text-[#0F2A43]" />
               <p className="text-xs font-semibold text-slate-600">
-                Buscando escalações oficiais...
+                Lendo dados da partida no banco de dados...
               </p>
             </div>
-          ) : !lineup ||
-            (!lineup.teams?.[0]?.starters?.length && !lineup.teams?.[1]?.starters?.length) ? (
-            <div className="py-8 text-center flex flex-col items-center justify-center gap-2">
-              <div className="h-10 w-10 rounded-full bg-slate-100 flex items-center justify-center text-slate-400 mb-1">
-                <HelpCircle className="h-5 w-5" />
+          ) : activeTab === 'ficha' ? (
+            /* ABA 1: FICHA TÉCNICA E LANCES */
+            <div className="space-y-4">
+              {/* Quadro Resumo da Partida */}
+              <div className="rounded-lg border border-slate-200/80 bg-white p-3 shadow-2xs space-y-2 text-xs">
+                <h4 className="font-bold text-slate-800 text-[11px] uppercase tracking-wider flex items-center gap-1.5">
+                  <Info className="h-3.5 w-3.5 text-[#0F2A43]" /> Ficha da Partida
+                </h4>
+                <div className="grid grid-cols-2 gap-2 text-slate-600">
+                  <div>
+                    <span className="block text-[10px] text-slate-400 font-medium">Campeonato</span>
+                    <span className="font-semibold text-slate-800">
+                      {match.league?.name || '—'}
+                    </span>
+                  </div>
+                  <div>
+                    <span className="block text-[10px] text-slate-400 font-medium">Status</span>
+                    <span className="font-semibold text-slate-800">
+                      {partidaStatus.long || partidaStatus.short || '—'}
+                    </span>
+                  </div>
+                  <div>
+                    <span className="block text-[10px] text-slate-400 font-medium">Estádio</span>
+                    <span className="font-semibold text-slate-800">{estadio || '—'}</span>
+                  </div>
+                  <div>
+                    <span className="block text-[10px] text-slate-400 font-medium">Árbitro</span>
+                    <span className="font-semibold text-slate-800">{arbitro || '—'}</span>
+                  </div>
+                  {horaBR && (
+                    <div className="col-span-2">
+                      <span className="block text-[10px] text-slate-400 font-medium">
+                        Horário de Brasília
+                      </span>
+                      <span className="font-semibold text-slate-800">{horaBR}</span>
+                    </div>
+                  )}
+                </div>
               </div>
-              <p className="text-sm font-semibold text-slate-700 text-center">
-                Escalações ainda não disponibilizadas pelas equipes
-              </p>
-              <p className="text-xs text-slate-400 max-w-xs text-center">
-                As escalações oficiais costumam ser liberadas pelos clubes cerca de 30 a 60 minutos
-                antes do início da partida e são sincronizadas automaticamente pelo servidor.
-              </p>
+
+              {/* Lances / Eventos da Partida */}
+              {events.length === 0 ? (
+                <div className="py-6 text-center rounded-lg border border-slate-200/60 bg-white p-4">
+                  <p className="text-xs text-slate-500 font-medium">
+                    Nenhum lance registrado até o momento para esta partida.
+                  </p>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {/* Gols */}
+                  {golsList.length > 0 && (
+                    <div>
+                      <h4 className="text-xs font-bold uppercase tracking-wider text-slate-600 mb-2 flex items-center gap-1.5">
+                        <span>⚽</span> Gols e Marcadores ({golsList.length})
+                      </h4>
+                      <div className="space-y-1.5">
+                        {golsList.map((ev, idx) => renderEventItem(ev, idx))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Cartões */}
+                  {cartoesList.length > 0 && (
+                    <div>
+                      <h4 className="text-xs font-bold uppercase tracking-wider text-slate-600 mb-2 flex items-center gap-1.5">
+                        <span>🟨 / 🟥</span> Cartões ({cartoesList.length})
+                      </h4>
+                      <div className="space-y-1.5">
+                        {cartoesList.map((ev, idx) => renderEventItem(ev, idx))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Substituições */}
+                  {subsList.length > 0 && (
+                    <div>
+                      <h4 className="text-xs font-bold uppercase tracking-wider text-slate-600 mb-2 flex items-center gap-1.5">
+                        <span>🔄</span> Substituições ({subsList.length})
+                      </h4>
+                      <div className="space-y-1.5">
+                        {subsList.map((ev, idx) => renderEventItem(ev, idx))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          ) : /* ABA 2: ESCALAÇÕES */
+          !hasLineupTeams ? (
+            /* Se a escalação ainda não tiver sido capturada ou divulgada pela API, exibir mensagem amigável fixa */
+            <div className="py-10 text-center flex flex-col items-center justify-center gap-3 bg-white rounded-lg border border-slate-200 p-6">
+              <div className="h-12 w-12 rounded-full bg-amber-50 text-amber-600 flex items-center justify-center border border-amber-200">
+                <Users className="h-6 w-6" />
+              </div>
+              <div className="space-y-1">
+                <p className="text-sm font-bold text-slate-800">
+                  Escalação ainda não divulgada (disponível ~20 min antes do jogo)
+                </p>
+                <p className="text-xs text-slate-500 max-w-sm mx-auto">
+                  Os dados oficiais são sincronizados automaticamente e exibidos assim que
+                  publicados pelos clubes.
+                </p>
+              </div>
             </div>
           ) : (
             <div className="space-y-3">
               {/* Seletor de time Mandante / Visitante */}
               {(() => {
-                const teamHome = lineup.teams?.[0]
-                const teamAway = lineup.teams?.[1]
+                const teamHome = lineup?.teams?.[0]
+                const teamAway = lineup?.teams?.[1]
                 return (
                   <div className="grid grid-cols-2 gap-2 bg-slate-200/60 p-1 rounded-lg">
                     <button
@@ -780,7 +798,7 @@ export function MatchDetailsModal({ isOpen, onClose, match }: MatchDetailsModalP
 
               {/* Lista de Titulares e Reservas da equipe selecionada */}
               {(() => {
-                const selectedTeam = lineupTab === 'home' ? lineup.teams?.[0] : lineup.teams?.[1]
+                const selectedTeam = lineupTab === 'home' ? lineup?.teams?.[0] : lineup?.teams?.[1]
                 const starters = selectedTeam?.starters || []
                 const substitutes = selectedTeam?.substitutes || []
 
@@ -877,7 +895,7 @@ export function MatchDetailsModal({ isOpen, onClose, match }: MatchDetailsModalP
           )}
         </div>
 
-        {/* Rodapé com Fechar */}
+        {/* Rodapé */}
         <div className="p-3 bg-white border-t border-slate-200 flex justify-end">
           <Button
             type="button"

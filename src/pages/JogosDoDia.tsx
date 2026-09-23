@@ -47,6 +47,7 @@ import {
   readEscudoCache,
   JogoBuscado,
 } from '@/services/enquetes'
+import { useRealtime } from '@/hooks/use-realtime'
 import {
   Select,
   SelectContent,
@@ -477,6 +478,14 @@ export default function JogosDoDia() {
     setIsDetailsModalOpen(false)
     setSelectedDetailsMatch(null)
   }, [])
+
+  // Sincronização em tempo real com a collection `jogos_do_dia`:
+  // Quando o cron ou backend atualizar os registros do dia corrente, atualiza os dados locais
+  useRealtime('jogos_do_dia', () => {
+    if (selectedDate) {
+      fetchJogos(selectedDate)
+    }
+  })
 
   const fetchJogos = useCallback(
     async (dateStr: string, force = false) => {
