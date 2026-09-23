@@ -28,6 +28,7 @@ export interface LineupResponse {
   updatedAt?: string
   cached?: boolean
   error?: string
+  notice?: string
 }
 
 // Cache em memória (SWR) com TTL de 10 minutos para confirmadas e 2-3 minutos para prováveis/vazio
@@ -135,14 +136,26 @@ export async function fetchGameLineup(params: {
     forceRefresh = false,
   } = params
 
-  // 1. LEITURA PRIORITÁRIA DA COLLECTION LOCAL JOGOS (SEM CONSUMO DE COTA)
+  // Chave canônica unificada que considera também times e data para evitar colisões
+  const fallbackKey = timeA && timeB ? `${timeA}_${timeB}_${data}` : ''
+  const cacheKey = getLineupsCacheKey(jogoId, fixtureId) || fallbackKey
+  const now = Date.now()
+
+  // 1. LEITURA 100% POCKETBASE LOCAL (SEM CONSUMO DE COTA / SEM ROTA HTTP EXTERNA)
   if (jogoId && !forceRefresh) {
     try {
-      const rec = await pb.collection('jogos').getOne(jogoId)
+      const rec = await pb.collection('jogos').getOne(jogoId, { fields: 'id,escalacoes' })
       if (rec && rec.escalacoes) {
         const esc = typeof rec.escalacoes === 'string' ? JSON.parse(rec.escalacoes) : rec.escalacoes
         if (esc && esc.teams && esc.teams.length > 0) {
-          return { ...esc, cached: true }
+          const result: LineupResponse = { ...esc, cached: true }
+          setWithBoundedCapacity(
+            lineupsMemoryCache,
+            cacheKey,
+            { data: result, timestamp: now },
+            100,
+          )
+          return result
         }
       }
     } catch {
@@ -150,131 +163,57 @@ export async function fetchGameLineup(params: {
     }
   }
 
-  // Chave canônica unificada que considera também times e data para evitar colisões
-  const fallbackKey = timeA && timeB ? `${timeA}_${timeB}_${data}` : ''
-  const cacheKey = getLineupsCacheKey(jogoId, fixtureId) || fallbackKey
-  const now = Date.now()
-
-  if (!forceRefresh && cacheKey && lineupsMemoryCache.has(cacheKey)) {
-    const cached = lineupsMemoryCache.get(cacheKey)!
-    const ttl =
-      cached.data.status === 'confirmada'
-        ? TTL_CONFIRMADA_MS
-        : cached.data.status === 'provavel'
-          ? TTL_PROVAVEL_MS
-          : TTL_INDISPONIVEL_MS
-    if (now - cached.timestamp < ttl) {
-      return { ...cached.data, cached: true }
-    }
-  }
-
-  // Deduplicação de requisições em voo
-  if (inflightRequests.has(cacheKey)) {
-    return inflightRequests.get(cacheKey)!
-  }
-
-  const queryParams = new URLSearchParams()
-  if (jogoId) queryParams.set('jogo_id', jogoId)
-  if (fixtureId) queryParams.set('fixture_id', fixtureId)
-  if (timeA) queryParams.set('time_a', timeA)
-  if (timeB) queryParams.set('time_b', timeB)
-  if (data) queryParams.set('data', data)
-  if (forceRefresh) queryParams.set('refresh', '1')
-
-  const fetchPromise = (async (): Promise<LineupResponse> => {
+  // 100% Leitura PocketBase: se não encontrou no getOne acima ou não tem jogoId,
+  // consulta pelo fixture_id ou times na coleção jogos do PocketBase diretamente.
+  // NENHUMA rota externa ou hook HTTP é acionada a cada render/abertura.
+  if (fixtureId || (timeA && timeB)) {
     try {
-      const baseUrl = import.meta.env.VITE_POCKETBASE_URL || ''
-      const token = pb.authStore.token || ''
+      let filter = ''
+      if (fixtureId) {
+        filter = `fixture_id = '${fixtureId.replace(/'/g, "\\'")}'`
+      } else if (timeA && timeB) {
+        filter = `time_a ~ '${timeA.replace(/'/g, "\\'")}' && time_b ~ '${timeB.replace(/'/g, "\\'")}'`
+      }
 
-      const response = await fetch(`${baseUrl}/backend/v1/escalacoes?${queryParams.toString()}`, {
-        method: 'GET',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Cascade-Priority': 'db-fallback-first',
-          Authorization: token,
-        },
+      const records = await pb.collection('jogos').getList(1, 1, {
+        filter: filter,
+        fields: 'id,escalacoes,fixture_id,time_a,time_b',
       })
 
-      if (!response.ok) {
-        const errorJson = await response.json().catch(() => ({}))
-        // Se já existia cache anterior para esta partida, reaproveita para a modal nunca ficar vazia
-        const previousCached =
-          cacheKey && lineupsMemoryCache.has(cacheKey) ? lineupsMemoryCache.get(cacheKey) : null
-        if (
-          previousCached &&
-          previousCached.data &&
-          previousCached.data.teams &&
-          previousCached.data.teams.length > 0
-        ) {
-          return { ...previousCached.data, cached: true }
+      if (records.items.length > 0 && records.items[0].escalacoes) {
+        const escRaw = records.items[0].escalacoes
+        const escObj = typeof escRaw === 'string' ? JSON.parse(escRaw) : escRaw
+        if (escObj && escObj.teams && escObj.teams.length > 0) {
+          const result: LineupResponse = { ...escObj, cached: true }
+          setWithBoundedCapacity(
+            lineupsMemoryCache,
+            cacheKey,
+            { data: result, timestamp: now },
+            100,
+          )
+          return result
         }
-
-        const fallback: LineupResponse = {
-          status: 'indisponivel',
-          teams: [
-            { teamName: timeA || 'Mandante', starters: [], substitutes: [] },
-            { teamName: timeB || 'Visitante', starters: [], substitutes: [] },
-          ],
-          error: errorJson.error || 'Não foi possível carregar a escalação.',
-        }
-        setWithBoundedCapacity(
-          lineupsMemoryCache,
-          cacheKey,
-          { data: fallback, timestamp: now },
-          100,
-        )
-        return fallback
       }
-
-      const dataJson: LineupResponse = await response.json()
-      // Se vier status indisponivel mas tivermos versão em cache com escalação, preserva a versão anterior com jogadores
-      const previousCached =
-        cacheKey && lineupsMemoryCache.has(cacheKey) ? lineupsMemoryCache.get(cacheKey) : null
-      const hasNewPlayers = dataJson.teams?.some(
-        (t) => (t.starters && t.starters.length > 0) || (t.substitutes && t.substitutes.length > 0),
-      )
-      if (
-        !hasNewPlayers &&
-        previousCached &&
-        previousCached.data?.teams?.some(
-          (t) =>
-            (t.starters && t.starters.length > 0) || (t.substitutes && t.substitutes.length > 0),
-        )
-      ) {
-        return { ...previousCached.data, cached: true }
-      }
-
-      setWithBoundedCapacity(lineupsMemoryCache, cacheKey, { data: dataJson, timestamp: now }, 100)
-      return dataJson
-    } catch (err: unknown) {
-      // Se houver falha de rede/throttle e tiver cache anterior, retorna cache para evitar tela em branco
-      const previousCached =
-        cacheKey && lineupsMemoryCache.has(cacheKey) ? lineupsMemoryCache.get(cacheKey) : null
-      if (
-        previousCached &&
-        previousCached.data &&
-        previousCached.data.teams &&
-        previousCached.data.teams.length > 0
-      ) {
-        return { ...previousCached.data, cached: true }
-      }
-
-      const errorMsg = err instanceof Error ? err.message : 'Falha na conexão com o servidor'
-      const fallback: LineupResponse = {
-        status: 'indisponivel',
-        teams: [
-          { teamName: timeA || 'Mandante', starters: [], substitutes: [] },
-          { teamName: timeB || 'Visitante', starters: [], substitutes: [] },
-        ],
-        error: errorMsg,
-      }
-      setWithBoundedCapacity(lineupsMemoryCache, cacheKey, { data: fallback, timestamp: now }, 100)
-      return fallback
-    } finally {
-      inflightRequests.delete(cacheKey)
+    } catch {
+      /* intentionally ignored */
     }
-  })()
+  }
 
-  inflightRequests.set(cacheKey, fetchPromise)
-  return fetchPromise
+  // Se não há dados gravados no banco para esta partida, retorna status indisponivel informativo
+  const fallback: LineupResponse = {
+    status: 'indisponivel',
+    provider: 'local',
+    fixtureId: fixtureId,
+    cached: true,
+    teams: [
+      { teamName: timeA || 'Mandante', starters: [], substitutes: [] },
+      { teamName: timeB || 'Visitante', starters: [], substitutes: [] },
+    ],
+    notice:
+      'Escalação ainda não confirmada pelos clubes. A sincronização automática ocorre antes do início do jogo.',
+    updatedAt: new Date().toISOString(),
+  }
+
+  setWithBoundedCapacity(lineupsMemoryCache, cacheKey, { data: fallback, timestamp: now }, 100)
+  return fallback
 }

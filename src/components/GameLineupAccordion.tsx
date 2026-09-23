@@ -126,8 +126,8 @@ export const GameLineupAccordion: React.FC<GameLineupAccordionProps> = ({
                 <HelpCircle className="h-4 w-4" />
               </div>
               <p className="text-xs font-semibold text-slate-700">
-                Escalações ainda não confirmadas. A atualização será realizada automaticamente assim
-                que divulgadas.
+                {lineup?.notice ||
+                  'Escalações ainda não confirmadas pelos clubes. A atualização é realizada automaticamente antes do início da partida.'}
               </p>
             </div>
           ) : (

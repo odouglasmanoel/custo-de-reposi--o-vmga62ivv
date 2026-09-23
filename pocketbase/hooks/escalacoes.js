@@ -418,12 +418,16 @@ routerAdd(
 )
 
 // =============================================================
-// ROTINA PRÉ-JOGO DE ESCALAÇÕES (Acionada pelo cron a cada 10 min)
-// Regra Aprovada: 1 chamada consolidada no MÁXIMO por ciclo.
-// Apenas janela de 60 min antes do kickoff, APENAS jogos com escalacoes == null.
-// Prioridade 2 no limiter.
+// CRON DE ESCALAÇÕES PRÉ-JOGO A CADA 5 MINUTOS (*/5 * * * *)
+// Regras:
+// - Intervalo: */5 * * * *
+// - Janela de kickoff: 15–25 min à frente (agora >= kickoff - 25m e agora <= kickoff - 15m)
+// - Não re-tenta jogos já iniciados (agora >= kickoff)
+// - Pula silenciosamente se cota esgotada (limiter blocked)
+// - Import estático no topo do módulo (Goja runtime estável)
+// - Grava titulares, reservas, técnico e formação no campo JSON 'escalacoes' da coleção 'jogos'
 // =============================================================
-function sincronizarEscalacoesPreJogo() {
+cronAdd('cron_escalacoes_pre_jogo_5m', '*/5 * * * *', () => {
   try {
     const agora = Date.now()
     let apiKey = ''
@@ -451,13 +455,12 @@ function sincronizarEscalacoesPreJogo() {
     const jogosPendentes = $app.findRecordsByFilter(
       'jogos',
       'resultado_finalizado = false',
-      '-data',
+      'data,hora',
       50,
       0,
     )
     if (!Array.isArray(jogosPendentes) || jogosPendentes.length === 0) return
 
-    // Encontra APENAS o primeiro jogo qualificado com escalação ausente (1 ÚNICA chamada consolidada por ciclo)
     let jogoAlvo = null
 
     for (let ji = 0; ji < jogosPendentes.length; ji++) {
@@ -466,7 +469,7 @@ function sincronizarEscalacoesPreJogo() {
       const hrVal = (jRec.getString('hora') || '').trim()
       const fixtureId = (jRec.getString('fixture_id') || '').trim()
 
-      // Já possui escalação confirmada completa? Se sim, PULA (NUNCA sobrescreve ou gasta cota)
+      // Já possui escalação confirmada completa? Se sim, pula
       const escAtual = jRec.get('escalacoes')
       if (escAtual) {
         let objEsc = null
@@ -478,13 +481,14 @@ function sincronizarEscalacoesPreJogo() {
           objEsc.status === 'confirmada' &&
           Array.isArray(objEsc.teams) &&
           objEsc.teams.length > 0 &&
-          objEsc.teams[0].starters?.length > 0
+          objEsc.teams[0].starters &&
+          objEsc.teams[0].starters.length > 0
         ) {
           continue
         }
       }
 
-      // Calcula kickoff
+      // Calcula kickoff exato em UTC
       let kickoffMs = null
       if (dtVal) {
         let y = 0,
@@ -513,20 +517,27 @@ function sincronizarEscalacoesPreJogo() {
           }
         }
         if (y && m && d) {
+          // Fuso horário de Brasília (UTC-3): soma 3 horas para timestamp UTC real
           kickoffMs = Date.UTC(y, m - 1, d, hrs + 3, mins, 0, 0)
         }
       }
 
       if (!kickoffMs) continue
 
-      // JANELA ESTRITA: kickoff a menos de 60 minutos (ou iniciado há até 2h)
-      const janelaInicio = kickoffMs - 60 * 60 * 1000
-      const janelaFim = kickoffMs + 2 * 60 * 60 * 1000
-      if (agora < janelaInicio || agora > janelaFim) continue
+      // NÃO re-tenta jogos já iniciados (agora >= kickoffMs)
+      if (agora >= kickoffMs) continue
 
-      if (fixtureId && /^\d+$/.test(fixtureId)) {
-        jogoAlvo = jRec
-        break // Selecionou 1 jogo elegível para este ciclo
+      // JANELA DE KICKOFF 15–25 MINUTOS À FRENTE
+      // janelaInicio = kickoffMs - 25 min (25 * 60 * 1000)
+      // janelaFim    = kickoffMs - 15 min (15 * 60 * 1000)
+      const janelaInicio = kickoffMs - 25 * 60 * 1000
+      const janelaFim = kickoffMs - 15 * 60 * 1000
+
+      if (agora >= janelaInicio && agora <= janelaFim) {
+        if (fixtureId && /^\d+$/.test(fixtureId)) {
+          jogoAlvo = jRec
+          break
+        }
       }
     }
 
@@ -540,35 +551,86 @@ function sincronizarEscalacoesPreJogo() {
         encodeURIComponent(fixtureId)
 
     console.log(
-      `[Escalacoes Pré-Jogo] Executando chamada consolidada (1 jogo) para fixture ${fixtureId}...`,
+      `[Cron Escalações 5m] Buscando escalação na janela 15-25m para fixture ${fixtureId} (${jogoAlvo.id})...`,
     )
     const limiterRes = enviarRequisicaoApiFootball(urlLineups, { headers }, 2)
 
+    // Se a cota estiver esgotada, pula silenciosamente sem crash
     if (limiterRes.blocked) {
-      console.log('[Escalacoes Pré-Jogo] Chamada suprimida pelo limiter:', limiterRes.reason)
+      console.log(
+        '[Cron Escalações 5m] Cota esgotada ou suprimida pelo limiter. Pulando silenciosamente.',
+      )
       return
     }
 
     const resJson = limiterRes.json
     if (resJson && Array.isArray(resJson.response) && resJson.response.length > 0) {
-      const payload = montarLineupPayload(resJson.response, fixtureId)
-      if (payload) {
+      const rawLineups = resJson.response
+      const teamsData = []
+      for (let rli = 0; rli < rawLineups.length; rli++) {
+        const teamBlock = rawLineups[rli]
+        const teamInfo = teamBlock.team || {}
+        const formation = teamBlock.formation || ''
+        const coach = teamBlock.coach ? teamBlock.coach.name : ''
+        const starters = []
+        if (Array.isArray(teamBlock.startXI)) {
+          for (let s = 0; s < teamBlock.startXI.length; s++) {
+            const p = teamBlock.startXI[s].player || {}
+            starters.push({
+              id: p.id ? String(p.id) : '',
+              name: p.name || '',
+              number: p.number || null,
+              pos: p.pos || '',
+              grid: p.grid || null,
+            })
+          }
+        }
+        const bench = []
+        if (Array.isArray(teamBlock.substitutes)) {
+          for (let b = 0; b < teamBlock.substitutes.length; b++) {
+            const bp = teamBlock.substitutes[b].player || {}
+            bench.push({
+              id: bp.id ? String(bp.id) : '',
+              name: bp.name || '',
+              number: bp.number || null,
+              pos: bp.pos || '',
+            })
+          }
+        }
+
+        const tNameStr = teamInfo.name || ''
+        let tLogoStr = teamInfo.logo || ''
+        if (tNameStr.toLowerCase().indexOf('paris') !== -1 || tNameStr.toLowerCase() === 'psg') {
+          tLogoStr = 'https://media.api-sports.io/football/teams/85.png'
+        }
+
+        teamsData.push({
+          teamId: teamInfo.id ? String(teamInfo.id) : '',
+          teamName: tNameStr,
+          teamLogo: tLogoStr,
+          formation: formation,
+          coach: coach,
+          starters: starters,
+          substitutes: bench,
+        })
+      }
+
+      if (teamsData.length > 0) {
+        const payload = {
+          status: 'confirmada',
+          provider: 'api_football',
+          fixtureId: fixtureId,
+          teams: teamsData,
+          updatedAt: new Date().toISOString(),
+        }
         jogoAlvo.set('escalacoes', payload)
         $app.save(jogoAlvo)
         console.log(
-          `[Escalacoes Pré-Jogo] Escalação confirmada salva no banco para o jogo ${jogoAlvo.id}`,
+          `[Cron Escalações 5m] Escalação pré-jogo gravada com sucesso no campo escalacoes do jogo ${jogoAlvo.id}`,
         )
       }
     }
   } catch (errSync) {
-    console.log('[Escalacoes Pré-Jogo] Aviso na rotina consolidada:', errSync)
+    console.log('[Cron Escalações 5m] Erro no ciclo de 5min:', errSync)
   }
-}
-
-if (typeof globalThis !== 'undefined') {
-  globalThis.__sincronizarEscalacoesPreJogo = sincronizarEscalacoesPreJogo
-}
-
-module.exports = {
-  sincronizarEscalacoesPreJogo,
-}
+})

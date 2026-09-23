@@ -430,7 +430,7 @@ export default function Palpites() {
               filter: gamesFilter || undefined,
               sort: 'data,hora',
               fields:
-                'id,bolao,time_a,time_b,data,hora,competicao,resultado_finalizado,placar_a,placar_b,tem_penaltis,vencedor_penaltis,fixture_id,url_escudo_mandante,url_escudo_visitante',
+                'id,bolao,time_a,time_b,data,hora,competicao,resultado_finalizado,placar_a,placar_b,tem_penaltis,vencedor_penaltis,fixture_id,url_escudo_mandante,url_escudo_visitante,escalacoes',
             })
 
             // Buscar registros de participante deste usuário
@@ -567,7 +567,7 @@ export default function Palpites() {
               filter: specificFilter,
               sort: 'data,hora',
               fields:
-                'id,bolao,time_a,time_b,data,hora,competicao,resultado_finalizado,placar_a,placar_b,tem_penaltis,vencedor_penaltis,fixture_id,url_escudo_mandante,url_escudo_visitante',
+                'id,bolao,time_a,time_b,data,hora,competicao,resultado_finalizado,placar_a,placar_b,tem_penaltis,vencedor_penaltis,fixture_id,url_escudo_mandante,url_escudo_visitante,escalacoes',
             })
 
             const [gamesResult] = await Promise.race([

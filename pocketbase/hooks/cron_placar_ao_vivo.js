@@ -17,18 +17,6 @@ onBootstrap((e) => {
 
 cronAdd('placar_ao_vivo_sync', '*/10 * * * *', () => {
   try {
-    // 1. Aciona rotina consolidada de escalações pré-jogo (janela 60 min, apenas se houver jogos pendentes)
-    if (
-      typeof globalThis !== 'undefined' &&
-      typeof globalThis.__sincronizarEscalacoesPreJogo === 'function'
-    ) {
-      try {
-        globalThis.__sincronizarEscalacoesPreJogo()
-      } catch (errEscCron) {
-        console.log('[cron placar-ao-vivo] rotina pré-jogo de escalações aviso:', errEscCron)
-      }
-    }
-
     let siteUrl = ''
     try {
       if ($secrets && $secrets.has && $secrets.has('SITE_URL')) {
