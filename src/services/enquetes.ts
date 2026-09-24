@@ -548,6 +548,69 @@ export async function toggleVotoJogo(
 /**
  * Admin: Adiciona um jogo manualmente a uma enquete já ativa/criada
  */
+export interface FixtureDetalhesResultado {
+  success: boolean
+  fixture?: {
+    id: number | string
+    homeTeamName?: string
+    awayTeamName?: string
+    homeTeamLogo?: string
+    awayTeamLogo?: string
+    leagueName?: string
+    date?: string
+  }
+  error?: string
+  rate_limited?: boolean
+}
+
+/**
+ * Consulta detalhes da fixture pelo ID na API-Sports via endpoint backend (/backend/v1/enquetes/fixture-detalhes)
+ * Respeita a cota diária de 80 requisições (reset 21h Brasília).
+ */
+export async function buscarFixtureDetalhes(
+  fixtureId: string | number,
+): Promise<FixtureDetalhesResultado> {
+  const cleanId = String(fixtureId || '')
+    .replace(/\D/g, '')
+    .trim()
+  if (!cleanId) {
+    return { success: false, error: 'ID da fixture inválido.' }
+  }
+
+  try {
+    const token = pb.authStore.token
+    const baseUrl = import.meta.env.VITE_POCKETBASE_URL || ''
+    const res = await fetch(
+      `${baseUrl}/backend/v1/enquetes/fixture-detalhes?id=${encodeURIComponent(cleanId)}`,
+      {
+        headers: {
+          Authorization: token ? `Bearer ${token}` : '',
+        },
+      },
+    )
+
+    const data = await res.json().catch(() => null)
+    if (!res.ok || !data?.success) {
+      return {
+        success: false,
+        error: data?.error || `Falha na requisição (status ${res.status}).`,
+        rate_limited: Boolean(data?.rate_limited || res.status === 429),
+      }
+    }
+
+    return {
+      success: true,
+      fixture: data.fixture,
+    }
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err)
+    return {
+      success: false,
+      error: `Erro ao buscar fixture: ${msg}`,
+    }
+  }
+}
+
 export async function adicionarJogoManualNaEnquete(params: {
   enqueteId: string
   time_a: string
@@ -569,25 +632,13 @@ export async function adicionarJogoManualNaEnquete(params: {
   // tenta consultar os logos da fixture via backend (respeitando o limiter 80/dia)
   if (cleanFixtureId && (!logoCasa || !logoVisitante)) {
     try {
-      const token = pb.authStore.token
-      const baseUrl = import.meta.env.VITE_POCKETBASE_URL || ''
-      const res = await fetch(
-        `${baseUrl}/backend/v1/enquetes/fixture-detalhes?id=${encodeURIComponent(cleanFixtureId)}`,
-        {
-          headers: {
-            Authorization: token ? `Bearer ${token}` : '',
-          },
-        },
-      )
-      if (res.ok) {
-        const data = await res.json()
-        if (data && data.success && data.fixture) {
-          if (!logoCasa && data.fixture.homeTeamLogo) {
-            logoCasa = data.fixture.homeTeamLogo
-          }
-          if (!logoVisitante && data.fixture.awayTeamLogo) {
-            logoVisitante = data.fixture.awayTeamLogo
-          }
+      const res = await buscarFixtureDetalhes(cleanFixtureId)
+      if (res.success && res.fixture) {
+        if (!logoCasa && res.fixture.homeTeamLogo) {
+          logoCasa = res.fixture.homeTeamLogo
+        }
+        if (!logoVisitante && res.fixture.awayTeamLogo) {
+          logoVisitante = res.fixture.awayTeamLogo
         }
       }
     } catch (errFixture) {
@@ -834,10 +885,54 @@ export async function editarJogoEnquete(
     regiao?: string
     data: string
     horario?: string
+    fixture_id?: string
     logo_casa?: string
     logo_visitante?: string
   },
 ): Promise<EnqueteJogoModel> {
+  // Obtém o registro existente para preservar fixture_id se o novo vier vazio
+  let jogoExistente: EnqueteJogoModel | null = null
+  try {
+    jogoExistente = await pb.collection('enquete_jogos').getOne<EnqueteJogoModel>(jogoId)
+  } catch {
+    jogoExistente = null
+  }
+
+  const cleanParamFixtureId =
+    params.fixture_id !== undefined ? params.fixture_id.replace(/\D/g, '').trim() : undefined
+  const existingFixtureId = (jogoExistente?.fixture_id || '').replace(/\D/g, '').trim()
+
+  // Regra: nunca apagar um fixture_id existente se o campo vier vazio no salvamento
+  let fixtureIdFinal = existingFixtureId
+  if (cleanParamFixtureId !== undefined && cleanParamFixtureId !== '') {
+    fixtureIdFinal = cleanParamFixtureId
+  }
+
+  let logoCasaFinal =
+    params.logo_casa !== undefined ? params.logo_casa.trim() : jogoExistente?.logo_casa || ''
+  let logoVisitanteFinal =
+    params.logo_visitante !== undefined
+      ? params.logo_visitante.trim()
+      : jogoExistente?.logo_visitante || ''
+
+  // Se houver fixture_id final e pelo menos um dos escudos estiver vazio,
+  // consulta automaticamente pelo ID via backend (API-Sports) respeitando o limite diário
+  if (fixtureIdFinal && (!logoCasaFinal || !logoVisitanteFinal)) {
+    try {
+      const res = await buscarFixtureDetalhes(fixtureIdFinal)
+      if (res.success && res.fixture) {
+        if (!logoCasaFinal && res.fixture.homeTeamLogo) {
+          logoCasaFinal = res.fixture.homeTeamLogo
+        }
+        if (!logoVisitanteFinal && res.fixture.awayTeamLogo) {
+          logoVisitanteFinal = res.fixture.awayTeamLogo
+        }
+      }
+    } catch (errFixture) {
+      console.warn('[editarJogoEnquete] Aviso ao buscar logos da fixture:', errFixture)
+    }
+  }
+
   const payload: Record<string, any> = {
     time_a: params.time_a.trim(),
     time_b: params.time_b.trim(),
@@ -845,13 +940,12 @@ export async function editarJogoEnquete(
     regiao: params.regiao?.trim() || 'Brasileirão & Copas',
     data: params.data,
     horario: params.horario || '16:00',
+    logo_casa: logoCasaFinal,
+    logo_visitante: logoVisitanteFinal,
   }
 
-  if (params.logo_casa !== undefined) {
-    payload.logo_casa = params.logo_casa.trim()
-  }
-  if (params.logo_visitante !== undefined) {
-    payload.logo_visitante = params.logo_visitante.trim()
+  if (fixtureIdFinal) {
+    payload.fixture_id = fixtureIdFinal
   }
 
   const atualizado = await pb.collection('enquete_jogos').update<EnqueteJogoModel>(jogoId, payload)
@@ -859,12 +953,8 @@ export async function editarJogoEnquete(
 
   // Propaga imediatamente as alterações para o jogo correspondente no bolão se já estiver cadastrado
   try {
-    const jogoAntigo = await pb
-      .collection('enquete_jogos')
-      .getOne<EnqueteJogoModel>(jogoId)
-      .catch(() => null)
-    const timeABusca = (jogoAntigo?.time_a || params.time_a).trim().replace(/'/g, "\\'")
-    const timeBBusca = (jogoAntigo?.time_b || params.time_b).trim().replace(/'/g, "\\'")
+    const timeABusca = (jogoExistente?.time_a || params.time_a).trim().replace(/'/g, "\\'")
+    const timeBBusca = (jogoExistente?.time_b || params.time_b).trim().replace(/'/g, "\\'")
 
     const jogosRelacionados = await pb.collection('jogos').getFullList<Jogo>({
       filter: `time_a = '${timeABusca}' && time_b = '${timeBBusca}'`,
@@ -874,20 +964,29 @@ export async function editarJogoEnquete(
       time_a: params.time_a.trim(),
       time_b: params.time_b.trim(),
     }
-    if (params.logo_casa !== undefined) {
-      jogoUpdatePayload.url_escudo_mandante = params.logo_casa.trim()
+    if (logoCasaFinal) {
+      jogoUpdatePayload.url_escudo_mandante = logoCasaFinal
     }
-    if (params.logo_visitante !== undefined) {
-      jogoUpdatePayload.url_escudo_visitante = params.logo_visitante.trim()
+    if (logoVisitanteFinal) {
+      jogoUpdatePayload.url_escudo_visitante = logoVisitanteFinal
     }
     if (params.campeonato !== undefined) {
       jogoUpdatePayload.competicao = params.campeonato.trim()
     }
+    // Propaga fixture_id para jogos quando houver, sem nunca sobrescrever com vazio
+    if (fixtureIdFinal) {
+      jogoUpdatePayload.fixture_id = fixtureIdFinal
+    }
 
     for (const jr of jogosRelacionados) {
+      // Se o jogo já possui fixture_id e o novo não foi fornecido, preserva
+      const updateDataForJr = { ...jogoUpdatePayload }
+      if (!fixtureIdFinal && jr.fixture_id) {
+        delete updateDataForJr.fixture_id
+      }
       await pb
         .collection('jogos')
-        .update(jr.id, jogoUpdatePayload)
+        .update(jr.id, updateDataForJr)
         .catch(() => {})
     }
   } catch (syncErr) {

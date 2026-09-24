@@ -77,6 +77,7 @@ import {
   adicionarJogoManualNaEnquete,
   editarJogoEnquete,
   excluirJogoEnquete,
+  buscarFixtureDetalhes,
   readListaEnquetesCache,
   readEnqueteDetalhesCache,
 } from '@/services/enquetes'
@@ -234,6 +235,7 @@ export default function Enquetes() {
   const [dialogEditarJogoOpen, setDialogEditarJogoOpen] = useState(false)
   const [editMandante, setEditMandante] = useState('')
   const [editVisitante, setEditVisitante] = useState('')
+  const [editFixtureId, setEditFixtureId] = useState('')
   const [editLogoCasa, setEditLogoCasa] = useState('')
   const [editLogoVisitante, setEditLogoVisitante] = useState('')
   const [editCompeticao, setEditCompeticao] = useState('')
@@ -241,6 +243,8 @@ export default function Enquetes() {
   const [editHorario, setEditHorario] = useState('16:00')
   const [editAvisoMargem, setEditAvisoMargem] = useState<string | null>(null)
   const [salvandoEdicaoJogo, setSalvandoEdicaoJogo] = useState(false)
+  const [buscandoFixtureEdit, setBuscandoFixtureEdit] = useState(false)
+  const [buscandoFixtureAtiva, setBuscandoFixtureAtiva] = useState(false)
 
   // Admin: Modal de Exclusão de Jogo Individual da Enquete
   const [jogoEmExclusao, setJogoEmExclusao] = useState<JogoComVotos | null>(null)
@@ -1149,12 +1153,97 @@ export default function Enquetes() {
     }
   }
 
+  // Admin: Função utilitária para buscar escudos pela fixture na edição
+  const handleBuscarEscudosPorFixtureEdit = async (fidParam?: string) => {
+    const rawFid = fidParam !== undefined ? fidParam : editFixtureId
+    const cleanId = rawFid.replace(/\D/g, '').trim()
+    if (!cleanId) return
+
+    // Só preenche se pelo menos um dos campos de escudo estiver vazio (preserva preenchimento manual)
+    if (editLogoCasa && editLogoVisitante) return
+
+    setBuscandoFixtureEdit(true)
+    try {
+      const res = await buscarFixtureDetalhes(cleanId)
+      if (res.success && res.fixture) {
+        let mudou = false
+        if (!editLogoCasa && res.fixture.homeTeamLogo) {
+          setEditLogoCasa(res.fixture.homeTeamLogo)
+          mudou = true
+        }
+        if (!editLogoVisitante && res.fixture.awayTeamLogo) {
+          setEditLogoVisitante(res.fixture.awayTeamLogo)
+          mudou = true
+        }
+        if (mudou) {
+          toast({
+            title: 'Escudos encontrados pela API',
+            description: `Escudos oficiais vinculados à fixture ${cleanId}.`,
+          })
+        }
+      } else if (res.rate_limited) {
+        toast({
+          title: 'Limite da API atingido',
+          description:
+            'Limite diário da API-Sports atingido (80/dia, reset às 21h). O ID foi mantido para salvamento.',
+        })
+      }
+    } catch {
+      /* ignore */
+    } finally {
+      setBuscandoFixtureEdit(false)
+    }
+  }
+
+  // Admin: Função utilitária para buscar escudos pela fixture na adição manual
+  const handleBuscarEscudosPorFixtureAtiva = async (fidParam?: string) => {
+    const rawFid = fidParam !== undefined ? fidParam : ativaManualFixtureId
+    const cleanId = rawFid.replace(/\D/g, '').trim()
+    if (!cleanId) return
+
+    // Só preenche se pelo menos um campo estiver vazio
+    if (ativaManualLogoCasa && ativaManualLogoVisitante) return
+
+    setBuscandoFixtureAtiva(true)
+    try {
+      const res = await buscarFixtureDetalhes(cleanId)
+      if (res.success && res.fixture) {
+        let mudou = false
+        if (!ativaManualLogoCasa && res.fixture.homeTeamLogo) {
+          setAtivaManualLogoCasa(res.fixture.homeTeamLogo)
+          mudou = true
+        }
+        if (!ativaManualLogoVisitante && res.fixture.awayTeamLogo) {
+          setAtivaManualLogoVisitante(res.fixture.awayTeamLogo)
+          mudou = true
+        }
+        if (mudou) {
+          toast({
+            title: 'Escudos encontrados pela API',
+            description: `Escudos oficiais vinculados à fixture ${cleanId}.`,
+          })
+        }
+      } else if (res.rate_limited) {
+        toast({
+          title: 'Limite da API atingido',
+          description:
+            'Limite diário da API-Sports atingido (80/dia, reset às 21h). O ID foi mantido para salvamento.',
+        })
+      }
+    } catch {
+      /* ignore */
+    } finally {
+      setBuscandoFixtureAtiva(false)
+    }
+  }
+
   // Admin: Abrir modal de edição de confronto
   const handleAbrirModalEditarJogo = (jogo: JogoComVotos, e?: React.MouseEvent) => {
     if (e) e.stopPropagation()
     setJogoEmEdicao(jogo)
     setEditMandante(jogo.time_a)
     setEditVisitante(jogo.time_b)
+    setEditFixtureId(jogo.fixture_id ? String(jogo.fixture_id).replace(/\D/g, '').trim() : '')
     setEditLogoCasa(jogo.logo_casa || '')
     setEditLogoVisitante(jogo.logo_visitante || '')
     setEditCompeticao(jogo.campeonato || '')
@@ -1170,6 +1259,7 @@ export default function Enquetes() {
 
     const timeA = editMandante.trim()
     const timeB = editVisitante.trim()
+    const cleanEditFixtureId = editFixtureId.replace(/\D/g, '').trim()
     const competicao = editCompeticao.trim() || 'Amistoso / Outros'
     const dataJogo = editData.trim()
     const horarioJogo = editHorario.trim() || '16:00'
@@ -1256,6 +1346,7 @@ export default function Enquetes() {
       const atualizado = await editarJogoEnquete(jogoEmEdicao.id, {
         time_a: timeA,
         time_b: timeB,
+        fixture_id: cleanEditFixtureId,
         logo_casa: logoAFinal,
         logo_visitante: logoBFinal,
         campeonato: competicao,
@@ -1263,6 +1354,15 @@ export default function Enquetes() {
         data: dataFinal,
         horario: horaFinal,
       })
+
+      // Se informou fixture_id e os escudos permaneceram vazios, avisa amigavelmente
+      if (cleanEditFixtureId && (!atualizado.logo_casa || !atualizado.logo_visitante)) {
+        toast({
+          title: 'Escudos pendentes',
+          description:
+            'O confronto foi salvo com o ID da partida intacto. Os escudos oficiais ficaram pendentes devido à cota da API ou conexão.',
+        })
+      }
 
       // Atualiza o estado React imediatamente mantendo os votos já computados
       setJogosEnquete((prev) =>
@@ -1272,6 +1372,7 @@ export default function Enquetes() {
               ...j,
               time_a: atualizado.time_a,
               time_b: atualizado.time_b,
+              fixture_id: atualizado.fixture_id || cleanEditFixtureId || j.fixture_id,
               logo_casa: atualizado.logo_casa || logoAFinal,
               logo_visitante: atualizado.logo_visitante || logoBFinal,
               campeonato: atualizado.campeonato,
@@ -3298,18 +3399,35 @@ export default function Enquetes() {
                 className="text-xs font-bold text-slate-700 flex items-center justify-between"
               >
                 <span>ID da Partida (API-Football) / api_fixture_id</span>
-                <span className="text-[10px] font-normal text-slate-500">Opcional</span>
+                <span className="text-[10px] font-normal text-slate-500">
+                  {buscandoFixtureAtiva ? 'Buscando escudos...' : 'Opcional'}
+                </span>
               </Label>
-              <Input
-                id="ativa-manual-fixture-id"
-                type="text"
-                inputMode="numeric"
-                pattern="[0-9]*"
-                placeholder="Ex.: 1528881"
-                value={ativaManualFixtureId}
-                onChange={(e) => setAtivaManualFixtureId(e.target.value.replace(/\D/g, ''))}
-                className="h-9 bg-white text-xs"
-              />
+              <div className="relative">
+                <Input
+                  id="ativa-manual-fixture-id"
+                  type="text"
+                  inputMode="numeric"
+                  pattern="[0-9]*"
+                  placeholder="Ex.: 1528881"
+                  value={ativaManualFixtureId}
+                  onChange={(e) => {
+                    const clean = e.target.value.replace(/\D/g, '')
+                    setAtivaManualFixtureId(clean)
+                  }}
+                  onBlur={() => {
+                    if (ativaManualFixtureId) {
+                      handleBuscarEscudosPorFixtureAtiva(ativaManualFixtureId)
+                    }
+                  }}
+                  className="h-9 bg-white text-xs"
+                />
+                {buscandoFixtureAtiva && (
+                  <div className="absolute right-2.5 top-2.5">
+                    <RefreshCw className="h-4 w-4 animate-spin text-amber-600" />
+                  </div>
+                )}
+              </div>
             </div>
 
             {/* Escudos Opcionais (Mandante e Visitante) */}
@@ -3498,6 +3616,44 @@ export default function Enquetes() {
                   onChange={(e) => setEditVisitante(e.target.value)}
                   className="h-9 bg-white text-xs"
                 />
+              </div>
+            </div>
+
+            {/* ID da Partida (API-Football) / api_fixture_id */}
+            <div className="space-y-1">
+              <Label
+                htmlFor="edit-fixture-id"
+                className="text-xs font-bold text-slate-700 flex items-center justify-between"
+              >
+                <span>ID da Partida (API-Football) / api_fixture_id</span>
+                <span className="text-[10px] font-normal text-slate-500">
+                  {buscandoFixtureEdit ? 'Buscando escudos...' : 'Opcional'}
+                </span>
+              </Label>
+              <div className="relative">
+                <Input
+                  id="edit-fixture-id"
+                  type="text"
+                  inputMode="numeric"
+                  pattern="[0-9]*"
+                  placeholder="Ex.: 1528881"
+                  value={editFixtureId}
+                  onChange={(e) => {
+                    const clean = e.target.value.replace(/\D/g, '')
+                    setEditFixtureId(clean)
+                  }}
+                  onBlur={() => {
+                    if (editFixtureId) {
+                      handleBuscarEscudosPorFixtureEdit(editFixtureId)
+                    }
+                  }}
+                  className="h-9 bg-white text-xs"
+                />
+                {buscandoFixtureEdit && (
+                  <div className="absolute right-2.5 top-2.5">
+                    <RefreshCw className="h-4 w-4 animate-spin text-amber-600" />
+                  </div>
+                )}
               </div>
             </div>
 

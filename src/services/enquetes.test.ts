@@ -244,7 +244,7 @@ describe('Serviço de Enquetes - Otimizações de Carregamento, Cache e Requisi�
     })
   })
 
-  describe('6. Adicionar Jogo Manual na Enquete Ativa com fixture_id e tratamento de escudos', () => {
+  describe('6. Adicionar e Editar Jogo na Enquete com fixture_id e tratamento de escudos', () => {
     it('higieniza fixture_id numérico e repassa para criação do registro', async () => {
       const mockCreate = vi.fn().mockImplementation((payload) => {
         return Promise.resolve({
@@ -330,6 +330,196 @@ describe('Serviço de Enquetes - Otimizações de Carregamento, Cache e Requisi�
       expect(payload.logo_casa).toBe('')
       expect(payload.logo_visitante).toBe('')
       expect(jogo.id).toBe('jogo_sem_logo')
+    })
+
+    it('editarJogoEnquete atualiza fixture_id, busca escudos automáticos se vazios e sincroniza com jogos do bolão', async () => {
+      const mockUpdateEnqueteJogo = vi.fn().mockImplementation((id, payload) => {
+        return Promise.resolve({
+          id,
+          ...payload,
+        })
+      })
+
+      const mockGetOneEnqueteJogo = vi.fn().mockResolvedValue({
+        id: 'ej_1',
+        time_a: 'Jamaica',
+        time_b: 'Honduras',
+        fixture_id: '1000',
+        logo_casa: '',
+        logo_visitante: '',
+      })
+
+      const mockUpdateJogo = vi.fn().mockResolvedValue({ id: 'jg_1' })
+      const mockGetFullListJogos = vi
+        .fn()
+        .mockResolvedValue([
+          { id: 'jg_1', time_a: 'Jamaica', time_b: 'Honduras', fixture_id: '1000' },
+        ])
+
+      vi.spyOn(pb, 'collection').mockImplementation((col: string) => {
+        if (col === 'enquete_jogos') {
+          return {
+            getOne: mockGetOneEnqueteJogo,
+            update: mockUpdateEnqueteJogo,
+          } as any
+        }
+        if (col === 'jogos') {
+          return {
+            getFullList: mockGetFullListJogos,
+            update: mockUpdateJogo,
+          } as any
+        }
+        return {} as any
+      })
+
+      // Simula retorno da API para a nova fixture 1528881
+      globalThis.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          success: true,
+          fixture: {
+            id: 1528881,
+            homeTeamLogo: 'https://media.api-sports.io/football/teams/jamaica.png',
+            awayTeamLogo: 'https://media.api-sports.io/football/teams/honduras.png',
+          },
+        }),
+      }) as any
+
+      const { editarJogoEnquete } = await import('./enquetes')
+      const atualizado = await editarJogoEnquete('ej_1', {
+        time_a: 'Jamaica',
+        time_b: 'Honduras',
+        data: '2026-09-28',
+        horario: '21:00',
+        fixture_id: '1528881',
+      })
+
+      expect(mockUpdateEnqueteJogo).toHaveBeenCalledTimes(1)
+      const updatePayload = mockUpdateEnqueteJogo.mock.calls[0][1]
+      expect(updatePayload.fixture_id).toBe('1528881')
+      expect(updatePayload.logo_casa).toBe('https://media.api-sports.io/football/teams/jamaica.png')
+      expect(updatePayload.logo_visitante).toBe(
+        'https://media.api-sports.io/football/teams/honduras.png',
+      )
+      expect(atualizado.fixture_id).toBe('1528881')
+
+      // Verifica sincronização com a coleção jogos do bolão
+      expect(mockUpdateJogo).toHaveBeenCalledTimes(1)
+      const jogoPayload = mockUpdateJogo.mock.calls[0][1]
+      expect(jogoPayload.fixture_id).toBe('1528881')
+      expect(jogoPayload.url_escudo_mandante).toBe(
+        'https://media.api-sports.io/football/teams/jamaica.png',
+      )
+      expect(jogoPayload.url_escudo_visitante).toBe(
+        'https://media.api-sports.io/football/teams/honduras.png',
+      )
+    })
+
+    it('editarJogoEnquete NUNCA apaga fixture_id existente quando o campo vier vazio', async () => {
+      const mockUpdateEnqueteJogo = vi.fn().mockImplementation((id, payload) => {
+        return Promise.resolve({
+          id,
+          ...payload,
+        })
+      })
+
+      const mockGetOneEnqueteJogo = vi.fn().mockResolvedValue({
+        id: 'ej_2',
+        time_a: 'Brasil',
+        time_b: 'Argentina',
+        fixture_id: '999999',
+        logo_casa: 'https://media.api-sports.io/football/teams/6.png',
+        logo_visitante: 'https://media.api-sports.io/football/teams/26.png',
+      })
+
+      vi.spyOn(pb, 'collection').mockImplementation((col: string) => {
+        if (col === 'enquete_jogos') {
+          return {
+            getOne: mockGetOneEnqueteJogo,
+            update: mockUpdateEnqueteJogo,
+          } as any
+        }
+        if (col === 'jogos') {
+          return {
+            getFullList: vi.fn().mockResolvedValue([]),
+            update: vi.fn(),
+          } as any
+        }
+        return {} as any
+      })
+
+      const { editarJogoEnquete } = await import('./enquetes')
+      // Salva sem informar fixture_id (string vazia ou undefined)
+      await editarJogoEnquete('ej_2', {
+        time_a: 'Brasil',
+        time_b: 'Argentina',
+        data: '2026-10-10',
+        horario: '21:30',
+        fixture_id: '',
+        logo_casa: 'https://media.api-sports.io/football/teams/6.png',
+        logo_visitante: 'https://media.api-sports.io/football/teams/26.png',
+      })
+
+      expect(mockUpdateEnqueteJogo).toHaveBeenCalledTimes(1)
+      const payload = mockUpdateEnqueteJogo.mock.calls[0][1]
+      // Garante que o fixture_id anterior 999999 foi preservado!
+      expect(payload.fixture_id).toBe('999999')
+    })
+
+    it('editarJogoEnquete preserva escudos manuais pré-existentes mesmo ao definir fixture_id (prioridade máxima manual)', async () => {
+      const mockUpdateEnqueteJogo = vi.fn().mockImplementation((id, payload) => {
+        return Promise.resolve({
+          id,
+          ...payload,
+        })
+      })
+
+      const mockGetOneEnqueteJogo = vi.fn().mockResolvedValue({
+        id: 'ej_3',
+        time_a: 'Clube Manual A',
+        time_b: 'Clube Manual B',
+        fixture_id: '',
+        logo_casa: 'https://custom.escudo.com/a.png',
+        logo_visitante: 'https://custom.escudo.com/b.png',
+      })
+
+      vi.spyOn(pb, 'collection').mockImplementation((col: string) => {
+        if (col === 'enquete_jogos') {
+          return {
+            getOne: mockGetOneEnqueteJogo,
+            update: mockUpdateEnqueteJogo,
+          } as any
+        }
+        if (col === 'jogos') {
+          return {
+            getFullList: vi.fn().mockResolvedValue([]),
+            update: vi.fn(),
+          } as any
+        }
+        return {} as any
+      })
+
+      // Fetch não deve nem ser chamado se os logos manuais já estão preenchidos
+      const fetchSpy = vi.fn()
+      globalThis.fetch = fetchSpy as any
+
+      const { editarJogoEnquete } = await import('./enquetes')
+      await editarJogoEnquete('ej_3', {
+        time_a: 'Clube Manual A',
+        time_b: 'Clube Manual B',
+        data: '2026-10-12',
+        horario: '16:00',
+        fixture_id: '777888',
+        logo_casa: 'https://custom.escudo.com/a.png',
+        logo_visitante: 'https://custom.escudo.com/b.png',
+      })
+
+      expect(fetchSpy).not.toHaveBeenCalled()
+      const payload = mockUpdateEnqueteJogo.mock.calls[0][1]
+      expect(payload.fixture_id).toBe('777888')
+      expect(payload.logo_casa).toBe('https://custom.escudo.com/a.png')
+      expect(payload.logo_visitante).toBe('https://custom.escudo.com/b.png')
     })
   })
 
