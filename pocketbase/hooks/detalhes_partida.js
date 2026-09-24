@@ -28,7 +28,17 @@ routerAdd(
   'GET',
   '/backend/v1/detalhes-partida',
   (e) => {
-    const { enviarRequisicaoApiFootball } = require(`${__hooks}/api_football_limiter.js`)
+    let enviarRequisicaoApiFootball = null
+    try {
+      enviarRequisicaoApiFootball = require(
+        __hooks + '/api_football_limiter.js',
+      ).enviarRequisicaoApiFootball
+    } catch (_) {
+      try {
+        enviarRequisicaoApiFootball =
+          require('./api_football_limiter.js').enviarRequisicaoApiFootball
+      } catch (_) {}
+    }
 
     // Anti-spam leve por fixture (30s) para chamadas sob demanda
     var FIXTURE_SPAM_WINDOW_MS = 30 * 1000
@@ -292,7 +302,14 @@ routerAdd(
 
       // Se o limiter estiver esgotado/aguardando reset, responde gracioso com 200
       try {
-        const { obterStatusLimiter } = require(`${__hooks}/api_football_limiter.js`)
+        let obterStatusLimiter = null
+        try {
+          obterStatusLimiter = require(__hooks + '/api_football_limiter.js').obterStatusLimiter
+        } catch (_) {
+          try {
+            obterStatusLimiter = require('./api_football_limiter.js').obterStatusLimiter
+          } catch (_) {}
+        }
         const statusLim = obterStatusLimiter()
         if (statusLim.waiting_reset) {
           if (matchingJogoRecord) {

@@ -1068,33 +1068,10 @@ export default function Enquetes() {
       setAtivaManualAvisoDuplicado(null)
     }
 
-    // Resolução prévia de escudos: URL digitada > busca automática via API
+    // Resolução de escudos:
+    // Se o usuário digitou uma URL customizada, usa ela; se deixou vazio, envia vazio e deixa a API-Football resolver.
     let logoAFinal = customLogoA
     let logoBFinal = customLogoB
-
-    const buscamPromessas: Promise<void>[] = []
-    if (!logoAFinal) {
-      buscamPromessas.push(
-        buscarEscudoTime(timeA)
-          .then((badge) => {
-            if (badge) logoAFinal = badge
-          })
-          .catch(() => {}),
-      )
-    }
-    if (!logoBFinal) {
-      buscamPromessas.push(
-        buscarEscudoTime(timeB)
-          .then((badge) => {
-            if (badge) logoBFinal = badge
-          })
-          .catch(() => {}),
-      )
-    }
-
-    if (buscamPromessas.length > 0) {
-      await Promise.all(buscamPromessas)
-    }
 
     const regiaoCalculada =
       competicao.toLowerCase().includes('brasileir') || competicao.toLowerCase().includes('copa')
@@ -1493,33 +1470,11 @@ export default function Enquetes() {
       setEditAvisoMargem(null)
     }
 
-    // Resolução prévia de escudos: se não preenchido manualmente e alterou o time, busca via API
+    // Resolução de escudos:
+    // Se o usuário limpou o campo de escudo (enviando string vazia), respeitar e enviar vazio.
+    // A busca oficial será feita EXCLUSIVAMENTE via API-Football no editarJogoEnquete.
     let logoAFinal = customLogoA
     let logoBFinal = customLogoB
-
-    const buscamPromessas: Promise<void>[] = []
-    if (!logoAFinal) {
-      buscamPromessas.push(
-        buscarEscudoTime(timeA)
-          .then((badge) => {
-            if (badge) logoAFinal = badge
-          })
-          .catch(() => {}),
-      )
-    }
-    if (!logoBFinal) {
-      buscamPromessas.push(
-        buscarEscudoTime(timeB)
-          .then((badge) => {
-            if (badge) logoBFinal = badge
-          })
-          .catch(() => {}),
-      )
-    }
-
-    if (buscamPromessas.length > 0) {
-      await Promise.all(buscamPromessas)
-    }
 
     const regiaoCalculada =
       competicao.toLowerCase().includes('brasileir') || competicao.toLowerCase().includes('copa')

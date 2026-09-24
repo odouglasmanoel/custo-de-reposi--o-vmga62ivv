@@ -55,8 +55,30 @@ routerAdd('POST', '/backend/v1/admin/vincular-fixtures', (e) => {
       })
     }
 
-    const { buscarFixtureIdNaApi } = require(`${__hooks}/fixtures_matcher.js`)
-    const { obterStatusLimiter } = require(`${__hooks}/api_football_limiter.js`)
+    let buscarFixtureIdNaApi = null
+    try {
+      buscarFixtureIdNaApi = require(__hooks + '/fixtures_matcher.js').buscarFixtureIdNaApi
+    } catch (_) {
+      try {
+        buscarFixtureIdNaApi = require('./fixtures_matcher.js').buscarFixtureIdNaApi
+      } catch (_) {}
+    }
+
+    let obterStatusLimiter = null
+    try {
+      obterStatusLimiter = require(__hooks + '/api_football_limiter.js').obterStatusLimiter
+    } catch (_) {
+      try {
+        obterStatusLimiter = require('./api_football_limiter.js').obterStatusLimiter
+      } catch (_) {}
+    }
+
+    if (!buscarFixtureIdNaApi || !obterStatusLimiter) {
+      return e.json(500, {
+        success: false,
+        error: 'Módulos auxiliares não carregados.',
+      })
+    }
 
     const hojeStr = new Date().toISOString().slice(0, 10)
     let vinculadosCount = 0

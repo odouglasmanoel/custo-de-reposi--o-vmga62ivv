@@ -171,7 +171,17 @@ function buscarFixtureDetalhadaNaApi(timeA, timeB, dataRaw) {
   }
 
   try {
-    const { enviarRequisicaoApiFootball } = require(`${__hooks}/api_football_limiter.js`)
+    let enviarRequisicaoApiFootball = null
+    try {
+      enviarRequisicaoApiFootball = require(
+        __hooks + '/api_football_limiter.js',
+      ).enviarRequisicaoApiFootball
+    } catch (_) {
+      try {
+        enviarRequisicaoApiFootball =
+          require('./api_football_limiter.js').enviarRequisicaoApiFootball
+      } catch (_) {}
+    }
     const isRapid = apiKey.length > 40
     const url = isRapid
       ? `https://api-football-v1.p.rapidapi.com/v3/fixtures?date=${encodeURIComponent(isoDate)}&timezone=America%2FSao_Paulo`

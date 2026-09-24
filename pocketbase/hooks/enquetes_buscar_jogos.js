@@ -702,12 +702,12 @@ routerAdd(
                     home: {
                       id: parseInt(evGlobal.idHomeTeam, 10) || 0,
                       name: hNameG,
-                      logo: evGlobal.strHomeTeamBadge || '',
+                      logo: '', // TheSportsDB eliminado: nunca persistir escudos dessa fonte
                     },
                     away: {
                       id: parseInt(evGlobal.idAwayTeam, 10) || 0,
                       name: aNameG,
-                      logo: evGlobal.strAwayTeamBadge || '',
+                      logo: '', // TheSportsDB eliminado: nunca persistir escudos dessa fonte
                     },
                   },
                   dateSP: tsdbDateSPG,
@@ -801,12 +801,12 @@ routerAdd(
                         home: {
                           id: parseInt(ev.idHomeTeam, 10) || 0,
                           name: hName,
-                          logo: ev.strHomeTeamBadge || '',
+                          logo: '', // TheSportsDB eliminado: nunca persistir escudos dessa fonte
                         },
                         away: {
                           id: parseInt(ev.idAwayTeam, 10) || 0,
                           name: aName,
-                          logo: ev.strAwayTeamBadge || '',
+                          logo: '', // TheSportsDB eliminado: nunca persistir escudos dessa fonte
                         },
                       },
                       dateSP: tsdbDateSP,
@@ -864,12 +864,18 @@ routerAdd(
                     home: {
                       id: 0,
                       name: dbHome,
-                      logo: dbr.getString('logo_casa') || '',
+                      logo:
+                        (dbr.getString('logo_casa') || '').indexOf('thesportsdb.com') !== -1
+                          ? ''
+                          : dbr.getString('logo_casa') || '',
                     },
                     away: {
                       id: 0,
                       name: dbAway,
-                      logo: dbr.getString('logo_visitante') || '',
+                      logo:
+                        (dbr.getString('logo_visitante') || '').indexOf('thesportsdb.com') !== -1
+                          ? ''
+                          : dbr.getString('logo_visitante') || '',
                     },
                   },
                   dateSP: targetDate,
@@ -1008,8 +1014,20 @@ routerAdd(
                 : 'Futebol Europeu',
             data: gameDate,
             horario: gameTime,
-            logo_casa: (f.teams && f.teams.home && f.teams.home.logo) || '',
-            logo_visitante: (f.teams && f.teams.away && f.teams.away.logo) || '',
+            logo_casa:
+              f.teams &&
+              f.teams.home &&
+              f.teams.home.logo &&
+              f.teams.home.logo.indexOf('thesportsdb.com') === -1
+                ? f.teams.home.logo
+                : '',
+            logo_visitante:
+              f.teams &&
+              f.teams.away &&
+              f.teams.away.logo &&
+              f.teams.away.logo.indexOf('thesportsdb.com') === -1
+                ? f.teams.away.logo
+                : '',
             campeonato_logo: (f.league && f.league.logo) || '',
           })
         }
@@ -1277,16 +1295,16 @@ routerAdd(
     }
 
     // Helper unificado de busca de escudo respeitando a ordem e exigindo similaridade >= 0.85:
-    // 0) PURGA de cache contaminado conhecido (ex: Köln associado a Paris)
-    // 1) cache em memória (validado)
-    // 2) TheSportsDB (strTeamBadge, gratuito) com verificação de similaridade >= 0.85
-    // 3) Football-Data.org (crest) com verificação de similaridade >= 0.85
-    // 4) API-Football com busca por nome e verificação de similaridade >= 0.85
+    // TheSportsDB ELIMINADO TOTALMENTE por diretriz do usuário Douglas.
+    // Fontes permitidas:
+    // 0) Escudos oficiais conhecidos (PSG, Dinamarca, etc. na API-Sports)
+    // 1) Cache em memória (validado, descartando TheSportsDB)
+    // 2) Football-Data.org (crest) com similaridade >= 0.85
     var fetchTeamBadgeOrdered = function (teamName) {
       if (!teamName) return ''
       var cleanKey = normalizarNomeEscudo(teamName)
 
-      // 0) Tratamento explícito para PSG e Dinamarca
+      // 0) Tratamento explícito para PSG e Dinamarca (oficiais API-Sports)
       if (cleanKey === 'paris saint germain') {
         return 'https://media.api-sports.io/football/teams/85.png'
       }
@@ -1295,153 +1313,82 @@ routerAdd(
       }
 
       // 1) Cache em memória
-      if (typeof globalThis !== 'undefined' && !globalThis.__tsdbBadgeCache) {
-        globalThis.__tsdbBadgeCache = {}
+      if (typeof globalThis !== 'undefined' && !globalThis.__officialBadgeCache) {
+        globalThis.__officialBadgeCache = {}
       }
       if (
         typeof globalThis !== 'undefined' &&
-        globalThis.__tsdbBadgeCache &&
-        globalThis.__tsdbBadgeCache[cleanKey] !== undefined
+        globalThis.__officialBadgeCache &&
+        globalThis.__officialBadgeCache[cleanKey] !== undefined
       ) {
-        var cachedVal = globalThis.__tsdbBadgeCache[cleanKey] || ''
-        // Invalida cache se for contaminação de Colônia (Köln) em time que não seja Köln,
-        // ou se for contaminação de B.S.C. (z3v04x) em Dinamarca
-        if (
-          cachedVal &&
-          (cachedVal.indexOf('192') !== -1 ||
-            cachedVal.indexOf('koln') !== -1 ||
-            cachedVal.indexOf('cologne') !== -1)
-        ) {
-          if (cleanKey.indexOf('koln') === -1 && cleanKey.indexOf('cologne') === -1) {
-            cachedVal = ''
-            globalThis.__tsdbBadgeCache[cleanKey] = ''
-          }
-        }
-        if (
-          cachedVal &&
-          (cleanKey === 'dinamarca' || cleanKey === 'denmark') &&
-          (cachedVal.indexOf('z3v04x') !== -1 || cachedVal.indexOf('bsc') !== -1)
-        ) {
-          cachedVal = 'https://media.api-sports.io/football/teams/21.png'
-          globalThis.__tsdbBadgeCache[cleanKey] = cachedVal
+        var cachedVal = globalThis.__officialBadgeCache[cleanKey] || ''
+        // Elimina qualquer resíduo de TheSportsDB
+        if (cachedVal && cachedVal.indexOf('thesportsdb.com') !== -1) {
+          cachedVal = ''
+          globalThis.__officialBadgeCache[cleanKey] = ''
         }
         if (cachedVal) return cachedVal
       }
 
       var badgeFound = ''
 
-      // 2) TheSportsDB (gratuito)
-      var tsdbKey = ''
+      // 2) Football-Data.org (crest)
+      var fdKey = ''
       try {
-        var tsdbRec = $app.findFirstRecordByData(
+        var fdRec = $app.findFirstRecordByData(
           'config_integracoes',
           'chave',
-          'thesportsdb_fallback',
+          'football_data_fallback',
         )
-        if (tsdbRec) {
-          tsdbKey = (tsdbRec.getString('api_key') || '').trim()
+        if (fdRec) {
+          fdKey = (fdRec.getString('api_key') || '').trim()
         }
       } catch (_) {}
-      if (!tsdbKey) {
+      if (!fdKey) {
         try {
-          if ($secrets && $secrets.has && $secrets.has('THESPORTSDB_KEY')) {
-            tsdbKey = ($secrets.get('THESPORTSDB_KEY') || '').trim()
+          if ($secrets && $secrets.has && $secrets.has('FOOTBALL_DATA_KEY')) {
+            fdKey = ($secrets.get('FOOTBALL_DATA_KEY') || '').trim()
           } else if ($os && $os.getenv) {
-            tsdbKey = ($os.getenv('THESPORTSDB_KEY') || '').trim()
+            fdKey = ($os.getenv('FOOTBALL_DATA_KEY') || '').trim()
           }
         } catch (_) {}
       }
-      if (!tsdbKey) {
-        tsdbKey = '3'
-      }
 
-      try {
-        var resTsdb = $http.send({
-          url:
-            'https://www.thesportsdb.com/api/v1/json/' +
-            encodeURIComponent(tsdbKey) +
-            '/searchteams.php?t=' +
-            encodeURIComponent(teamName),
-          method: 'GET',
-          timeout: 4,
-        })
-
-        if (
-          resTsdb.statusCode === 200 &&
-          resTsdb.json &&
-          Array.isArray(resTsdb.json.teams) &&
-          resTsdb.json.teams.length > 0
-        ) {
-          for (var ti = 0; ti < resTsdb.json.teams.length; ti++) {
-            var cand = resTsdb.json.teams[ti]
-            var candName = cand.strTeam || ''
-            if (similaridadeEscudo(teamName, candName) >= 0.85) {
-              badgeFound = (cand.strTeamBadge || cand.strBadge || cand.strLogo || '').trim()
-              if (badgeFound) break
-            }
-          }
-        }
-      } catch (errTsdb) {
-        console.log('[TSDB Escudo] Erro na busca por ' + teamName + ':', errTsdb)
-      }
-
-      // 3) Football-Data.org (crest)
-      if (!badgeFound) {
-        var fdKey = ''
+      if (fdKey) {
         try {
-          var fdRec = $app.findFirstRecordByData(
-            'config_integracoes',
-            'chave',
-            'football_data_fallback',
-          )
-          if (fdRec) {
-            fdKey = (fdRec.getString('api_key') || '').trim()
-          }
-        } catch (_) {}
-        if (!fdKey) {
-          try {
-            if ($secrets && $secrets.has && $secrets.has('FOOTBALL_DATA_KEY')) {
-              fdKey = ($secrets.get('FOOTBALL_DATA_KEY') || '').trim()
-            } else if ($os && $os.getenv) {
-              fdKey = ($os.getenv('FOOTBALL_DATA_KEY') || '').trim()
-            }
-          } catch (_) {}
-        }
-
-        if (fdKey) {
-          try {
-            var resFD = $http.send({
-              url: 'https://api.football-data.org/v4/teams?name=' + encodeURIComponent(teamName),
-              method: 'GET',
-              headers: { 'X-Auth-Token': fdKey },
-              timeout: 4,
-            })
-            if (
-              resFD.statusCode === 200 &&
-              resFD.json &&
-              Array.isArray(resFD.json.teams) &&
-              resFD.json.teams.length > 0
-            ) {
-              for (var fdi = 0; fdi < resFD.json.teams.length; fdi++) {
-                var fdTeamObj = resFD.json.teams[fdi]
-                var fdName = (fdTeamObj && (fdTeamObj.name || fdTeamObj.shortName)) || ''
-                if (similaridadeEscudo(teamName, fdName) >= 0.85 && fdTeamObj.crest) {
-                  badgeFound = String(fdTeamObj.crest).trim()
-                  if (badgeFound) break
-                }
+          var resFD = $http.send({
+            url: 'https://api.football-data.org/v4/teams?name=' + encodeURIComponent(teamName),
+            method: 'GET',
+            headers: { 'X-Auth-Token': fdKey },
+            timeout: 4,
+          })
+          if (
+            resFD.statusCode === 200 &&
+            resFD.json &&
+            Array.isArray(resFD.json.teams) &&
+            resFD.json.teams.length > 0
+          ) {
+            for (var fdi = 0; fdi < resFD.json.teams.length; fdi++) {
+              var fdTeamObj = resFD.json.teams[fdi]
+              var fdName = (fdTeamObj && (fdTeamObj.name || fdTeamObj.shortName)) || ''
+              if (similaridadeEscudo(teamName, fdName) >= 0.85 && fdTeamObj.crest) {
+                badgeFound = String(fdTeamObj.crest).trim()
+                if (badgeFound) break
               }
             }
-          } catch (errFD) {
-            console.log('[Football-Data Escudo] Erro na busca por ' + teamName + ':', errFD)
           }
+        } catch (errFD) {
+          console.log('[Football-Data Escudo] Erro na busca por ' + teamName + ':', errFD)
         }
       }
 
-      // 4) API-Football DESATIVADA para busca de escudos (uso EXCLUSIVO nas escalações pré-jogo)
-      // Preserva 100% da cota da API-Football.
+      // Se a URL encontrada contiver TheSportsDB, anula para nunca devolver essa fonte
+      if (badgeFound && badgeFound.indexOf('thesportsdb.com') !== -1) {
+        badgeFound = ''
+      }
 
-      if (typeof globalThis !== 'undefined' && globalThis.__tsdbBadgeCache) {
-        globalThis.__tsdbBadgeCache[cleanKey] = badgeFound
+      if (typeof globalThis !== 'undefined' && globalThis.__officialBadgeCache) {
+        globalThis.__officialBadgeCache[cleanKey] = badgeFound
       }
 
       return badgeFound
@@ -1486,25 +1433,14 @@ routerAdd(
 onRecordCreate((e) => {
   var rec = e.record
   try {
+    // Purga escudos do TheSportsDB se porventura vierem no payload
     var logoCasa = (rec.getString('logo_casa') || '').trim()
     var logoVis = (rec.getString('logo_visitante') || '').trim()
-    var timeCasa = (rec.getString('time_a') || '').trim()
-    var timeVis = (rec.getString('time_b') || '').trim()
-
-    if (!logoCasa || !logoVis) {
-      if (!logoCasa && timeCasa) {
-        var foundCasa = fetchTeamBadgeOrdered(timeCasa)
-        if (foundCasa) {
-          rec.set('logo_casa', foundCasa)
-        }
-      }
-
-      if (!logoVis && timeVis) {
-        var foundVis = fetchTeamBadgeOrdered(timeVis)
-        if (foundVis) {
-          rec.set('logo_visitante', foundVis)
-        }
-      }
+    if (logoCasa.indexOf('thesportsdb.com') !== -1) {
+      rec.set('logo_casa', '')
+    }
+    if (logoVis.indexOf('thesportsdb.com') !== -1) {
+      rec.set('logo_visitante', '')
     }
   } catch (errBadge) {
     console.log('[Escudo enquete_jogos onRecordCreate] Aviso:', errBadge)
@@ -1563,25 +1499,14 @@ onRecordCreate((e) => {
 onRecordUpdate((e) => {
   var rec = e.record
   try {
+    // Purga escudos do TheSportsDB se porventura vierem no payload
     var logoCasa = (rec.getString('logo_casa') || '').trim()
     var logoVis = (rec.getString('logo_visitante') || '').trim()
-    var timeCasa = (rec.getString('time_a') || '').trim()
-    var timeVis = (rec.getString('time_b') || '').trim()
-
-    if (!logoCasa || !logoVis) {
-      if (!logoCasa && timeCasa) {
-        var foundCasa = fetchTeamBadgeOrdered(timeCasa)
-        if (foundCasa) {
-          rec.set('logo_casa', foundCasa)
-        }
-      }
-
-      if (!logoVis && timeVis) {
-        var foundVis = fetchTeamBadgeOrdered(timeVis)
-        if (foundVis) {
-          rec.set('logo_visitante', foundVis)
-        }
-      }
+    if (logoCasa.indexOf('thesportsdb.com') !== -1) {
+      rec.set('logo_casa', '')
+    }
+    if (logoVis.indexOf('thesportsdb.com') !== -1) {
+      rec.set('logo_visitante', '')
     }
   } catch (errBadge) {
     console.log('[Escudo enquete_jogos onRecordUpdate] Aviso:', errBadge)

@@ -891,7 +891,17 @@ routerAdd('GET', '/backend/v1/placar-ao-vivo', (e) => {
               ? { 'x-rapidapi-key': apiKey, 'x-rapidapi-host': 'api-football-v1.p.rapidapi.com' }
               : { 'x-apisports-key': apiKey }
 
-            var { enviarRequisicaoApiFootball } = require(`${__hooks}/api_football_limiter.js`)
+            var enviarRequisicaoApiFootball = null
+            try {
+              enviarRequisicaoApiFootball = require(
+                __hooks + '/api_football_limiter.js',
+              ).enviarRequisicaoApiFootball
+            } catch (_) {
+              try {
+                enviarRequisicaoApiFootball =
+                  require('./api_football_limiter.js').enviarRequisicaoApiFootball
+              } catch (_) {}
+            }
             var resFixturesDate = enviarRequisicaoApiFootball(
               resUrlR,
               { headers: rHeaders, timeout: 8 },
@@ -1159,7 +1169,17 @@ routerAdd('GET', '/backend/v1/placar-ao-vivo', (e) => {
           '&timezone=America%2FSao_Paulo'
 
         try {
-          var { enviarRequisicaoApiFootball } = require(`${__hooks}/api_football_limiter.js`)
+          var enviarRequisicaoApiFootball = null
+          try {
+            enviarRequisicaoApiFootball = require(
+              __hooks + '/api_football_limiter.js',
+            ).enviarRequisicaoApiFootball
+          } catch (_) {
+            try {
+              enviarRequisicaoApiFootball =
+                require('./api_football_limiter.js').enviarRequisicaoApiFootball
+            } catch (_) {}
+          }
           var resDirect = enviarRequisicaoApiFootball(
             urlDirect,
             { headers: headers, timeout: 8 },
@@ -1201,7 +1221,17 @@ routerAdd('GET', '/backend/v1/placar-ao-vivo', (e) => {
     // Consulta /fixtures?live=all somente se houver partidas cadastradas dentro da janela
     if (permitirPlacarAoVivoApiFootball && !rateLimitDetected && fixturesDentroJanela.length > 0) {
       try {
-        const { enviarRequisicaoApiFootball } = require(`${__hooks}/api_football_limiter.js`)
+        var enviarRequisicaoApiFootball = null
+        try {
+          enviarRequisicaoApiFootball = require(
+            __hooks + '/api_football_limiter.js',
+          ).enviarRequisicaoApiFootball
+        } catch (_) {
+          try {
+            enviarRequisicaoApiFootball =
+              require('./api_football_limiter.js').enviarRequisicaoApiFootball
+          } catch (_) {}
+        }
         const resLive = enviarRequisicaoApiFootball(urlLive, { headers: headers, timeout: 8 }, 1)
 
         if (resLive.blocked) {
@@ -2437,9 +2467,13 @@ var _desativado_routerJogosDoDia_legacy = function (e) {
     // =========================================================================
     var limiterMod = null
     try {
-      limiterMod = require(`${__hooks}/api_football_limiter.js`)
+      limiterMod = require(__hooks + '/api_football_limiter.js')
     } catch (_) {
-      limiterMod = null
+      try {
+        limiterMod = require('./api_football_limiter.js')
+      } catch (_) {
+        limiterMod = null
+      }
     }
 
     var limiterStatus =

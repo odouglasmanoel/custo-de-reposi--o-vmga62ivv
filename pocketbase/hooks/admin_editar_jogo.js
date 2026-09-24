@@ -581,135 +581,99 @@ routerAdd('POST', '/backend/v1/admin/editar-jogo', (e) => {
       }
     }
 
-    // (2) Se escudos não foram obtidos pela fixture, busca pela cascata existente:
-    // cache em memória -> TheSportsDB (strTeamBadge) -> Football-Data.org (crest) -> jogos_do_dia / enquete_jogos
+    // (2) Se escudos não foram obtidos pela fixture, busca pela cascata permitida (TheSportsDB ELIMINADO):
+    // cache em memória -> Football-Data.org (crest) -> jogos_do_dia / enquete_jogos
     curLogoCasa = (jogoRec.getString('url_escudo_mandante') || '').trim()
     curLogoVis = (jogoRec.getString('url_escudo_visitante') || '').trim()
+
+    // Se tiver TheSportsDB nos campos, limpa
+    if (curLogoCasa.indexOf('thesportsdb.com') !== -1) {
+      curLogoCasa = ''
+      jogoRec.set('url_escudo_mandante', '')
+    }
+    if (curLogoVis.indexOf('thesportsdb.com') !== -1) {
+      curLogoVis = ''
+      jogoRec.set('url_escudo_visitante', '')
+    }
 
     if (!curLogoCasa || !curLogoVis) {
       const buscarEscudoCascata = (teamName) => {
         if (!teamName) return ''
         const cleanKey = normalizarNome(teamName)
 
-        // 0) PSG especial
+        // 0) PSG e Dinamarca oficial API-Sports
         if (cleanKey === 'paris saint germain' || cleanKey === 'psg') {
           return 'https://media.api-sports.io/football/teams/85.png'
         }
+        if (cleanKey === 'dinamarca' || cleanKey === 'denmark') {
+          return 'https://media.api-sports.io/football/teams/21.png'
+        }
 
         // 1) Cache em memória global
-        if (typeof globalThis !== 'undefined' && !globalThis.__tsdbBadgeCache) {
-          globalThis.__tsdbBadgeCache = {}
+        if (typeof globalThis !== 'undefined' && !globalThis.__officialBadgeCache) {
+          globalThis.__officialBadgeCache = {}
         }
         if (
           typeof globalThis !== 'undefined' &&
-          globalThis.__tsdbBadgeCache &&
-          globalThis.__tsdbBadgeCache[cleanKey]
+          globalThis.__officialBadgeCache &&
+          globalThis.__officialBadgeCache[cleanKey]
         ) {
-          return globalThis.__tsdbBadgeCache[cleanKey]
+          const cVal = globalThis.__officialBadgeCache[cleanKey]
+          if (cVal && cVal.indexOf('thesportsdb.com') === -1) {
+            return cVal
+          }
         }
 
         let badge = ''
 
-        // 2) TheSportsDB (strTeamBadge)
-        let tsdbKey = ''
+        // 2) Football-Data.org (crest)
+        let fdKey = ''
         try {
-          const tsdbRec = $app.findFirstRecordByData(
+          const fdRec = $app.findFirstRecordByData(
             'config_integracoes',
             'chave',
-            'thesportsdb_fallback',
+            'football_data_fallback',
           )
-          if (tsdbRec) tsdbKey = (tsdbRec.getString('api_key') || '').trim()
+          if (fdRec) fdKey = (fdRec.getString('api_key') || '').trim()
         } catch (_) {}
-        if (!tsdbKey) {
+        if (!fdKey) {
           try {
-            if ($secrets && $secrets.has && $secrets.has('THESPORTSDB_KEY')) {
-              tsdbKey = ($secrets.get('THESPORTSDB_KEY') || '').trim()
+            if ($secrets && $secrets.has && $secrets.has('FOOTBALL_DATA_KEY')) {
+              fdKey = ($secrets.get('FOOTBALL_DATA_KEY') || '').trim()
             } else if ($os && $os.getenv) {
-              tsdbKey = ($os.getenv('THESPORTSDB_KEY') || '').trim()
+              fdKey = ($os.getenv('FOOTBALL_DATA_KEY') || '').trim()
             }
           } catch (_) {}
         }
-        if (!tsdbKey) tsdbKey = '3'
-
-        try {
-          const resTsdb = $http.send({
-            url:
-              'https://www.thesportsdb.com/api/v1/json/' +
-              encodeURIComponent(tsdbKey) +
-              '/searchteams.php?t=' +
-              encodeURIComponent(teamName),
-            method: 'GET',
-            timeout: 4,
-          })
-          if (
-            resTsdb.statusCode === 200 &&
-            resTsdb.json &&
-            Array.isArray(resTsdb.json.teams) &&
-            resTsdb.json.teams.length > 0
-          ) {
-            for (let i = 0; i < resTsdb.json.teams.length; i++) {
-              const cand = resTsdb.json.teams[i]
-              const candName = cand.strTeam || ''
-              if (calcularSimilaridade(teamName, candName) >= 0.75) {
-                badge = (cand.strTeamBadge || cand.strBadge || cand.strLogo || '').trim()
-                if (badge) break
-              }
-            }
-          }
-        } catch (errTsdb) {
-          console.log('[admin_editar_jogo] Erro TheSportsDB para ' + teamName + ':', errTsdb)
-        }
-
-        // 3) Football-Data.org (crest)
-        if (!badge) {
-          let fdKey = ''
+        if (fdKey) {
           try {
-            const fdRec = $app.findFirstRecordByData(
-              'config_integracoes',
-              'chave',
-              'football_data_fallback',
-            )
-            if (fdRec) fdKey = (fdRec.getString('api_key') || '').trim()
-          } catch (_) {}
-          if (!fdKey) {
-            try {
-              if ($secrets && $secrets.has && $secrets.has('FOOTBALL_DATA_KEY')) {
-                fdKey = ($secrets.get('FOOTBALL_DATA_KEY') || '').trim()
-              } else if ($os && $os.getenv) {
-                fdKey = ($os.getenv('FOOTBALL_DATA_KEY') || '').trim()
-              }
-            } catch (_) {}
-          }
-          if (fdKey) {
-            try {
-              const resFD = $http.send({
-                url: 'https://api.football-data.org/v4/teams?name=' + encodeURIComponent(teamName),
-                method: 'GET',
-                headers: { 'X-Auth-Token': fdKey },
-                timeout: 4,
-              })
-              if (
-                resFD.statusCode === 200 &&
-                resFD.json &&
-                Array.isArray(resFD.json.teams) &&
-                resFD.json.teams.length > 0
-              ) {
-                for (let j = 0; j < resFD.json.teams.length; j++) {
-                  const fdTeam = resFD.json.teams[j]
-                  const fdName = (fdTeam && (fdTeam.name || fdTeam.shortName)) || ''
-                  if (calcularSimilaridade(teamName, fdName) >= 0.75 && fdTeam.crest) {
-                    badge = String(fdTeam.crest).trim()
-                    if (badge) break
-                  }
+            const resFD = $http.send({
+              url: 'https://api.football-data.org/v4/teams?name=' + encodeURIComponent(teamName),
+              method: 'GET',
+              headers: { 'X-Auth-Token': fdKey },
+              timeout: 4,
+            })
+            if (
+              resFD.statusCode === 200 &&
+              resFD.json &&
+              Array.isArray(resFD.json.teams) &&
+              resFD.json.teams.length > 0
+            ) {
+              for (let j = 0; j < resFD.json.teams.length; j++) {
+                const fdTeam = resFD.json.teams[j]
+                const fdName = (fdTeam && (fdTeam.name || fdTeam.shortName)) || ''
+                if (calcularSimilaridade(teamName, fdName) >= 0.75 && fdTeam.crest) {
+                  badge = String(fdTeam.crest).trim()
+                  if (badge) break
                 }
               }
-            } catch (errFD) {
-              console.log('[admin_editar_jogo] Erro Football-Data para ' + teamName + ':', errFD)
             }
+          } catch (errFD) {
+            console.log('[admin_editar_jogo] Erro Football-Data para ' + teamName + ':', errFD)
           }
         }
 
-        // 4) Tabela jogos_do_dia ou enquete_jogos
+        // 3) Tabela jogos_do_dia ou enquete_jogos
         if (!badge) {
           try {
             const jdds = $app.findRecordsByFilter('jogos_do_dia', '', '-created', 100, 0)
@@ -717,12 +681,18 @@ routerAdd('POST', '/backend/v1/admin/editar-jogo', (e) => {
               const tc = jdds[k].getString('time_casa') || ''
               const tv = jdds[k].getString('time_visitante') || ''
               if (calcularSimilaridade(teamName, tc) >= 0.8) {
-                badge = (jdds[k].getString('logo_casa') || '').trim()
-                if (badge) break
+                const cand = (jdds[k].getString('logo_casa') || '').trim()
+                if (cand && cand.indexOf('thesportsdb.com') === -1) {
+                  badge = cand
+                  break
+                }
               }
               if (calcularSimilaridade(teamName, tv) >= 0.8) {
-                badge = (jdds[k].getString('logo_visitante') || '').trim()
-                if (badge) break
+                const cand = (jdds[k].getString('logo_visitante') || '').trim()
+                if (cand && cand.indexOf('thesportsdb.com') === -1) {
+                  badge = cand
+                  break
+                }
               }
             }
           } catch (_) {}
@@ -735,19 +705,30 @@ routerAdd('POST', '/backend/v1/admin/editar-jogo', (e) => {
               const tA = enqs[m].getString('time_a') || ''
               const tB = enqs[m].getString('time_b') || ''
               if (calcularSimilaridade(teamName, tA) >= 0.8) {
-                badge = (enqs[m].getString('logo_casa') || '').trim()
-                if (badge) break
+                const cand = (enqs[m].getString('logo_casa') || '').trim()
+                if (cand && cand.indexOf('thesportsdb.com') === -1) {
+                  badge = cand
+                  break
+                }
               }
               if (calcularSimilaridade(teamName, tB) >= 0.8) {
-                badge = (enqs[m].getString('logo_visitante') || '').trim()
-                if (badge) break
+                const cand = (enqs[m].getString('logo_visitante') || '').trim()
+                if (cand && cand.indexOf('thesportsdb.com') === -1) {
+                  badge = cand
+                  break
+                }
               }
             }
           } catch (_) {}
         }
 
-        if (badge && typeof globalThis !== 'undefined' && globalThis.__tsdbBadgeCache) {
-          globalThis.__tsdbBadgeCache[cleanKey] = badge
+        // Descarta se for TheSportsDB
+        if (badge && badge.indexOf('thesportsdb.com') !== -1) {
+          badge = ''
+        }
+
+        if (badge && typeof globalThis !== 'undefined' && globalThis.__officialBadgeCache) {
+          globalThis.__officialBadgeCache[cleanKey] = badge
         }
 
         return badge

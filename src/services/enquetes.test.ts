@@ -870,15 +870,71 @@ describe('Serviço de Enquetes - Otimizações de Carregamento, Cache e Requisi�
         time_b: 'Internacional',
         data: '2025-05-18',
         fixture_id: '123456',
-        logo_casa: 'https://r2.thesportsdb.com/gremio.png',
-        logo_visitante: 'https://r2.thesportsdb.com/inter.png',
+        logo_casa: 'https://minha-url-custom.com/gremio.png',
+        logo_visitante: 'https://minha-url-custom.com/inter.png',
       })
 
       // O jogo foi salvo mesmo com rate limit!
       expect(res.fixture_id).toBe('123456')
-      expect(res.logo_casa).toBe('https://r2.thesportsdb.com/gremio.png')
+      expect(res.logo_casa).toBe('https://minha-url-custom.com/gremio.png')
       expect(res._saveMeta?.rateLimited).toBe(true)
       expect(res._saveMeta?.aviso).toContain('Cota diária da API atingida')
+    })
+
+    it('apagar URL de escudo e salvar NÃO reinserir TheSportsDB e envia vazio se não houver fixture', async () => {
+      const updateSpy = vi.fn().mockImplementation(async (_id: string, data: any) => ({
+        id: 'jogo_com_tsdb_antigo',
+        ...data,
+      }))
+
+      vi.spyOn(pb, 'collection').mockImplementation((col: string) => {
+        if (col === 'enquete_jogos') {
+          return {
+            getOne: vi.fn().mockResolvedValue({
+              id: 'jogo_com_tsdb_antigo',
+              time_a: 'Jamaica',
+              time_b: 'Honduras',
+              data: '2026-09-28',
+              fixture_id: '',
+              logo_casa: 'https://r2.thesportsdb.com/images/media/team/badge/v6mk4r1594321722.png',
+              logo_visitante:
+                'https://r2.thesportsdb.com/images/media/team/badge/v6mk4r1594321722.png',
+            }),
+            update: updateSpy,
+          } as any
+        }
+        return {} as any
+      })
+
+      // Mock da busca auto-lookup falhando (sem match na API-Football)
+      globalThis.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          success: false,
+          error: 'Nenhuma partida correspondente encontrada.',
+        }),
+      }) as any
+
+      // Usuário apagou a URL do escudo (passando string vazia)
+      const res = await editarJogoEnquete('jogo_com_tsdb_antigo', {
+        time_a: 'Jamaica',
+        time_b: 'Honduras',
+        data: '2026-09-28',
+        logo_casa: '',
+        logo_visitante: '',
+      })
+
+      expect(updateSpy).toHaveBeenCalledWith(
+        'jogo_com_tsdb_antigo',
+        expect.objectContaining({
+          logo_casa: '',
+          logo_visitante: '',
+        }),
+      )
+      expect(res.logo_casa).toBe('')
+      expect(res.logo_visitante).toBe('')
+      expect(res.logo_casa).not.toContain('thesportsdb')
+      expect(res.logo_visitante).not.toContain('thesportsdb')
     })
   })
 

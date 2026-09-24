@@ -705,8 +705,13 @@ export async function adicionarJogoManualNaEnquete(params: {
   campeonato_logo?: string
 }): Promise<EnqueteJogoModel & { _saveMeta?: SalvarJogoEnqueteResult }> {
   let cleanFixtureId = (params.fixture_id || '').replace(/\D/g, '').trim()
-  let logoCasa = params.logo_casa || ''
-  let logoVisitante = params.logo_visitante || ''
+  let logoCasa = (params.logo_casa || '').trim()
+  let logoVisitante = (params.logo_visitante || '').trim()
+
+  // Se vier com URL thesportsdb, descarta imediatamente
+  if (isTheSportsDbLogo(logoCasa)) logoCasa = ''
+  if (isTheSportsDbLogo(logoVisitante)) logoVisitante = ''
+
   let fixtureIdEncontrado = ''
   let escudosAtualizados = false
   let autoLookupSucesso = false
@@ -1045,12 +1050,30 @@ export async function editarJogoEnquete(
     fixtureIdFinal = cleanParamFixtureId
   }
 
+  // Se o usuário passou explicitamente params.logo_casa/params.logo_visitante, respeita o valor
+  // (mesmo que vazio — NUNCA restaura o valor antigo do banco quando o usuário enviou vazio).
+  // Além disso, se o logo existente for do TheSportsDB, ele é descartado imediatamente.
   let logoCasaFinal =
-    params.logo_casa !== undefined ? params.logo_casa.trim() : jogoExistente?.logo_casa || ''
+    params.logo_casa !== undefined
+      ? params.logo_casa.trim()
+      : isTheSportsDbLogo(jogoExistente?.logo_casa)
+        ? ''
+        : jogoExistente?.logo_casa || ''
+
   let logoVisitanteFinal =
     params.logo_visitante !== undefined
       ? params.logo_visitante.trim()
-      : jogoExistente?.logo_visitante || ''
+      : isTheSportsDbLogo(jogoExistente?.logo_visitante)
+        ? ''
+        : jogoExistente?.logo_visitante || ''
+
+  // Se o usuário passou link TheSportsDB manualmente, descarta para nunca persistir essa fonte
+  if (isTheSportsDbLogo(logoCasaFinal)) {
+    logoCasaFinal = ''
+  }
+  if (isTheSportsDbLogo(logoVisitanteFinal)) {
+    logoVisitanteFinal = ''
+  }
 
   let fixtureIdEncontrado = ''
   let escudosAtualizados = false
@@ -1058,7 +1081,7 @@ export async function editarJogoEnquete(
   let rateLimited = false
   let aviso = ''
 
-  // 1. Se o campo 'ID da Partida' estiver VAZIO e o jogo NÃO tem ID no banco:
+  // 1. Se NÃO tem fixture_id (nem no banco nem no param) E algum escudo precisa ser resolvido:
   // Faz busca automática por confronto na API-Football (endpoint /fixtures por data + times tolerantes)
   if (!fixtureIdFinal && params.time_a && params.time_b && params.data) {
     try {
@@ -1072,12 +1095,15 @@ export async function editarJogoEnquete(
         fixtureIdEncontrado = fixtureIdFinal
         autoLookupSucesso = true
 
-        // Substitui escudos pelos oficiais retornados pela API
-        if (lookupRes.fixture.homeTeamLogo) {
+        // Substitui escudos pelos oficiais retornados pela API se estavam vazios ou não-oficiais
+        if (lookupRes.fixture.homeTeamLogo && (!logoCasaFinal || !isApiSportsLogo(logoCasaFinal))) {
           logoCasaFinal = lookupRes.fixture.homeTeamLogo
           escudosAtualizados = true
         }
-        if (lookupRes.fixture.awayTeamLogo) {
+        if (
+          lookupRes.fixture.awayTeamLogo &&
+          (!logoVisitanteFinal || !isApiSportsLogo(logoVisitanteFinal))
+        ) {
           logoVisitanteFinal = lookupRes.fixture.awayTeamLogo
           escudosAtualizados = true
         }
@@ -1092,7 +1118,7 @@ export async function editarJogoEnquete(
 
   // 2. Se o ID já estiver preenchido (manualmente ou preservado do banco):
   // Consulta diretamente a API-Football (/fixtures?id={api_fixture_id}) e atualiza/sobrescreve
-  // as URLs dos escudos/bandeiras com as imagens oficiais retornadas pela API (substituindo TheSportsDB).
+  // as URLs dos escudos/bandeiras com as imagens oficiais retornadas pela API (substituindo TheSportsDB/vazios).
   // URLs que já sejam media.api-sports.io não precisam de nova requisição se ambas forem oficiais.
   if (fixtureIdFinal && (!isApiSportsLogo(logoCasaFinal) || !isApiSportsLogo(logoVisitanteFinal))) {
     try {
