@@ -141,24 +141,74 @@ routerAdd(
     }
 
     // Buscar chave da API-Sports
+    // 1) Registro principal: chave = "placar_ao_vivo" && provedor = "api_football" && ativo = true
     let apiKey = ''
     try {
-      const configRecord = $app.findFirstRecordByData(
+      const recPlacar = $app.findFirstRecordByFilter(
         'config_integracoes',
-        'chave',
-        'api_football_key',
+        "chave = 'placar_ao_vivo' && provedor = 'api_football' && ativo = true",
       )
-      if (configRecord && configRecord.get('ativo')) {
-        apiKey = (configRecord.get('api_key') || '').toString().trim()
+      if (recPlacar) {
+        apiKey = (recPlacar.getString('api_key') || recPlacar.get('api_key') || '')
+          .toString()
+          .trim()
       }
     } catch (_) {}
 
+    // Fallback caso não encontre por filtro ou api_key esteja em branco:
     if (!apiKey) {
-      return e.json(400, {
-        error: 'Chave da API-Football não configurada em config_integracoes (api_football_key).',
-      })
+      try {
+        const recPlacarDirect = $app.findFirstRecordByData(
+          'config_integracoes',
+          'chave',
+          'placar_ao_vivo',
+        )
+        if (recPlacarDirect && recPlacarDirect.getBool('ativo')) {
+          apiKey = (recPlacarDirect.getString('api_key') || recPlacarDirect.get('api_key') || '')
+            .toString()
+            .trim()
+        }
+      } catch (_) {}
     }
 
+    // Fallback: qualquer registro provedor = "api_football" && ativo = true com api_key preenchido,
+    // ignorando registros com JSON de metadados (como sobrescrita_jogos, api_validada, api_football_daily_usage)
+    if (!apiKey) {
+      try {
+        const configs = $app.findRecordsByFilter(
+          'config_integracoes',
+          "provedor = 'api_football' && ativo = true",
+          '-updated',
+          20,
+          0,
+        )
+        for (let ci = 0; ci < configs.length; ci++) {
+          const cfg = configs[ci]
+          const chv = (cfg.getString('chave') || '').trim()
+          if (
+            chv === 'sobrescrita_jogos' ||
+            chv === 'api_validada' ||
+            chv === 'api_football_daily_usage'
+          ) {
+            continue
+          }
+          const candidateKey = (cfg.getString('api_key') || cfg.get('api_key') || '')
+            .toString()
+            .trim()
+          // Chave válida não começa com { nem [ (não é JSON)
+          if (candidateKey && !candidateKey.startsWith('{') && !candidateKey.startsWith('[')) {
+            apiKey = candidateKey
+            break
+          }
+        }
+      } catch (_) {}
+    }
+
+    if (!apiKey) {
+      return e.json(400, {
+        error: 'Chave da API-Football não configurada em config_integracoes (placar_ao_vivo).',
+      })
+    }
     // Consulta fixture por ID
     let fixtureData = null
     try {
@@ -266,6 +316,68 @@ routerAdd(
     if (awayGoals !== null && !isNaN(awayGoals)) {
       jogoRecord.set('placar_b', awayGoals)
     }
+
+    // Atualização de logos/escudos dos times via API-Football
+    const homeTeamLogo = (fixtureData.teams?.home?.logo || '').toString().trim()
+    const awayTeamLogo = (fixtureData.teams?.away?.logo || '').toString().trim()
+
+    if (homeTeamLogo) {
+      jogoRecord.set('url_escudo_mandante', homeTeamLogo)
+    }
+    if (awayTeamLogo) {
+      jogoRecord.set('url_escudo_visitante', awayTeamLogo)
+    }
+
+    // Se houver registros vinculados na tabela jogos_do_dia ou enquete_jogos com o mesmo fixture_id, atualiza lá também
+    try {
+      if (fixtureIdParaUso && (homeTeamLogo || awayTeamLogo)) {
+        try {
+          const jdds = $app.findRecordsByFilter(
+            'jogos_do_dia',
+            `fixture_id = '${fixtureIdParaUso}'`,
+            '-created',
+            5,
+            0,
+          )
+          for (let jdi = 0; jdi < jdds.length; jdi++) {
+            const jdd = jdds[jdi]
+            let mudouJdd = false
+            if (homeTeamLogo && !jdd.getString('logo_casa')) {
+              jdd.set('logo_casa', homeTeamLogo)
+              mudouJdd = true
+            }
+            if (awayTeamLogo && !jdd.getString('logo_visitante')) {
+              jdd.set('logo_visitante', awayTeamLogo)
+              mudouJdd = true
+            }
+            if (mudouJdd) $app.save(jdd)
+          }
+        } catch (_) {}
+
+        try {
+          const enqs = $app.findRecordsByFilter(
+            'enquete_jogos',
+            `fixture_id = '${fixtureIdParaUso}'`,
+            '-created',
+            5,
+            0,
+          )
+          for (let eqi = 0; eqi < enqs.length; eqi++) {
+            const eq = enqs[eqi]
+            let mudouEq = false
+            if (homeTeamLogo && !eq.getString('logo_casa')) {
+              eq.set('logo_casa', homeTeamLogo)
+              mudouEq = true
+            }
+            if (awayTeamLogo && !eq.getString('logo_visitante')) {
+              eq.set('logo_visitante', awayTeamLogo)
+              mudouEq = true
+            }
+            if (mudouEq) $app.save(eq)
+          }
+        } catch (_) {}
+      }
+    } catch (_) {}
 
     // JAMAIS marcar como em andamento/finalizado se o kickoff ainda não chegou
     if (kickoffJaChegou) {
@@ -781,6 +893,8 @@ routerAdd(
         gols_time_a: jogoRecord.get('gols_time_a'),
         gols_time_b: jogoRecord.get('gols_time_b'),
         marcadores: jogoRecord.get('marcadores'),
+        url_escudo_mandante: jogoRecord.get('url_escudo_mandante'),
+        url_escudo_visitante: jogoRecord.get('url_escudo_visitante'),
         fixture_id: jogoRecord.get('fixture_id'),
       },
       status_fixture: statusShort,

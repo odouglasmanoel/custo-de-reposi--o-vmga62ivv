@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useRef } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useNavigate, useLocation } from 'react-router-dom'
 import {
   Shield,
   Plus,
@@ -51,6 +51,8 @@ import { getErrorMessage } from '@/lib/pocketbase/errors'
 import { cn } from '@/lib/utils'
 
 export default function AdminJogos() {
+  const navigate = useNavigate()
+  const location = useLocation()
   const { boloes, activeBolao, activeBolaoId, setActiveBolaoId, refreshBoloes } = useActivePool()
   const { toast } = useToast()
   const [boloesLocais, setBoloesLocais] = useState<Bolao[]>([])

@@ -53,6 +53,7 @@ import {
 
 import { GameLineupAccordion } from '@/components/GameLineupAccordion'
 import { checkPlayerInLineup, LineupResponse } from '@/services/escalacoes'
+import { readEscudoCache } from '@/services/enquetes'
 
 interface PalpiteFormData {
   placar_a: number | string
