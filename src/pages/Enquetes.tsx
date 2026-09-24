@@ -552,6 +552,17 @@ export default function Enquetes() {
 
   // Ação: Votar / Desmarcar Jogo
   const handleToggleVoto = async (jogoId: string) => {
+    // 1. Verificação se o usuário está logado
+    if (!user && !pb.authStore.isValid) {
+      toast({
+        title: 'Login necessário',
+        description:
+          'Você precisa estar logado para votar na enquete. Faça login no sistema e tente novamente.',
+        variant: 'destructive',
+      })
+      return
+    }
+
     if (!activePoll) return
     if (activePoll.status !== 'aberta' || isVotacaoEncerrada) {
       toast({
@@ -572,6 +583,9 @@ export default function Enquetes() {
       return
     }
 
+    // Se já estiver processando um voto para este jogo, ignora clique duplo
+    if (votandoJogoId === jogoId) return
+
     setVotandoJogoId(jogoId)
     try {
       const res = await toggleVotoJogo(activePoll.id, jogoId, limiteVotos)
@@ -582,18 +596,27 @@ export default function Enquetes() {
         return next
       })
 
-      // Atualização otimista na lista local
+      // Atualização imediata e precisa no estado da interface
       setJogosEnquete((prev) =>
         prev.map((j) => {
           if (j.id === jogoId) {
             const countDiff = res.voted ? 1 : -1
-            const myName = participantName || 'Eu'
+            const myName = participantName || user?.name || user?.username || 'Eu'
             const nextVotantes = res.voted
-              ? [...j.votantes, myName]
+              ? j.votantes.includes(myName)
+                ? j.votantes
+                : [...j.votantes, myName]
               : j.votantes.filter((v) => v !== myName)
+
+            // Se o backend retornou totalVotosJogo absoluto, usa-o diretamente; senão ajusta incrementalmente
+            const nextTotal =
+              res.totalVotosJogo !== undefined
+                ? res.totalVotosJogo
+                : Math.max(0, j.totalVotos + countDiff)
+
             return {
               ...j,
-              totalVotos: Math.max(0, j.totalVotos + countDiff),
+              totalVotos: nextTotal,
               votadoPorMim: res.voted,
               votantes: nextVotantes,
             }
@@ -607,10 +630,20 @@ export default function Enquetes() {
         description: `Votos utilizados: ${res.totalVotosUsuario}/${limiteVotos}`,
       })
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'Falha ao registrar voto.'
+      console.error('[handleToggleVoto] Erro detalhado na votação:', err)
+      const rawMsg = err instanceof Error ? err.message : 'Falha ao registrar voto.'
+      const friendlyMsg =
+        rawMsg.includes('Failed to authenticate') ||
+        rawMsg.includes('autenticado') ||
+        rawMsg.includes('logado')
+          ? 'Você precisa estar logado para votar. Acesse sua conta e tente novamente.'
+          : rawMsg.includes('Something went wrong')
+            ? 'Não foi possível gravar o voto no momento. Tente novamente em alguns instantes.'
+            : rawMsg
+
       toast({
         title: 'Aviso de votação',
-        description: msg,
+        description: friendlyMsg,
         variant: 'destructive',
       })
     } finally {

@@ -3,6 +3,7 @@ import pb from '@/lib/pocketbase/client'
 import {
   listarEnquetes,
   obterDadosEnquete,
+  toggleVotoJogo,
   invalidateEnqueteCache,
   readListaEnquetesCache,
   writeListaEnquetesCache,
@@ -240,6 +241,70 @@ describe('Serviço de Enquetes - Otimizações de Carregamento, Cache e Requisi�
       const urlId = 'enq_30_09'
       const selecionadaUrl = enquetes.find((e) => e.id === urlId) || listaOrdenada[0]
       expect(selecionadaUrl.id).toBe('enq_30_09')
+    })
+  })
+
+  describe('5. Alternância de Voto (toggleVotoJogo) e Tratamento de Erros', () => {
+    it('bloqueia e avisa quando usuário não está autenticado', async () => {
+      // Força pb.authStore sem usuário logado
+      const originalRecord = pb.authStore.record
+      const originalToken = pb.authStore.token
+      Object.defineProperty(pb.authStore, 'record', { value: null, configurable: true })
+      Object.defineProperty(pb.authStore, 'token', { value: '', configurable: true })
+      Object.defineProperty(pb.authStore, 'isValid', { value: false, configurable: true })
+
+      await expect(toggleVotoJogo('enq_1', 'jogo_1')).rejects.toThrow(
+        'Você precisa estar autenticado para votar. Acesse sua conta e tente novamente.',
+      )
+
+      // Restaura
+      Object.defineProperty(pb.authStore, 'record', { value: originalRecord, configurable: true })
+      Object.defineProperty(pb.authStore, 'token', { value: originalToken, configurable: true })
+      Object.defineProperty(pb.authStore, 'isValid', { value: true, configurable: true })
+    })
+
+    it('registra voto com sucesso via endpoint customizado do backend', async () => {
+      const mockUser = { id: 'user_douglas', name: 'Douglas', username: 'douglas' }
+      Object.defineProperty(pb.authStore, 'record', { value: mockUser, configurable: true })
+      Object.defineProperty(pb.authStore, 'token', { value: 'fake_jwt_token', configurable: true })
+      Object.defineProperty(pb.authStore, 'isValid', { value: true, configurable: true })
+
+      globalThis.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          success: true,
+          voted: true,
+          totalVotosUsuario: 1,
+          totalVotosJogo: 5,
+        }),
+      }) as any
+
+      const res = await toggleVotoJogo('enq_123', 'jogo_456', 10)
+      expect(res.voted).toBe(true)
+      expect(res.totalVotosUsuario).toBe(1)
+      expect(res.totalVotosJogo).toBe(5)
+      expect(globalThis.fetch).toHaveBeenCalledTimes(1)
+    })
+
+    it('trata resposta de erro específica do backend em vez do Something went wrong', async () => {
+      const mockUser = { id: 'user_douglas', name: 'Douglas', username: 'douglas' }
+      Object.defineProperty(pb.authStore, 'record', { value: mockUser, configurable: true })
+      Object.defineProperty(pb.authStore, 'token', { value: 'fake_jwt_token', configurable: true })
+      Object.defineProperty(pb.authStore, 'isValid', { value: true, configurable: true })
+
+      globalThis.fetch = vi.fn().mockResolvedValue({
+        ok: false,
+        status: 400,
+        json: async () => ({
+          success: false,
+          error: 'Esta enquete está encerrada e não aceita mais novos votos.',
+        }),
+      }) as any
+
+      await expect(toggleVotoJogo('enq_123', 'jogo_456', 10)).rejects.toThrow(
+        'Esta enquete está encerrada e não aceita mais novos votos.',
+      )
     })
   })
 })

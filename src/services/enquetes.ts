@@ -427,48 +427,121 @@ export async function obterDadosEnquete(
 /**
  * Alterna voto em um jogo (adiciona se não votado, remove se já votado)
  * Respeita a trava de no máximo 10 votos (ou o limite_votos configurado na enquete)
+ *
+ * Utiliza o endpoint dedicado com privilégios de sistema (/backend/v1/enquetes/votar)
+ * com fallback direto via SDK caso a rota customizada falhe por rede,
+ * garantindo mensagens de erro descritivas e nunca um genérico "Something went wrong".
  */
 export async function toggleVotoJogo(
   enqueteId: string,
   jogoId: string,
   limiteVotosParam: number = 10,
-): Promise<{ voted: boolean; totalVotosUsuario: number }> {
+): Promise<{ voted: boolean; totalVotosUsuario: number; totalVotosJogo?: number }> {
   const user = pb.authStore.record
-  if (!user) throw new Error('Usuário não autenticado.')
+  const token = pb.authStore.token
+  if (!user && !pb.authStore.isValid) {
+    throw new Error(
+      'Você precisa estar autenticado para votar. Acesse sua conta e tente novamente.',
+    )
+  }
 
-  const userId = user.id
-  const userName = user.name || user.username || 'Participante'
-
-  // Piso mínimo garantido de 10 votos
+  const userId = user?.id || ''
+  const userName = user?.name || user?.username || 'Participante'
   const limiteVotos = Math.max(10, Number(limiteVotosParam) || 10)
 
-  // Busca votos existentes do usuário nesta enquete
-  const meusVotos = await pb.collection('enquete_votos').getFullList<EnqueteVotoModel>({
-    filter: `enquete = '${enqueteId}' && user = '${userId}'`,
-  })
+  // 1. Prioridade: endpoint customizado com privilégios no backend (/backend/v1/enquetes/votar)
+  try {
+    const baseUrl = import.meta.env.VITE_POCKETBASE_URL || ''
+    const response = await fetch(`${baseUrl}/backend/v1/enquetes/votar`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: token ? `Bearer ${token}` : '',
+      },
+      body: JSON.stringify({
+        enquete_id: enqueteId,
+        jogo_id: jogoId,
+        user_id: userId,
+        limite_votos: limiteVotos,
+      }),
+    })
 
-  const votoExistente = meusVotos.find((v) => v.jogo === jogoId)
+    const data = await response.json().catch(() => null)
 
-  if (votoExistente) {
-    // Remove voto
-    await pb.collection('enquete_votos').delete(votoExistente.id)
-    return { voted: false, totalVotosUsuario: meusVotos.length - 1 }
-  } else {
-    // Verifica limite
-    if (meusVotos.length >= limiteVotos) {
+    if (response.ok && data && data.success) {
+      invalidateEnqueteCache(enqueteId)
+      return {
+        voted: Boolean(data.voted),
+        totalVotosUsuario: Number(data.totalVotosUsuario) || 0,
+        totalVotosJogo: data.totalVotosJogo !== undefined ? Number(data.totalVotosJogo) : undefined,
+      }
+    }
+
+    // Se o backend retornou um erro descritivo em JSON, lança o motivo exato
+    if (data && data.error) {
+      throw new Error(data.error)
+    }
+
+    if (response.status === 401) {
+      throw new Error('Sua sessão expirou ou você não está autenticado. Faça login novamente.')
+    }
+  } catch (backendErr: any) {
+    // Se o erro já foi uma validação descritiva lançada acima, propaga imediatamente
+    if (
+      backendErr instanceof Error &&
+      backendErr.message &&
+      !backendErr.message.includes('fetch') &&
+      !backendErr.message.includes('NetworkError')
+    ) {
+      throw backendErr
+    }
+    console.warn('[toggleVotoJogo] Tentando fallback direto via SDK após erro:', backendErr)
+  }
+
+  // 2. Fallback resiliente via PocketBase SDK
+  try {
+    const meusVotos = await pb.collection('enquete_votos').getFullList<EnqueteVotoModel>({
+      filter: `enquete = '${enqueteId}' && user = '${userId}'`,
+    })
+
+    const votoExistente = meusVotos.find((v) => v.jogo === jogoId)
+
+    if (votoExistente) {
+      // Remove voto
+      await pb.collection('enquete_votos').delete(votoExistente.id)
+      invalidateEnqueteCache(enqueteId)
+      return { voted: false, totalVotosUsuario: Math.max(0, meusVotos.length - 1) }
+    } else {
+      // Verifica limite
+      if (meusVotos.length >= limiteVotos) {
+        throw new Error(
+          `Limite de ${limiteVotos} votos atingido para esta enquete. Desmarque outro jogo primeiro.`,
+        )
+      }
+      // Cria voto
+      await pb.collection('enquete_votos').create({
+        enquete: enqueteId,
+        jogo: jogoId,
+        user: userId,
+        user_name: userName,
+      })
+      invalidateEnqueteCache(enqueteId)
+      return { voted: true, totalVotosUsuario: meusVotos.length + 1 }
+    }
+  } catch (sdkErr: any) {
+    // Extrai mensagem limpa do PocketBase SDK evitando "Something went wrong"
+    const rawMsg = sdkErr?.response?.message || sdkErr?.message || 'Falha ao registrar voto.'
+    if (rawMsg.includes('Failed to authenticate') || sdkErr?.status === 401) {
       throw new Error(
-        `Limite de ${limiteVotos} votos atingido para esta enquete. Desmarque outro jogo primeiro.`,
+        'Você precisa estar autenticado para votar. Acesse sua conta e tente novamente.',
       )
     }
-    // Cria voto
-    await pb.collection('enquete_votos').create({
-      enquete: enqueteId,
-      jogo: jogoId,
-      user: userId,
-      user_name: userName,
-    })
-    invalidateEnqueteCache(enqueteId)
-    return { voted: true, totalVotosUsuario: meusVotos.length + 1 }
+    if (rawMsg.includes('Something went wrong')) {
+      throw new Error(
+        'Não foi possível gravar o voto no momento. Verifique sua conexão e tente novamente.',
+      )
+    }
+    throw new Error(rawMsg)
   }
 }
 
