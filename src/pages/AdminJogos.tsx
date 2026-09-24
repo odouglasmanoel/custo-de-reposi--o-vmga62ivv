@@ -122,6 +122,7 @@ export default function AdminJogos() {
   const [editData, setEditData] = useState('')
   const [editHora, setEditHora] = useState('')
   const [editCompeticao, setEditCompeticao] = useState('')
+  const [editFixtureId, setEditFixtureId] = useState('')
   const [savingEditJogo, setSavingEditJogo] = useState(false)
   const [editJogoError, setEditJogoError] = useState<string | null>(null)
 
@@ -534,6 +535,7 @@ export default function AdminJogos() {
     setEditData(matchIso ? matchIso[1] : rawData)
     setEditHora(jogo.hora || '')
     setEditCompeticao(jogo.competicao || '')
+    setEditFixtureId(jogo.fixture_id || '')
     setEditJogoError(null)
   }
 
@@ -573,6 +575,7 @@ export default function AdminJogos() {
             data: dataIsoFormatada || undefined,
             hora: editHora.trim() || undefined,
             competicao: editCompeticao.trim() || undefined,
+            fixture_id: editFixtureId.trim() || undefined,
           }),
         },
       )
@@ -1303,10 +1306,37 @@ export default function AdminJogos() {
               />
             </div>
 
+            <div>
+              <div className="flex items-center justify-between">
+                <Label htmlFor="edit-fixture-id" className="text-xs font-bold text-slate-700">
+                  ID do Jogo (API-Football / Fixture ID)
+                </Label>
+                {editFixtureId && (
+                  <span className="font-mono text-[10px] font-semibold text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200">
+                    Vinculado: {editFixtureId}
+                  </span>
+                )}
+              </div>
+              <Input
+                id="edit-fixture-id"
+                type="text"
+                inputMode="numeric"
+                pattern="[0-9]*"
+                placeholder="Ex: 1208456 (cole ou digite o ID numérico)"
+                value={editFixtureId}
+                onChange={(e) => setEditFixtureId(e.target.value.replace(/[^0-9]/g, ''))}
+                className="mt-1 h-9 border-[#CBD5E1] font-mono text-xs focus-visible:border-amber-500 focus-visible:ring-amber-500"
+              />
+              <p className="mt-1 text-[11px] text-slate-500">
+                Uma vez preenchido ou vinculado, o ID fica fixo no banco e não é apagado ao renomear
+                os times. Preencha manualmente caso a busca automática falhe por grafia/fuso.
+              </p>
+            </div>
+
             <div className="rounded-lg bg-amber-50/70 border border-amber-200 p-2.5 text-[11px] text-amber-900 leading-relaxed">
-              💡 <strong>Dica da API:</strong> Ao salvar, o sistema tenta vincular automaticamente o{' '}
-              <code>fixture_id</code> e os escudos dos clubes. Nomes internacionais em inglês
-              aumentam a taxa de correspondência com o provedor.
+              💡 <strong>Dica da API:</strong> Quando o ID do jogo estiver informado, o sistema
+              preserva o ID e poupa chamadas de busca à API-Football. Caso esteja em branco, tenta
+              vincular automaticamente por data e nomes.
             </div>
 
             <DialogFooter className="mt-4 flex gap-2">
