@@ -1156,6 +1156,19 @@ export default function BolaoDashboard() {
     liveScoresBreakdownByBetId,
   ])
 
+  // Determina se há de fato algum jogo em andamento (ao vivo)
+  const hasAnyLiveMatch = useMemo(() => {
+    const targetGames = isGeral ? allJogos : jogos
+    return targetGames.some((j) => {
+      if (j.resultado_finalizado) return false
+      if (sobrescritasAdmin[j.id]) return true
+      if (j.status === 'ao_vivo') return true
+      const jogoDataISO = normalizeDataISO(j.data)
+      const matched = resolveLiveScoreForGame(j, apiFixtures, 0.55, jogoDataISO)
+      return Boolean(matched?.isLive)
+    })
+  }, [isGeral, allJogos, jogos, sobrescritasAdmin, apiFixtures])
+
   // Mapa de bolões para nomes rápidos
   const bolaoMap = useMemo(() => {
     const map = new Map<string, Bolao>()
@@ -2114,18 +2127,11 @@ export default function BolaoDashboard() {
                         ? 'Football-Data.org'
                         : 'API-Football'
 
-                // Status badge: Ao Vivo (API em andamento, Sobrescrita manual do Admin ou nativo por horário kickoff <= agora)
-                const kickoffTimestamp = getJogoKickoffTimestamp(jogo.data, jogo.hora)
-                const isNativamenteInPlay =
-                  kickoffTimestamp !== null &&
-                  nowMs >= kickoffTimestamp &&
-                  !jogo.resultado_finalizado &&
-                  !(matchedLive && matchedLive.isFinished)
-
+                // Status badge: Ao Vivo (Placar sobrescrito pelo Admin, live pela API ou status 'ao_vivo' persistido)
                 const isStatusAoVivo =
                   tipoFontePlacar === 'sobrescrita' ||
                   Boolean(matchedLive?.isLive) ||
-                  isNativamenteInPlay
+                  jogo.status === 'ao_vivo'
 
                 const isStatusEncerrado = Boolean(
                   (matchedLive && matchedLive.isFinished) || jogo.resultado_finalizado,
@@ -2201,7 +2207,7 @@ export default function BolaoDashboard() {
                             <Badge
                               variant="secondary"
                               className="border border-emerald-400 bg-emerald-50 text-emerald-800 text-[10px] font-bold shadow-2xs flex items-center gap-1.5 animate-pulse"
-                              title={`Partida em andamento via ${providerLabel} (${matchedLive?.statusLong || (isNativamenteInPlay ? 'Em Andamento' : 'Ao Vivo')}${matchedLive?.matchedBy === 'fixture_id' ? ' • ID Direto' : ''}).`}
+                              title={`Partida em andamento via ${providerLabel} (${matchedLive?.statusLong || (jogo.status === 'ao_vivo' ? 'Em Andamento' : 'Ao Vivo')}${matchedLive?.matchedBy === 'fixture_id' ? ' • ID Direto' : ''}).`}
                             >
                               <Radio className="h-3 w-3 text-emerald-600" />
                               <span>
@@ -2605,12 +2611,14 @@ export default function BolaoDashboard() {
                     Pontuação somada em tempo real com regras oficiais
                   </p>
                 </div>
-                <Badge
-                  variant="outline"
-                  className="border-emerald-200 bg-emerald-50 text-[11px] text-emerald-700"
-                >
-                  Ao Vivo
-                </Badge>
+                {hasAnyLiveMatch && (
+                  <Badge
+                    variant="outline"
+                    className="border-emerald-200 bg-emerald-50 text-[11px] text-emerald-700"
+                  >
+                    Ao Vivo
+                  </Badge>
+                )}
               </div>
             </CardHeader>
 

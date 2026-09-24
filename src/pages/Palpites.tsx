@@ -1730,6 +1730,7 @@ export default function Palpites() {
                     timeA={jogo.time_a}
                     timeB={jogo.time_b}
                     data={jogo.data}
+                    isAdmin={isAdmin}
                     onLineupLoaded={onLineupLoaded}
                   />
 

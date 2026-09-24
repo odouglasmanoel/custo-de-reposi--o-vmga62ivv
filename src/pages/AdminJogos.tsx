@@ -92,6 +92,7 @@ export default function AdminJogos() {
   // Modal Gerenciar Participantes
   const [modalGerenciarParticipantes, setModalGerenciarParticipantes] = useState(false)
   const [forcingEscalacaoId, setForcingEscalacaoId] = useState<string | null>(null)
+  const [vinculandoFixtures, setVinculandoFixtures] = useState(false)
 
   // Upload Planilha states
   const [modalUpload, setModalUpload] = useState(false)
@@ -565,6 +566,56 @@ export default function AdminJogos() {
     }
   }
 
+  // Varredura de jogos existentes sem fixture_id (Douglas)
+  const handleVincularFixtures = async () => {
+    setVinculandoFixtures(true)
+    try {
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+      }
+      if (pb.authStore.token) {
+        headers['Authorization'] = pb.authStore.token
+      }
+
+      const res = await fetch(
+        `${import.meta.env.VITE_POCKETBASE_URL}/backend/v1/admin/vincular-fixtures`,
+        {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({ bolao_id: activeBolaoId || 'geral' }),
+        },
+      )
+
+      const data = await res.json()
+      if (!res.ok || data.success === false) {
+        const errorMsg = data.error || 'Não foi possível completar o vínculo de fixtures.'
+        toast({
+          title: 'Erro no vínculo de fixtures',
+          description: errorMsg,
+          variant: 'destructive',
+        })
+      } else {
+        toast({
+          title: 'Vínculo de fixtures concluído!',
+          description:
+            data.vinculados > 0
+              ? `${data.vinculados} jogo(s) vinculado(s) com sucesso na API.`
+              : data.message || 'Nenhum novo ID vinculado no momento.',
+        })
+        loadJogos(activeBolaoId || 'geral')
+      }
+    } catch (err: unknown) {
+      console.error('Erro ao vincular fixtures:', err)
+      toast({
+        title: 'Erro na requisição',
+        description: 'Falha de comunicação ao solicitar vínculo de partidas.',
+        variant: 'destructive',
+      })
+    } finally {
+      setVinculandoFixtures(false)
+    }
+  }
+
   // Confirm import into active bolão
   const handleConfirmImport = async () => {
     if (!activeBolaoId || (parsedScores.length === 0 && parsedGames.length === 0)) return
@@ -677,6 +728,29 @@ export default function AdminJogos() {
           >
             <Users className="mr-1 h-3.5 w-3.5 text-emerald-600" />
             Gerenciar Participantes
+          </Button>
+
+          {/* Vincular IDs das Partidas */}
+          <Button
+            type="button"
+            onClick={handleVincularFixtures}
+            disabled={vinculandoFixtures}
+            variant="outline"
+            size="sm"
+            className="h-8 rounded-lg border-indigo-300 bg-indigo-50 px-3 text-xs font-semibold text-indigo-900 shadow-xs hover:bg-indigo-100"
+            title="Varre jogos pendentes sem fixture_id e vincula automaticamente pela API-Football"
+          >
+            {vinculandoFixtures ? (
+              <>
+                <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />
+                <span>Vinculando IDs...</span>
+              </>
+            ) : (
+              <>
+                <RefreshCw className="mr-1 h-3.5 w-3.5 text-indigo-600" />
+                <span>Vincular IDs das Partidas</span>
+              </>
+            )}
           </Button>
 
           {/* Upload Planilha individual por bolão */}
@@ -971,11 +1045,14 @@ export default function AdminJogos() {
                             title="Buscar ou forçar atualização de escalação na API-Football"
                           >
                             {forcingEscalacaoId === jogo.id ? (
-                              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                              <>
+                                <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />
+                                <span>Buscando...</span>
+                              </>
                             ) : (
                               <>
                                 <RefreshCw className="mr-1 h-3.5 w-3.5" />
-                                <span className="hidden xl:inline">Forçar Escalação</span>
+                                <span>Forçar Escalação</span>
                               </>
                             )}
                           </Button>

@@ -18,7 +18,10 @@ import {
   Calendar,
   Clock,
   Info,
+  RefreshCw,
 } from 'lucide-react'
+import { toast } from '@/hooks/use-toast'
+import { useAuth } from '@/context/AuthContext'
 import pb from '@/lib/pocketbase/client'
 import { useRealtime } from '@/hooks/use-realtime'
 import { isFixtureLive } from '@/lib/apiFootballMatcher'
@@ -103,11 +106,15 @@ function getCacheKey(match: DayFixture | null): string {
 }
 
 export function MatchDetailsModal({ isOpen, onClose, match }: MatchDetailsModalProps) {
+  const auth = useAuth()
+  const isAdmin = Boolean(auth?.isAdmin)
   const [activeTab, setActiveTab] = useState<'ficha' | 'escalacoes'>('ficha')
   const [loading, setLoading] = useState(false)
+  const [forcingEscalacao, setForcingEscalacao] = useState(false)
   const [events, setEvents] = useState<MatchEventItem[]>([])
   const [lineup, setLineup] = useState<LineupData | null>(null)
   const [lineupTab, setLineupTab] = useState<'home' | 'away'>('home')
+  const [associatedJogoId, setAssociatedJogoId] = useState<string | null>(null)
 
   // Metadados da Ficha Técnica (Estádio, Árbitro, Status)
   const [estadio, setEstadio] = useState<string | null>(null)
@@ -223,6 +230,7 @@ export function MatchDetailsModal({ isOpen, onClose, match }: MatchDetailsModalP
           })
           if (jogosRecords.items.length > 0) {
             const jRec = jogosRecords.items[0] as any
+            setAssociatedJogoId(jRec.id)
             const rawEsc = jRec.escalacoes
             if (rawEsc) {
               const parsedEsc = typeof rawEsc === 'string' ? JSON.parse(rawEsc) : rawEsc
@@ -329,8 +337,69 @@ export function MatchDetailsModal({ isOpen, onClose, match }: MatchDetailsModalP
       setLineup(null)
       setEstadio(null)
       setArbitro(null)
+      setAssociatedJogoId(null)
     }
   }, [isOpen, match, loadFromPocketBase])
+
+  const handleForcarEscalacaoAdmin = async () => {
+    if (!match || forcingEscalacao) return
+    const targetJogoId = associatedJogoId
+    if (!targetJogoId) {
+      toast({
+        title: 'Jogo não encontrado',
+        description: 'Esta partida não está associada a um registro na tabela de jogos do bolão.',
+        variant: 'destructive',
+      })
+      return
+    }
+
+    setForcingEscalacao(true)
+    try {
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+      }
+      if (pb.authStore.token) {
+        headers['Authorization'] = pb.authStore.token
+      }
+
+      const res = await fetch(
+        `${import.meta.env.VITE_POCKETBASE_URL}/backend/v1/admin/forcar-escalacao`,
+        {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({ jogo_id: targetJogoId }),
+        },
+      )
+
+      const dataRes = await res.json()
+      if (!res.ok || dataRes.success === false) {
+        const errorMsg =
+          dataRes.error ||
+          dataRes.notice ||
+          'Não foi possível obter escalações da API externa no momento.'
+        toast({
+          title: 'Aviso sobre escalação',
+          description: errorMsg,
+          variant: dataRes.rate_limited ? 'destructive' : 'default',
+        })
+      } else {
+        toast({
+          title: 'Escalação sincronizada!',
+          description: 'Escalações da partida atualizadas com sucesso no banco de dados.',
+        })
+        loadFromPocketBase(match, true)
+      }
+    } catch (err: unknown) {
+      console.error('Erro ao forçar escalação:', err)
+      toast({
+        title: 'Erro na requisição',
+        description: 'Falha de comunicação ao solicitar busca de escalação.',
+        variant: 'destructive',
+      })
+    } finally {
+      setForcingEscalacao(false)
+    }
+  }
 
   // Sincronização em tempo real com PocketBase:
   // Se o cron `cron_escalacoes_pre_jogo_5m` salvar a escalação na collection `jogos`
@@ -904,7 +973,32 @@ export function MatchDetailsModal({ isOpen, onClose, match }: MatchDetailsModalP
         </div>
 
         {/* Rodapé */}
-        <div className="p-3 bg-white border-t border-slate-200 flex justify-end">
+        <div className="p-3 bg-white border-t border-slate-200 flex items-center justify-between">
+          <div>
+            {isAdmin && associatedJogoId && (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={handleForcarEscalacaoAdmin}
+                disabled={forcingEscalacao}
+                className="text-xs h-8 border-indigo-200 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 hover:text-indigo-900"
+                title="Buscar ou forçar atualização de escalação na API-Football (Admin)"
+              >
+                {forcingEscalacao ? (
+                  <>
+                    <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                    <span>Buscando Escalação...</span>
+                  </>
+                ) : (
+                  <>
+                    <RefreshCw className="mr-1.5 h-3.5 w-3.5" />
+                    <span>Forçar Escalação</span>
+                  </>
+                )}
+              </Button>
+            )}
+          </div>
           <Button
             type="button"
             variant="outline"

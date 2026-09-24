@@ -9,6 +9,11 @@ import {
   Loader2,
 } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
+import { RefreshCw } from 'lucide-react'
+import { toast } from '@/hooks/use-toast'
+import { useAuth } from '@/context/AuthContext'
+import pb from '@/lib/pocketbase/client'
 import { fetchGameLineup, LineupResponse, LineupTeam } from '@/services/escalacoes'
 
 interface GameLineupAccordionProps {
@@ -17,6 +22,7 @@ interface GameLineupAccordionProps {
   timeA: string
   timeB: string
   data?: string
+  isAdmin?: boolean
   onLineupLoaded?: (lineup: LineupResponse) => void
 }
 
@@ -26,10 +32,14 @@ export const GameLineupAccordion: React.FC<GameLineupAccordionProps> = ({
   timeA,
   timeB,
   data,
+  isAdmin: propsIsAdmin,
   onLineupLoaded,
 }) => {
+  const auth = useAuth()
+  const isUserAdmin = Boolean(propsIsAdmin ?? auth?.isAdmin)
   const [isOpen, setIsOpen] = useState(false)
   const [loading, setLoading] = useState(false)
+  const [forcingEscalacao, setForcingEscalacao] = useState(false)
   const [lineup, setLineup] = useState<LineupResponse | null>(null)
   const [activeTab, setActiveTab] = useState<'timeA' | 'timeB'>('timeA')
 
@@ -61,6 +71,69 @@ export const GameLineupAccordion: React.FC<GameLineupAccordionProps> = ({
     setIsOpen(nextState)
     if (nextState && !lineup && !loading) {
       loadLineup()
+    }
+  }
+
+  const handleForcarEscalacaoAdmin = async (e: React.MouseEvent) => {
+    e.stopPropagation()
+    if (!jogoId || forcingEscalacao) return
+    setForcingEscalacao(true)
+    try {
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+      }
+      if (pb.authStore.token) {
+        headers['Authorization'] = pb.authStore.token
+      }
+
+      const res = await fetch(
+        `${import.meta.env.VITE_POCKETBASE_URL}/backend/v1/admin/forcar-escalacao`,
+        {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({ jogo_id: jogoId }),
+        },
+      )
+
+      const dataRes = await res.json()
+      if (!res.ok || dataRes.success === false) {
+        const errorMsg =
+          dataRes.error ||
+          dataRes.notice ||
+          'Não foi possível obter escalações da API externa no momento.'
+        toast({
+          title: 'Aviso sobre escalação',
+          description: errorMsg,
+          variant: dataRes.rate_limited ? 'destructive' : 'default',
+        })
+      } else {
+        toast({
+          title: 'Escalação sincronizada!',
+          description: `Escalações do confronto ${timeA} x ${timeB} foram atualizadas com sucesso.`,
+        })
+        if (dataRes.escalacoes) {
+          const freshLineup = {
+            status: dataRes.escalacoes.status || 'confirmada',
+            provider: dataRes.escalacoes.provider || 'api_football',
+            fixtureId: dataRes.escalacoes.fixtureId,
+            teams: dataRes.escalacoes.teams,
+            updatedAt: dataRes.escalacoes.updatedAt,
+          } as LineupResponse
+          setLineup(freshLineup)
+          if (onLineupLoaded) onLineupLoaded(freshLineup)
+        } else {
+          loadLineup()
+        }
+      }
+    } catch (err: unknown) {
+      console.error('Erro ao forçar escalação:', err)
+      toast({
+        title: 'Erro na requisição',
+        description: 'Falha de comunicação ao solicitar busca de escalação.',
+        variant: 'destructive',
+      })
+    } finally {
+      setForcingEscalacao(false)
     }
   }
 
@@ -102,7 +175,30 @@ export const GameLineupAccordion: React.FC<GameLineupAccordionProps> = ({
             </Badge>
           )}
         </div>
-        <div className="flex items-center gap-1 text-slate-400">
+        <div className="flex items-center gap-2 text-slate-400">
+          {isUserAdmin && (
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              onClick={handleForcarEscalacaoAdmin}
+              disabled={forcingEscalacao}
+              className="h-6 px-2 text-[10px] font-semibold border-indigo-200 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 hover:text-indigo-900"
+              title="Buscar ou forçar atualização de escalação na API-Football"
+            >
+              {forcingEscalacao ? (
+                <>
+                  <Loader2 className="mr-1 h-3 w-3 animate-spin" />
+                  <span>Buscando...</span>
+                </>
+              ) : (
+                <>
+                  <RefreshCw className="mr-1 h-3 w-3" />
+                  <span>Forçar Escalação</span>
+                </>
+              )}
+            </Button>
+          )}
           {loading && <Loader2 className="h-3.5 w-3.5 animate-spin text-[#0F2A43]" />}
           {isOpen ? (
             <ChevronUp className="h-4 w-4 text-slate-600" />
