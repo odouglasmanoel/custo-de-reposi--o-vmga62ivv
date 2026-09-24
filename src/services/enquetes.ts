@@ -550,6 +550,7 @@ export async function toggleVotoJogo(
  */
 export interface FixtureDetalhesResultado {
   success: boolean
+  auto_lookup?: boolean
   fixture?: {
     id: number | string
     homeTeamName?: string
@@ -561,6 +562,15 @@ export interface FixtureDetalhesResultado {
   }
   error?: string
   rate_limited?: boolean
+  matches_found?: number
+}
+
+/**
+ * Helper para verificar se uma URL de escudo já é a oficial da API-Sports
+ */
+export function isApiSportsLogo(url?: string | null): boolean {
+  if (!url) return false
+  return url.includes('media.api-sports.io')
 }
 
 /**
@@ -611,6 +621,62 @@ export async function buscarFixtureDetalhes(
   }
 }
 
+/**
+ * Busca/Geração Automática do ID da Partida (Auto-Lookup) via backend (/backend/v1/enquetes/fixture-detalhes)
+ * Consulta fixtures na data e encontra confronto entre Mandante e Visitante.
+ * Se encontrar exatamente 1 correspondência, retorna o fixture com seu ID e logos oficiais.
+ * Respeita a cota diária de 80 requisições (reset 21h Brasília).
+ */
+export async function buscarFixtureAutoLookup(params: {
+  mandante: string
+  visitante: string
+  data: string
+}): Promise<FixtureDetalhesResultado> {
+  const mandante = (params.mandante || '').trim()
+  const visitante = (params.visitante || '').trim()
+  const data = (params.data || '').trim()
+
+  if (!mandante || !visitante || !data) {
+    return { success: false, error: 'Mandante, visitante e data são obrigatórios.' }
+  }
+
+  try {
+    const token = pb.authStore.token
+    const baseUrl = import.meta.env.VITE_POCKETBASE_URL || ''
+    const url = `${baseUrl}/backend/v1/enquetes/fixture-detalhes?mandante=${encodeURIComponent(
+      mandante,
+    )}&visitante=${encodeURIComponent(visitante)}&data=${encodeURIComponent(data)}`
+
+    const res = await fetch(url, {
+      headers: {
+        Authorization: token ? `Bearer ${token}` : '',
+      },
+    })
+
+    const dataRes = await res.json().catch(() => null)
+    if (!res.ok || !dataRes?.success) {
+      return {
+        success: false,
+        error: dataRes?.error || `Nenhuma partida correspondente (status ${res.status}).`,
+        rate_limited: Boolean(dataRes?.rate_limited || res.status === 429),
+        matches_found: dataRes?.matches_found,
+      }
+    }
+
+    return {
+      success: true,
+      auto_lookup: true,
+      fixture: dataRes.fixture,
+    }
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err)
+    return {
+      success: false,
+      error: `Erro no auto-lookup da fixture: ${msg}`,
+    }
+  }
+}
+
 export async function adicionarJogoManualNaEnquete(params: {
   enqueteId: string
   time_a: string
@@ -628,16 +694,17 @@ export async function adicionarJogoManualNaEnquete(params: {
   let logoCasa = params.logo_casa || ''
   let logoVisitante = params.logo_visitante || ''
 
-  // Se fixture_id foi fornecido e os logos não foram digitados manualmente,
-  // tenta consultar os logos da fixture via backend (respeitando o limiter 80/dia)
-  if (cleanFixtureId && (!logoCasa || !logoVisitante)) {
+  // Se fixture_id foi fornecido, consulta os logos oficiais da fixture via backend (API-Sports)
+  // Substitui URLs nos campos pelos logos oficiais da API, sobrepondo links de terceiros (TheSportsDB),
+  // a menos que a URL informada já seja oficial da API-Sports (media.api-sports.io).
+  if (cleanFixtureId && (!isApiSportsLogo(logoCasa) || !isApiSportsLogo(logoVisitante))) {
     try {
       const res = await buscarFixtureDetalhes(cleanFixtureId)
       if (res.success && res.fixture) {
-        if (!logoCasa && res.fixture.homeTeamLogo) {
+        if (res.fixture.homeTeamLogo && !isApiSportsLogo(logoCasa)) {
           logoCasa = res.fixture.homeTeamLogo
         }
-        if (!logoVisitante && res.fixture.awayTeamLogo) {
+        if (res.fixture.awayTeamLogo && !isApiSportsLogo(logoVisitante)) {
           logoVisitante = res.fixture.awayTeamLogo
         }
       }
@@ -915,16 +982,17 @@ export async function editarJogoEnquete(
       ? params.logo_visitante.trim()
       : jogoExistente?.logo_visitante || ''
 
-  // Se houver fixture_id final e pelo menos um dos escudos estiver vazio,
-  // consulta automaticamente pelo ID via backend (API-Sports) respeitando o limite diário
-  if (fixtureIdFinal && (!logoCasaFinal || !logoVisitanteFinal)) {
+  // Se houver fixture_id final e os escudos ainda não forem os oficiais da API-Sports,
+  // consulta automaticamente pelo ID via backend e atualiza com os logos oficiais da API-Sports,
+  // sobrepondo links de terceiros como TheSportsDB.
+  if (fixtureIdFinal && (!isApiSportsLogo(logoCasaFinal) || !isApiSportsLogo(logoVisitanteFinal))) {
     try {
       const res = await buscarFixtureDetalhes(fixtureIdFinal)
       if (res.success && res.fixture) {
-        if (!logoCasaFinal && res.fixture.homeTeamLogo) {
+        if (res.fixture.homeTeamLogo && !isApiSportsLogo(logoCasaFinal)) {
           logoCasaFinal = res.fixture.homeTeamLogo
         }
-        if (!logoVisitanteFinal && res.fixture.awayTeamLogo) {
+        if (res.fixture.awayTeamLogo && !isApiSportsLogo(logoVisitanteFinal)) {
           logoVisitanteFinal = res.fixture.awayTeamLogo
         }
       }

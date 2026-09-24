@@ -24,6 +24,7 @@ import {
   ChevronDown,
   ChevronUp,
   Share2,
+  Check,
 } from 'lucide-react'
 import pb from '@/lib/pocketbase/client'
 import { useAuth } from '@/context/AuthContext'
@@ -78,6 +79,8 @@ import {
   editarJogoEnquete,
   excluirJogoEnquete,
   buscarFixtureDetalhes,
+  buscarFixtureAutoLookup,
+  isApiSportsLogo,
   readListaEnquetesCache,
   readEnqueteDetalhesCache,
 } from '@/services/enquetes'
@@ -229,6 +232,8 @@ export default function Enquetes() {
   const [ativaManualHorario, setAtivaManualHorario] = useState('16:00')
   const [ativaManualAvisoMargem, setAtivaManualAvisoMargem] = useState<string | null>(null)
   const [ativaManualAvisoDuplicado, setAtivaManualAvisoDuplicado] = useState<string | null>(null)
+  const [autoLookupAtivaFeedback, setAutoLookupAtivaFeedback] = useState<string | null>(null)
+  const [buscandoAutoLookupAtiva, setBuscandoAutoLookupAtiva] = useState(false)
 
   // Admin: Modal de Edição de Jogo da Enquete
   const [jogoEmEdicao, setJogoEmEdicao] = useState<JogoComVotos | null>(null)
@@ -245,6 +250,8 @@ export default function Enquetes() {
   const [salvandoEdicaoJogo, setSalvandoEdicaoJogo] = useState(false)
   const [buscandoFixtureEdit, setBuscandoFixtureEdit] = useState(false)
   const [buscandoFixtureAtiva, setBuscandoFixtureAtiva] = useState(false)
+  const [autoLookupEditFeedback, setAutoLookupEditFeedback] = useState<string | null>(null)
+  const [buscandoAutoLookupEdit, setBuscandoAutoLookupEdit] = useState(false)
 
   // Admin: Modal de Exclusão de Jogo Individual da Enquete
   const [jogoEmExclusao, setJogoEmExclusao] = useState<JogoComVotos | null>(null)
@@ -1154,31 +1161,48 @@ export default function Enquetes() {
   }
 
   // Admin: Função utilitária para buscar escudos pela fixture na edição
-  const handleBuscarEscudosPorFixtureEdit = async (fidParam?: string) => {
+  // Substitui automaticamente as URLs nos campos de escudo pelas oficiais da API,
+  // inclusive sobrepondo links de terceiros (como TheSportsDB), exceto se já forem media.api-sports.io
+  const handleBuscarEscudosPorFixtureEdit = async (
+    fidParam?: string,
+    forcedLogos?: { home?: string; away?: string },
+  ) => {
     const rawFid = fidParam !== undefined ? fidParam : editFixtureId
     const cleanId = rawFid.replace(/\D/g, '').trim()
+
+    // Se já recebemos os logos oficiais diretamente da chamada de auto-lookup:
+    if (forcedLogos?.home || forcedLogos?.away) {
+      if (forcedLogos.home && !isApiSportsLogo(editLogoCasa)) {
+        setEditLogoCasa(forcedLogos.home)
+      }
+      if (forcedLogos.away && !isApiSportsLogo(editLogoVisitante)) {
+        setEditLogoVisitante(forcedLogos.away)
+      }
+      return
+    }
+
     if (!cleanId) return
 
-    // Só preenche se pelo menos um dos campos de escudo estiver vazio (preserva preenchimento manual)
-    if (editLogoCasa && editLogoVisitante) return
+    // Se ambos já são media.api-sports.io, não precisa refazer a busca
+    if (isApiSportsLogo(editLogoCasa) && isApiSportsLogo(editLogoVisitante)) return
 
     setBuscandoFixtureEdit(true)
     try {
       const res = await buscarFixtureDetalhes(cleanId)
       if (res.success && res.fixture) {
         let mudou = false
-        if (!editLogoCasa && res.fixture.homeTeamLogo) {
+        if (res.fixture.homeTeamLogo && !isApiSportsLogo(editLogoCasa)) {
           setEditLogoCasa(res.fixture.homeTeamLogo)
           mudou = true
         }
-        if (!editLogoVisitante && res.fixture.awayTeamLogo) {
+        if (res.fixture.awayTeamLogo && !isApiSportsLogo(editLogoVisitante)) {
           setEditLogoVisitante(res.fixture.awayTeamLogo)
           mudou = true
         }
         if (mudou) {
           toast({
-            title: 'Escudos encontrados pela API',
-            description: `Escudos oficiais vinculados à fixture ${cleanId}.`,
+            title: 'Escudos atualizados pela API',
+            description: `Escudos oficiais vinculados à fixture ${cleanId} aplicados ao formulário.`,
           })
         }
       } else if (res.rate_limited) {
@@ -1196,31 +1220,48 @@ export default function Enquetes() {
   }
 
   // Admin: Função utilitária para buscar escudos pela fixture na adição manual
-  const handleBuscarEscudosPorFixtureAtiva = async (fidParam?: string) => {
+  // Substitui automaticamente as URLs nos campos de escudo pelas oficiais da API,
+  // inclusive sobrepondo links de terceiros (como TheSportsDB), exceto se já forem media.api-sports.io
+  const handleBuscarEscudosPorFixtureAtiva = async (
+    fidParam?: string,
+    forcedLogos?: { home?: string; away?: string },
+  ) => {
     const rawFid = fidParam !== undefined ? fidParam : ativaManualFixtureId
     const cleanId = rawFid.replace(/\D/g, '').trim()
+
+    // Se já recebemos os logos oficiais diretamente do auto-lookup:
+    if (forcedLogos?.home || forcedLogos?.away) {
+      if (forcedLogos.home && !isApiSportsLogo(ativaManualLogoCasa)) {
+        setAtivaManualLogoCasa(forcedLogos.home)
+      }
+      if (forcedLogos.away && !isApiSportsLogo(ativaManualLogoVisitante)) {
+        setAtivaManualLogoVisitante(forcedLogos.away)
+      }
+      return
+    }
+
     if (!cleanId) return
 
-    // Só preenche se pelo menos um campo estiver vazio
-    if (ativaManualLogoCasa && ativaManualLogoVisitante) return
+    // Se ambos já são media.api-sports.io, evita refetch desnecessário
+    if (isApiSportsLogo(ativaManualLogoCasa) && isApiSportsLogo(ativaManualLogoVisitante)) return
 
     setBuscandoFixtureAtiva(true)
     try {
       const res = await buscarFixtureDetalhes(cleanId)
       if (res.success && res.fixture) {
         let mudou = false
-        if (!ativaManualLogoCasa && res.fixture.homeTeamLogo) {
+        if (res.fixture.homeTeamLogo && !isApiSportsLogo(ativaManualLogoCasa)) {
           setAtivaManualLogoCasa(res.fixture.homeTeamLogo)
           mudou = true
         }
-        if (!ativaManualLogoVisitante && res.fixture.awayTeamLogo) {
+        if (res.fixture.awayTeamLogo && !isApiSportsLogo(ativaManualLogoVisitante)) {
           setAtivaManualLogoVisitante(res.fixture.awayTeamLogo)
           mudou = true
         }
         if (mudou) {
           toast({
-            title: 'Escudos encontrados pela API',
-            description: `Escudos oficiais vinculados à fixture ${cleanId}.`,
+            title: 'Escudos atualizados pela API',
+            description: `Escudos oficiais vinculados à fixture ${cleanId} aplicados ao formulário.`,
           })
         }
       } else if (res.rate_limited) {
@@ -1237,6 +1278,128 @@ export default function Enquetes() {
     }
   }
 
+  // Auto-Lookup com Debounce para Modal de Criação Manual (800ms)
+  useEffect(() => {
+    if (!dialogAdicionarManualAtivaOpen) return
+    const mandante = ativaManualMandante.trim()
+    const visitante = ativaManualVisitante.trim()
+    const data = ativaManualData.trim()
+
+    // Só dispara se Mandante, Visitante e Data estiverem preenchidos e não houver ID digitado manualmente
+    if (!mandante || !visitante || !data) {
+      setAutoLookupAtivaFeedback(null)
+      return
+    }
+
+    // Se o usuário já informou um ID manualmente, não sobressai auto-lookup a menos que o campo esteja vazio
+    if (ativaManualFixtureId) {
+      return
+    }
+
+    let isMounted = true
+    setBuscandoAutoLookupAtiva(true)
+    const timer = setTimeout(async () => {
+      try {
+        const res = await buscarFixtureAutoLookup({ mandante, visitante, data })
+        if (!isMounted) return
+        if (res.success && res.fixture?.id) {
+          const fidStr = String(res.fixture.id).replace(/\D/g, '')
+          setAtivaManualFixtureId(fidStr)
+          setAutoLookupAtivaFeedback(`ID #${fidStr} encontrado automaticamente`)
+
+          // Atualiza escudos com os oficiais da API-Sports
+          if (res.fixture.homeTeamLogo && !isApiSportsLogo(ativaManualLogoCasa)) {
+            setAtivaManualLogoCasa(res.fixture.homeTeamLogo)
+          }
+          if (res.fixture.awayTeamLogo && !isApiSportsLogo(ativaManualLogoVisitante)) {
+            setAtivaManualLogoVisitante(res.fixture.awayTeamLogo)
+          }
+        } else {
+          setAutoLookupAtivaFeedback(null)
+        }
+      } catch {
+        if (isMounted) setAutoLookupAtivaFeedback(null)
+      } finally {
+        if (isMounted) setBuscandoAutoLookupAtiva(false)
+      }
+    }, 800)
+
+    return () => {
+      isMounted = false
+      clearTimeout(timer)
+      setBuscandoAutoLookupAtiva(false)
+    }
+  }, [
+    ativaManualMandante,
+    ativaManualVisitante,
+    ativaManualData,
+    dialogAdicionarManualAtivaOpen,
+    ativaManualFixtureId,
+    ativaManualLogoCasa,
+    ativaManualLogoVisitante,
+  ])
+
+  // Auto-Lookup com Debounce para Modal de Edição de Jogo (800ms)
+  useEffect(() => {
+    if (!dialogEditarJogoOpen || !jogoEmEdicao) return
+    const mandante = editMandante.trim()
+    const visitante = editVisitante.trim()
+    const data = editData.trim()
+
+    if (!mandante || !visitante || !data) {
+      setAutoLookupEditFeedback(null)
+      return
+    }
+
+    // Se já tiver fixture_id (pré-carregado ou digitado), não sobrescreve
+    if (editFixtureId) {
+      return
+    }
+
+    let isMounted = true
+    setBuscandoAutoLookupEdit(true)
+    const timer = setTimeout(async () => {
+      try {
+        const res = await buscarFixtureAutoLookup({ mandante, visitante, data })
+        if (!isMounted) return
+        if (res.success && res.fixture?.id) {
+          const fidStr = String(res.fixture.id).replace(/\D/g, '')
+          setEditFixtureId(fidStr)
+          setAutoLookupEditFeedback(`ID #${fidStr} encontrado automaticamente`)
+
+          // Atualiza escudos com os oficiais da API-Sports
+          if (res.fixture.homeTeamLogo && !isApiSportsLogo(editLogoCasa)) {
+            setEditLogoCasa(res.fixture.homeTeamLogo)
+          }
+          if (res.fixture.awayTeamLogo && !isApiSportsLogo(editLogoVisitante)) {
+            setEditLogoVisitante(res.fixture.awayTeamLogo)
+          }
+        } else {
+          setAutoLookupEditFeedback(null)
+        }
+      } catch {
+        if (isMounted) setAutoLookupEditFeedback(null)
+      } finally {
+        if (isMounted) setBuscandoAutoLookupEdit(false)
+      }
+    }, 800)
+
+    return () => {
+      isMounted = false
+      clearTimeout(timer)
+      setBuscandoAutoLookupEdit(false)
+    }
+  }, [
+    editMandante,
+    editVisitante,
+    editData,
+    dialogEditarJogoOpen,
+    jogoEmEdicao,
+    editFixtureId,
+    editLogoCasa,
+    editLogoVisitante,
+  ])
+
   // Admin: Abrir modal de edição de confronto
   const handleAbrirModalEditarJogo = (jogo: JogoComVotos, e?: React.MouseEvent) => {
     if (e) e.stopPropagation()
@@ -1250,6 +1413,7 @@ export default function Enquetes() {
     setEditData(jogo.data)
     setEditHorario(jogo.horario || '16:00')
     setEditAvisoMargem(null)
+    setAutoLookupEditFeedback(null)
     setDialogEditarJogoOpen(true)
   }
 
@@ -3398,9 +3562,21 @@ export default function Enquetes() {
                 htmlFor="ativa-manual-fixture-id"
                 className="text-xs font-bold text-slate-700 flex items-center justify-between"
               >
-                <span>ID da Partida (API-Football) / api_fixture_id</span>
+                <span className="flex items-center gap-1.5">
+                  <span>ID da Partida (API-Football) / api_fixture_id</span>
+                  {autoLookupAtivaFeedback && (
+                    <span className="inline-flex items-center gap-1 rounded bg-emerald-50 px-1.5 py-0.5 text-[10px] font-medium text-emerald-700 border border-emerald-200">
+                      <Check className="h-3 w-3 text-emerald-600" />
+                      {autoLookupAtivaFeedback}
+                    </span>
+                  )}
+                </span>
                 <span className="text-[10px] font-normal text-slate-500">
-                  {buscandoFixtureAtiva ? 'Buscando escudos...' : 'Opcional'}
+                  {buscandoAutoLookupAtiva
+                    ? 'Buscando partida...'
+                    : buscandoFixtureAtiva
+                      ? 'Buscando escudos...'
+                      : 'Opcional'}
                 </span>
               </Label>
               <div className="relative">
@@ -3414,6 +3590,7 @@ export default function Enquetes() {
                   onChange={(e) => {
                     const clean = e.target.value.replace(/\D/g, '')
                     setAtivaManualFixtureId(clean)
+                    setAutoLookupAtivaFeedback(null)
                   }}
                   onBlur={() => {
                     if (ativaManualFixtureId) {
@@ -3422,7 +3599,7 @@ export default function Enquetes() {
                   }}
                   className="h-9 bg-white text-xs"
                 />
-                {buscandoFixtureAtiva && (
+                {(buscandoFixtureAtiva || buscandoAutoLookupAtiva) && (
                   <div className="absolute right-2.5 top-2.5">
                     <RefreshCw className="h-4 w-4 animate-spin text-amber-600" />
                   </div>
@@ -3625,9 +3802,21 @@ export default function Enquetes() {
                 htmlFor="edit-fixture-id"
                 className="text-xs font-bold text-slate-700 flex items-center justify-between"
               >
-                <span>ID da Partida (API-Football) / api_fixture_id</span>
+                <span className="flex items-center gap-1.5">
+                  <span>ID da Partida (API-Football) / api_fixture_id</span>
+                  {autoLookupEditFeedback && (
+                    <span className="inline-flex items-center gap-1 rounded bg-emerald-50 px-1.5 py-0.5 text-[10px] font-medium text-emerald-700 border border-emerald-200">
+                      <Check className="h-3 w-3 text-emerald-600" />
+                      {autoLookupEditFeedback}
+                    </span>
+                  )}
+                </span>
                 <span className="text-[10px] font-normal text-slate-500">
-                  {buscandoFixtureEdit ? 'Buscando escudos...' : 'Opcional'}
+                  {buscandoAutoLookupEdit
+                    ? 'Buscando partida...'
+                    : buscandoFixtureEdit
+                      ? 'Buscando escudos...'
+                      : 'Opcional'}
                 </span>
               </Label>
               <div className="relative">
@@ -3641,6 +3830,7 @@ export default function Enquetes() {
                   onChange={(e) => {
                     const clean = e.target.value.replace(/\D/g, '')
                     setEditFixtureId(clean)
+                    setAutoLookupEditFeedback(null)
                   }}
                   onBlur={() => {
                     if (editFixtureId) {
@@ -3649,7 +3839,7 @@ export default function Enquetes() {
                   }}
                   className="h-9 bg-white text-xs"
                 />
-                {buscandoFixtureEdit && (
+                {(buscandoFixtureEdit || buscandoAutoLookupEdit) && (
                   <div className="absolute right-2.5 top-2.5">
                     <RefreshCw className="h-4 w-4 animate-spin text-amber-600" />
                   </div>

@@ -467,7 +467,7 @@ describe('Serviço de Enquetes - Otimizações de Carregamento, Cache e Requisi�
       expect(payload.fixture_id).toBe('999999')
     })
 
-    it('editarJogoEnquete preserva escudos manuais pré-existentes mesmo ao definir fixture_id (prioridade máxima manual)', async () => {
+    it('editarJogoEnquete substitui URLs de terceiros (como TheSportsDB) pelas oficiais da API ao informar fixture_id', async () => {
       const mockUpdateEnqueteJogo = vi.fn().mockImplementation((id, payload) => {
         return Promise.resolve({
           id,
@@ -477,11 +477,11 @@ describe('Serviço de Enquetes - Otimizações de Carregamento, Cache e Requisi�
 
       const mockGetOneEnqueteJogo = vi.fn().mockResolvedValue({
         id: 'ej_3',
-        time_a: 'Clube Manual A',
-        time_b: 'Clube Manual B',
+        time_a: 'Jamaica',
+        time_b: 'Honduras',
         fixture_id: '',
-        logo_casa: 'https://custom.escudo.com/a.png',
-        logo_visitante: 'https://custom.escudo.com/b.png',
+        logo_casa: 'https://r2.thesportsdb.com/images/media/team/badge/jamaica.png',
+        logo_visitante: 'https://r2.thesportsdb.com/images/media/team/badge/honduras.png',
       })
 
       vi.spyOn(pb, 'collection').mockImplementation((col: string) => {
@@ -500,26 +500,154 @@ describe('Serviço de Enquetes - Otimizações de Carregamento, Cache e Requisi�
         return {} as any
       })
 
-      // Fetch não deve nem ser chamado se os logos manuais já estão preenchidos
+      // Simula retorno dos logos oficiais da API-Sports
+      globalThis.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          success: true,
+          fixture: {
+            id: 1528881,
+            homeTeamLogo: 'https://media.api-sports.io/football/teams/jamaica_official.png',
+            awayTeamLogo: 'https://media.api-sports.io/football/teams/honduras_official.png',
+          },
+        }),
+      }) as any
+
+      const { editarJogoEnquete } = await import('./enquetes')
+      await editarJogoEnquete('ej_3', {
+        time_a: 'Jamaica',
+        time_b: 'Honduras',
+        data: '2026-10-12',
+        horario: '16:00',
+        fixture_id: '1528881',
+        logo_casa: 'https://r2.thesportsdb.com/images/media/team/badge/jamaica.png',
+        logo_visitante: 'https://r2.thesportsdb.com/images/media/team/badge/honduras.png',
+      })
+
+      const payload = mockUpdateEnqueteJogo.mock.calls[0][1]
+      expect(payload.fixture_id).toBe('1528881')
+      // Sobrescreveu as URLs de r2.thesportsdb.com pelas oficiais da API-Sports!
+      expect(payload.logo_casa).toBe(
+        'https://media.api-sports.io/football/teams/jamaica_official.png',
+      )
+      expect(payload.logo_visitante).toBe(
+        'https://media.api-sports.io/football/teams/honduras_official.png',
+      )
+    })
+
+    it('editarJogoEnquete preserva URL quando já for a oficial da API-Sports (media.api-sports.io)', async () => {
+      const mockUpdateEnqueteJogo = vi.fn().mockImplementation((id, payload) => {
+        return Promise.resolve({
+          id,
+          ...payload,
+        })
+      })
+
+      const mockGetOneEnqueteJogo = vi.fn().mockResolvedValue({
+        id: 'ej_4',
+        time_a: 'Brasil',
+        time_b: 'Argentina',
+        fixture_id: '999',
+        logo_casa: 'https://media.api-sports.io/football/teams/6.png',
+        logo_visitante: 'https://media.api-sports.io/football/teams/26.png',
+      })
+
+      vi.spyOn(pb, 'collection').mockImplementation((col: string) => {
+        if (col === 'enquete_jogos') {
+          return {
+            getOne: mockGetOneEnqueteJogo,
+            update: mockUpdateEnqueteJogo,
+          } as any
+        }
+        if (col === 'jogos') {
+          return {
+            getFullList: vi.fn().mockResolvedValue([]),
+            update: vi.fn(),
+          } as any
+        }
+        return {} as any
+      })
+
       const fetchSpy = vi.fn()
       globalThis.fetch = fetchSpy as any
 
       const { editarJogoEnquete } = await import('./enquetes')
-      await editarJogoEnquete('ej_3', {
-        time_a: 'Clube Manual A',
-        time_b: 'Clube Manual B',
+      await editarJogoEnquete('ej_4', {
+        time_a: 'Brasil',
+        time_b: 'Argentina',
         data: '2026-10-12',
         horario: '16:00',
-        fixture_id: '777888',
-        logo_casa: 'https://custom.escudo.com/a.png',
-        logo_visitante: 'https://custom.escudo.com/b.png',
+        fixture_id: '999',
+        logo_casa: 'https://media.api-sports.io/football/teams/6.png',
+        logo_visitante: 'https://media.api-sports.io/football/teams/26.png',
       })
 
+      // Não deve refazer a busca na API pois já eram oficiais
       expect(fetchSpy).not.toHaveBeenCalled()
       const payload = mockUpdateEnqueteJogo.mock.calls[0][1]
-      expect(payload.fixture_id).toBe('777888')
-      expect(payload.logo_casa).toBe('https://custom.escudo.com/a.png')
-      expect(payload.logo_visitante).toBe('https://custom.escudo.com/b.png')
+      expect(payload.logo_casa).toBe('https://media.api-sports.io/football/teams/6.png')
+      expect(payload.logo_visitante).toBe('https://media.api-sports.io/football/teams/26.png')
+    })
+
+    it('buscarFixtureAutoLookup consulta backend e encontra partida por mandante, visitante e data', async () => {
+      globalThis.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          success: true,
+          auto_lookup: true,
+          fixture: {
+            id: 1528881,
+            homeTeamName: 'Jamaica',
+            awayTeamName: 'Honduras',
+            homeTeamLogo: 'https://media.api-sports.io/football/teams/jamaica.png',
+            awayTeamLogo: 'https://media.api-sports.io/football/teams/honduras.png',
+            leagueName: 'Liga das Nações da Concacaf',
+            date: '2026-09-28T21:00:00+00:00',
+          },
+        }),
+      }) as any
+
+      const { buscarFixtureAutoLookup } = await import('./enquetes')
+      const res = await buscarFixtureAutoLookup({
+        mandante: 'Jamaica',
+        visitante: 'Honduras',
+        data: '2026-09-28',
+      })
+
+      expect(res.success).toBe(true)
+      expect(res.fixture?.id).toBe(1528881)
+      expect(res.fixture?.homeTeamLogo).toBe(
+        'https://media.api-sports.io/football/teams/jamaica.png',
+      )
+      expect(globalThis.fetch).toHaveBeenCalledTimes(1)
+      const calledUrl = (globalThis.fetch as any).mock.calls[0][0]
+      expect(calledUrl).toContain('mandante=Jamaica')
+      expect(calledUrl).toContain('visitante=Honduras')
+      expect(calledUrl).toContain('data=2026-09-28')
+    })
+
+    it('buscarFixtureAutoLookup trata cota esgotada (429) de forma limpa sem quebrar', async () => {
+      globalThis.fetch = vi.fn().mockResolvedValue({
+        ok: false,
+        status: 429,
+        json: async () => ({
+          error: 'Limite diário de requisições da API-Sports atingido (80/dia).',
+          rate_limited: true,
+        }),
+      }) as any
+
+      const { buscarFixtureAutoLookup } = await import('./enquetes')
+      const res = await buscarFixtureAutoLookup({
+        mandante: 'Turquia',
+        visitante: 'Estados Unidos',
+        data: '2026-09-28',
+      })
+
+      expect(res.success).toBe(false)
+      expect(res.rate_limited).toBe(true)
+      expect(res.error).toContain('Limite diário')
     })
   })
 
