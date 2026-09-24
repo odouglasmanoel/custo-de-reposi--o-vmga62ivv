@@ -252,10 +252,14 @@ export function normalizeDataISO(dataValue?: string | Date | null): string | nul
   if (!dataValue) return null
   if (dataValue instanceof Date) {
     if (isNaN(dataValue.getTime())) return null
-    const y = dataValue.getUTCFullYear()
-    const m = String(dataValue.getUTCMonth() + 1).padStart(2, '0')
-    const d = String(dataValue.getUTCDate()).padStart(2, '0')
-    return `${y}-${m}-${d}`
+    // Se for Date em horário específico, converte no fuso de São Paulo
+    const formatter = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'America/Sao_Paulo',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    })
+    return formatter.format(dataValue)
   }
   const trimmed = dataValue.trim()
   if (!trimmed) return null
@@ -266,18 +270,49 @@ export function normalizeDataISO(dataValue?: string | Date | null): string | nul
     return `${brMatch[3]}-${brMatch[2]}-${brMatch[1]}`
   }
 
-  // YYYY-MM-DD
-  const isoMatch = trimmed.match(/^(\d{4})-(\d{2})-(\d{2})/)
-  if (isoMatch) {
-    return `${isoMatch[1]}-${isoMatch[2]}-${isoMatch[3]}`
+  // PocketBase date string "YYYY-MM-DD 00:00:00.000Z" ou "YYYY-MM-DD" puro
+  // Quando é apenas data armazenada como meia-noite UTC ("... 00:00:00.000Z" ou "T00:00:00.000Z" sem horário local real associado),
+  // a data nominal gravada pelo sistema é o prefixo YYYY-MM-DD.
+  const pureIsoDateMatch = trimmed.match(/^(\d{4})-(\d{2})-(\d{2})(?:[ T]00:00:00(?:\.000)?Z?)?$/)
+  if (pureIsoDateMatch) {
+    return `${pureIsoDateMatch[1]}-${pureIsoDateMatch[2]}-${pureIsoDateMatch[3]}`
+  }
+
+  // YYYY-MM-DD simples (prefixo de qualquer ISO com T ou espaço)
+  const isoPrefixMatch = trimmed.match(/^(\d{4})-(\d{2})-(\d{2})/)
+  if (isoPrefixMatch) {
+    // Se tiver horário UTC explícito diferente de 00:00:00Z, converte para SP
+    if (trimmed.includes('T') || (trimmed.includes(' ') && trimmed.includes(':'))) {
+      const d = new Date(trimmed)
+      if (!isNaN(d.getTime())) {
+        const formatter = new Intl.DateTimeFormat('en-CA', {
+          timeZone: 'America/Sao_Paulo',
+          year: 'numeric',
+          month: '2-digit',
+          day: '2-digit',
+        })
+        return formatter.format(d)
+      }
+    }
+    return `${isoPrefixMatch[1]}-${isoPrefixMatch[2]}-${isoPrefixMatch[3]}`
   }
 
   const d = new Date(trimmed)
   if (isNaN(d.getTime())) return null
-  const y = d.getUTCFullYear()
-  const m = String(d.getUTCMonth() + 1).padStart(2, '0')
-  const day = String(d.getUTCDate()).padStart(2, '0')
-  return `${y}-${m}-${day}`
+  const formatter = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/Sao_Paulo',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  })
+  return formatter.format(d)
+}
+
+/**
+ * Normaliza e extrai a data do jogo especificamente no fuso de Brasília (America/Sao_Paulo).
+ */
+export function getJogoDataSaoPaulo(dataValue?: string | Date | null): string | null {
+  return normalizeDataISO(dataValue)
 }
 
 /**
@@ -288,15 +323,24 @@ export function getTodayDateString(nowMs: number = Date.now()): string {
 }
 
 /**
- * Checks if a game date is today in the America/Sao_Paulo timezone.
+ * Checks if a game date is today in the America/Sao_Paulo (Brasília) timezone.
  */
-export function isJogoHoje(dataValue?: string | Date | null, nowMs: number = Date.now()): boolean {
+export function isJogoHojeBrasilia(
+  dataValue?: string | Date | null,
+  nowMs: number = Date.now(),
+): boolean {
   const normalizedGameDate = normalizeDataISO(dataValue)
   if (!normalizedGameDate) return false
   const hojeSaoPaulo = getHojeDataSaoPaulo(nowMs)
   return normalizedGameDate === hojeSaoPaulo
 }
 
+/**
+ * Checks if a game date is today in the America/Sao_Paulo timezone (alias mantido para retrocompatibilidade).
+ */
+export function isJogoHoje(dataValue?: string | Date | null, nowMs: number = Date.now()): boolean {
+  return isJogoHojeBrasilia(dataValue, nowMs)
+}
 /**
  * Checks if a game is scheduled for today AND has not started yet
  * (dataHoraJogo > dataHoraAtual in America/Sao_Paulo).
