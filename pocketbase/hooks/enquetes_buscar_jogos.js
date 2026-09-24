@@ -1286,9 +1286,12 @@ routerAdd(
       if (!teamName) return ''
       var cleanKey = normalizarNomeEscudo(teamName)
 
-      // 0) Tratamento explícito para PSG / Paris Saint-Germain
+      // 0) Tratamento explícito para PSG e Dinamarca
       if (cleanKey === 'paris saint germain') {
         return 'https://media.api-sports.io/football/teams/85.png'
+      }
+      if (cleanKey === 'dinamarca' || cleanKey === 'denmark') {
+        return 'https://media.api-sports.io/football/teams/21.png'
       }
 
       // 1) Cache em memória
@@ -1301,7 +1304,8 @@ routerAdd(
         globalThis.__tsdbBadgeCache[cleanKey] !== undefined
       ) {
         var cachedVal = globalThis.__tsdbBadgeCache[cleanKey] || ''
-        // Invalida cache se for contaminação de Colônia (Köln) em time que não seja Köln
+        // Invalida cache se for contaminação de Colônia (Köln) em time que não seja Köln,
+        // ou se for contaminação de B.S.C. (z3v04x) em Dinamarca
         if (
           cachedVal &&
           (cachedVal.indexOf('192') !== -1 ||
@@ -1312,6 +1316,14 @@ routerAdd(
             cachedVal = ''
             globalThis.__tsdbBadgeCache[cleanKey] = ''
           }
+        }
+        if (
+          cachedVal &&
+          (cleanKey === 'dinamarca' || cleanKey === 'denmark') &&
+          (cachedVal.indexOf('z3v04x') !== -1 || cachedVal.indexOf('bsc') !== -1)
+        ) {
+          cachedVal = 'https://media.api-sports.io/football/teams/21.png'
+          globalThis.__tsdbBadgeCache[cleanKey] = cachedVal
         }
         if (cachedVal) return cachedVal
       }

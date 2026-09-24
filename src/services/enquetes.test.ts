@@ -244,6 +244,95 @@ describe('Serviço de Enquetes - Otimizações de Carregamento, Cache e Requisi�
     })
   })
 
+  describe('6. Adicionar Jogo Manual na Enquete Ativa com fixture_id e tratamento de escudos', () => {
+    it('higieniza fixture_id numérico e repassa para criação do registro', async () => {
+      const mockCreate = vi.fn().mockImplementation((payload) => {
+        return Promise.resolve({
+          id: 'novo_jogo_manual',
+          ...payload,
+        })
+      })
+
+      vi.spyOn(pb, 'collection').mockImplementation((col: string) => {
+        if (col === 'enquete_jogos') {
+          return { create: mockCreate } as any
+        }
+        return {} as any
+      })
+
+      // Mock fetch para busca de fixture (simula retorno de logos oficiais)
+      globalThis.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          success: true,
+          fixture: {
+            id: 1528881,
+            homeTeamLogo: 'https://media.api-sports.io/football/teams/1.png',
+            awayTeamLogo: 'https://media.api-sports.io/football/teams/2.png',
+          },
+        }),
+      }) as any
+
+      const { adicionarJogoManualNaEnquete } = await import('./enquetes')
+      const jogo = await adicionarJogoManualNaEnquete({
+        enqueteId: 'enq_123',
+        time_a: 'Time A',
+        time_b: 'Time B',
+        fixture_id: 'ID: 1528881 abc',
+        data: '2026-09-25',
+      })
+
+      expect(mockCreate).toHaveBeenCalledTimes(1)
+      const payload = mockCreate.mock.calls[0][0]
+      expect(payload.fixture_id).toBe('1528881')
+      expect(payload.logo_casa).toBe('https://media.api-sports.io/football/teams/1.png')
+      expect(payload.logo_visitante).toBe('https://media.api-sports.io/football/teams/2.png')
+      expect(jogo.id).toBe('novo_jogo_manual')
+    })
+
+    it('em caso de falha da API ou esgotamento de cota, salva o jogo com fixture_id intacto sem quebrar', async () => {
+      const mockCreate = vi.fn().mockImplementation((payload) => {
+        return Promise.resolve({
+          id: 'jogo_sem_logo',
+          ...payload,
+        })
+      })
+
+      vi.spyOn(pb, 'collection').mockImplementation((col: string) => {
+        if (col === 'enquete_jogos') {
+          return { create: mockCreate } as any
+        }
+        return {} as any
+      })
+
+      // Simula falha 429 Rate Limit
+      globalThis.fetch = vi.fn().mockResolvedValue({
+        ok: false,
+        status: 429,
+        json: async () => ({
+          error: 'Limite diário de requisições excedido.',
+        }),
+      }) as any
+
+      const { adicionarJogoManualNaEnquete } = await import('./enquetes')
+      const jogo = await adicionarJogoManualNaEnquete({
+        enqueteId: 'enq_123',
+        time_a: 'Time A',
+        time_b: 'Time B',
+        fixture_id: '1528881',
+        data: '2026-09-25',
+      })
+
+      expect(mockCreate).toHaveBeenCalledTimes(1)
+      const payload = mockCreate.mock.calls[0][0]
+      expect(payload.fixture_id).toBe('1528881')
+      expect(payload.logo_casa).toBe('')
+      expect(payload.logo_visitante).toBe('')
+      expect(jogo.id).toBe('jogo_sem_logo')
+    })
+  })
+
   describe('5. Alternância de Voto (toggleVotoJogo) e Tratamento de Erros', () => {
     it('bloqueia e avisa quando usuário não está autenticado', async () => {
       // Força pb.authStore sem usuário logado

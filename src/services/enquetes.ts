@@ -556,10 +556,45 @@ export async function adicionarJogoManualNaEnquete(params: {
   regiao?: string
   data: string
   horario?: string
+  fixture_id?: string
   logo_casa?: string
   logo_visitante?: string
   campeonato_logo?: string
 }): Promise<EnqueteJogoModel> {
+  const cleanFixtureId = (params.fixture_id || '').replace(/\D/g, '').trim()
+  let logoCasa = params.logo_casa || ''
+  let logoVisitante = params.logo_visitante || ''
+
+  // Se fixture_id foi fornecido e os logos não foram digitados manualmente,
+  // tenta consultar os logos da fixture via backend (respeitando o limiter 80/dia)
+  if (cleanFixtureId && (!logoCasa || !logoVisitante)) {
+    try {
+      const token = pb.authStore.token
+      const baseUrl = import.meta.env.VITE_POCKETBASE_URL || ''
+      const res = await fetch(
+        `${baseUrl}/backend/v1/enquetes/fixture-detalhes?id=${encodeURIComponent(cleanFixtureId)}`,
+        {
+          headers: {
+            Authorization: token ? `Bearer ${token}` : '',
+          },
+        },
+      )
+      if (res.ok) {
+        const data = await res.json()
+        if (data && data.success && data.fixture) {
+          if (!logoCasa && data.fixture.homeTeamLogo) {
+            logoCasa = data.fixture.homeTeamLogo
+          }
+          if (!logoVisitante && data.fixture.awayTeamLogo) {
+            logoVisitante = data.fixture.awayTeamLogo
+          }
+        }
+      }
+    } catch (errFixture) {
+      console.warn('[adicionarJogoManualNaEnquete] Aviso ao buscar logos da fixture:', errFixture)
+    }
+  }
+
   const novoJogo = await pb.collection('enquete_jogos').create<EnqueteJogoModel>({
     enquete: params.enqueteId,
     time_a: params.time_a.trim(),
@@ -568,9 +603,9 @@ export async function adicionarJogoManualNaEnquete(params: {
     regiao: params.regiao?.trim() || 'Brasileirão & Copas',
     data: params.data,
     horario: params.horario || '16:00',
-    fixture_id: '',
-    logo_casa: params.logo_casa || '',
-    logo_visitante: params.logo_visitante || '',
+    fixture_id: cleanFixtureId,
+    logo_casa: logoCasa,
+    logo_visitante: logoVisitante,
     campeonato_logo: params.campeonato_logo || '',
     selecionado_admin: false,
     cadastrado_bolao: false,
@@ -617,18 +652,6 @@ export function readEscudoCache(teamName: string): string | null {
   const isKoln = (url: string) =>
     url.includes('/192.') || url.includes('koln') || url.includes('cologne')
 
-  // Se for PSG, SEMPRE retorna a URL oficial hardcoded independente de qualquer resíduo
-  if (isParis) {
-    const psgOfficial = 'https://media.api-sports.io/football/teams/85.png'
-    setWithBoundedCapacity(escudoMemoryCache, key, psgOfficial, 200)
-    try {
-      localStorage.setItem(`${ESCUDO_CACHE_PREFIX}_${key}`, psgOfficial)
-    } catch {
-      /* intentionally ignored */
-    }
-    return psgOfficial
-  }
-
   // Escudos oficiais conhecidos para seleções/times recorrentes (fallback instantâneo da API-Sports)
   const KNOWN_OFFICIAL_BADGES: Record<string, string> = {
     paisdegales: 'https://media.api-sports.io/football/teams/767.png',
@@ -653,10 +676,39 @@ export function readEscudoCache(teamName: string): string | null {
     uruguai: 'https://media.api-sports.io/football/teams/7.png',
   }
 
+  // Se for PSG, SEMPRE retorna a URL oficial hardcoded independente de qualquer resíduo
+  if (isParis) {
+    const psgOfficial = 'https://media.api-sports.io/football/teams/85.png'
+    setWithBoundedCapacity(escudoMemoryCache, key, psgOfficial, 200)
+    try {
+      localStorage.setItem(`${ESCUDO_CACHE_PREFIX}_${key}`, psgOfficial)
+    } catch {
+      /* intentionally ignored */
+    }
+    return psgOfficial
+  }
+
+  // Invalidação e purga de contaminação para Dinamarca:
+  // Se for Dinamarca, garantir SEMPRE a URL oficial (teams/21.png) expurgando qualquer badge incorreto (como B.S.C. z3v04x)
+  const isDinamarca = key === 'dinamarca' || key === 'denmark'
+  const isBscOrCorruptedDinamarca = (url: string) =>
+    url.includes('z3v04x') || url.includes('bsc') || url.includes('b.s.c')
+
+  if (isDinamarca) {
+    const dinamarcaOfficial = 'https://media.api-sports.io/football/teams/21.png'
+    setWithBoundedCapacity(escudoMemoryCache, key, dinamarcaOfficial, 200)
+    try {
+      localStorage.setItem(`${ESCUDO_CACHE_PREFIX}_${key}`, dinamarcaOfficial)
+    } catch {
+      /* intentionally ignored */
+    }
+    return dinamarcaOfficial
+  }
+
   // 1. Memória RAM
   const fromMem = escudoMemoryCache.get(key)
   if (fromMem !== undefined) {
-    if (isKoln(fromMem)) {
+    if (isKoln(fromMem) || isBscOrCorruptedDinamarca(fromMem)) {
       escudoMemoryCache.delete(key)
     } else {
       return fromMem
@@ -667,7 +719,7 @@ export function readEscudoCache(teamName: string): string | null {
   try {
     const raw = localStorage.getItem(`${ESCUDO_CACHE_PREFIX}_${key}`)
     if (raw !== null) {
-      if (isKoln(raw)) {
+      if (isKoln(raw) || isBscOrCorruptedDinamarca(raw)) {
         localStorage.removeItem(`${ESCUDO_CACHE_PREFIX}_${key}`)
         return null
       }
@@ -926,12 +978,13 @@ export async function cadastrarJogosAprovadosNaCopaConi(
     const comp = j.campeonato || 'Copa Coni'
 
     try {
+      const fixtureIdFinal = (j.fixture_id || '').replace(/\D/g, '').trim()
       await pb.collection('jogos').create({
         bolao: bolaoId,
         time_a: j.time_a.trim(),
         time_b: j.time_b.trim(),
         competicao: comp,
-        fixture_id: j.fixture_id || '',
+        fixture_id: fixtureIdFinal,
         data: dataISO,
         hora: hora,
         resultado_finalizado: false,

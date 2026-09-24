@@ -1634,9 +1634,27 @@ export default function BolaoDashboard() {
     const missingTeams: string[] = []
     const initialFound: Record<string, string> = {}
 
+    // Validador de escudo corrompido ou de terceiros incorreto para o time
+    const isBadEscudo = (time: string, url: string): boolean => {
+      if (!url) return true
+      const normTime = time
+        .toLowerCase()
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .trim()
+      const lowerUrl = url.toLowerCase()
+      // Caso Dinamarca: NUNCA aceitar escudo do B.S.C. (thesportsdb z3v04x)
+      if (normTime.includes('dinamarca') || normTime.includes('denmark')) {
+        if (lowerUrl.includes('z3v04x') || lowerUrl.includes('bsc') || lowerUrl.includes('b.s.c')) {
+          return true
+        }
+      }
+      return false
+    }
+
     teamNames.forEach((t) => {
       const cached = readEscudoCache(t)
-      if (cached) {
+      if (cached && !isBadEscudo(t, cached)) {
         initialFound[t] = cached
       } else {
         missingTeams.push(t)
@@ -1644,7 +1662,16 @@ export default function BolaoDashboard() {
     })
 
     if (Object.keys(initialFound).length > 0) {
-      setEscudosMap((prev) => ({ ...prev, ...initialFound }))
+      setEscudosMap((prev) => {
+        const next = { ...prev }
+        // Purga qualquer entrada existente corrompida de Dinamarca
+        for (const k of Object.keys(next)) {
+          if (isBadEscudo(k, next[k])) {
+            delete next[k]
+          }
+        }
+        return { ...next, ...initialFound }
+      })
     }
 
     if (missingTeams.length > 0) {
@@ -1663,8 +1690,15 @@ export default function BolaoDashboard() {
         setEscudosMap((prev) => {
           let changed = false
           const next = { ...prev }
+          // Purga entradas corrompidas
+          for (const k of Object.keys(next)) {
+            if (isBadEscudo(k, next[k])) {
+              delete next[k]
+              changed = true
+            }
+          }
           for (const res of results) {
-            if (res.url && next[res.time] !== res.url) {
+            if (res.url && !isBadEscudo(res.time, res.url) && next[res.time] !== res.url) {
               next[res.time] = res.url
               changed = true
             }
@@ -2247,19 +2281,47 @@ export default function BolaoDashboard() {
                     jogo.status === 'ao_vivo' ||
                     kickoffPassou)
 
-                // Prioridade de fonte do escudo:
-                // url_escudo_mandante/visitante do jogo -> escudosMap -> matchedLive -> cache de enquetes
+                // Prioridade padronizada de fonte do escudo:
+                // 1. jogo.url_escudo_mandante / jogo.url_escudo_visitante
+                // 2. matchedLive?.homeTeamLogo / matchedLive?.awayTeamLogo
+                // 3. readEscudoCache(time) (com purga e conhecidos)
+                // 4. escudosMap[time] (com validação anti-contaminação B.S.C.)
+                const timeANome = (jogo.time_a || '').trim()
+                const timeBNome = (jogo.time_b || '').trim()
+                const isCorrompido = (time: string, url?: string | null) => {
+                  if (!url) return true
+                  const n = time
+                    .toLowerCase()
+                    .normalize('NFD')
+                    .replace(/[\u0300-\u036f]/g, '')
+                  if (n.includes('dinamarca') || n.includes('denmark')) {
+                    if (url.includes('z3v04x') || url.includes('bsc') || url.includes('b.s.c')) {
+                      return true
+                    }
+                  }
+                  return false
+                }
+
+                const escudoMapA = escudosMap[timeANome]
+                const escudoMapValidoA = !isCorrompido(timeANome, escudoMapA) ? escudoMapA : ''
+                const escudoMapB = escudosMap[timeBNome]
+                const escudoMapValidoB = !isCorrompido(timeBNome, escudoMapB) ? escudoMapB : ''
+
                 const logoCasa =
-                  jogo.url_escudo_mandante ||
-                  escudosMap[jogo.time_a?.trim()] ||
+                  (!isCorrompido(timeANome, jogo.url_escudo_mandante)
+                    ? jogo.url_escudo_mandante
+                    : '') ||
                   matchedLive?.homeTeamLogo ||
-                  readEscudoCache(jogo.time_a?.trim() || '') ||
+                  readEscudoCache(timeANome) ||
+                  escudoMapValidoA ||
                   ''
                 const logoVisitante =
-                  jogo.url_escudo_visitante ||
-                  escudosMap[jogo.time_b?.trim()] ||
+                  (!isCorrompido(timeBNome, jogo.url_escudo_visitante)
+                    ? jogo.url_escudo_visitante
+                    : '') ||
                   matchedLive?.awayTeamLogo ||
-                  readEscudoCache(jogo.time_b?.trim() || '') ||
+                  readEscudoCache(timeBNome) ||
+                  escudoMapValidoB ||
                   ''
                 const initialsA = (jogo.time_a || '').slice(0, 2).toUpperCase()
                 const initialsB = (jogo.time_b || '').slice(0, 2).toUpperCase()
@@ -2591,15 +2653,55 @@ export default function BolaoDashboard() {
                             </Badge>
                           )}
                           {(() => {
+                            // Padronização rigorosa da ordem de resolução de escudos:
+                            // 1. jogo.url_escudo_mandante / jogo.url_escudo_visitante
+                            // 2. matchedLive?.homeTeamLogo / matchedLive?.awayTeamLogo
+                            // 3. readEscudoCache(time)
+                            // 4. escudosMap[time] (com purga de corrupção B.S.C.)
+                            const timeANome = (jogo.time_a || '').trim()
+                            const timeBNome = (jogo.time_b || '').trim()
+                            const isCorrompido = (time: string, url?: string | null) => {
+                              if (!url) return true
+                              const n = time
+                                .toLowerCase()
+                                .normalize('NFD')
+                                .replace(/[\u0300-\u036f]/g, '')
+                              if (n.includes('dinamarca') || n.includes('denmark')) {
+                                if (
+                                  url.includes('z3v04x') ||
+                                  url.includes('bsc') ||
+                                  url.includes('b.s.c')
+                                ) {
+                                  return true
+                                }
+                              }
+                              return false
+                            }
+
+                            const escudoMapA = escudosMap[timeANome]
+                            const escudoMapValidoA = !isCorrompido(timeANome, escudoMapA)
+                              ? escudoMapA
+                              : ''
+                            const escudoMapB = escudosMap[timeBNome]
+                            const escudoMapValidoB = !isCorrompido(timeBNome, escudoMapB)
+                              ? escudoMapB
+                              : ''
+
                             const logoCasa =
-                              escudosMap[jogo.time_a?.trim()] ||
+                              (!isCorrompido(timeANome, jogo.url_escudo_mandante)
+                                ? jogo.url_escudo_mandante
+                                : '') ||
                               matchedLive?.homeTeamLogo ||
-                              readEscudoCache(jogo.time_a?.trim() || '') ||
+                              readEscudoCache(timeANome) ||
+                              escudoMapValidoA ||
                               ''
                             const logoVisitante =
-                              escudosMap[jogo.time_b?.trim()] ||
+                              (!isCorrompido(timeBNome, jogo.url_escudo_visitante)
+                                ? jogo.url_escudo_visitante
+                                : '') ||
                               matchedLive?.awayTeamLogo ||
-                              readEscudoCache(jogo.time_b?.trim() || '') ||
+                              readEscudoCache(timeBNome) ||
+                              escudoMapValidoB ||
                               ''
                             const initialsA = (jogo.time_a || '').slice(0, 2).toUpperCase()
                             const initialsB = (jogo.time_b || '').slice(0, 2).toUpperCase()

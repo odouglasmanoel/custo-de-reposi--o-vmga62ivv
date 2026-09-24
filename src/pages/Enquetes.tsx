@@ -220,6 +220,7 @@ export default function Enquetes() {
   const [salvandoJogoAtiva, setSalvandoJogoAtiva] = useState(false)
   const [ativaManualMandante, setAtivaManualMandante] = useState('')
   const [ativaManualVisitante, setAtivaManualVisitante] = useState('')
+  const [ativaManualFixtureId, setAtivaManualFixtureId] = useState('')
   const [ativaManualLogoCasa, setAtivaManualLogoCasa] = useState('')
   const [ativaManualLogoVisitante, setAtivaManualLogoVisitante] = useState('')
   const [ativaManualCompeticao, setAtivaManualCompeticao] = useState('')
@@ -968,6 +969,7 @@ export default function Enquetes() {
   const handleAbrirModalAdicionarManualAtiva = () => {
     setAtivaManualMandante('')
     setAtivaManualVisitante('')
+    setAtivaManualFixtureId('')
     setAtivaManualLogoCasa('')
     setAtivaManualLogoVisitante('')
     setAtivaManualCompeticao('')
@@ -984,6 +986,7 @@ export default function Enquetes() {
 
     const timeA = ativaManualMandante.trim()
     const timeB = ativaManualVisitante.trim()
+    const fixtureIdClean = ativaManualFixtureId.replace(/\D/g, '').trim()
     const competicao = ativaManualCompeticao.trim() || 'Amistoso / Outros'
     const dataJogo = ativaManualData.trim()
     const horarioJogo = ativaManualHorario.trim() || '16:00'
@@ -1093,6 +1096,7 @@ export default function Enquetes() {
         enqueteId: activePoll.id,
         time_a: timeA,
         time_b: timeB,
+        fixture_id: fixtureIdClean,
         logo_casa: logoAFinal,
         logo_visitante: logoBFinal,
         campeonato: competicao,
@@ -1100,6 +1104,15 @@ export default function Enquetes() {
         data: dataFinal,
         horario: horaFinal,
       })
+
+      // Se o usuário informou fixture_id e os logos não vieram do backend nem do form, avisa amigavelmente
+      if (fixtureIdClean && (!novoRegistro.logo_casa || !novoRegistro.logo_visitante)) {
+        toast({
+          title: 'Escudos pendentes',
+          description:
+            'O jogo foi cadastrado com o ID da partida intacto. Os escudos oficiais ficaram pendentes devido à cota da API ou conexão.',
+        })
+      }
 
       // Normaliza no fuso America/Sao_Paulo (UTC-3)
       const spNovo = formatDataHoraSaoPaulo(novoRegistro.data, novoRegistro.horario)
@@ -3276,6 +3289,27 @@ export default function Enquetes() {
                   className="h-9 bg-white text-xs"
                 />
               </div>
+            </div>
+
+            {/* ID da Partida (API-Football) / api_fixture_id */}
+            <div className="space-y-1">
+              <Label
+                htmlFor="ativa-manual-fixture-id"
+                className="text-xs font-bold text-slate-700 flex items-center justify-between"
+              >
+                <span>ID da Partida (API-Football) / api_fixture_id</span>
+                <span className="text-[10px] font-normal text-slate-500">Opcional</span>
+              </Label>
+              <Input
+                id="ativa-manual-fixture-id"
+                type="text"
+                inputMode="numeric"
+                pattern="[0-9]*"
+                placeholder="Ex.: 1528881"
+                value={ativaManualFixtureId}
+                onChange={(e) => setAtivaManualFixtureId(e.target.value.replace(/\D/g, ''))}
+                className="h-9 bg-white text-xs"
+              />
             </div>
 
             {/* Escudos Opcionais (Mandante e Visitante) */}
