@@ -876,8 +876,41 @@ export default function BolaoDashboard() {
     >()
 
     const targetGames = isGeral ? allJogos : jogos
+    const STATUS_INICIADOS = new Set([
+      'em_andamento',
+      'ao_vivo',
+      '1h',
+      '2h',
+      'ht',
+      'finalizado',
+      'encerrado',
+      'ft',
+      'finished',
+    ])
 
     for (const jogo of targetGames) {
+      const kickoffMs = getJogoKickoffTimestamp(jogo.data, jogo.hora)
+      const st = (jogo.status || '').toLowerCase().trim()
+      const statusIniciado = STATUS_INICIADOS.has(st)
+      const jogoIniciou = (kickoffMs != null && nowMs >= kickoffMs) || statusIniciado
+
+      const gameBets = palpites.filter((p) => p.jogo === jogo.id)
+
+      // Regra estrita: Se o jogo é futuro/não iniciado e NÃO está finalizado no banco,
+      // NUNCA comparar palpite com placar default 0x0. Mantém hasScore=false e pontos=0.
+      if (!jogoIniciou && !jogo.resultado_finalizado) {
+        for (const bet of gameBets) {
+          map.set(bet.id, {
+            pontos: 0,
+            badges: [],
+            resumoTexto: '',
+            resumoItens: [],
+            hasScore: false,
+          })
+        }
+        continue
+      }
+
       const jogoDataISO = normalizeDataISO(jogo.data)
       const matchedLive = resolveLiveScoreForGame(jogo, apiFixtures, 0.55, jogoDataISO)
       const sobrescrita = sobrescritasAdmin[jogo.id]
@@ -964,7 +997,6 @@ export default function BolaoDashboard() {
         }),
       ]
 
-      const gameBets = palpites.filter((p) => p.jogo === jogo.id)
       for (const bet of gameBets) {
         if (placarA === null || placarB === null) {
           map.set(bet.id, {
@@ -992,7 +1024,7 @@ export default function BolaoDashboard() {
     }
 
     return map
-  }, [isGeral, allJogos, jogos, palpites, apiFixtures, sobrescritasAdmin])
+  }, [isGeral, allJogos, jogos, palpites, apiFixtures, sobrescritasAdmin, nowMs])
 
   // Dynamic leaderboard calculation (SUM of valid finished games + imported points + PONTUAÇÃO AO VIVO)
   // Otimizado com pré-indexação por participante em O(N) para SUM e COUNT instantâneos
@@ -1021,7 +1053,7 @@ export default function BolaoDashboard() {
           pointsByParticipantId.set(p.participante, current + (Number(p.pontuacao_jogo) || 0))
         } else if (liveGameIds.has(p.jogo)) {
           const liveBreakdown = liveScoresBreakdownByBetId.get(p.id)
-          const livePts = liveBreakdown?.pontos || 0
+          const livePts = liveBreakdown && liveBreakdown.hasScore ? liveBreakdown.pontos : 0
           const currentLive = livePointsByParticipantId.get(p.participante) || 0
           livePointsByParticipantId.set(p.participante, currentLive + livePts)
         }
@@ -1086,7 +1118,7 @@ export default function BolaoDashboard() {
         pointsByParticipantId.set(p.participante, current + (Number(p.pontuacao_jogo) || 0))
       } else if (liveGameIds.has(p.jogo)) {
         const liveBreakdown = liveScoresBreakdownByBetId.get(p.id)
-        const livePts = liveBreakdown?.pontos || 0
+        const livePts = liveBreakdown && liveBreakdown.hasScore ? liveBreakdown.pontos : 0
         const currentLive = livePointsByParticipantId.get(p.participante) || 0
         livePointsByParticipantId.set(p.participante, currentLive + livePts)
       }

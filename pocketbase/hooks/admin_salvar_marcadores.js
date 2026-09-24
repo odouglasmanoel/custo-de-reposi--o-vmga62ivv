@@ -124,7 +124,46 @@ routerAdd('POST', '/backend/v1/admin/salvar-marcadores', (e) => {
     palpiteRec.set('goleadores_b', goleadoresB)
     $app.save(palpiteRec)
 
-    // Se a partida estiver sendo finalizada (placar final presente), setar status='finalizado' e resultado_finalizado=true
+    // Normalizar kickoff e status para garantir que o jogo já iniciou antes de finalizar e pontuar
+    let kickoffMs = 0
+    try {
+      let dataStr = (jogoRec.getString('data') || '').trim()
+      let horaStr = (jogoRec.getString('hora') || '').trim() || '16:00'
+
+      const brMatch = dataStr.match(/^(\d{2})\/(\d{2})\/(\d{4})/)
+      if (brMatch) {
+        dataStr = brMatch[3] + '-' + brMatch[2] + '-' + brMatch[1]
+      } else if (dataStr.indexOf('T') !== -1) {
+        dataStr = dataStr.split('T')[0]
+      }
+
+      const horaParts = horaStr.split(':')
+      const hh = (horaParts[0] || '16').padStart(2, '0')
+      const mm = (horaParts[1] || '00').padStart(2, '0')
+      const ss = (horaParts[2] || '00').padStart(2, '0')
+      const isoStr = dataStr + 'T' + hh + ':' + mm + ':' + ss + '-03:00'
+      const parsedKickoff = new Date(isoStr).getTime()
+      if (!isNaN(parsedKickoff)) {
+        kickoffMs = parsedKickoff
+      }
+    } catch (_) {}
+
+    const statusAtualJogo = (jogoRec.getString('status') || '').toLowerCase().trim()
+    const STATUS_INICIADOS = [
+      'em_andamento',
+      'ao_vivo',
+      '1h',
+      '2h',
+      'ht',
+      'finalizado',
+      'encerrado',
+      'ft',
+      'finished',
+    ]
+    const statusIniciado = STATUS_INICIADOS.indexOf(statusAtualJogo) >= 0
+    const jogoIniciou = (kickoffMs > 0 && Date.now() >= kickoffMs) || statusIniciado
+
+    // Se a partida estiver sendo finalizada e o jogo já iniciou, setar status='finalizado' e resultado_finalizado=true
     try {
       const pRealA = jogoRec.get('placar_a')
       const pRealB = jogoRec.get('placar_b')
@@ -136,7 +175,7 @@ routerAdd('POST', '/backend/v1/admin/salvar-marcadores', (e) => {
         pRealB !== undefined &&
         pRealB !== ''
 
-      if (hasPlacar) {
+      if (hasPlacar && jogoIniciou) {
         jogoRec.set('status', 'finalizado')
         jogoRec.set('resultado_finalizado', true)
         $app.save(jogoRec)
@@ -424,6 +463,13 @@ routerAdd('POST', '/backend/v1/admin/salvar-marcadores', (e) => {
         const palpite = palpitesDoJogo[pi]
         let pontos = 0
         const detalhamento = []
+
+        if (!jogoIniciou) {
+          palpite.set('pontuacao_jogo', 0)
+          palpite.set('detalhamento', ['Aguardando início'])
+          $app.save(palpite)
+          continue
+        }
 
         const palpiteA = palpite.getInt('placar_a')
         const palpiteB = palpite.getInt('placar_b')

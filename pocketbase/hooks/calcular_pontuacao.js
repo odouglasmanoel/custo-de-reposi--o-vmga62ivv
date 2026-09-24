@@ -12,17 +12,83 @@ routerAdd('POST', '/backend/v1/calcular-pontuacao', (e) => {
       return e.notFoundError('Jogo não encontrado')
     }
 
-    // Quando o payload indicar resultado finalizado (placar preenchido/finalização),
-    // garantir status='finalizado' e resultado_finalizado=true antes de salvar
-    jogo.set('status', 'finalizado')
-    jogo.set('resultado_finalizado', true)
-    $app.save(jogo)
-
     const bolaoId = jogo.getString('bolao')
     const placarRealA = jogo.getInt('placar_a')
     const placarRealB = jogo.getInt('placar_b')
     const temPenaltis = jogo.getBool('tem_penaltis')
     const vencedorPenaltisReal = (jogo.getString('vencedor_penaltis') || '').toUpperCase().trim()
+
+    // 1. Normalizar kickoff no fuso de Brasília (UTC-3)
+    let kickoffMs = 0
+    try {
+      let dataStr = (jogo.getString('data') || '').trim()
+      let horaStr = (jogo.getString('hora') || '').trim() || '16:00'
+
+      // Trata data se vier DD/MM/YYYY
+      const brMatch = dataStr.match(/^(\d{2})\/(\d{2})\/(\d{4})/)
+      if (brMatch) {
+        dataStr = brMatch[3] + '-' + brMatch[2] + '-' + brMatch[1]
+      } else if (dataStr.indexOf('T') !== -1) {
+        dataStr = dataStr.split('T')[0]
+      }
+
+      // Garante formato HH:mm ou HH:mm:ss
+      const horaParts = horaStr.split(':')
+      const hh = (horaParts[0] || '16').padStart(2, '0')
+      const mm = (horaParts[1] || '00').padStart(2, '0')
+      const ss = (horaParts[2] || '00').padStart(2, '0')
+      const isoStr = dataStr + 'T' + hh + ':' + mm + ':' + ss + '-03:00'
+      const parsedKickoff = new Date(isoStr).getTime()
+      if (!isNaN(parsedKickoff)) {
+        kickoffMs = parsedKickoff
+      }
+    } catch (_) {}
+
+    // 2. Checar status iniciado
+    const statusAtual = (jogo.getString('status') || '').toLowerCase().trim()
+    const STATUS_INICIADOS = [
+      'em_andamento',
+      'ao_vivo',
+      '1h',
+      '2h',
+      'ht',
+      'finalizado',
+      'encerrado',
+      'ft',
+      'finished',
+    ]
+    const statusIniciado = STATUS_INICIADOS.indexOf(statusAtual) >= 0
+    const jogoIniciou = (kickoffMs > 0 && Date.now() >= kickoffMs) || statusIniciado
+
+    // 3. Se jogo não iniciou: zerar palpites com 'Aguardando início' e NUNCA finalizar o jogo
+    if (!jogoIniciou) {
+      const palpitesNaoIniciados = $app.findRecordsByFilter(
+        'palpites',
+        "jogo = '" + jogoId + "'",
+        '',
+        500,
+        0,
+      )
+      for (let pi = 0; pi < palpitesNaoIniciados.length; pi++) {
+        const pRec = palpitesNaoIniciados[pi]
+        pRec.set('pontuacao_jogo', 0)
+        pRec.set('detalhamento', ['Aguardando início'])
+        $app.save(pRec)
+      }
+
+      return e.json(200, {
+        success: true,
+        message: 'Jogo futuro ou não iniciado. Pontuação mantida zerada (Aguardando início).',
+        jogo_id: jogoId,
+        jogo_iniciado: false,
+        palpites_calculados: palpitesNaoIniciados.length,
+      })
+    }
+
+    // Quando o jogo de fato já iniciou ou foi finalizado, marcar status='finalizado' e resultado_finalizado=true
+    jogo.set('status', 'finalizado')
+    jogo.set('resultado_finalizado', true)
+    $app.save(jogo)
 
     // Robust parser for JSON / text / byte fields in Goja / PocketBase
     const parseJsonField = (rec, fieldName) => {

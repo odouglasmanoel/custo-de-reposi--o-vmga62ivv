@@ -40,6 +40,7 @@ import {
   formatHoraEncerramento,
   normalizeDataISO,
   getJogoSortTimestamp,
+  getJogoKickoffTimestamp,
   sortJogosCrescente,
   sortJogosDecrescente,
 } from '@/lib/dateUtils'
@@ -1203,6 +1204,22 @@ export default function Palpites() {
         }) => void
       }) {
         const horaEncerramento = formatHoraEncerramento(jogo.hora)
+        const kickoffMs = getJogoKickoffTimestamp(jogo.data, jogo.hora)
+        const STATUS_INICIADOS = [
+          'em_andamento',
+          'ao_vivo',
+          '1h',
+          '2h',
+          'ht',
+          'finalizado',
+          'encerrado',
+          'ft',
+          'finished',
+        ]
+        const st = (jogo.status || '').toLowerCase().trim()
+        const statusIniciado = STATUS_INICIADOS.includes(st)
+        const jogoIniciou =
+          (kickoffMs != null && nowMs >= kickoffMs) || statusIniciado || Boolean(finalizado)
 
         return (
           <Card className="overflow-hidden rounded-[14px] border-[#E2E8F0] bg-white shadow-xs transition hover:shadow-sm flex flex-col justify-between w-full">
@@ -1268,7 +1285,7 @@ export default function Palpites() {
                     Aberto
                   </Badge>
                 )}
-                {finalizado && (
+                {finalizado ? (
                   <span
                     className={`rounded-full px-2 py-0.2 text-[10px] font-bold ${
                       pontos > 0 ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-200 text-slate-700'
@@ -1276,7 +1293,14 @@ export default function Palpites() {
                   >
                     {pontos > 0 ? `+${pontos} pts` : '0 pts'}
                   </span>
-                )}
+                ) : !jogoIniciou ? (
+                  <span
+                    className="rounded-full px-2 py-0.2 text-[10px] font-bold bg-slate-100 text-slate-400 border border-slate-200"
+                    title="Aguardando início"
+                  >
+                    -
+                  </span>
+                ) : null}
               </div>
             </div>
 
@@ -1492,7 +1516,7 @@ export default function Palpites() {
                                           <span>Editar</span>
                                         </button>
                                       )}
-                                      {finalizado && (
+                                      {finalizado ? (
                                         <span
                                           className={`rounded-md px-2 py-0.5 font-bold text-xs ${
                                             bet.pontuacao_jogo > 0
@@ -1502,7 +1526,14 @@ export default function Palpites() {
                                         >
                                           +{bet.pontuacao_jogo} pts
                                         </span>
-                                      )}
+                                      ) : !jogoIniciou ? (
+                                        <span
+                                          className="rounded-md px-2 py-0.5 font-semibold text-xs bg-slate-100 text-slate-400 border border-slate-200"
+                                          title="Aguardando início"
+                                        >
+                                          -
+                                        </span>
+                                      ) : null}
                                     </div>
                                   </div>
 
@@ -1617,25 +1648,31 @@ export default function Palpites() {
                         )}
                       </div>
 
-                      {activeSelectedBet && (
-                        <div className="mt-2 grid grid-cols-1 gap-2 text-xs sm:grid-cols-2">
-                          <div className="rounded bg-white p-2 border border-slate-200">
-                            <span className="text-[11px] font-medium text-slate-500">
-                              Goleadores indicados ({jogo.time_a}):
-                            </span>
-                            <p className="font-medium text-slate-800">
-                              {formatScorersDisplayText(activeSelectedBet.goleadores_a)}
-                            </p>
-                          </div>
-                          <div className="rounded bg-white p-2 border border-slate-200">
-                            <span className="text-[11px] font-medium text-slate-500">
-                              Goleadores indicados ({jogo.time_b}):
-                            </span>
-                            <p className="font-medium text-slate-800">
-                              {formatScorersDisplayText(activeSelectedBet.goleadores_b)}
-                            </p>
-                          </div>
+                      {!jogoIniciou && !finalizado ? (
+                        <div className="mt-2 rounded bg-white p-2.5 border border-slate-200 text-center text-xs text-slate-400 italic">
+                          Aguardando início da partida (-)
                         </div>
+                      ) : (
+                        activeSelectedBet && (
+                          <div className="mt-2 grid grid-cols-1 gap-2 text-xs sm:grid-cols-2">
+                            <div className="rounded bg-white p-2 border border-slate-200">
+                              <span className="text-[11px] font-medium text-slate-500">
+                                Goleadores indicados ({jogo.time_a}):
+                              </span>
+                              <p className="font-medium text-slate-800">
+                                {formatScorersDisplayText(activeSelectedBet.goleadores_a)}
+                              </p>
+                            </div>
+                            <div className="rounded bg-white p-2 border border-slate-200">
+                              <span className="text-[11px] font-medium text-slate-500">
+                                Goleadores indicados ({jogo.time_b}):
+                              </span>
+                              <p className="font-medium text-slate-800">
+                                {formatScorersDisplayText(activeSelectedBet.goleadores_b)}
+                              </p>
+                            </div>
+                          </div>
+                        )
                       )}
 
                       {expandedDetails && (
@@ -1643,7 +1680,9 @@ export default function Palpites() {
                           <p className="font-bold text-emerald-950 mb-1">
                             Critérios de pontuação atendidos ({activeParticipantLabel}):
                           </p>
-                          {activeDetalhamento.length > 0 ? (
+                          {!jogoIniciou && !finalizado ? (
+                            <p className="text-slate-500 italic">Aguardando início</p>
+                          ) : activeDetalhamento.length > 0 ? (
                             <ul className="list-inside list-disc space-y-1">
                               {activeDetalhamento.map((item, idx) => (
                                 <li key={idx} className="font-medium">
