@@ -2,6 +2,11 @@
 // Endpoint administrativo para forçar busca de escalação de uma partida específica via API-Football.
 // Resolve o fixture_id caso esteja ausente (via tabela local jogos_do_dia ou busca por data),
 // consulta a API-Football com prioridade 2 respeitando o limitador central e grava a escalação no registro do jogo.
+//
+// REGRAS GOJA / POCKETBASE:
+// - Toda lógica e helpers inline dentro do callback (SEM requires externos dinâmicos)
+// - Checagem e incremento da trava diária inline na coleção config_integracoes (chave: api_football_daily_usage)
+// - Limite estrito de 15 chamadas/dia e trava de 1 tentativa/jogo/dia mantidos
 
 routerAdd(
   'POST',
@@ -70,7 +75,88 @@ routerAdd(
         })
       }
 
-      // Helpers inline
+      // Helper inline para checar e incrementar cota da API-Football (chave: api_football_daily_usage)
+      const DAILY_LIMIT = 15
+      const checarCotaApiFootball = () => {
+        const hojeUtc = new Date().toISOString().slice(0, 10)
+        let rec = null
+        try {
+          rec = $app.findFirstRecordByFilter(
+            'config_integracoes',
+            "chave = 'api_football_daily_usage'",
+          )
+        } catch (_) {
+          rec = null
+        }
+
+        let usageData = {
+          date_utc: hojeUtc,
+          count: 0,
+          max_limit: DAILY_LIMIT,
+          last_reset_utc: new Date().toISOString(),
+          last_request_utc: null,
+        }
+
+        if (rec) {
+          try {
+            const rawKey = rec.get('api_key')
+            if (rawKey) {
+              const parsed = JSON.parse(rawKey)
+              if (parsed && typeof parsed === 'object') {
+                usageData = Object.assign(usageData, parsed)
+              }
+            }
+          } catch (_) {}
+
+          if (usageData.date_utc !== hojeUtc) {
+            usageData.date_utc = hojeUtc
+            usageData.count = 0
+            usageData.max_limit = DAILY_LIMIT
+            usageData.last_reset_utc = new Date().toISOString()
+            rec.set('api_key', JSON.stringify(usageData))
+            rec.set('ativo', true)
+            rec.set('provedor', 'api_football')
+            $app.save(rec)
+          }
+        } else {
+          try {
+            const col = $app.findCollectionByNameOrId('config_integracoes')
+            rec = new Record(col)
+            rec.set('chave', 'api_football_daily_usage')
+            rec.set('provedor', 'api_football')
+            rec.set('ativo', true)
+            rec.set('api_key', JSON.stringify(usageData))
+            $app.save(rec)
+          } catch (_) {}
+        }
+
+        const count = Number(usageData.count) || 0
+        const maxLimit = Number(usageData.max_limit) || DAILY_LIMIT
+        const blocked = count >= maxLimit
+
+        return {
+          rec: rec,
+          usageData: usageData,
+          count: count,
+          max_limit: maxLimit,
+          blocked: blocked,
+        }
+      }
+
+      const incrementarCotaApiFootball = (cotaState) => {
+        try {
+          if (!cotaState || !cotaState.rec) return
+          const usageData = cotaState.usageData || {}
+          usageData.count = (Number(usageData.count) || 0) + 1
+          usageData.last_request_utc = new Date().toISOString()
+          cotaState.rec.set('api_key', JSON.stringify(usageData))
+          $app.save(cotaState.rec)
+        } catch (errInc) {
+          console.log('[Admin Forçar Escalação] Erro ao incrementar uso da API:', errInc)
+        }
+      }
+
+      // Helpers inline de nomes e similaridade
       const sinonimos = {
         'paris saint germain': 'paris saint germain',
         'paris saint-germain': 'paris saint germain',
@@ -148,9 +234,9 @@ routerAdd(
       const extrairIso = (dt) => {
         if (!dt) return ''
         const br = dt.match(/^(\d{2})\/(\d{2})\/(\d{4})/)
-        if (br) return `${br[3]}-${br[2]}-${br[1]}`
+        if (br) return br[3] + '-' + br[2] + '-' + br[1]
         const iso = dt.match(/^(\d{4})-(\d{2})-(\d{2})/)
-        if (iso) return `${iso[1]}-${iso[2]}-${iso[3]}`
+        if (iso) return iso[1] + '-' + iso[2] + '-' + iso[3]
         return ''
       }
 
@@ -162,10 +248,10 @@ routerAdd(
       const dataIso = extrairIso(dtVal)
 
       if (!fixtureId || !/^\d+$/.test(fixtureId)) {
-        // Tenta na tabela local jogos_do_dia
+        // Tenta na tabela local jogos_do_dia (sem gastar cota externa)
         try {
           let filt = ''
-          if (dataIso) filt = `data = '${dataIso}'`
+          if (dataIso) filt = "data = '" + dataIso + "'"
           const jdds = $app.findRecordsByFilter('jogos_do_dia', filt, '-created', 100, 0)
           for (let ji = 0; ji < jdds.length; ji++) {
             const jdd = jdds[ji]
@@ -181,7 +267,10 @@ routerAdd(
                 jogoRec.set('fixture_id', fixtureId)
                 $app.save(jogoRec)
                 console.log(
-                  `[Admin Forçar Escalação] Fixture ${fixtureId} encontrada em jogos_do_dia para o jogo ${jogoRec.id}`,
+                  '[Admin Forçar Escalação] Fixture ' +
+                    fixtureId +
+                    ' encontrada em jogos_do_dia para o jogo ' +
+                    jogoRec.id,
                 )
                 break
               }
@@ -191,47 +280,78 @@ routerAdd(
           console.log('[Admin Forçar Escalação] Aviso ao buscar em jogos_do_dia:', errJdd)
         }
 
-        // Se ainda não achou, consulta /v3/fixtures?date=... na API-Football
+        // Se ainda não achou, consulta /v3/fixtures?date=... na API-Football (1 tentativa/jogo/dia)
         if ((!fixtureId || !/^\d+$/.test(fixtureId)) && dataIso) {
-          try {
-            const { enviarRequisicaoApiFootball } = require(`${__hooks}/api_football_limiter.js`)
-            const isRapid = apiKey.length > 40
-            const urlDate = isRapid
-              ? `https://api-football-v1.p.rapidapi.com/v3/fixtures?date=${encodeURIComponent(dataIso)}&timezone=America%2FSao_Paulo`
-              : `https://v3.football.api-sports.io/fixtures?date=${encodeURIComponent(dataIso)}&timezone=America%2FSao_Paulo`
-            const headers = isRapid
-              ? { 'x-rapidapi-key': apiKey, 'x-rapidapi-host': 'api-football-v1.p.rapidapi.com' }
-              : { 'x-apisports-key': apiKey }
+          const hojeStr = new Date().toISOString().slice(0, 10)
+          const storeKeyDate = 'fixture_scan_adm_' + jogoId + '_' + hojeStr
+          const jaTentouScanHoje = $app.store().get(storeKeyDate) === '1'
 
-            const resDate = enviarRequisicaoApiFootball(urlDate, { headers, timeout: 10 }, 2)
-            if (!resDate.blocked && resDate.json && Array.isArray(resDate.json.response)) {
-              const fixturesList = resDate.json.response
-              for (let fi = 0; fi < fixturesList.length; fi++) {
-                const fItem = fixturesList[fi]
-                const fHome = (fItem.teams && fItem.teams.home && fItem.teams.home.name) || ''
-                const fAway = (fItem.teams && fItem.teams.away && fItem.teams.away.name) || ''
+          if (!jaTentouScanHoje) {
+            $app.store().set(storeKeyDate, '1')
+            const cotaDate = checarCotaApiFootball()
+            if (!cotaDate.blocked && cotaDate.count < cotaDate.max_limit) {
+              try {
+                const isRapid = apiKey.length > 40
+                const urlDate = isRapid
+                  ? 'https://api-football-v1.p.rapidapi.com/v3/fixtures?date=' +
+                    encodeURIComponent(dataIso) +
+                    '&timezone=America%2FSao_Paulo'
+                  : 'https://v3.football.api-sports.io/fixtures?date=' +
+                    encodeURIComponent(dataIso) +
+                    '&timezone=America%2FSao_Paulo'
+                const headersDate = isRapid
+                  ? {
+                      'x-rapidapi-key': apiKey,
+                      'x-rapidapi-host': 'api-football-v1.p.rapidapi.com',
+                    }
+                  : { 'x-apisports-key': apiKey }
+
+                const resDate = $http.send({
+                  url: urlDate,
+                  method: 'GET',
+                  headers: headersDate,
+                  timeout: 10,
+                })
+                incrementarCotaApiFootball(cotaDate)
+
                 if (
-                  (timesMatch(timeA, fHome) && timesMatch(timeB, fAway)) ||
-                  (timesMatch(timeA, fAway) && timesMatch(timeB, fHome))
+                  resDate.statusCode === 200 &&
+                  resDate.json &&
+                  Array.isArray(resDate.json.response)
                 ) {
-                  const candFid = fItem.fixture && fItem.fixture.id ? String(fItem.fixture.id) : ''
-                  if (candFid && /^\d+$/.test(candFid)) {
-                    fixtureId = candFid
-                    jogoRec.set('fixture_id', fixtureId)
-                    $app.save(jogoRec)
-                    console.log(
-                      `[Admin Forçar Escalação] Fixture ${fixtureId} resolvida via API-Football por data para jogo ${jogoRec.id}`,
-                    )
-                    break
+                  const fixturesList = resDate.json.response
+                  for (let fi = 0; fi < fixturesList.length; fi++) {
+                    const fItem = fixturesList[fi]
+                    const fHome = (fItem.teams && fItem.teams.home && fItem.teams.home.name) || ''
+                    const fAway = (fItem.teams && fItem.teams.away && fItem.teams.away.name) || ''
+                    if (
+                      (timesMatch(timeA, fHome) && timesMatch(timeB, fAway)) ||
+                      (timesMatch(timeA, fAway) && timesMatch(timeB, fHome))
+                    ) {
+                      const candFid =
+                        fItem.fixture && fItem.fixture.id ? String(fItem.fixture.id) : ''
+                      if (candFid && /^\d+$/.test(candFid)) {
+                        fixtureId = candFid
+                        jogoRec.set('fixture_id', fixtureId)
+                        $app.save(jogoRec)
+                        console.log(
+                          '[Admin Forçar Escalação] Fixture ' +
+                            fixtureId +
+                            ' resolvida via API-Football por data para jogo ' +
+                            jogoRec.id,
+                        )
+                        break
+                      }
+                    }
                   }
                 }
+              } catch (errApiFid) {
+                console.log(
+                  '[Admin Forçar Escalação] Erro ao buscar fixture por data na API:',
+                  errApiFid,
+                )
               }
             }
-          } catch (errApiFid) {
-            console.log(
-              '[Admin Forçar Escalação] Erro ao buscar fixture por data na API:',
-              errApiFid,
-            )
           }
         }
       }
@@ -245,32 +365,82 @@ routerAdd(
         })
       }
 
-      // 3. Consulta /fixtures/lineups via limitador centralizador
-      const { enviarRequisicaoApiFootball } = require(`${__hooks}/api_football_limiter.js`)
-      const isRapid = apiKey.length > 40
-      const urlLineups = isRapid
-        ? `https://api-football-v1.p.rapidapi.com/v3/fixtures/lineups?fixture=${encodeURIComponent(fixtureId)}`
-        : `https://v3.football.api-sports.io/fixtures/lineups?fixture=${encodeURIComponent(fixtureId)}`
-      const headers = isRapid
-        ? { 'x-rapidapi-key': apiKey, 'x-rapidapi-host': 'api-football-v1.p.rapidapi.com' }
-        : { 'x-apisports-key': apiKey }
-
-      console.log(
-        `[Admin Forçar Escalação] Buscando lineups para fixture ${fixtureId} (${jogoId})...`,
-      )
-      const limiterRes = enviarRequisicaoApiFootball(urlLineups, { headers, timeout: 15 }, 2)
-
-      if (limiterRes.blocked) {
+      // 3. Consulta /fixtures/lineups com checagem inline da cota diária
+      const cotaLineups = checarCotaApiFootball()
+      if (cotaLineups.blocked || cotaLineups.count >= cotaLineups.max_limit) {
         return e.json(429, {
           success: false,
           rate_limited: true,
           waiting_reset: true,
           error: 'Limite diário da API atingido. Aguardando reset às 21h (Brasília).',
-          reason: limiterRes.reason,
+          reason: 'daily_limit_reached',
         })
       }
 
-      const resJson = limiterRes.json
+      const isRapid = apiKey.length > 40
+      const urlLineups = isRapid
+        ? 'https://api-football-v1.p.rapidapi.com/v3/fixtures/lineups?fixture=' +
+          encodeURIComponent(fixtureId)
+        : 'https://v3.football.api-sports.io/fixtures/lineups?fixture=' +
+          encodeURIComponent(fixtureId)
+      const headers = isRapid
+        ? { 'x-rapidapi-key': apiKey, 'x-rapidapi-host': 'api-football-v1.p.rapidapi.com' }
+        : { 'x-apisports-key': apiKey }
+
+      console.log(
+        '[Admin Forçar Escalação] Buscando lineups para fixture ' +
+          fixtureId +
+          ' (' +
+          jogoId +
+          ')...',
+      )
+
+      let resHttp = null
+      try {
+        resHttp = $http.send({
+          url: urlLineups,
+          method: 'GET',
+          headers: headers,
+          timeout: 15,
+        })
+        incrementarCotaApiFootball(cotaLineups)
+      } catch (errHttp) {
+        console.log('[Admin Forçar Escalação] Exceção na requisição HTTP de lineups:', errHttp)
+        return e.json(500, {
+          success: false,
+          error:
+            'Falha na conexão com a API externa: ' + (errHttp ? errHttp.message : 'indisponível'),
+        })
+      }
+
+      const statusCode = resHttp ? resHttp.statusCode : 500
+      const resJson = resHttp ? resHttp.json : null
+      const apiErrors = resJson && resJson.errors ? resJson.errors : {}
+      const isRateLimited =
+        statusCode === 429 ||
+        Boolean(apiErrors.rateLimit) ||
+        Boolean(apiErrors.requests) ||
+        Boolean(apiErrors.token)
+
+      if (isRateLimited) {
+        // Marca contador como esgotado para proteger a cota
+        try {
+          cotaLineups.usageData.count = cotaLineups.max_limit
+          if (cotaLineups.rec) {
+            cotaLineups.rec.set('api_key', JSON.stringify(cotaLineups.usageData))
+            $app.save(cotaLineups.rec)
+          }
+        } catch (_) {}
+
+        return e.json(429, {
+          success: false,
+          rate_limited: true,
+          waiting_reset: true,
+          error: 'Limite diário da API atingido. Aguardando reset às 21h (Brasília).',
+          reason: 'api_returned_rate_limit',
+        })
+      }
+
       if (resJson && Array.isArray(resJson.response) && resJson.response.length > 0) {
         const rawLineups = resJson.response
         const teamsData = []
@@ -330,7 +500,9 @@ routerAdd(
           }
           jogoRec.set('escalacoes', payload)
           $app.save(jogoRec)
-          console.log(`[Admin Forçar Escalação] Escalação salva com sucesso no jogo ${jogoRec.id}!`)
+          console.log(
+            '[Admin Forçar Escalação] Escalação salva com sucesso no jogo ' + jogoRec.id + '!',
+          )
           return e.json(200, {
             success: true,
             message: 'Escalação obtida e gravada com sucesso no PocketBase!',

@@ -1,134 +1,13 @@
 // pocketbase/hooks/escalacoes.js
 // Hook dedicado para busca e consolidação de escalações da API-Football.
 // REGRAS APROVADAS CONTRA ESTOURO DE COTA:
-// - Roteado pelo limitador centralizador api_football_limiter (Prioridade 2).
+// - Toda lógica e helpers inline dentro de cada callback (SEM requires externos dinâmicos)
+// - Checagem e incremento da cota diária inline na coleção config_integracoes (chave: api_football_daily_usage)
 // - No máximo 1 chamada consolidada por ciclo de sincronização (janela 30–20 min antes do kickoff).
 // - APENAS jogos com escalacoes == null / pendente.
-// - Se bloqueado pelo limiter ou cota esgotada: retorna HTTP 200 com { cached: true, rate_limited: true, waiting_reset: true, notice: "..." }, sem erro/crash.
+// - Se bloqueado pela cota esgotada (>= 15): retorna HTTP 200 com { cached: true, rate_limited: true, waiting_reset: true, notice: "..." }, sem erro/crash.
 // - Se fixture_id estiver vazio, tenta resolver via tabela jogos_do_dia ou por data na API-Football.
 // - Se o jogo passou do kickoff recentemente (até 2h) e ainda não tem escalação, tenta 1 única vez pós-kickoff.
-// - Todas as funções e variáveis utilizadas nos callbacks são declaradas INLINE para compatibilidade estrita com Goja/PocketBase VM.
-
-const sinonimosConhecidosTimes = {
-  'paris saint germain': 'paris saint germain',
-  'paris saint-germain': 'paris saint germain',
-  'paris sg': 'paris saint germain',
-  psg: 'paris saint germain',
-  'olympique de marseille': 'olympique marseille',
-  'olympique marseille': 'olympique marseille',
-  marseille: 'olympique marseille',
-  'olimpia de marsella': 'olympique marseille',
-  om: 'olympique marseille',
-  'afc bournemouth': 'bournemouth',
-  bournemouth: 'bournemouth',
-  'atletico madrid': 'atletico madrid',
-  'atletico de madrid': 'atletico madrid',
-  'club atletico de madrid': 'atletico madrid',
-  atleti: 'atletico madrid',
-  'liverpool fc': 'liverpool',
-  liverpool: 'liverpool',
-  internazionale: 'inter milan',
-  'inter milan': 'inter milan',
-  'inter de milao': 'inter milan',
-  fcRecord: 'inter milan',
-  'sporting cp': 'sporting lisbon',
-  'sporting lisbon': 'sporting lisbon',
-  'athletic club': 'athletic bilbao',
-  'athletic bilbao': 'athletic club',
-  'real madrid': 'real madrid',
-  'real madrid cf': 'real madrid',
-  ldu: 'ldu quito',
-  'liga de quito': 'ldu quito',
-  japao: 'japan',
-  japan: 'japan',
-  uruguai: 'uruguay',
-  uruguay: 'uruguay',
-}
-
-function normalizeStr(str) {
-  if (!str) return ''
-  const s = str
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .toLowerCase()
-    .replace(/[^a-z0-9\s]/g, ' ')
-  const rawTokens = s.split(/\s+/).filter(Boolean)
-  const rawClean = rawTokens.join(' ').trim()
-  if (sinonimosConhecidosTimes[rawClean]) {
-    return sinonimosConhecidosTimes[rawClean]
-  }
-  const noiseWords = [
-    'afc',
-    'fc',
-    'sc',
-    'ac',
-    'cf',
-    'cd',
-    'sd',
-    'clube',
-    'club',
-    'ec',
-    'cr',
-    'se',
-    'de',
-    'do',
-    'da',
-    'dos',
-    'das',
-    'del',
-    'futebol',
-    'futbol',
-    'sport',
-    'association',
-    'sociedade',
-    'esportiva',
-  ]
-  const tokens = rawTokens.filter((t) => noiseWords.indexOf(t) === -1)
-  if (tokens.length === 0) {
-    return s.replace(/[^a-z0-9]/g, '').trim()
-  }
-  const clean = tokens.join(' ').trim()
-  return sinonimosConhecidosTimes[clean] || clean
-}
-
-function calcularLevenshtein(a, b) {
-  const m = a.length
-  const n = b.length
-  if (m === 0) return n
-  if (n === 0) return m
-  const d = []
-  for (let i = 0; i <= m; i++) d[i] = [i]
-  for (let j = 0; j <= n; j++) d[0][j] = j
-  for (let i1 = 1; i1 <= m; i1++) {
-    for (let j1 = 1; j1 <= n; j1++) {
-      const cost = a[i1 - 1] === b[j1 - 1] ? 0 : 1
-      d[i1][j1] = Math.min(d[i1 - 1][j1] + 1, d[i1][j1 - 1] + 1, d[i1 - 1][j1 - 1] + cost)
-    }
-  }
-  return d[m][n]
-}
-
-function timesCoincidem(a, b) {
-  const normA = normalizeStr(a)
-  const normB = normalizeStr(b)
-  if (!normA || !normB) return false
-  if (normA === normB) return true
-  if (normA.indexOf(normB) !== -1 || normB.indexOf(normA) !== -1) return true
-  const tA = normA.split(/\s+/).filter((t) => t.length >= 3)
-  const tB = normB.split(/\s+/).filter((t) => t.length >= 3)
-  let common = false
-  for (let ti = 0; ti < tA.length; ti++) {
-    if (tB.indexOf(tA[ti]) !== -1) {
-      common = true
-      break
-    }
-  }
-  if (common && (tA.length <= 2 || tB.length <= 2)) return true
-  const maxLen = Math.max(normA.length, normB.length)
-  if (maxLen === 0) return true
-  const dist = calcularLevenshtein(normA, normB)
-  return 1 - dist / maxLen >= 0.85
-}
 
 // -------------------------------------------------------------
 // Endpoint GET /backend/v1/escalacoes
@@ -332,22 +211,91 @@ routerAdd(
         return e.json(200, fallback)
       }
 
-      // 4. Executa chamada externa ÚNICA via limitador centralizador com PRIORIDADE 2
-      const { enviarRequisicaoApiFootball } = require(`${__hooks}/api_football_limiter.js`)
-      const isRapid = apiKey.length > 40
-      const url = isRapid
-        ? 'https://api-football-v1.p.rapidapi.com/v3/fixtures/lineups?fixture=' +
-          encodeURIComponent(fixtureIdParam)
-        : 'https://v3.football.api-sports.io/fixtures/lineups?fixture=' +
-          encodeURIComponent(fixtureIdParam)
-      const headers = isRapid
-        ? { 'x-rapidapi-key': apiKey, 'x-rapidapi-host': 'api-football-v1.p.rapidapi.com' }
-        : { 'x-apisports-key': apiKey }
+      // Helper inline para checar e incrementar cota da API-Football
+      const DAILY_LIMIT = 15
+      const checarCotaApiFootball = () => {
+        const hojeUtc = new Date().toISOString().slice(0, 10)
+        let rec = null
+        try {
+          rec = $app.findFirstRecordByFilter(
+            'config_integracoes',
+            "chave = 'api_football_daily_usage'",
+          )
+        } catch (_) {
+          rec = null
+        }
 
-      const limiterRes = enviarRequisicaoApiFootball(url, { headers }, 2)
+        let usageData = {
+          date_utc: hojeUtc,
+          count: 0,
+          max_limit: DAILY_LIMIT,
+          last_reset_utc: new Date().toISOString(),
+          last_request_utc: null,
+        }
 
-      if (limiterRes.blocked) {
-        console.log('[Escalacoes] Requisição bloqueada pelo limiter:', limiterRes.reason)
+        if (rec) {
+          try {
+            const rawKey = rec.get('api_key')
+            if (rawKey) {
+              const parsed = JSON.parse(rawKey)
+              if (parsed && typeof parsed === 'object') {
+                usageData = Object.assign(usageData, parsed)
+              }
+            }
+          } catch (_) {}
+
+          if (usageData.date_utc !== hojeUtc) {
+            usageData.date_utc = hojeUtc
+            usageData.count = 0
+            usageData.max_limit = DAILY_LIMIT
+            usageData.last_reset_utc = new Date().toISOString()
+            rec.set('api_key', JSON.stringify(usageData))
+            rec.set('ativo', true)
+            rec.set('provedor', 'api_football')
+            $app.save(rec)
+          }
+        } else {
+          try {
+            const col = $app.findCollectionByNameOrId('config_integracoes')
+            rec = new Record(col)
+            rec.set('chave', 'api_football_daily_usage')
+            rec.set('provedor', 'api_football')
+            rec.set('ativo', true)
+            rec.set('api_key', JSON.stringify(usageData))
+            $app.save(rec)
+          } catch (_) {}
+        }
+
+        const count = Number(usageData.count) || 0
+        const maxLimit = Number(usageData.max_limit) || DAILY_LIMIT
+        const blocked = count >= maxLimit
+
+        return {
+          rec: rec,
+          usageData: usageData,
+          count: count,
+          max_limit: maxLimit,
+          blocked: blocked,
+        }
+      }
+
+      const incrementarCotaApiFootball = (cotaState) => {
+        try {
+          if (!cotaState || !cotaState.rec) return
+          const usageData = cotaState.usageData || {}
+          usageData.count = (Number(usageData.count) || 0) + 1
+          usageData.last_request_utc = new Date().toISOString()
+          cotaState.rec.set('api_key', JSON.stringify(usageData))
+          $app.save(cotaState.rec)
+        } catch (errInc) {
+          console.log('[Escalacoes] Erro ao incrementar uso da API:', errInc)
+        }
+      }
+
+      // 4. Executa chamada externa ÚNICA respeitando a trava diária
+      const cotaState = checarCotaApiFootball()
+      if (cotaState.blocked || cotaState.count >= cotaState.max_limit) {
+        console.log('[Escalacoes] Requisição bloqueada: cota diária esgotada')
         const fallbackRateLimited = {
           status: 'indisponivel',
           provider: 'api_football',
@@ -365,8 +313,65 @@ routerAdd(
         return e.json(200, fallbackRateLimited)
       }
 
+      const isRapid = apiKey.length > 40
+      const url = isRapid
+        ? 'https://api-football-v1.p.rapidapi.com/v3/fixtures/lineups?fixture=' +
+          encodeURIComponent(fixtureIdParam)
+        : 'https://v3.football.api-sports.io/fixtures/lineups?fixture=' +
+          encodeURIComponent(fixtureIdParam)
+      const headers = isRapid
+        ? { 'x-rapidapi-key': apiKey, 'x-rapidapi-host': 'api-football-v1.p.rapidapi.com' }
+        : { 'x-apisports-key': apiKey }
+
+      let resHttp = null
+      try {
+        resHttp = $http.send({
+          url: url,
+          method: 'GET',
+          headers: headers,
+          timeout: 15,
+        })
+        incrementarCotaApiFootball(cotaState)
+      } catch (errCall) {
+        console.log('[Escalacoes] Erro na chamada HTTP lineups:', errCall)
+      }
+
+      const statusCode = resHttp ? resHttp.statusCode : 500
+      const resJson = resHttp ? resHttp.json : null
+      const apiErrors = resJson && resJson.errors ? resJson.errors : {}
+      const hasRateLimitError =
+        statusCode === 429 ||
+        Boolean(apiErrors.rateLimit) ||
+        Boolean(apiErrors.requests) ||
+        Boolean(apiErrors.token)
+
+      if (hasRateLimitError) {
+        try {
+          cotaState.usageData.count = cotaState.max_limit
+          if (cotaState.rec) {
+            cotaState.rec.set('api_key', JSON.stringify(cotaState.usageData))
+            $app.save(cotaState.rec)
+          }
+        } catch (_) {}
+
+        const fallbackRL = {
+          status: 'indisponivel',
+          provider: 'api_football',
+          fixtureId: fixtureIdParam,
+          cached: true,
+          rate_limited: true,
+          waiting_reset: true,
+          notice: 'Exibindo dados armazenados localmente (Aguardando reset da API às 21h)',
+          teams: [
+            { teamName: timeA || 'Mandante', starters: [], substitutes: [] },
+            { teamName: timeB || 'Visitante', starters: [], substitutes: [] },
+          ],
+          updatedAt: new Date().toISOString(),
+        }
+        return e.json(200, fallbackRL)
+      }
+
       let result = null
-      const resJson = limiterRes.json
       if (resJson && Array.isArray(resJson.response) && resJson.response.length > 0) {
         const rawLineups = resJson.response
         const teamsData = []
@@ -477,7 +482,7 @@ routerAdd(
 // - Janela de kickoff: 30–20 min à frente (agora >= kickoff - 30m e agora <= kickoff - 20m)
 // - Se jogo não tem escalação e já passou do kickoff há pouco tempo (até 2 horas),
 //   permite UMA ÚNICA tentativa pós-kickoff (marcada em store interna para não repetir).
-// - Pula silenciosamente se cota esgotada (limiter blocked)
+// - Pula silenciosamente se cota esgotada (blocked / count >= max_limit)
 // =============================================================
 cronAdd('cron_escalacoes_pre_jogo_5m', '*/5 * * * *', () => {
   try {
@@ -499,7 +504,93 @@ cronAdd('cron_escalacoes_pre_jogo_5m', '*/5 * * * *', () => {
     }
     if (!apiKey) return
 
-    const { enviarRequisicaoApiFootball } = require(`${__hooks}/api_football_limiter.js`)
+    // Checagem inline da cota antes de qualquer requisição
+    const DAILY_LIMIT = 15
+    const checarCotaCron = () => {
+      const hojeUtc = new Date().toISOString().slice(0, 10)
+      let rec = null
+      try {
+        rec = $app.findFirstRecordByFilter(
+          'config_integracoes',
+          "chave = 'api_football_daily_usage'",
+        )
+      } catch (_) {
+        rec = null
+      }
+
+      let usageData = {
+        date_utc: hojeUtc,
+        count: 0,
+        max_limit: DAILY_LIMIT,
+        last_reset_utc: new Date().toISOString(),
+        last_request_utc: null,
+      }
+
+      if (rec) {
+        try {
+          const rawKey = rec.get('api_key')
+          if (rawKey) {
+            const parsed = JSON.parse(rawKey)
+            if (parsed && typeof parsed === 'object') {
+              usageData = Object.assign(usageData, parsed)
+            }
+          }
+        } catch (_) {}
+
+        if (usageData.date_utc !== hojeUtc) {
+          usageData.date_utc = hojeUtc
+          usageData.count = 0
+          usageData.max_limit = DAILY_LIMIT
+          usageData.last_reset_utc = new Date().toISOString()
+          rec.set('api_key', JSON.stringify(usageData))
+          rec.set('ativo', true)
+          rec.set('provedor', 'api_football')
+          $app.save(rec)
+        }
+      } else {
+        try {
+          const col = $app.findCollectionByNameOrId('config_integracoes')
+          rec = new Record(col)
+          rec.set('chave', 'api_football_daily_usage')
+          rec.set('provedor', 'api_football')
+          rec.set('ativo', true)
+          rec.set('api_key', JSON.stringify(usageData))
+          $app.save(rec)
+        } catch (_) {}
+      }
+
+      const count = Number(usageData.count) || 0
+      const maxLimit = Number(usageData.max_limit) || DAILY_LIMIT
+      const blocked = count >= maxLimit
+
+      return {
+        rec: rec,
+        usageData: usageData,
+        count: count,
+        max_limit: maxLimit,
+        blocked: blocked,
+      }
+    }
+
+    const incrementarCotaCron = (cotaState) => {
+      try {
+        if (!cotaState || !cotaState.rec) return
+        const usageData = cotaState.usageData || {}
+        usageData.count = (Number(usageData.count) || 0) + 1
+        usageData.last_request_utc = new Date().toISOString()
+        cotaState.rec.set('api_key', JSON.stringify(usageData))
+        $app.save(cotaState.rec)
+      } catch (errInc) {
+        console.log('[Cron Escalações 5m] Erro ao incrementar uso da API:', errInc)
+      }
+    }
+
+    const cotaCron = checarCotaCron()
+    if (cotaCron.blocked || cotaCron.count >= cotaCron.max_limit) {
+      console.log('[Cron Escalações 5m] Cota diária esgotada. Pulando ciclo silenciosamente.')
+      return
+    }
+
     const isRapid = apiKey.length > 40
     const headers = isRapid
       ? { 'x-rapidapi-key': apiKey, 'x-rapidapi-host': 'api-football-v1.p.rapidapi.com' }
@@ -577,14 +668,14 @@ cronAdd('cron_escalacoes_pre_jogo_5m', '*/5 * * * *', () => {
           d = parseInt(brM[1], 10)
           m = parseInt(brM[2], 10)
           y = parseInt(brM[3], 10)
-          isoDateStr = `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`
+          isoDateStr = y + '-' + String(m).padStart(2, '0') + '-' + String(d).padStart(2, '0')
         } else {
           const isoM = dtVal.match(/^(\d{4})-(\d{2})-(\d{2})/)
           if (isoM) {
             y = parseInt(isoM[1], 10)
             m = parseInt(isoM[2], 10)
             d = parseInt(isoM[3], 10)
-            isoDateStr = `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`
+            isoDateStr = y + '-' + String(m).padStart(2, '0') + '-' + String(d).padStart(2, '0')
           }
         }
         let hrs = 16,
@@ -619,7 +710,7 @@ cronAdd('cron_escalacoes_pre_jogo_5m', '*/5 * * * *', () => {
           const tB = (jRec.getString('time_b') || '').trim()
           try {
             let filt = ''
-            if (isoDateStr) filt = `data = '${isoDateStr}'`
+            if (isoDateStr) filt = "data = '" + isoDateStr + "'"
             const jdds = $app.findRecordsByFilter('jogos_do_dia', filt, '-created', 100, 0)
             for (let xi = 0; xi < jdds.length; xi++) {
               const tc = jdds[xi].getString('time_casa') || ''
@@ -639,22 +730,36 @@ cronAdd('cron_escalacoes_pre_jogo_5m', '*/5 * * * *', () => {
           // Se ainda sem fixture_id e na janela, busca por data
           if ((!fixtureId || !/^\d+$/.test(fixtureId)) && isoDateStr) {
             try {
-              const urlD = isRapid
-                ? `https://api-football-v1.p.rapidapi.com/v3/fixtures?date=${encodeURIComponent(isoDateStr)}&timezone=America%2FSao_Paulo`
-                : `https://v3.football.api-sports.io/fixtures?date=${encodeURIComponent(isoDateStr)}&timezone=America%2FSao_Paulo`
-              const resD = enviarRequisicaoApiFootball(urlD, { headers, timeout: 10 }, 2)
-              if (!resD.blocked && resD.json && Array.isArray(resD.json.response)) {
-                for (let k = 0; k < resD.json.response.length; k++) {
-                  const fi = resD.json.response[k]
-                  const fh = (fi.teams && fi.teams.home && fi.teams.home.name) || ''
-                  const fa = (fi.teams && fi.teams.away && fi.teams.away.name) || ''
-                  if (inlineTimesCoincidemCron(tA, fh) && inlineTimesCoincidemCron(tB, fa)) {
-                    const cid = fi.fixture && fi.fixture.id ? String(fi.fixture.id) : ''
-                    if (cid && /^\d+$/.test(cid)) {
-                      fixtureId = cid
-                      jRec.set('fixture_id', fixtureId)
-                      $app.save(jRec)
-                      break
+              const cotaDateCron = checarCotaCron()
+              if (!cotaDateCron.blocked && cotaDateCron.count < cotaDateCron.max_limit) {
+                const urlD = isRapid
+                  ? 'https://api-football-v1.p.rapidapi.com/v3/fixtures?date=' +
+                    encodeURIComponent(isoDateStr) +
+                    '&timezone=America%2FSao_Paulo'
+                  : 'https://v3.football.api-sports.io/fixtures?date=' +
+                    encodeURIComponent(isoDateStr) +
+                    '&timezone=America%2FSao_Paulo'
+                const resD = $http.send({
+                  url: urlD,
+                  method: 'GET',
+                  headers: headers,
+                  timeout: 10,
+                })
+                incrementarCotaCron(cotaDateCron)
+
+                if (resD.statusCode === 200 && resD.json && Array.isArray(resD.json.response)) {
+                  for (let k = 0; k < resD.json.response.length; k++) {
+                    const fi = resD.json.response[k]
+                    const fh = (fi.teams && fi.teams.home && fi.teams.home.name) || ''
+                    const fa = (fi.teams && fi.teams.away && fi.teams.away.name) || ''
+                    if (inlineTimesCoincidemCron(tA, fh) && inlineTimesCoincidemCron(tB, fa)) {
+                      const cid = fi.fixture && fi.fixture.id ? String(fi.fixture.id) : ''
+                      if (cid && /^\d+$/.test(cid)) {
+                        fixtureId = cid
+                        jRec.set('fixture_id', fixtureId)
+                        $app.save(jRec)
+                        break
+                      }
                     }
                   }
                 }
@@ -683,18 +788,53 @@ cronAdd('cron_escalacoes_pre_jogo_5m', '*/5 * * * *', () => {
         encodeURIComponent(fixtureId)
 
     console.log(
-      `[Cron Escalações 5m] Buscando escalação na janela 30-20m / pós-kickoff para fixture ${fixtureId} (${jogoAlvo.id})...`,
+      '[Cron Escalações 5m] Buscando escalação na janela 30-20m / pós-kickoff para fixture ' +
+        fixtureId +
+        ' (' +
+        jogoAlvo.id +
+        ')...',
     )
-    const limiterRes = enviarRequisicaoApiFootball(urlLineups, { headers }, 2)
 
-    if (limiterRes.blocked) {
-      console.log(
-        '[Cron Escalações 5m] Cota esgotada ou suprimida pelo limiter. Pulando silenciosamente.',
-      )
+    const cotaLineupCron = checarCotaCron()
+    if (cotaLineupCron.blocked || cotaLineupCron.count >= cotaLineupCron.max_limit) {
+      console.log('[Cron Escalações 5m] Cota esgotada. Pulando silenciosamente.')
       return
     }
 
-    const resJson = limiterRes.json
+    let resHttp = null
+    try {
+      resHttp = $http.send({
+        url: urlLineups,
+        method: 'GET',
+        headers: headers,
+        timeout: 15,
+      })
+      incrementarCotaCron(cotaLineupCron)
+    } catch (errHttp) {
+      console.log('[Cron Escalações 5m] Exceção na requisição HTTP:', errHttp)
+      return
+    }
+
+    const statusCode = resHttp ? resHttp.statusCode : 500
+    const resJson = resHttp ? resHttp.json : null
+    const apiErrors = resJson && resJson.errors ? resJson.errors : {}
+    const hasRateLimit =
+      statusCode === 429 ||
+      Boolean(apiErrors.rateLimit) ||
+      Boolean(apiErrors.requests) ||
+      Boolean(apiErrors.token)
+
+    if (hasRateLimit) {
+      try {
+        cotaLineupCron.usageData.count = cotaLineupCron.max_limit
+        if (cotaLineupCron.rec) {
+          cotaLineupCron.rec.set('api_key', JSON.stringify(cotaLineupCron.usageData))
+          $app.save(cotaLineupCron.rec)
+        }
+      } catch (_) {}
+      return
+    }
+
     if (resJson && Array.isArray(resJson.response) && resJson.response.length > 0) {
       const rawLineups = resJson.response
       const teamsData = []
@@ -757,7 +897,8 @@ cronAdd('cron_escalacoes_pre_jogo_5m', '*/5 * * * *', () => {
         jogoAlvo.set('escalacoes', payload)
         $app.save(jogoAlvo)
         console.log(
-          `[Cron Escalações 5m] Escalação pré-jogo gravada com sucesso no campo escalacoes do jogo ${jogoAlvo.id}`,
+          '[Cron Escalações 5m] Escalação pré-jogo gravada com sucesso no campo escalacoes do jogo ' +
+            jogoAlvo.id,
         )
       }
     }
@@ -765,8 +906,3 @@ cronAdd('cron_escalacoes_pre_jogo_5m', '*/5 * * * *', () => {
     console.log('[Cron Escalações 5m] Erro no ciclo de 5min:', errSync)
   }
 })
-
-module.exports = {
-  timesCoincidem,
-  normalizeStr,
-}

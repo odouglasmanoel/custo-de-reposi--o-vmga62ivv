@@ -3,7 +3,7 @@
 // Protegido por checagem de Admin (Douglas).
 //
 // REGRAS GOJA / POCKETBASE:
-// - Variáveis e helpers inline dentro do callback
+// - Toda lógica e helpers inline dentro do callback (SEM requires externos dinâmicos)
 // - NENHUM spread ({ ...obj }) nem funções transpiladas globais
 // - Atribuição direta de propriedades
 
@@ -66,7 +66,7 @@ routerAdd('POST', '/backend/v1/admin/editar-jogo', (e) => {
     let escudosAtualizados = false
     let aviso = ''
 
-    // Helper inline de normalização e similaridade para cascata de escudos
+    // Helper inline de normalização e similaridade
     const normalizarNome = (str) => {
       if (!str) return ''
       let s = String(str).toLowerCase()
@@ -81,6 +81,23 @@ routerAdd('POST', '/backend/v1/admin/editar-jogo', (e) => {
         .trim()
     }
 
+    const calcularLevenshtein = (a, b) => {
+      const m = a.length
+      const n = b.length
+      if (m === 0) return n
+      if (n === 0) return m
+      const d = []
+      for (let i = 0; i <= m; i++) d[i] = [i]
+      for (let j = 0; j <= n; j++) d[0][j] = j
+      for (let i1 = 1; i1 <= m; i1++) {
+        for (let j1 = 1; j1 <= n; j1++) {
+          const cost = a[i1 - 1] === b[j1 - 1] ? 0 : 1
+          d[i1][j1] = Math.min(d[i1 - 1][j1] + 1, d[i1][j1 - 1] + 1, d[i1 - 1][j1 - 1] + cost)
+        }
+      }
+      return d[m][n]
+    }
+
     const calcularSimilaridade = (a, b) => {
       const s1 = normalizarNome(a)
       const s2 = normalizarNome(b)
@@ -90,58 +107,352 @@ routerAdd('POST', '/backend/v1/admin/editar-jogo', (e) => {
 
       const m = s1.length
       const n = s2.length
-      const d = []
-      for (let i = 0; i <= m; i++) d[i] = [i]
-      for (let j = 0; j <= n; j++) d[0][j] = j
-      for (let i = 1; i <= m; i++) {
-        for (let j = 1; j <= n; j++) {
-          const cost = s1[i - 1] === s2[j - 1] ? 0 : 1
-          d[i][j] = Math.min(d[i - 1][j] + 1, d[i][j - 1] + 1, d[i - 1][j - 1] + cost)
-        }
-      }
-      return 1 - d[m][n] / Math.max(m, n)
+      const maxLen = Math.max(m, n)
+      if (maxLen === 0) return 1
+      const dist = calcularLevenshtein(s1, s2)
+      return 1 - dist / maxLen
     }
 
-    // 1. Busca de fixture_id reusando fixtures_matcher com trava de 1 tentativa/jogo/dia no store $app
-    const hojeStr = new Date().toISOString().slice(0, 10)
-    const storeKey = `fixture_scan_${jogoId}_${hojeStr}`
-    const jaTentouHoje = $app.store().get(storeKey) === '1'
+    const formatarDataISO = (dataRaw) => {
+      if (!dataRaw) return ''
+      const str = String(dataRaw).trim()
+      const brMatch = str.match(/^(\d{2})\/(\d{2})\/(\d{4})/)
+      if (brMatch) {
+        return brMatch[3] + '-' + brMatch[2] + '-' + brMatch[1]
+      }
+      const isoMatch = str.match(/^(\d{4})-(\d{2})-(\d{2})/)
+      if (isoMatch) {
+        return isoMatch[1] + '-' + isoMatch[2] + '-' + isoMatch[3]
+      }
+      return ''
+    }
 
+    // Normalização com remoção de stopwords (pt/en) para correspondência de times
+    const normalizarTimeComStopwords = (str) => {
+      if (!str) return ''
+      let s = String(str).toLowerCase()
+      if (typeof s.normalize === 'function') {
+        try {
+          s = s.normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+        } catch (_) {}
+      }
+      s = s.replace(/[^a-z0-9\s]/g, ' ')
+      const rawTokens = s.split(/\s+/).filter(Boolean)
+      const stopWords = [
+        'afc',
+        'fc',
+        'sc',
+        'cf',
+        'cd',
+        'sd',
+        'clube',
+        'club',
+        'de',
+        'do',
+        'da',
+        'dos',
+        'das',
+        'futebol',
+        'ec',
+        'cr',
+        'ca',
+        'se',
+        'sp',
+        'rj',
+        'mg',
+        'rs',
+        'pr',
+        'esporte',
+        'atletico',
+        'atletica',
+        'associacao',
+        'united',
+        'city',
+      ]
+      const cleanTokens = rawTokens.filter((t) => stopWords.indexOf(t) === -1)
+      return cleanTokens.join(' ').trim() || s.replace(/[^a-z0-9]/g, '').trim()
+    }
+
+    const timesCoincidem = (a, b) => {
+      const normA = normalizarTimeComStopwords(a)
+      const normB = normalizarTimeComStopwords(b)
+      if (!normA || !normB) return false
+      if (normA === normB) return true
+      if (normA.indexOf(normB) !== -1 || normB.indexOf(normA) !== -1) return true
+
+      const tA = normA.split(/\s+/).filter((t) => t.length >= 3)
+      const tB = normB.split(/\s+/).filter((t) => t.length >= 3)
+      for (let ti = 0; ti < tA.length; ti++) {
+        if (tB.indexOf(tA[ti]) !== -1) {
+          return true
+        }
+      }
+
+      const maxLen = Math.max(normA.length, normB.length)
+      if (maxLen === 0) return true
+      const dist = calcularLevenshtein(normA, normB)
+      return 1 - dist / maxLen >= 0.75
+    }
+
+    // Helper inline para checar e incrementar cota da API-Football
+    const checarCotaApiFootball = () => {
+      const hojeUtc = new Date().toISOString().slice(0, 10)
+      const DAILY_LIMIT = 15
+      let rec = null
+      try {
+        rec = $app.findFirstRecordByFilter(
+          'config_integracoes',
+          "chave = 'api_football_daily_usage'",
+        )
+      } catch (_) {
+        rec = null
+      }
+
+      let usageData = {
+        date_utc: hojeUtc,
+        count: 0,
+        max_limit: DAILY_LIMIT,
+        last_reset_utc: new Date().toISOString(),
+        last_request_utc: null,
+      }
+
+      if (rec) {
+        try {
+          const rawKey = rec.get('api_key')
+          if (rawKey) {
+            const parsed = JSON.parse(rawKey)
+            if (parsed && typeof parsed === 'object') {
+              usageData = Object.assign(usageData, parsed)
+            }
+          }
+        } catch (_) {}
+
+        if (usageData.date_utc !== hojeUtc) {
+          usageData.date_utc = hojeUtc
+          usageData.count = 0
+          usageData.max_limit = DAILY_LIMIT
+          usageData.last_reset_utc = new Date().toISOString()
+          rec.set('api_key', JSON.stringify(usageData))
+          rec.set('ativo', true)
+          rec.set('provedor', 'api_football')
+          $app.save(rec)
+        }
+      } else {
+        try {
+          const col = $app.findCollectionByNameOrId('config_integracoes')
+          rec = new Record(col)
+          rec.set('chave', 'api_football_daily_usage')
+          rec.set('provedor', 'api_football')
+          rec.set('ativo', true)
+          rec.set('api_key', JSON.stringify(usageData))
+          $app.save(rec)
+        } catch (_) {}
+      }
+
+      const count = Number(usageData.count) || 0
+      const maxLimit = Number(usageData.max_limit) || DAILY_LIMIT
+      const blocked = count >= maxLimit
+
+      return {
+        rec: rec,
+        usageData: usageData,
+        count: count,
+        max_limit: maxLimit,
+        blocked: blocked,
+      }
+    }
+
+    const incrementarCotaApiFootball = (cotaState) => {
+      try {
+        if (!cotaState || !cotaState.rec) return
+        const usageData = cotaState.usageData || {}
+        usageData.count = (Number(usageData.count) || 0) + 1
+        usageData.last_request_utc = new Date().toISOString()
+        cotaState.rec.set('api_key', JSON.stringify(usageData))
+        $app.save(cotaState.rec)
+      } catch (errInc) {
+        console.log('[admin_editar_jogo] Erro ao incrementar uso da API:', errInc)
+      }
+    }
+
+    // 1. Busca de fixture_id com trava de 1 tentativa/jogo/dia no store $app
+    const hojeStr = new Date().toISOString().slice(0, 10)
+    const storeKey = 'fixture_scan_' + jogoId + '_' + hojeStr
+    const jaTentouHoje = $app.store().get(storeKey) === '1'
     const curDataRaw = dataVal || jogoRec.getString('data') || ''
+    const curIsoDate = formatarDataISO(curDataRaw)
+
     let fixtureResultado = null
 
     if (!jaTentouHoje) {
       try {
-        const { obterStatusLimiter } = require(`${__hooks}/api_football_limiter.js`)
-        const statusLimiter = obterStatusLimiter()
-        if (statusLimiter.consumidasHoje >= statusLimiter.limiteDiario) {
-          aviso = 'Cota diária da API-Football esgotada. Dados salvos, busca de fixture adiada.'
-        } else {
-          // Marca tentativa diária
-          $app.store().set(storeKey, '1')
+        // Marca tentativa diária
+        $app.store().set(storeKey, '1')
 
-          const { buscarFixtureDetalhadaNaApi } = require(`${__hooks}/fixtures_matcher.js`)
-          fixtureResultado = buscarFixtureDetalhadaNaApi(timeA, timeB, curDataRaw)
-
-          if (fixtureResultado && fixtureResultado.fixture_id) {
-            jogoRec.set('fixture_id', fixtureResultado.fixture_id)
-            fixtureVinculado = true
-            console.log(
-              `[admin_editar_jogo] Fixture ${fixtureResultado.fixture_id} vinculada ao jogo ${jogoId}`,
-            )
-
-            if (fixtureResultado.logo_mandante) {
-              jogoRec.set('url_escudo_mandante', fixtureResultado.logo_mandante)
-              escudosAtualizados = true
+        // (a) Busca local primeiro na coleção jogos_do_dia por data + similaridade (sem custo de API)
+        try {
+          let filt = ''
+          if (curIsoDate) filt = "data = '" + curIsoDate + "'"
+          const jdds = $app.findRecordsByFilter('jogos_do_dia', filt, '-created', 100, 0)
+          for (let i = 0; i < jdds.length; i++) {
+            const tc = jdds[i].getString('time_casa') || ''
+            const tv = jdds[i].getString('time_visitante') || ''
+            const matchDir = timesCoincidem(timeA, tc) && timesCoincidem(timeB, tv)
+            const matchInv = timesCoincidem(timeA, tv) && timesCoincidem(timeB, tc)
+            if (matchDir || matchInv) {
+              const fid = (jdds[i].getString('fixture_id') || '').trim()
+              if (fid && /^\d+$/.test(fid)) {
+                const logoA = matchDir
+                  ? jdds[i].getString('logo_casa')
+                  : jdds[i].getString('logo_visitante')
+                const logoB = matchDir
+                  ? jdds[i].getString('logo_visitante')
+                  : jdds[i].getString('logo_casa')
+                fixtureResultado = {
+                  fixture_id: fid,
+                  logo_mandante: logoA || '',
+                  logo_visitante: logoB || '',
+                  origem: 'jogos_do_dia',
+                }
+                console.log(
+                  '[admin_editar_jogo] Fixture encontrada localmente em jogos_do_dia: ' +
+                    fid +
+                    ' (' +
+                    timeA +
+                    ' x ' +
+                    timeB +
+                    ')',
+                )
+                break
+              }
             }
-            if (fixtureResultado.logo_visitante) {
-              jogoRec.set('url_escudo_visitante', fixtureResultado.logo_visitante)
-              escudosAtualizados = true
-            }
-            $app.save(jogoRec)
-          } else {
-            aviso = 'Nenhuma fixture correspondente encontrada na API para estes nomes/data.'
           }
+        } catch (errLocal) {
+          console.log('[admin_editar_jogo] Aviso na busca local em jogos_do_dia:', errLocal)
+        }
+
+        // (b) Se nada encontrado localmente e temos data válida, checa cota e busca na API externa
+        if (!fixtureResultado && curIsoDate) {
+          const cota = checarCotaApiFootball()
+          if (cota.blocked || cota.count >= cota.max_limit) {
+            aviso = 'Cota diária da API-Football esgotada. Dados salvos, busca de fixture adiada.'
+          } else {
+            // Obter API Key
+            let apiKey = ''
+            try {
+              const cfgRec = $app.findFirstRecordByData(
+                'config_integracoes',
+                'chave',
+                'placar_ao_vivo',
+              )
+              if (cfgRec) apiKey = (cfgRec.getString('api_key') || '').trim()
+            } catch (_) {}
+
+            if (!apiKey) {
+              try {
+                if ($secrets && $secrets.has && $secrets.has('API_FOOTBALL_KEY')) {
+                  apiKey = ($secrets.get('API_FOOTBALL_KEY') || '').trim()
+                } else if ($secrets && $secrets.has && $secrets.has('RAPIDAPI_KEY')) {
+                  apiKey = ($secrets.get('RAPIDAPI_KEY') || '').trim()
+                } else if ($os && $os.getenv) {
+                  apiKey = (
+                    $os.getenv('API_FOOTBALL_KEY') ||
+                    $os.getenv('RAPIDAPI_KEY') ||
+                    ''
+                  ).trim()
+                }
+              } catch (_) {}
+            }
+
+            if (apiKey) {
+              const isRapid = apiKey.length > 40
+              const url = isRapid
+                ? 'https://api-football-v1.p.rapidapi.com/v3/fixtures?date=' +
+                  encodeURIComponent(curIsoDate) +
+                  '&timezone=America%2FSao_Paulo'
+                : 'https://v3.football.api-sports.io/fixtures?date=' +
+                  encodeURIComponent(curIsoDate) +
+                  '&timezone=America%2FSao_Paulo'
+              const headers = isRapid
+                ? { 'x-rapidapi-key': apiKey, 'x-rapidapi-host': 'api-football-v1.p.rapidapi.com' }
+                : { 'x-apisports-key': apiKey }
+
+              console.log(
+                '[admin_editar_jogo] Chamando API-Football por data ' +
+                  curIsoDate +
+                  ' para ' +
+                  timeA +
+                  ' x ' +
+                  timeB,
+              )
+              const resApi = $http.send({
+                url: url,
+                method: 'GET',
+                headers: headers,
+                timeout: 12,
+              })
+
+              incrementarCotaApiFootball(cota)
+
+              if (resApi.statusCode === 200 && resApi.json && Array.isArray(resApi.json.response)) {
+                const fixturesList = resApi.json.response
+                for (let k = 0; k < fixturesList.length; k++) {
+                  const item = fixturesList[k]
+                  const hName = (item.teams && item.teams.home && item.teams.home.name) || ''
+                  const aName = (item.teams && item.teams.away && item.teams.away.name) || ''
+                  const matchDir = timesCoincidem(timeA, hName) && timesCoincidem(timeB, aName)
+                  const matchInv = timesCoincidem(timeA, aName) && timesCoincidem(timeB, hName)
+
+                  if (matchDir || matchInv) {
+                    const fid = item.fixture && item.fixture.id ? String(item.fixture.id) : ''
+                    if (fid && /^\d+$/.test(fid)) {
+                      const hLogo = (item.teams && item.teams.home && item.teams.home.logo) || ''
+                      const aLogo = (item.teams && item.teams.away && item.teams.away.logo) || ''
+                      fixtureResultado = {
+                        fixture_id: fid,
+                        logo_mandante: matchDir ? hLogo : aLogo,
+                        logo_visitante: matchDir ? aLogo : hLogo,
+                        origem: 'api_football',
+                      }
+                      console.log(
+                        '[admin_editar_jogo] Fixture ' +
+                          fid +
+                          ' encontrada na API para ' +
+                          timeA +
+                          ' x ' +
+                          timeB,
+                      )
+                      break
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+
+        // Aplica o resultado da fixture encontrada
+        if (fixtureResultado && fixtureResultado.fixture_id) {
+          jogoRec.set('fixture_id', fixtureResultado.fixture_id)
+          fixtureVinculado = true
+          console.log(
+            '[admin_editar_jogo] Fixture ' +
+              fixtureResultado.fixture_id +
+              ' vinculada ao jogo ' +
+              jogoId,
+          )
+
+          if (fixtureResultado.logo_mandante) {
+            jogoRec.set('url_escudo_mandante', fixtureResultado.logo_mandante)
+            escudosAtualizados = true
+          }
+          if (fixtureResultado.logo_visitante) {
+            jogoRec.set('url_escudo_visitante', fixtureResultado.logo_visitante)
+            escudosAtualizados = true
+          }
+          $app.save(jogoRec)
+        } else if (!aviso) {
+          aviso = 'Nenhuma fixture correspondente encontrada para estes nomes/data.'
         }
       } catch (errFixture) {
         console.log('[admin_editar_jogo] Aviso na consulta de fixture:', errFixture)
