@@ -50,6 +50,7 @@ import {
   splitMatchScorersByTeam,
 } from '@/lib/scorerUtils'
 import { calculateLiveMatchScoreBreakdown } from '@/lib/scoreBadgeUtils'
+import { jogoPontua } from '@/lib/jogoStatus'
 import {
   resolveLiveScoreForGame,
   isFixtureLive,
@@ -1039,8 +1040,9 @@ export default function BolaoDashboard() {
 
     if (isGeral) {
       // Visão Geral: agregar os 4 participantes em todas as copas
-      const finishedGameIds = new Set(
-        allJogos.filter((j) => j.resultado_finalizado).map((j) => j.id),
+      const allJogosMap = new Map(allJogos.map((j) => [j.id, j]))
+      const finishedValidGameIds = new Set(
+        allJogos.filter((j) => j.resultado_finalizado && jogoPontua(j, nowMs)).map((j) => j.id),
       )
 
       // Pré-agrega palpites finalizados por participante: Map<participanteId, sumPontos> em O(P)
@@ -1048,10 +1050,11 @@ export default function BolaoDashboard() {
       const livePointsByParticipantId = new Map<string, number>()
 
       for (const p of palpites) {
-        if (finishedGameIds.has(p.jogo)) {
+        const j = allJogosMap.get(p.jogo)
+        if (finishedValidGameIds.has(p.jogo) && j && jogoPontua(j, nowMs)) {
           const current = pointsByParticipantId.get(p.participante) || 0
           pointsByParticipantId.set(p.participante, current + (Number(p.pontuacao_jogo) || 0))
-        } else if (liveGameIds.has(p.jogo)) {
+        } else if (liveGameIds.has(p.jogo) && j && jogoPontua(j, nowMs)) {
           const liveBreakdown = liveScoresBreakdownByBetId.get(p.id)
           const livePts = liveBreakdown && liveBreakdown.hasScore ? liveBreakdown.pontos : 0
           const currentLive = livePointsByParticipantId.get(p.participante) || 0
@@ -1106,17 +1109,21 @@ export default function BolaoDashboard() {
     }
 
     // Visão de bolão específico: consolidação e deduplicação estrita por participante oficial
-    const finishedGameIds = new Set(jogos.filter((j) => j.resultado_finalizado).map((j) => j.id))
+    const jogosMap = new Map(jogos.map((j) => [j.id, j]))
+    const finishedValidGameIds = new Set(
+      jogos.filter((j) => j.resultado_finalizado && jogoPontua(j, nowMs)).map((j) => j.id),
+    )
 
     // Pré-agrega palpites finalizados por participante em O(P)
     const pointsByParticipantId = new Map<string, number>()
     const livePointsByParticipantId = new Map<string, number>()
 
     for (const p of palpites) {
-      if (finishedGameIds.has(p.jogo)) {
+      const j = jogosMap.get(p.jogo)
+      if (finishedValidGameIds.has(p.jogo) && j && jogoPontua(j, nowMs)) {
         const current = pointsByParticipantId.get(p.participante) || 0
         pointsByParticipantId.set(p.participante, current + (Number(p.pontuacao_jogo) || 0))
-      } else if (liveGameIds.has(p.jogo)) {
+      } else if (liveGameIds.has(p.jogo) && j && jogoPontua(j, nowMs)) {
         const liveBreakdown = liveScoresBreakdownByBetId.get(p.id)
         const livePts = liveBreakdown && liveBreakdown.hasScore ? liveBreakdown.pontos : 0
         const currentLive = livePointsByParticipantId.get(p.participante) || 0

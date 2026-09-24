@@ -1529,10 +1529,46 @@ routerAdd('GET', '/backend/v1/placar-ao-vivo', (e) => {
                     candJogoRec.set('placar_b', pB)
                   }
 
-                  if (isFinSt && pA !== null && pB !== null) {
+                  var candDtVal = candJogoRec.getString('data')
+                  var candHrVal = candJogoRec.getString('hora')
+                  var candKickoffMs = null
+                  if (candDtVal) {
+                    var cY = 0,
+                      cM = 0,
+                      cD = 0
+                    var cDtStr = String(candDtVal).trim()
+                    var cBrM = cDtStr.match(/^(\d{2})\/(\d{2})\/(\d{4})/)
+                    if (cBrM) {
+                      cD = parseInt(cBrM[1], 10)
+                      cM = parseInt(cBrM[2], 10)
+                      cY = parseInt(cBrM[3], 10)
+                    } else {
+                      var cIsoM = cDtStr.match(/^(\d{4})-(\d{2})-(\d{2})/)
+                      if (cIsoM) {
+                        cY = parseInt(cIsoM[1], 10)
+                        cM = parseInt(cIsoM[2], 10)
+                        cD = parseInt(cIsoM[3], 10)
+                      }
+                    }
+                    var cHrs = 16,
+                      cMins = 0
+                    if (candHrVal) {
+                      var cHrM = String(candHrVal).match(/^(\d{1,2}):(\d{2})/)
+                      if (cHrM) {
+                        cHrs = parseInt(cHrM[1], 10)
+                        cMins = parseInt(cHrM[2], 10)
+                      }
+                    }
+                    if (cY && cM && cD) {
+                      candKickoffMs = Date.UTC(cY, cM - 1, cD, cHrs + 3, cMins, 0, 0)
+                    }
+                  }
+
+                  var candJaIniciou = candKickoffMs === null || Date.now() >= candKickoffMs
+                  if (isFinSt && pA !== null && pB !== null && candJaIniciou) {
                     candJogoRec.set('resultado_finalizado', true)
                     candJogoRec.set('status', 'finalizado')
-                  } else if (isLiveSt) {
+                  } else if (isLiveSt && candJaIniciou) {
                     candJogoRec.set('status', 'ao_vivo')
                   }
 
@@ -1680,11 +1716,50 @@ routerAdd('GET', '/backend/v1/placar-ao-vivo', (e) => {
         // Salva snapshot completo de ficha técnica no campo ficha_detalhes do jogo
         matchedJogo.set('ficha_detalhes', fixItem)
 
-        // Se a partida encerrou oficialmente na API-Football (FT, AET, PEN), finaliza o resultado
-        if (isFinishedStatus && homeGoals !== null && awayGoals !== null) {
+        var mDtVal = matchedJogo.getString('data')
+        var mHrVal = matchedJogo.getString('hora')
+        var mKickoffMs = null
+        if (mDtVal) {
+          var mY = 0,
+            mM = 0,
+            mD = 0
+          var mDtStr = String(mDtVal).trim()
+          var mBrM = mDtStr.match(/^(\d{2})\/(\d{2})\/(\d{4})/)
+          if (mBrM) {
+            mD = parseInt(mBrM[1], 10)
+            mM = parseInt(mBrM[2], 10)
+            mY = parseInt(mBrM[3], 10)
+          } else {
+            var mIsoM = mDtStr.match(/^(\d{4})-(\d{2})-(\d{2})/)
+            if (mIsoM) {
+              mY = parseInt(mIsoM[1], 10)
+              mM = parseInt(mIsoM[2], 10)
+              mD = parseInt(mIsoM[3], 10)
+            }
+          }
+          var mHrs = 16,
+            mMins = 0
+          if (mHrVal) {
+            var mHrM = String(mHrVal).match(/^(\d{1,2}):(\d{2})/)
+            if (mHrM) {
+              mHrs = parseInt(mHrM[1], 10)
+              mMins = parseInt(mHrM[2], 10)
+            }
+          }
+          if (mY && mM && mD) {
+            mKickoffMs = Date.UTC(mY, mM - 1, mD, mHrs + 3, mMins, 0, 0)
+          }
+        }
+        var mJaIniciou = mKickoffMs === null || Date.now() >= mKickoffMs
+
+        // Se a partida encerrou oficialmente na API-Football (FT, AET, PEN), finaliza o resultado SOMENTE se kickoff já ocorreu
+        if (isFinishedStatus && homeGoals !== null && awayGoals !== null && mJaIniciou) {
           matchedJogo.set('resultado_finalizado', true)
           matchedJogo.set('status', 'finalizado')
-        } else if (['1H', 'HT', '2H', 'ET', 'BT', 'P', 'LIVE'].indexOf(fixStatusShort) !== -1) {
+        } else if (
+          ['1H', 'HT', '2H', 'ET', 'BT', 'P', 'LIVE'].indexOf(fixStatusShort) !== -1 &&
+          mJaIniciou
+        ) {
           matchedJogo.set('status', 'ao_vivo')
         }
 

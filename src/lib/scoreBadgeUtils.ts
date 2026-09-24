@@ -820,7 +820,18 @@ export function calculateLiveMatchScoreBreakdown(
  * Prioriza detalhamento cadastrado quando existente e detalhado;
  * caso contrário deriva via lógica de regras oficial.
  */
-export function getScoreBreakdownBadges(bet: BetLike, match: MatchLike): ScoreRuleBadge[] {
+import { jogoPontua, type JogoPontuaInput } from './jogoStatus'
+
+export function getScoreBreakdownBadges(
+  bet: BetLike,
+  match: MatchLike & JogoPontuaInput,
+  agoraMs: number = Date.now(),
+): ScoreRuleBadge[] {
+  // Se o jogo ainda não pontua (futuro, pendente ou sem kickoff), não há badges
+  if (!jogoPontua(match, agoraMs)) {
+    return []
+  }
+
   // Se pontuação do jogo for zero ou o resultado ainda não foi finalizado, não há badges de pontuação
   if (!match.resultado_finalizado || Number(bet.pontuacao_jogo) <= 0) {
     return []

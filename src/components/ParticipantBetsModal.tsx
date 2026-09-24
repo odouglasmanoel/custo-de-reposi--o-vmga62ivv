@@ -14,6 +14,7 @@ import pb from '@/lib/pocketbase/client'
 import type { Bolao, Jogo, Palpite, Participante } from '@/types/bolao'
 import { formatDataBR, formatHoraBR } from '@/lib/dateUtils'
 import { getScoreBreakdownBadges, type ScoreRuleBadge } from '@/lib/scoreBadgeUtils'
+import { jogoPontua } from '@/lib/jogoStatus'
 import { ParticipantScorersView } from '@/components/ParticipantScorersView'
 import {
   Dialog,
@@ -129,12 +130,13 @@ export function ParticipantBetsModal({
         }
 
         // 4. Montar lista de palpites enriquecida com o jogo e badges
+        const now = Date.now()
         const enriched: BetItemWithGame[] = []
         for (const p of palpites) {
           const j = jogosMap.get(p.jogo)
           if (!j) continue
 
-          const badges = getScoreBreakdownBadges(p, j)
+          const badges = getScoreBreakdownBadges(p, j, now)
           enriched.push({
             palpite: p,
             jogo: j,
@@ -261,7 +263,9 @@ export function ParticipantBetsModal({
 
                   <div className="space-y-3">
                     {bItems.map(({ palpite, jogo, badges }) => {
-                      const finalizado = jogo.resultado_finalizado
+                      const agoraMs = Date.now()
+                      const podePontuar = jogoPontua(jogo, agoraMs)
+                      const finalizado = Boolean(jogo.resultado_finalizado) && podePontuar
                       const placarRealA = jogo.placar_a
                       const placarRealB = jogo.placar_b
                       const temResultadoReal =
@@ -270,7 +274,7 @@ export function ParticipantBetsModal({
                         placarRealB !== null &&
                         placarRealB !== undefined
 
-                      const ptsJogo = Number(palpite.pontuacao_jogo) || 0
+                      const ptsJogo = podePontuar ? Number(palpite.pontuacao_jogo) || 0 : 0
 
                       return (
                         <div
@@ -342,8 +346,8 @@ export function ParticipantBetsModal({
                                 placarB={palpite.placar_b}
                                 rawGolsA={palpite.goleadores_a}
                                 rawGolsB={palpite.goleadores_b}
-                                jogoGolsA={jogo.gols_time_a}
-                                jogoGolsB={jogo.gols_time_b}
+                                jogoGolsA={podePontuar ? jogo.gols_time_a : []}
+                                jogoGolsB={podePontuar ? jogo.gols_time_b : []}
                               />
                             </div>
 
@@ -367,7 +371,7 @@ export function ParticipantBetsModal({
                                         </span>
                                       )}
                                     </Badge>
-                                  ) : (
+                                  ) : podePontuar ? (
                                     <Badge
                                       variant="outline"
                                       className="border-amber-300 bg-amber-50 text-amber-800 text-[10px]"
@@ -375,6 +379,13 @@ export function ParticipantBetsModal({
                                       {temResultadoReal
                                         ? `Ao Vivo: ${placarRealA} x ${placarRealB}`
                                         : 'Aguardando jogo'}
+                                    </Badge>
+                                  ) : (
+                                    <Badge
+                                      variant="outline"
+                                      className="border-slate-300 bg-slate-100 text-slate-600 text-[10px]"
+                                    >
+                                      Aguardando início
                                     </Badge>
                                   )}
                                 </div>
@@ -390,7 +401,7 @@ export function ParticipantBetsModal({
                                     ptsJogo > 0 ? 'text-emerald-700' : 'text-slate-500'
                                   }`}
                                 >
-                                  +{ptsJogo} pts
+                                  {podePontuar ? `+${ptsJogo} pts` : '-'}
                                 </span>
                               </div>
                             </div>
@@ -402,7 +413,11 @@ export function ParticipantBetsModal({
                               Detalhamento de Pontos:
                             </span>
 
-                            {badges.length > 0 ? (
+                            {!podePontuar ? (
+                              <span className="text-xs text-slate-400 italic">
+                                Aguardando início
+                              </span>
+                            ) : badges.length > 0 ? (
                               <div className="flex flex-wrap gap-1.5">
                                 {badges.map((b) => (
                                   <span

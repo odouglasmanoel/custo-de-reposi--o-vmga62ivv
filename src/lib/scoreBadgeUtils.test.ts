@@ -131,10 +131,32 @@ describe('scoreBadgeUtils', () => {
   })
 
   describe('getScoreBreakdownBadges', () => {
+    it('não deve retornar badges para jogos futuros mesmo se tiver pontuacao_jogo', () => {
+      const badges = getScoreBreakdownBadges(
+        { placar_a: 2, placar_b: 2, pontuacao_jogo: 3, detalhamento: ['Empate (+2 pts)'] },
+        {
+          data: '2026-09-26',
+          hora: '15:45',
+          placar_a: 0,
+          placar_b: 0,
+          status: 'finalizado',
+          resultado_finalizado: true,
+        },
+        new Date('2026-09-24T12:00:00-03:00').getTime(),
+      )
+      expect(badges).toHaveLength(0)
+    })
+
     it('não deve retornar badges para palpites com pontuação 0', () => {
       const badges = getScoreBreakdownBadges(
         { placar_a: 0, placar_b: 1, pontuacao_jogo: 0 },
-        { placar_a: 2, placar_b: 1, resultado_finalizado: true },
+        {
+          data: '2026-09-20',
+          hora: '16:00',
+          placar_a: 2,
+          placar_b: 1,
+          resultado_finalizado: true,
+        },
       )
       expect(badges).toHaveLength(0)
     })
@@ -142,12 +164,18 @@ describe('scoreBadgeUtils', () => {
     it('não deve retornar badges se resultado não estiver finalizado', () => {
       const badges = getScoreBreakdownBadges(
         { placar_a: 2, placar_b: 1, pontuacao_jogo: 8 },
-        { placar_a: 2, placar_b: 1, resultado_finalizado: false },
+        {
+          data: '2026-09-20',
+          hora: '16:00',
+          placar_a: 2,
+          placar_b: 1,
+          resultado_finalizado: false,
+        },
       )
       expect(badges).toHaveLength(0)
     })
 
-    it('deve mesclar detalhamento da Copa Coni com badges limpas', () => {
+    it('deve mesclar detalhamento da Copa Coni com badges limpas para jogo passado válido', () => {
       const badges = getScoreBreakdownBadges(
         {
           placar_a: 1,
@@ -156,6 +184,8 @@ describe('scoreBadgeUtils', () => {
           pontuacao_jogo: 10,
         },
         {
+          data: '2026-09-20',
+          hora: '16:00',
           placar_a: 1,
           placar_b: 2,
           resultado_finalizado: true,
