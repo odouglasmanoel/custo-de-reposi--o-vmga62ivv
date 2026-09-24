@@ -231,6 +231,52 @@ routerAdd('GET', '/backend/v1/enquetes/fixture-detalhes', (e) => {
     venezuela: 'venezuela',
     bolivia: 'bolivia',
     peru: 'peru',
+    // Países e territórios adicionais (CONCACAF, Amistosos, etc.)
+    jamaica: 'jamaica',
+    honduras: 'honduras',
+    elsalvador: 'el salvador',
+    martinica: 'martinique',
+    martinique: 'martinique',
+    montserrat: 'montserrat',
+    ilhasvirgensbritanicas: 'british virgin islands',
+    virgensbritanicas: 'british virgin islands',
+    britishvirginislands: 'british virgin islands',
+    ilhasvirgensamericanas: 'us virgin islands',
+    virgensamericanas: 'us virgin islands',
+    usvirginislands: 'us virgin islands',
+    saomartinho: 'saint martin',
+    saintmartin: 'saint martin',
+    sintmaarten: 'sint maarten',
+    saovicenteegranadinas: 'saint vincent and the grenadines',
+    saovicente: 'saint vincent',
+    saintvincent: 'saint vincent',
+    saintvincentandthegrenadines: 'saint vincent and the grenadines',
+    guianafrancesa: 'french guiana',
+    frenchguiana: 'french guiana',
+    tchequia: 'czech republic',
+    republicatcheca: 'czech republic',
+    czechrepublic: 'czech republic',
+    czechia: 'czech republic',
+    georgia: 'georgia',
+    irlandadonorte: 'northern ireland',
+    northernireland: 'northern ireland',
+    escocia: 'scotland',
+    scotland: 'scotland',
+    canada: 'canada',
+    emiradosarabesunidos: 'united arab emirates',
+    emiradosarabes: 'united arab emirates',
+    uae: 'united arab emirates',
+    bahrein: 'bahrain',
+    bahrain: 'bahrain',
+    iemen: 'yemen',
+    yemen: 'yemen',
+    oma: 'oman',
+    oman: 'oman',
+    kuwait: 'kuwait',
+    arabiasaudita: 'saudi arabia',
+    saudiarabia: 'saudi arabia',
+    iraque: 'iraq',
+    iraq: 'iraq',
     psg: 'paris saint germain',
     ldu: 'ldu quito',
     idv: 'independiente del valle',
@@ -404,81 +450,160 @@ routerAdd('GET', '/backend/v1/enquetes/fixture-detalhes', (e) => {
 
   // -------------------------------------------------------------
   // MODO 2: Auto-lookup por Mandante, Visitante e Data
+  // Suporte a fuso horário e tolerância de data (UTC x Brasília)
+  // Sem restrição de liga ou horário exato.
   // -------------------------------------------------------------
   try {
     const isRapid = apiKey.length > 40
-    const url = isRapid
-      ? `https://api-football-v1.p.rapidapi.com/v3/fixtures?date=${encodeURIComponent(dataRaw)}&timezone=America%2FSao_Paulo`
-      : `https://v3.football.api-sports.io/fixtures?date=${encodeURIComponent(dataRaw)}&timezone=America%2FSao_Paulo`
-
     const headers = isRapid
       ? { 'x-rapidapi-key': apiKey, 'x-rapidapi-host': 'api-football-v1.p.rapidapi.com' }
       : { 'x-apisports-key': apiKey }
 
-    const res = $http.send({
-      url,
-      method: 'GET',
-      headers,
-      timeout: 15,
-    })
-
-    registrarConsumoCota()
-
-    if (res.statusCode !== 200) {
-      return e.json(502, {
-        error: `A API-Sports retornou status ${res.statusCode}.`,
-      })
-    }
-
-    const json = JSON.parse(res.raw)
-    if (json.errors && Object.keys(json.errors).length > 0) {
-      const errStr = JSON.stringify(json.errors)
-      if (errStr.includes('rate') || errStr.includes('Requests')) {
-        usageData.blocked = true
-        if (recUsage) {
-          recUsage.set('api_key', JSON.stringify(usageData))
-          $app.save(recUsage)
+    // Gera lista de datas a consultar:
+    // A data informada no formato YYYY-MM-DD (Brasília). Jogos noturnos no Brasil (ex: 21h ou 22h)
+    // podem cair no dia seguinte em UTC se a API indexar por UTC, ou se o usuário informou data local.
+    // Também calcula o dia seguinte (+1) para checagem com tolerância.
+    const datasParaConsultar = [dataRaw]
+    try {
+      const dtParts = dataRaw.split('-')
+      if (dtParts.length === 3) {
+        const y = parseInt(dtParts[0], 10)
+        const m = parseInt(dtParts[1], 10) - 1
+        const d = parseInt(dtParts[2], 10)
+        const nextDay = new Date(Date.UTC(y, m, d + 1, 12, 0, 0))
+        const nextIso = nextDay.toISOString().slice(0, 10)
+        if (nextIso && datasParaConsultar.indexOf(nextIso) === -1) {
+          datasParaConsultar.push(nextIso)
         }
-        return e.json(429, {
-          error: 'Limite de requisições da API-Sports atingido.',
-          rate_limited: true,
-        })
       }
-      return e.json(502, { error: `Erro da API-Sports: ${errStr}` })
+    } catch (_) {}
+
+    let correspondencias = []
+    let todasFixturesDoDia = []
+    let ultimoErro = null
+
+    for (let di = 0; di < datasParaConsultar.length; di++) {
+      const dataQuery = datasParaConsultar[di]
+
+      // Faz a requisição à API-Football sem restrição de league
+      const url = isRapid
+        ? `https://api-football-v1.p.rapidapi.com/v3/fixtures?date=${encodeURIComponent(dataQuery)}&timezone=America%2FSao_Paulo`
+        : `https://v3.football.api-sports.io/fixtures?date=${encodeURIComponent(dataQuery)}&timezone=America%2FSao_Paulo`
+
+      let res
+      try {
+        res = $http.send({
+          url,
+          method: 'GET',
+          headers,
+          timeout: 15,
+        })
+        registrarConsumoCota()
+      } catch (httpErr) {
+        ultimoErro = httpErr.message || String(httpErr)
+        continue
+      }
+
+      if (res.statusCode !== 200) {
+        ultimoErro = `API retornou status ${res.statusCode}`
+        continue
+      }
+
+      let json
+      try {
+        json = JSON.parse(res.raw)
+      } catch (parseErr) {
+        ultimoErro = 'Resposta JSON inválida da API-Sports'
+        continue
+      }
+
+      if (json.errors && Object.keys(json.errors).length > 0) {
+        const errStr = JSON.stringify(json.errors)
+        if (errStr.includes('rate') || errStr.includes('Requests')) {
+          usageData.blocked = true
+          if (recUsage) {
+            recUsage.set('api_key', JSON.stringify(usageData))
+            $app.save(recUsage)
+          }
+          return e.json(429, {
+            error: 'Limite de requisições da API-Sports atingido.',
+            rate_limited: true,
+          })
+        }
+        ultimoErro = `Erro da API-Sports: ${errStr}`
+        continue
+      }
+
+      const fixturesList = Array.isArray(json.response) ? json.response : []
+      if (todasFixturesDoDia.length === 0 && fixturesList.length > 0) {
+        todasFixturesDoDia = fixturesList
+      }
+
+      for (let k = 0; k < fixturesList.length; k++) {
+        const item = fixturesList[k]
+        const hName = (item.teams && item.teams.home && item.teams.home.name) || ''
+        const aName = (item.teams && item.teams.away && item.teams.away.name) || ''
+
+        const matchDireto =
+          timesSaoEquivalentes(mandante, hName) && timesSaoEquivalentes(visitante, aName)
+        const matchInvertido =
+          timesSaoEquivalentes(mandante, aName) && timesSaoEquivalentes(visitante, hName)
+
+        if (matchDireto || matchInvertido) {
+          // Evita duplicar se a mesma fixture já foi encontrada
+          const fid = item.fixture && item.fixture.id
+          const jaExiste = correspondencias.some((c) => c.item.fixture?.id === fid)
+          if (!jaExiste) {
+            correspondencias.push({
+              item,
+              isHomeMandante: matchDireto,
+            })
+          }
+        }
+      }
+
+      // Se já encontrou correspondência na data principal, não precisa consultar data adjacente (poupa cota)
+      if (correspondencias.length > 0) {
+        break
+      }
     }
 
-    const fixturesList = Array.isArray(json.response) ? json.response : []
-    const correspondencias = []
-
-    for (let k = 0; k < fixturesList.length; k++) {
-      const item = fixturesList[k]
-      const hName = (item.teams && item.teams.home && item.teams.home.name) || ''
-      const aName = (item.teams && item.teams.away && item.teams.away.name) || ''
-
-      const matchDireto =
-        timesSaoEquivalentes(mandante, hName) && timesSaoEquivalentes(visitante, aName)
-      const matchInvertido =
-        timesSaoEquivalentes(mandante, aName) && timesSaoEquivalentes(visitante, hName)
-
-      if (matchDireto || matchInvertido) {
-        correspondencias.push({
-          item,
-          isHomeMandante: matchDireto,
-        })
-      }
-    }
+    // Prepara lista simplificada de alternativas do dia para ajudar o usuário se não encontrar exato
+    const sugestoesDoDia = todasFixturesDoDia.slice(0, 15).map((f) => ({
+      id: f.fixture?.id,
+      homeTeamName: f.teams?.home?.name || '',
+      awayTeamName: f.teams?.away?.name || '',
+      homeTeamLogo: f.teams?.home?.logo || '',
+      awayTeamLogo: f.teams?.away?.logo || '',
+      leagueName: f.league?.name || '',
+      date: f.fixture?.date || '',
+    }))
 
     if (correspondencias.length === 0) {
-      return e.json(404, {
-        error: `Nenhuma partida encontrada entre "${mandante}" e "${visitante}" na data ${dataRaw}.`,
+      return e.json(200, {
+        success: false,
+        error: `Nenhuma partida correspondente encontrada entre "${mandante}" e "${visitante}" na data ${dataRaw}.`,
         matches_found: 0,
+        alternativas: sugestoesDoDia,
       })
     }
 
     if (correspondencias.length > 1) {
-      return e.json(409, {
-        error: `Mais de uma partida encontrada (${correspondencias.length}) para esses times na data informada. Especifique o ID manualmente.`,
+      const matchesList = correspondencias.map((c) => ({
+        id: c.item.fixture?.id,
+        homeTeamName: c.item.teams?.home?.name || '',
+        awayTeamName: c.item.teams?.away?.name || '',
+        homeTeamLogo: c.item.teams?.home?.logo || '',
+        awayTeamLogo: c.item.teams?.away?.logo || '',
+        leagueName: c.item.league?.name || '',
+        date: c.item.fixture?.date || '',
+      }))
+
+      return e.json(200, {
+        success: false,
+        error: `Mais de uma partida encontrada (${correspondencias.length}) para esses times na data informada. Selecione a correta abaixo.`,
         matches_found: correspondencias.length,
+        alternativas: matchesList,
       })
     }
 

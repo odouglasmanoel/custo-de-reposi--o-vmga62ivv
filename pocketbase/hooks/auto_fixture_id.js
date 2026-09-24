@@ -302,7 +302,51 @@ onRecordCreate((e) => {
             cleanTokens.push(rawTokens[i])
           }
         }
-        return cleanTokens.join(' ').trim() || s.replace(/[^a-z0-9]/g, '').trim()
+        var cStr = cleanTokens.join(' ').trim() || s.replace(/[^a-z0-9]/g, '').trim()
+        var compact = cStr.replace(/\s+/g, '')
+        var paisesMap = {
+          jamaica: 'jamaica',
+          honduras: 'honduras',
+          elsalvador: 'el salvador',
+          martinica: 'martinique',
+          martinique: 'martinique',
+          montserrat: 'montserrat',
+          ilhasvirgensbritanicas: 'british virgin islands',
+          virgensbritanicas: 'british virgin islands',
+          britishvirginislands: 'british virgin islands',
+          ilhasvirgensamericanas: 'us virgin islands',
+          virgensamericanas: 'us virgin islands',
+          usvirginislands: 'us virgin islands',
+          saomartinho: 'saint martin',
+          saintmartin: 'saint martin',
+          sintmaarten: 'sint maarten',
+          saovicenteegranadinas: 'saint vincent and the grenadines',
+          saovicente: 'saint vincent',
+          saintvincent: 'saint vincent',
+          guianafrancesa: 'french guiana',
+          frenchguiana: 'french guiana',
+          tchequia: 'czech republic',
+          republicatcheca: 'czech republic',
+          czechrepublic: 'czech republic',
+          georgia: 'georgia',
+          irlandadonorte: 'northern ireland',
+          northernireland: 'northern ireland',
+          italia: 'italy',
+          belgica: 'belgium',
+          turquia: 'turkey',
+          franca: 'france',
+          portugal: 'portugal',
+          dinamarca: 'denmark',
+          noruega: 'norway',
+          inglaterra: 'england',
+          espanha: 'spain',
+          escocia: 'scotland',
+          paisdegales: 'wales',
+          japao: 'japan',
+          uruguai: 'uruguay',
+        }
+        if (paisesMap[compact]) return paisesMap[compact]
+        return cStr
       }
 
       var autoLevenshtein = function (a, b) {
@@ -428,49 +472,73 @@ onRecordCreate((e) => {
 
             if (limiterMod && typeof limiterMod.enviarRequisicaoApiFootball === 'function') {
               var isRapid = apiKey.length > 40
-              var url = isRapid
-                ? 'https://api-football-v1.p.rapidapi.com/v3/fixtures?date=' +
-                  encodeURIComponent(isoDate) +
-                  '&timezone=America%2FSao_Paulo'
-                : 'https://v3.football.api-sports.io/fixtures?date=' +
-                  encodeURIComponent(isoDate) +
-                  '&timezone=America%2FSao_Paulo'
+              var datesToTry = [isoDate]
+              try {
+                var p = isoDate.split('-')
+                if (p.length === 3) {
+                  var nd = new Date(
+                    Date.UTC(
+                      parseInt(p[0], 10),
+                      parseInt(p[1], 10) - 1,
+                      parseInt(p[2], 10) + 1,
+                      12,
+                      0,
+                      0,
+                    ),
+                  )
+                  var ndIso = nd.toISOString().slice(0, 10)
+                  if (ndIso && datesToTry.indexOf(ndIso) === -1) datesToTry.push(ndIso)
+                }
+              } catch (_) {}
+
               var headers = isRapid
                 ? { 'x-rapidapi-key': apiKey, 'x-rapidapi-host': 'api-football-v1.p.rapidapi.com' }
                 : { 'x-apisports-key': apiKey }
 
-              var limiterRes = limiterMod.enviarRequisicaoApiFootball(
-                url,
-                { headers: headers, timeout: 12 },
-                2,
-              )
-              if (
-                !limiterRes.blocked &&
-                limiterRes.json &&
-                Array.isArray(limiterRes.json.response)
-              ) {
-                for (var k = 0; k < limiterRes.json.response.length; k++) {
-                  var item = limiterRes.json.response[k]
-                  var hName = (item.teams && item.teams.home && item.teams.home.name) || ''
-                  var aName = (item.teams && item.teams.away && item.teams.away.name) || ''
-                  var matchDirApi =
-                    autoTimesCoincidem(timeA, hName) && autoTimesCoincidem(timeB, aName)
-                  var matchInvApi =
-                    autoTimesCoincidem(timeA, aName) && autoTimesCoincidem(timeB, hName)
-                  if (matchDirApi || matchInvApi) {
-                    var fidFound = item.fixture && item.fixture.id ? String(item.fixture.id) : ''
-                    if (fidFound && /^\d+$/.test(fidFound)) {
-                      var hLogo = (item.teams && item.teams.home && item.teams.home.logo) || ''
-                      var aLogo = (item.teams && item.teams.away && item.teams.away.logo) || ''
-                      foundResult = {
-                        fixture_id: fidFound,
-                        logo_mandante: matchDirApi ? hLogo : aLogo,
-                        logo_visitante: matchDirApi ? aLogo : hLogo,
+              for (var dtIdx = 0; dtIdx < datesToTry.length; dtIdx++) {
+                var dTarget = datesToTry[dtIdx]
+                var url = isRapid
+                  ? 'https://api-football-v1.p.rapidapi.com/v3/fixtures?date=' +
+                    encodeURIComponent(dTarget) +
+                    '&timezone=America%2FSao_Paulo'
+                  : 'https://v3.football.api-sports.io/fixtures?date=' +
+                    encodeURIComponent(dTarget) +
+                    '&timezone=America%2FSao_Paulo'
+
+                var limiterRes = limiterMod.enviarRequisicaoApiFootball(
+                  url,
+                  { headers: headers, timeout: 12 },
+                  2,
+                )
+                if (
+                  !limiterRes.blocked &&
+                  limiterRes.json &&
+                  Array.isArray(limiterRes.json.response)
+                ) {
+                  for (var k = 0; k < limiterRes.json.response.length; k++) {
+                    var item = limiterRes.json.response[k]
+                    var hName = (item.teams && item.teams.home && item.teams.home.name) || ''
+                    var aName = (item.teams && item.teams.away && item.teams.away.name) || ''
+                    var matchDirApi =
+                      autoTimesCoincidem(timeA, hName) && autoTimesCoincidem(timeB, aName)
+                    var matchInvApi =
+                      autoTimesCoincidem(timeA, aName) && autoTimesCoincidem(timeB, hName)
+                    if (matchDirApi || matchInvApi) {
+                      var fidFound = item.fixture && item.fixture.id ? String(item.fixture.id) : ''
+                      if (fidFound && /^\d+$/.test(fidFound)) {
+                        var hLogo = (item.teams && item.teams.home && item.teams.home.logo) || ''
+                        var aLogo = (item.teams && item.teams.away && item.teams.away.logo) || ''
+                        foundResult = {
+                          fixture_id: fidFound,
+                          logo_mandante: matchDirApi ? hLogo : aLogo,
+                          logo_visitante: matchDirApi ? aLogo : hLogo,
+                        }
+                        break
                       }
-                      break
                     }
                   }
                 }
+                if (foundResult) break
               }
             }
           }
@@ -557,7 +625,51 @@ onRecordUpdate((e) => {
             cleanTokens.push(rawTokens[i])
           }
         }
-        return cleanTokens.join(' ').trim() || s.replace(/[^a-z0-9]/g, '').trim()
+        var cStr = cleanTokens.join(' ').trim() || s.replace(/[^a-z0-9]/g, '').trim()
+        var compact = cStr.replace(/\s+/g, '')
+        var paisesMap = {
+          jamaica: 'jamaica',
+          honduras: 'honduras',
+          elsalvador: 'el salvador',
+          martinica: 'martinique',
+          martinique: 'martinique',
+          montserrat: 'montserrat',
+          ilhasvirgensbritanicas: 'british virgin islands',
+          virgensbritanicas: 'british virgin islands',
+          britishvirginislands: 'british virgin islands',
+          ilhasvirgensamericanas: 'us virgin islands',
+          virgensamericanas: 'us virgin islands',
+          usvirginislands: 'us virgin islands',
+          saomartinho: 'saint martin',
+          saintmartin: 'saint martin',
+          sintmaarten: 'sint maarten',
+          saovicenteegranadinas: 'saint vincent and the grenadines',
+          saovicente: 'saint vincent',
+          saintvincent: 'saint vincent',
+          guianafrancesa: 'french guiana',
+          frenchguiana: 'french guiana',
+          tchequia: 'czech republic',
+          republicatcheca: 'czech republic',
+          czechrepublic: 'czech republic',
+          georgia: 'georgia',
+          irlandadonorte: 'northern ireland',
+          northernireland: 'northern ireland',
+          italia: 'italy',
+          belgica: 'belgium',
+          turquia: 'turkey',
+          franca: 'france',
+          portugal: 'portugal',
+          dinamarca: 'denmark',
+          noruega: 'norway',
+          inglaterra: 'england',
+          espanha: 'spain',
+          escocia: 'scotland',
+          paisdegales: 'wales',
+          japao: 'japan',
+          uruguai: 'uruguay',
+        }
+        if (paisesMap[compact]) return paisesMap[compact]
+        return cStr
       }
 
       var autoLevenshtein = function (a, b) {
