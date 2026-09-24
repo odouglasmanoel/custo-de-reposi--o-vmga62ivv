@@ -4,758 +4,789 @@
 // Exclusivo para admin Douglas (douglas, douglas@repress.com.br, douglas.manoel@repress.com.br)
 // Sem require dinâmico (tudo inline para respeitar o JSVM do PocketBase)
 
-routerAdd('POST', '/backend/v1/placar-ao-vivo/atualizar-jogo', (c) => {
-  const authRecord = c.get('authRecord')
-  if (!authRecord) {
-    return c.json(401, { error: 'Não autorizado. Faça login novamente.' })
-  }
-
-  const nome = (authRecord.get('name') || '').toString().toLowerCase().trim()
-  const email = (authRecord.get('email') || '').toString().toLowerCase().trim()
-  const isAdmin =
-    nome === 'douglas' ||
-    email === 'douglas@repress.com.br' ||
-    email === 'douglas.manoel@repress.com.br'
-
-  if (!isAdmin) {
-    return c.json(403, { error: 'Acesso negado. Recurso restrito ao administrador.' })
-  }
-
-  let body = {}
-  try {
-    body = $apis.requestInfo(c).data || {}
-  } catch (_) {
-    body = {}
-  }
-
-  const jogoId = (body.jogoId || body.jogo_id || body.id || '').toString().trim()
-  const apiFixtureId = (body.api_fixture_id || body.fixture_id || '').toString().trim()
-
-  if (!jogoId) {
-    return c.json(400, { error: 'ID do jogo é obrigatório.' })
-  }
-
-  let jogoRecord
-  try {
-    jogoRecord = $app.findRecordById('jogos', jogoId)
-  } catch (_) {
-    return c.json(404, { error: 'Jogo não encontrado no sistema.' })
-  }
-
-  const fixtureIdParaUso = apiFixtureId || (jogoRecord.get('fixture_id') || '').toString().trim()
-
-  if (!fixtureIdParaUso) {
-    return c.json(400, {
-      error:
-        'Este jogo não possui ID da partida (fixture_id) vinculado. Vincule o ID antes de atualizar.',
-    })
-  }
-
-  // Rate limiter check inline sem require dinâmico (respeita registro com count/max_limit/blocked)
-  const dNow = new Date()
-  const yyyy = dNow.getUTCFullYear()
-  const mm = String(dNow.getUTCMonth() + 1).padStart(2, '0')
-  const dd = String(dNow.getUTCDate()).padStart(2, '0')
-  const hojeUtc = `${yyyy}-${mm}-${dd}`
-  const USAGE_RECORD_CHAVE = 'api_football_daily_usage'
-  const DAILY_LIMIT = 80
-
-  let recUsage = null
-  let usageData = {
-    date_utc: hojeUtc,
-    count: 0,
-    max_limit: DAILY_LIMIT,
-    trava_desativada: false,
-    blocked: false,
-    last_reset_utc: new Date().toISOString(),
-    last_request_utc: null,
-  }
-
-  try {
-    recUsage = $app.findFirstRecordByFilter('config_integracoes', `chave = '${USAGE_RECORD_CHAVE}'`)
-    if (recUsage && recUsage.get('api_key')) {
-      const parsed = JSON.parse(recUsage.get('api_key'))
-      if (parsed && typeof parsed === 'object') {
-        usageData = Object.assign(usageData, parsed)
-      }
+routerAdd(
+  'POST',
+  '/backend/v1/placar-ao-vivo/atualizar-jogo',
+  (e) => {
+    // No PocketBase JSVM routerAdd, o contexto do evento 'e' possui e.auth populado quando o middleware $apis.requireAuth() está ativo
+    const authRecord = e.auth || (e.get ? e.get('authRecord') : null)
+    if (!authRecord) {
+      return e.json(401, { error: 'Sua sessão expirou. Faça login novamente.' })
     }
-  } catch (_) {
-    recUsage = null
-  }
 
-  // Reset diário às 00:00 UTC se mudou a data
-  if (usageData.date_utc !== hojeUtc) {
-    usageData.date_utc = hojeUtc
-    usageData.count = 0
-    usageData.blocked = false
-    if (!usageData.max_limit || Number(usageData.max_limit) < DAILY_LIMIT) {
-      usageData.max_limit = DAILY_LIMIT
-    }
-    usageData.last_reset_utc = new Date().toISOString()
-    if (recUsage) {
-      recUsage.set('api_key', JSON.stringify(usageData))
-      $app.save(recUsage)
-    }
-  }
-
-  const currentCount = Number(usageData.count) || 0
-  const maxLimit = Number(usageData.max_limit) || DAILY_LIMIT
-  const travaDesativada = Boolean(usageData.trava_desativada)
-
-  if (!travaDesativada && (usageData.blocked || currentCount >= maxLimit)) {
-    return c.json(429, {
-      error:
-        'Limite diário de requisições da API-Sports atingido (80/dia). A cota é reiniciada às 21h (horário de Brasília). Placar mantido em segurança.',
-      rate_limited: true,
-      count: currentCount,
-      max_limit: maxLimit,
-    })
-  }
-
-  // Buscar chave da API-Sports
-  let apiKey = ''
-  try {
-    const configRecord = $app.findFirstRecordByData(
-      'config_integracoes',
-      'chave',
-      'api_football_key',
+    const nome = (
+      (authRecord.getString ? authRecord.getString('name') : authRecord.get('name')) || ''
     )
-    if (configRecord && configRecord.get('ativo')) {
-      apiKey = (configRecord.get('api_key') || '').toString().trim()
+      .toString()
+      .toLowerCase()
+      .trim()
+    const email = (
+      (authRecord.getString ? authRecord.getString('email') : authRecord.get('email')) || ''
+    )
+      .toString()
+      .toLowerCase()
+      .trim()
+    const username = (
+      (authRecord.getString ? authRecord.getString('username') : authRecord.get('username')) || ''
+    )
+      .toString()
+      .toLowerCase()
+      .trim()
+
+    const isAdmin =
+      nome === 'douglas' ||
+      username === 'douglas' ||
+      email === 'douglas@repress.com.br' ||
+      email === 'douglas.manoel@repress.com.br'
+
+    if (!isAdmin) {
+      return e.json(403, { error: 'Acesso negado. Recurso restrito ao administrador.' })
     }
-  } catch (_) {}
 
-  if (!apiKey) {
-    return c.json(400, {
-      error: 'Chave da API-Football não configurada em config_integracoes (api_football_key).',
-    })
-  }
-
-  // Consulta fixture por ID
-  let fixtureData = null
-  try {
-    const url = `https://v3.football.api-sports.io/fixtures?id=${encodeURIComponent(fixtureIdParaUso)}`
-    const res = $http.send({
-      url,
-      method: 'GET',
-      headers: {
-        'x-apisports-key': apiKey,
-      },
-      timeout: 15,
-    })
-
-    // Registra consumo da cota
+    let body = {}
     try {
-      usageData.count = currentCount + 1
-      usageData.last_request_utc = new Date().toISOString()
+      body =
+        (e.requestInfo ? e.requestInfo().body : null) ||
+        (e.requestInfo ? e.requestInfo().data : null) ||
+        $apis.requestInfo(e).data ||
+        {}
+    } catch (_) {
+      body = {}
+    }
+    const jogoId = (body.jogoId || body.jogo_id || body.id || '').toString().trim()
+    const apiFixtureId = (body.api_fixture_id || body.fixture_id || '').toString().trim()
+
+    if (!jogoId) {
+      return e.json(400, { error: 'ID do jogo é obrigatório.' })
+    }
+
+    let jogoRecord
+    try {
+      jogoRecord = $app.findRecordById('jogos', jogoId)
+    } catch (_) {
+      return e.json(404, { error: 'Jogo não encontrado no sistema.' })
+    }
+
+    const fixtureIdParaUso = apiFixtureId || (jogoRecord.get('fixture_id') || '').toString().trim()
+
+    if (!fixtureIdParaUso) {
+      return e.json(400, {
+        error:
+          'Este jogo não possui ID da partida (fixture_id) vinculado. Vincule o ID antes de atualizar.',
+      })
+    }
+
+    // Rate limiter check inline sem require dinâmico (respeita registro com count/max_limit/blocked)
+    const dNow = new Date()
+    const yyyy = dNow.getUTCFullYear()
+    const mm = String(dNow.getUTCMonth() + 1).padStart(2, '0')
+    const dd = String(dNow.getUTCDate()).padStart(2, '0')
+    const hojeUtc = `${yyyy}-${mm}-${dd}`
+    const USAGE_RECORD_CHAVE = 'api_football_daily_usage'
+    const DAILY_LIMIT = 80
+
+    let recUsage = null
+    let usageData = {
+      date_utc: hojeUtc,
+      count: 0,
+      max_limit: DAILY_LIMIT,
+      trava_desativada: false,
+      blocked: false,
+      last_reset_utc: new Date().toISOString(),
+      last_request_utc: null,
+    }
+
+    try {
+      recUsage = $app.findFirstRecordByFilter(
+        'config_integracoes',
+        `chave = '${USAGE_RECORD_CHAVE}'`,
+      )
+      if (recUsage && recUsage.get('api_key')) {
+        const parsed = JSON.parse(recUsage.get('api_key'))
+        if (parsed && typeof parsed === 'object') {
+          usageData = Object.assign(usageData, parsed)
+        }
+      }
+    } catch (_) {
+      recUsage = null
+    }
+
+    // Reset diário às 00:00 UTC se mudou a data
+    if (usageData.date_utc !== hojeUtc) {
+      usageData.date_utc = hojeUtc
+      usageData.count = 0
+      usageData.blocked = false
+      if (!usageData.max_limit || Number(usageData.max_limit) < DAILY_LIMIT) {
+        usageData.max_limit = DAILY_LIMIT
+      }
+      usageData.last_reset_utc = new Date().toISOString()
       if (recUsage) {
         recUsage.set('api_key', JSON.stringify(usageData))
         $app.save(recUsage)
-      } else {
-        const colIntegracoes = $app.findCollectionByNameOrId('config_integracoes')
-        const novo = new Record(colIntegracoes)
-        novo.set('chave', USAGE_RECORD_CHAVE)
-        novo.set('provedor', 'api_football')
-        novo.set('ativo', true)
-        novo.set('api_key', JSON.stringify(usageData))
-        $app.save(novo)
       }
-    } catch (_) {}
+    }
 
-    if (res.statusCode !== 200) {
-      return c.json(502, {
-        error: `A API-Sports retornou status ${res.statusCode}. Tente novamente mais tarde.`,
+    const currentCount = Number(usageData.count) || 0
+    const maxLimit = Number(usageData.max_limit) || DAILY_LIMIT
+    const travaDesativada = Boolean(usageData.trava_desativada)
+
+    if (!travaDesativada && (usageData.blocked || currentCount >= maxLimit)) {
+      return e.json(429, {
+        error:
+          'Limite diário de requisições da API-Sports atingido (80/dia). A cota é reiniciada às 21h (horário de Brasília). Placar mantido em segurança.',
+        rate_limited: true,
+        count: currentCount,
+        max_limit: maxLimit,
       })
     }
 
-    const json = JSON.parse(res.raw)
-    if (json.errors && Object.keys(json.errors).length > 0) {
-      const errStr = JSON.stringify(json.errors)
-      if (errStr.includes('rate') || errStr.includes('Requests')) {
-        usageData.blocked = true
+    // Buscar chave da API-Sports
+    let apiKey = ''
+    try {
+      const configRecord = $app.findFirstRecordByData(
+        'config_integracoes',
+        'chave',
+        'api_football_key',
+      )
+      if (configRecord && configRecord.get('ativo')) {
+        apiKey = (configRecord.get('api_key') || '').toString().trim()
+      }
+    } catch (_) {}
+
+    if (!apiKey) {
+      return e.json(400, {
+        error: 'Chave da API-Football não configurada em config_integracoes (api_football_key).',
+      })
+    }
+
+    // Consulta fixture por ID
+    let fixtureData = null
+    try {
+      const url = `https://v3.football.api-sports.io/fixtures?id=${encodeURIComponent(fixtureIdParaUso)}`
+      const res = $http.send({
+        url,
+        method: 'GET',
+        headers: {
+          'x-apisports-key': apiKey,
+        },
+        timeout: 15,
+      })
+
+      // Registra consumo da cota
+      try {
+        usageData.count = currentCount + 1
+        usageData.last_request_utc = new Date().toISOString()
         if (recUsage) {
           recUsage.set('api_key', JSON.stringify(usageData))
           $app.save(recUsage)
+        } else {
+          const colIntegracoes = $app.findCollectionByNameOrId('config_integracoes')
+          const novo = new Record(colIntegracoes)
+          novo.set('chave', USAGE_RECORD_CHAVE)
+          novo.set('provedor', 'api_football')
+          novo.set('ativo', true)
+          novo.set('api_key', JSON.stringify(usageData))
+          $app.save(novo)
         }
-        return c.json(429, {
-          error: 'Limite de requisições da API-Sports atingido. A cota reinicia às 21h (Brasília).',
+      } catch (_) {}
+
+      if (res.statusCode !== 200) {
+        return e.json(502, {
+          error: `A API-Sports retornou status ${res.statusCode}. Tente novamente mais tarde.`,
         })
       }
-      return c.json(502, { error: `Erro da API-Sports: ${errStr}` })
-    }
 
-    if (!Array.isArray(json.response) || json.response.length === 0) {
-      return c.json(404, {
-        error: `Nenhuma partida encontrada na API-Sports para o fixture_id ${fixtureIdParaUso}.`,
+      const json = JSON.parse(res.raw)
+      if (json.errors && Object.keys(json.errors).length > 0) {
+        const errStr = JSON.stringify(json.errors)
+        if (errStr.includes('rate') || errStr.includes('Requests')) {
+          usageData.blocked = true
+          if (recUsage) {
+            recUsage.set('api_key', JSON.stringify(usageData))
+            $app.save(recUsage)
+          }
+          return e.json(429, {
+            error:
+              'Limite de requisições da API-Sports atingido. A cota reinicia às 21h (Brasília).',
+          })
+        }
+        return e.json(502, { error: `Erro da API-Sports: ${errStr}` })
+      }
+
+      if (!Array.isArray(json.response) || json.response.length === 0) {
+        return e.json(404, {
+          error: `Nenhuma partida encontrada na API-Sports para o fixture_id ${fixtureIdParaUso}.`,
+        })
+      }
+
+      fixtureData = json.response[0]
+    } catch (err) {
+      return e.json(500, {
+        error: 'Falha na comunicação com a API-Sports: ' + (err.message || String(err)),
       })
     }
 
-    fixtureData = json.response[0]
-  } catch (err) {
-    return c.json(500, {
-      error: 'Falha na comunicação com a API-Sports: ' + (err.message || String(err)),
-    })
-  }
-
-  if (!fixtureData) {
-    return c.json(404, { error: 'Dados da partida não puderam ser processados.' })
-  }
-
-  // Verifica horário de kickoff do jogo no horário de Brasília (UTC-3)
-  const dataStr = (jogoRecord.getString('data') || '').trim()
-  const horaStr = (jogoRecord.getString('hora') || '').trim()
-  let kickoffMs = 0
-  try {
-    const horaParts = horaStr.split(':')
-    const hh = (horaParts[0] || '16').padStart(2, '0')
-    const mm = (horaParts[1] || '00').padStart(2, '0')
-    const ss = (horaParts[2] || '00').padStart(2, '0')
-    const isoStr = dataStr + 'T' + hh + ':' + mm + ':' + ss + '-03:00'
-    const parsedKickoff = new Date(isoStr).getTime()
-    if (!isNaN(parsedKickoff)) {
-      kickoffMs = parsedKickoff
-    }
-  } catch (_) {}
-
-  const kickoffJaChegou = kickoffMs > 0 ? Date.now() >= kickoffMs : true
-
-  const goals = fixtureData.goals || {}
-  const statusInfo = fixtureData.fixture?.status || {}
-  const statusShort = (statusInfo.short || '').toString().toUpperCase().trim()
-
-  const homeGoals =
-    goals.home !== null && goals.home !== undefined ? parseInt(goals.home, 10) : null
-  const awayGoals =
-    goals.away !== null && goals.away !== undefined ? parseInt(goals.away, 10) : null
-
-  const isLive = ['1H', '2H', 'HT', 'ET', 'BT', 'P', 'LIVE', 'INT'].includes(statusShort)
-  const isFinished = ['FT', 'AET', 'PEN'].includes(statusShort)
-
-  if (homeGoals !== null && !isNaN(homeGoals)) {
-    jogoRecord.set('placar_a', homeGoals)
-  }
-  if (awayGoals !== null && !isNaN(awayGoals)) {
-    jogoRecord.set('placar_b', awayGoals)
-  }
-
-  // JAMAIS marcar como em andamento/finalizado se o kickoff ainda não chegou
-  if (kickoffJaChegou) {
-    if (isFinished) {
-      jogoRecord.set('status', 'finalizado')
-      jogoRecord.set('resultado_finalizado', true)
-    } else if (isLive) {
-      jogoRecord.set('status', 'ao_vivo')
-    }
-  }
-
-  // Extrair eventos de gols e marcadores no mesmo formato
-  const events = Array.isArray(fixtureData.events) ? fixtureData.events : []
-  const homeTeamId = fixtureData.teams?.home?.id
-  const awayTeamId = fixtureData.teams?.away?.id
-
-  const golsA = []
-  const golsB = []
-  const marcadoresGerais = []
-
-  for (let i = 0; i < events.length; i++) {
-    const ev = events[i]
-    if ((ev.type || '').toString().toLowerCase() === 'goal') {
-      const detail = (ev.detail || '').toString().toLowerCase()
-      const isContra = detail.includes('own') || detail.includes('contra')
-      const playerName = (ev.player?.name || '').toString().trim()
-      const minute = ev.time?.elapsed ? String(ev.time.elapsed) : ''
-      const teamId = ev.team?.id
-
-      if (playerName) {
-        let posicao = 'Atacante/Meia'
-        if (isContra) {
-          posicao = 'Gol Contra'
-        }
-
-        const item = {
-          nome: playerName,
-          posicao: posicao,
-          quantidade: 1,
-          minuto: minute ? `${minute}'` : '',
-        }
-
-        if (teamId === homeTeamId) {
-          golsA.push(item)
-        } else if (teamId === awayTeamId) {
-          golsB.push(item)
-        }
-
-        marcadoresGerais.push(minute ? `${playerName} ${minute}'` : playerName)
-      }
-    }
-  }
-
-  if (golsA.length > 0) {
-    jogoRecord.set('gols_time_a', golsA)
-  }
-  if (golsB.length > 0) {
-    jogoRecord.set('gols_time_b', golsB)
-  }
-  if (marcadoresGerais.length > 0) {
-    jogoRecord.set('marcadores', marcadoresGerais)
-  }
-
-  if (
-    fixtureIdParaUso &&
-    (!jogoRecord.get('fixture_id') || jogoRecord.get('fixture_id') !== fixtureIdParaUso)
-  ) {
-    jogoRecord.set('fixture_id', fixtureIdParaUso)
-  }
-
-  // Salvar alterações no registro de jogo
-  try {
-    $app.save(jogoRecord)
-  } catch (err) {
-    return c.json(500, {
-      error: 'Erro ao persistir dados do jogo no banco: ' + (err.message || String(err)),
-    })
-  }
-
-  // Dispara o recálculo de pontuação dos palpites e ranking (reaproveitando rotina inline idêntica a admin_salvar_marcadores)
-  let recalculou = false
-  try {
-    const statusAtualJogo = (jogoRecord.getString('status') || '').toLowerCase().trim()
-    const STATUS_INICIADOS = [
-      'em_andamento',
-      'ao_vivo',
-      '1h',
-      '2h',
-      'ht',
-      'finalizado',
-      'encerrado',
-      'ft',
-      'finished',
-    ]
-    const statusIniciado = STATUS_INICIADOS.indexOf(statusAtualJogo) >= 0
-    const jogoIniciou = (kickoffMs > 0 && Date.now() >= kickoffMs) || statusIniciado
-
-    const placarRealA = jogoRecord.getInt('placar_a')
-    const placarRealB = jogoRecord.getInt('placar_b')
-    const bolaoId = jogoRecord.getString('bolao')
-    const temPenaltis = jogoRecord.getBool('tem_penaltis')
-    const vencedorPenaltisReal = (jogoRecord.getString('vencedor_penaltis') || '')
-      .toUpperCase()
-      .trim()
-
-    const stripAccents = (str) => {
-      if (!str) return ''
-      let s = String(str)
-      if (typeof s.normalize === 'function') {
-        try {
-          s = s.normalize('NFD').replace(/[\u0300-\u036f]/g, '')
-        } catch (_) {}
-      }
-      return s
-        .replace(/[áàâãä]/gi, 'a')
-        .replace(/[éèêë]/gi, 'e')
-        .replace(/[íìîï]/gi, 'i')
-        .replace(/[óòôõö]/gi, 'o')
-        .replace(/[úùûü]/gi, 'u')
-        .replace(/[ç]/gi, 'c')
-        .replace(/[ñ]/gi, 'n')
+    if (!fixtureData) {
+      return e.json(404, { error: 'Dados da partida não puderam ser processados.' })
     }
 
-    const parseJsonField = (rec, fieldName) => {
-      try {
-        const raw = rec.get(fieldName)
-        if (Array.isArray(raw) && raw.length > 0 && typeof raw[0] === 'number') {
-          const str = String.fromCharCode.apply(null, raw)
-          const parsed = JSON.parse(str)
-          if (Array.isArray(parsed)) return parsed
-        }
-        if (Array.isArray(raw)) return raw
-        const strVal = rec.getString(fieldName)
-        if (strVal && strVal.trim()) {
-          const parsed = JSON.parse(strVal)
-          if (Array.isArray(parsed)) return parsed
-        }
-      } catch (_) {}
-      try {
-        const strVal = rec.getString(fieldName)
-        if (strVal && strVal.trim()) {
-          return strVal
-            .split(',')
-            .map((s) => s.trim())
-            .filter(Boolean)
-        }
-      } catch (_) {}
-      return []
-    }
-
-    const golsTimeA = parseJsonField(jogoRecord, 'gols_time_a')
-    const golsTimeB = parseJsonField(jogoRecord, 'gols_time_b')
-
-    let normMap = {}
+    // Verifica horário de kickoff do jogo no horário de Brasília (UTC-3)
+    const dataStr = (jogoRecord.getString('data') || '').trim()
+    const horaStr = (jogoRecord.getString('hora') || '').trim()
+    let kickoffMs = 0
     try {
-      const normalizacoes = $app.findRecordsByFilter(
-        'normalizacoes',
-        "bolao = '" + bolaoId + "'",
-        '',
-        500,
-        0,
-      )
-      for (let ni = 0; ni < normalizacoes.length; ni++) {
-        const n = normalizacoes[ni]
-        const orig = stripAccents(n.getString('nome_original') || '')
-          .toLowerCase()
-          .trim()
-        const corr = stripAccents(n.getString('nome_correto') || '')
-          .toLowerCase()
-          .trim()
-        if (orig && corr) {
-          normMap[orig] = corr
-        }
+      const horaParts = horaStr.split(':')
+      const hh = (horaParts[0] || '16').padStart(2, '0')
+      const mm = (horaParts[1] || '00').padStart(2, '0')
+      const ss = (horaParts[2] || '00').padStart(2, '0')
+      const isoStr = dataStr + 'T' + hh + ':' + mm + ':' + ss + '-03:00'
+      const parsedKickoff = new Date(isoStr).getTime()
+      if (!isNaN(parsedKickoff)) {
+        kickoffMs = parsedKickoff
       }
     } catch (_) {}
 
-    const normalizePlayerName = (name) => {
-      if (!name) return ''
-      let clean = stripAccents(String(name).toLowerCase().trim())
-      if (normMap[clean]) {
-        clean = stripAccents(normMap[clean])
+    const kickoffJaChegou = kickoffMs > 0 ? Date.now() >= kickoffMs : true
+
+    const goals = fixtureData.goals || {}
+    const statusInfo = fixtureData.fixture?.status || {}
+    const statusShort = (statusInfo.short || '').toString().toUpperCase().trim()
+
+    const homeGoals =
+      goals.home !== null && goals.home !== undefined ? parseInt(goals.home, 10) : null
+    const awayGoals =
+      goals.away !== null && goals.away !== undefined ? parseInt(goals.away, 10) : null
+
+    const isLive = ['1H', '2H', 'HT', 'ET', 'BT', 'P', 'LIVE', 'INT'].includes(statusShort)
+    const isFinished = ['FT', 'AET', 'PEN'].includes(statusShort)
+
+    if (homeGoals !== null && !isNaN(homeGoals)) {
+      jogoRecord.set('placar_a', homeGoals)
+    }
+    if (awayGoals !== null && !isNaN(awayGoals)) {
+      jogoRecord.set('placar_b', awayGoals)
+    }
+
+    // JAMAIS marcar como em andamento/finalizado se o kickoff ainda não chegou
+    if (kickoffJaChegou) {
+      if (isFinished) {
+        jogoRecord.set('status', 'finalizado')
+        jogoRecord.set('resultado_finalizado', true)
+      } else if (isLive) {
+        jogoRecord.set('status', 'ao_vivo')
       }
-      return clean
     }
 
-    const getWinner = (a, b) => {
-      if (a > b) return 1
-      if (b > a) return -1
-      return 0
+    // Extrair eventos de gols e marcadores no mesmo formato
+    const events = Array.isArray(fixtureData.events) ? fixtureData.events : []
+    const homeTeamId = fixtureData.teams?.home?.id
+    const awayTeamId = fixtureData.teams?.away?.id
+
+    const golsA = []
+    const golsB = []
+    const marcadoresGerais = []
+
+    for (let i = 0; i < events.length; i++) {
+      const ev = events[i]
+      if ((ev.type || '').toString().toLowerCase() === 'goal') {
+        const detail = (ev.detail || '').toString().toLowerCase()
+        const isContra = detail.includes('own') || detail.includes('contra')
+        const playerName = (ev.player?.name || '').toString().trim()
+        const minute = ev.time?.elapsed ? String(ev.time.elapsed) : ''
+        const teamId = ev.team?.id
+
+        if (playerName) {
+          let posicao = 'Atacante/Meia'
+          if (isContra) {
+            posicao = 'Gol Contra'
+          }
+
+          const item = {
+            nome: playerName,
+            posicao: posicao,
+            quantidade: 1,
+            minuto: minute ? `${minute}'` : '',
+          }
+
+          if (teamId === homeTeamId) {
+            golsA.push(item)
+          } else if (teamId === awayTeamId) {
+            golsB.push(item)
+          }
+
+          marcadoresGerais.push(minute ? `${playerName} ${minute}'` : playerName)
+        }
+      }
     }
 
-    const realWinner = getWinner(placarRealA, placarRealB)
-    const realDiff = Math.abs(placarRealA - placarRealB)
+    if (golsA.length > 0) {
+      jogoRecord.set('gols_time_a', golsA)
+    }
+    if (golsB.length > 0) {
+      jogoRecord.set('gols_time_b', golsB)
+    }
+    if (marcadoresGerais.length > 0) {
+      jogoRecord.set('marcadores', marcadoresGerais)
+    }
 
-    const realScorersMap = {}
-    const processScorer = (item) => {
-      if (!item || !item.nome) return
-      const rawNome = String(item.nome).trim()
-      const cleanNome = rawNome
-        .replace(/\s*\d+\s*['’]/g, '')
-        .replace(/\(gol contra\)|\(contra\)/gi, '')
+    if (
+      fixtureIdParaUso &&
+      (!jogoRecord.get('fixture_id') || jogoRecord.get('fixture_id') !== fixtureIdParaUso)
+    ) {
+      jogoRecord.set('fixture_id', fixtureIdParaUso)
+    }
+
+    // Salvar alterações no registro de jogo
+    try {
+      $app.save(jogoRecord)
+    } catch (err) {
+      return e.json(500, {
+        error: 'Erro ao persistir dados do jogo no banco: ' + (err.message || String(err)),
+      })
+    }
+
+    // Dispara o recálculo de pontuação dos palpites e ranking (reaproveitando rotina inline idêntica a admin_salvar_marcadores)
+    let recalculou = false
+    try {
+      const statusAtualJogo = (jogoRecord.getString('status') || '').toLowerCase().trim()
+      const STATUS_INICIADOS = [
+        'em_andamento',
+        'ao_vivo',
+        '1h',
+        '2h',
+        'ht',
+        'finalizado',
+        'encerrado',
+        'ft',
+        'finished',
+      ]
+      const statusIniciado = STATUS_INICIADOS.indexOf(statusAtualJogo) >= 0
+      const jogoIniciou = (kickoffMs > 0 && Date.now() >= kickoffMs) || statusIniciado
+
+      const placarRealA = jogoRecord.getInt('placar_a')
+      const placarRealB = jogoRecord.getInt('placar_b')
+      const bolaoId = jogoRecord.getString('bolao')
+      const temPenaltis = jogoRecord.getBool('tem_penaltis')
+      const vencedorPenaltisReal = (jogoRecord.getString('vencedor_penaltis') || '')
+        .toUpperCase()
         .trim()
-      const norm = normalizePlayerName(cleanNome)
-      if (!norm) return
 
-      const count = parseInt(item.quantidade, 10) || 1
-      const pos = (item.posicao || 'Atacante/Meia').toLowerCase().trim()
-      let pts = 1
-      if (
-        pos.indexOf('zagueiro') >= 0 ||
-        pos.indexOf('lateral') >= 0 ||
-        pos.indexOf('defensor') >= 0
-      ) {
-        pts = 3
-      } else if (pos.indexOf('goleiro') >= 0) {
-        pts = 10
-      } else if (pos.indexOf('contra') >= 0) {
-        pts = 5
-      }
-
-      const posLabel =
-        item.posicao ||
-        (pts === 3 ? 'Defensor' : pts === 10 ? 'Goleiro' : pts === 5 ? 'Gol Contra' : 'Atacante')
-
-      const mins = []
-      const minRegex = /(\d+)\s*['’]/g
-      let mMatch
-      while ((mMatch = minRegex.exec(rawNome)) !== null) {
-        const num = parseInt(mMatch[1], 10)
-        if (!isNaN(num)) mins.push(num)
-      }
-
-      if (realScorersMap[norm]) {
-        realScorersMap[norm].countReal += count
-        if (mins.length > 0) {
-          realScorersMap[norm].minutes = realScorersMap[norm].minutes.concat(mins)
+      const stripAccents = (str) => {
+        if (!str) return ''
+        let s = String(str)
+        if (typeof s.normalize === 'function') {
+          try {
+            s = s.normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+          } catch (_) {}
         }
-      } else {
-        realScorersMap[norm] = {
-          displayName: cleanNome,
-          norm: norm,
-          points: pts,
-          position: posLabel,
-          countReal: count,
-          minutes: mins,
-        }
-      }
-    }
-
-    for (let gi = 0; gi < golsTimeA.length; gi++) processScorer(golsTimeA[gi])
-    for (let gi = 0; gi < golsTimeB.length; gi++) processScorer(golsTimeB[gi])
-
-    // Recalcula todos os palpites do jogo (trava jogoPontua intacta: !jogoIniciou zera pontuação)
-    const palpitesDoJogo = $app.findRecordsByFilter(
-      'palpites',
-      "jogo = '" + jogoId + "'",
-      '',
-      100,
-      0,
-    )
-    for (let pi = 0; pi < palpitesDoJogo.length; pi++) {
-      const palpite = palpitesDoJogo[pi]
-      let pontos = 0
-      const detalhamento = []
-
-      if (!jogoIniciou) {
-        palpite.set('pontuacao_jogo', 0)
-        palpite.set('detalhamento', ['Aguardando início'])
-        $app.save(palpite)
-        continue
+        return s
+          .replace(/[áàâãä]/gi, 'a')
+          .replace(/[éèêë]/gi, 'e')
+          .replace(/[íìîï]/gi, 'i')
+          .replace(/[óòôõö]/gi, 'o')
+          .replace(/[úùûü]/gi, 'u')
+          .replace(/[ç]/gi, 'c')
+          .replace(/[ñ]/gi, 'n')
       }
 
-      const palpiteA = palpite.getInt('placar_a')
-      const palpiteB = palpite.getInt('placar_b')
-      const predWinner = getWinner(palpiteA, palpiteB)
-      const predDiff = Math.abs(palpiteA - palpiteB)
+      const parseJsonField = (rec, fieldName) => {
+        try {
+          const raw = rec.get(fieldName)
+          if (Array.isArray(raw) && raw.length > 0 && typeof raw[0] === 'number') {
+            const str = String.fromCharCode.apply(null, raw)
+            const parsed = JSON.parse(str)
+            if (Array.isArray(parsed)) return parsed
+          }
+          if (Array.isArray(raw)) return raw
+          const strVal = rec.getString(fieldName)
+          if (strVal && strVal.trim()) {
+            const parsed = JSON.parse(strVal)
+            if (Array.isArray(parsed)) return parsed
+          }
+        } catch (_) {}
+        try {
+          const strVal = rec.getString(fieldName)
+          if (strVal && strVal.trim()) {
+            return strVal
+              .split(',')
+              .map((s) => s.trim())
+              .filter(Boolean)
+          }
+        } catch (_) {}
+        return []
+      }
 
-      const isExact = palpiteA === placarRealA && palpiteB === placarRealB
+      const golsTimeA = parseJsonField(jogoRecord, 'gols_time_a')
+      const golsTimeB = parseJsonField(jogoRecord, 'gols_time_b')
 
-      if (isExact) {
-        pontos += 8
-        detalhamento.push('Placar Exato (+8 pts)')
-      } else {
-        if (predWinner === realWinner) {
-          if (realWinner === 0) {
-            pontos += 2
-            detalhamento.push('Empate (+2 pts)')
-          } else {
-            pontos += 2
-            detalhamento.push('Vencedor (+2 pts)')
+      let normMap = {}
+      try {
+        const normalizacoes = $app.findRecordsByFilter(
+          'normalizacoes',
+          "bolao = '" + bolaoId + "'",
+          '',
+          500,
+          0,
+        )
+        for (let ni = 0; ni < normalizacoes.length; ni++) {
+          const n = normalizacoes[ni]
+          const orig = stripAccents(n.getString('nome_original') || '')
+            .toLowerCase()
+            .trim()
+          const corr = stripAccents(n.getString('nome_correto') || '')
+            .toLowerCase()
+            .trim()
+          if (orig && corr) {
+            normMap[orig] = corr
           }
         }
+      } catch (_) {}
 
-        if (predDiff === realDiff && predWinner === realWinner) {
-          pontos += 1
-          detalhamento.push('Diferença de Gols (+1 pt)')
+      const normalizePlayerName = (name) => {
+        if (!name) return ''
+        let clean = stripAccents(String(name).toLowerCase().trim())
+        if (normMap[clean]) {
+          clean = stripAccents(normMap[clean])
         }
-
-        if (palpiteA === placarRealA || palpiteB === placarRealB) {
-          pontos += 1
-          detalhamento.push('Metade do Placar (+1 pt)')
-        }
+        return clean
       }
 
-      const predScorersA = parseJsonField(palpite, 'goleadores_a')
-      const predScorersB = parseJsonField(palpite, 'goleadores_b')
+      const getWinner = (a, b) => {
+        if (a > b) return 1
+        if (b > a) return -1
+        return 0
+      }
 
-      const predInfo = {}
-      const addPredScorer = (p) => {
-        if (!p) return
-        const pStr = typeof p === 'string' ? p : String(p.nome || '')
-        const cleanP = pStr
+      const realWinner = getWinner(placarRealA, placarRealB)
+      const realDiff = Math.abs(placarRealA - placarRealB)
+
+      const realScorersMap = {}
+      const processScorer = (item) => {
+        if (!item || !item.nome) return
+        const rawNome = String(item.nome).trim()
+        const cleanNome = rawNome
           .replace(/\s*\d+\s*['’]/g, '')
           .replace(/\(gol contra\)|\(contra\)/gi, '')
           .trim()
-        const normP = normalizePlayerName(cleanP)
-        if (!normP) return
+        const norm = normalizePlayerName(cleanNome)
+        if (!norm) return
 
-        const pPos = typeof p === 'object' && p !== null ? p.posicao : undefined
-        const pContra =
-          (typeof p === 'object' && p !== null && p.gol_contra === true) ||
-          /\(gol contra\)|\(contra\)/i.test(pStr) ||
-          String(pPos || '')
-            .toLowerCase()
-            .indexOf('contra') >= 0
-
-        if (predInfo[normP]) {
-          predInfo[normP].count += 1
-          if (!predInfo[normP].posicao && pPos) predInfo[normP].posicao = pPos
-          if (pContra) predInfo[normP].golContra = true
-        } else {
-          predInfo[normP] = {
-            count: 1,
-            posicao: pPos,
-            golContra: pContra,
-          }
-        }
-      }
-
-      for (let sa = 0; sa < predScorersA.length; sa++) addPredScorer(predScorersA[sa])
-      for (let sb = 0; sb < predScorersB.length; sb++) addPredScorer(predScorersB[sb])
-
-      const matchedScorers = []
-      for (const normPred in predInfo) {
-        const itemInfo = predInfo[normPred]
-        const countPalpite = itemInfo.count
-        let matchedReal = realScorersMap[normPred]
-        if (!matchedReal) {
-          for (const rNorm in realScorersMap) {
-            if (rNorm.indexOf(normPred) >= 0 || normPred.indexOf(rNorm) >= 0) {
-              matchedReal = realScorersMap[rNorm]
-              break
-            }
-          }
-        }
-
-        if (matchedReal && matchedReal.countReal > 0) {
-          const g = Math.min(matchedReal.countReal, countPalpite)
-          if (g > 0) {
-            const targetPosStr = String(itemInfo.posicao || matchedReal.position || '')
-              .toLowerCase()
-              .trim()
-            let unitPoints = matchedReal.points
-            let displayPos = matchedReal.position
-
-            if (itemInfo.golContra || targetPosStr.indexOf('contra') >= 0) {
-              unitPoints = 5
-              displayPos = 'Gol Contra'
-            } else if (
-              targetPosStr.indexOf('defensor') >= 0 ||
-              targetPosStr.indexOf('zagueiro') >= 0 ||
-              targetPosStr.indexOf('lateral') >= 0 ||
-              targetPosStr === 'd'
-            ) {
-              unitPoints = 3
-              displayPos = 'Defensor'
-            } else if (targetPosStr.indexOf('goleiro') >= 0 || targetPosStr === 'g') {
-              unitPoints = 10
-              displayPos = 'Goleiro'
-            } else if (
-              targetPosStr.indexOf('atacante') >= 0 ||
-              targetPosStr.indexOf('meia') >= 0 ||
-              targetPosStr.indexOf('meio') >= 0 ||
-              targetPosStr === 'a'
-            ) {
-              unitPoints = 1
-              displayPos = 'Atacante'
-            }
-
-            const ptsTotal = g * unitPoints
-            pontos += ptsTotal
-
-            const minsToUse = (matchedReal.minutes || []).slice(0, g)
-            let txt = ''
-            if (minsToUse.length > 0) {
-              const minsStr = minsToUse.map((m) => m + "'").join(', ')
-              txt =
-                matchedReal.displayName +
-                ' ' +
-                minsStr +
-                ' [' +
-                displayPos +
-                '] (+' +
-                ptsTotal +
-                ' pt' +
-                (ptsTotal > 1 ? 's' : '') +
-                ')'
-            } else if (g > 1) {
-              txt =
-                matchedReal.displayName +
-                ' ×' +
-                g +
-                ' [' +
-                displayPos +
-                '] (+' +
-                ptsTotal +
-                ' pt' +
-                (ptsTotal > 1 ? 's' : '') +
-                ')'
-            } else {
-              txt =
-                matchedReal.displayName +
-                ' [' +
-                displayPos +
-                '] (+' +
-                ptsTotal +
-                ' pt' +
-                (ptsTotal > 1 ? 's' : '') +
-                ')'
-            }
-            matchedScorers.push(txt)
-          }
-        }
-      }
-
-      if (matchedScorers.length > 0) {
-        detalhamento.push('Gols acertados: ' + matchedScorers.join(', '))
-      }
-
-      if (temPenaltis) {
-        const predPenaltis = (palpite.getString('vencedor_penaltis') || '').toUpperCase().trim()
+        const count = parseInt(item.quantidade, 10) || 1
+        const pos = (item.posicao || 'Atacante/Meia').toLowerCase().trim()
+        let pts = 1
         if (
-          predPenaltis &&
-          predPenaltis === vencedorPenaltisReal &&
-          (predPenaltis === 'A' || predPenaltis === 'B')
+          pos.indexOf('zagueiro') >= 0 ||
+          pos.indexOf('lateral') >= 0 ||
+          pos.indexOf('defensor') >= 0
         ) {
-          pontos += 2
-          detalhamento.push('Vencedor nos Pênaltis (+2 pts)')
+          pts = 3
+        } else if (pos.indexOf('goleiro') >= 0) {
+          pts = 10
+        } else if (pos.indexOf('contra') >= 0) {
+          pts = 5
+        }
+
+        const posLabel =
+          item.posicao ||
+          (pts === 3 ? 'Defensor' : pts === 10 ? 'Goleiro' : pts === 5 ? 'Gol Contra' : 'Atacante')
+
+        const mins = []
+        const minRegex = /(\d+)\s*['’]/g
+        let mMatch
+        while ((mMatch = minRegex.exec(rawNome)) !== null) {
+          const num = parseInt(mMatch[1], 10)
+          if (!isNaN(num)) mins.push(num)
+        }
+
+        if (realScorersMap[norm]) {
+          realScorersMap[norm].countReal += count
+          if (mins.length > 0) {
+            realScorersMap[norm].minutes = realScorersMap[norm].minutes.concat(mins)
+          }
+        } else {
+          realScorersMap[norm] = {
+            displayName: cleanNome,
+            norm: norm,
+            points: pts,
+            position: posLabel,
+            countReal: count,
+            minutes: mins,
+          }
         }
       }
 
-      palpite.set('pontuacao_jogo', pontos)
-      palpite.set('detalhamento', detalhamento)
-      $app.save(palpite)
-    }
+      for (let gi = 0; gi < golsTimeA.length; gi++) processScorer(golsTimeA[gi])
+      for (let gi = 0; gi < golsTimeB.length; gi++) processScorer(golsTimeB[gi])
 
-    // Reacumula pontuação total dos participantes
-    const participantes = $app.findRecordsByFilter(
-      'participantes',
-      "bolao = '" + bolaoId + "'",
-      '',
-      200,
-      0,
-    )
-    for (let pi = 0; pi < participantes.length; pi++) {
-      const part = participantes[pi]
-      const partPalpites = $app.findRecordsByFilter(
+      // Recalcula todos os palpites do jogo (trava jogoPontua intacta: !jogoIniciou zera pontuação)
+      const palpitesDoJogo = $app.findRecordsByFilter(
         'palpites',
-        "bolao = '" + bolaoId + "' && participante = '" + part.id + "'",
+        "jogo = '" + jogoId + "'",
         '',
-        500,
+        100,
         0,
       )
+      for (let pi = 0; pi < palpitesDoJogo.length; pi++) {
+        const palpite = palpitesDoJogo[pi]
+        let pontos = 0
+        const detalhamento = []
 
-      let totalPoints = 0
-      for (let ppi = 0; ppi < partPalpites.length; ppi++) {
-        const p = partPalpites[ppi]
-        const pJogoId = p.getString('jogo')
-        try {
-          const gameRec = $app.findRecordById('jogos', pJogoId)
-          if (gameRec && gameRec.getBool('resultado_finalizado')) {
-            totalPoints += p.getInt('pontuacao_jogo')
+        if (!jogoIniciou) {
+          palpite.set('pontuacao_jogo', 0)
+          palpite.set('detalhamento', ['Aguardando início'])
+          $app.save(palpite)
+          continue
+        }
+
+        const palpiteA = palpite.getInt('placar_a')
+        const palpiteB = palpite.getInt('placar_b')
+        const predWinner = getWinner(palpiteA, palpiteB)
+        const predDiff = Math.abs(palpiteA - palpiteB)
+
+        const isExact = palpiteA === placarRealA && palpiteB === placarRealB
+
+        if (isExact) {
+          pontos += 8
+          detalhamento.push('Placar Exato (+8 pts)')
+        } else {
+          if (predWinner === realWinner) {
+            if (realWinner === 0) {
+              pontos += 2
+              detalhamento.push('Empate (+2 pts)')
+            } else {
+              pontos += 2
+              detalhamento.push('Vencedor (+2 pts)')
+            }
           }
-        } catch (_) {}
+
+          if (predDiff === realDiff && predWinner === realWinner) {
+            pontos += 1
+            detalhamento.push('Diferença de Gols (+1 pt)')
+          }
+
+          if (palpiteA === placarRealA || palpiteB === placarRealB) {
+            pontos += 1
+            detalhamento.push('Metade do Placar (+1 pt)')
+          }
+        }
+
+        const predScorersA = parseJsonField(palpite, 'goleadores_a')
+        const predScorersB = parseJsonField(palpite, 'goleadores_b')
+
+        const predInfo = {}
+        const addPredScorer = (p) => {
+          if (!p) return
+          const pStr = typeof p === 'string' ? p : String(p.nome || '')
+          const cleanP = pStr
+            .replace(/\s*\d+\s*['’]/g, '')
+            .replace(/\(gol contra\)|\(contra\)/gi, '')
+            .trim()
+          const normP = normalizePlayerName(cleanP)
+          if (!normP) return
+
+          const pPos = typeof p === 'object' && p !== null ? p.posicao : undefined
+          const pContra =
+            (typeof p === 'object' && p !== null && p.gol_contra === true) ||
+            /\(gol contra\)|\(contra\)/i.test(pStr) ||
+            String(pPos || '')
+              .toLowerCase()
+              .indexOf('contra') >= 0
+
+          if (predInfo[normP]) {
+            predInfo[normP].count += 1
+            if (!predInfo[normP].posicao && pPos) predInfo[normP].posicao = pPos
+            if (pContra) predInfo[normP].golContra = true
+          } else {
+            predInfo[normP] = {
+              count: 1,
+              posicao: pPos,
+              golContra: pContra,
+            }
+          }
+        }
+
+        for (let sa = 0; sa < predScorersA.length; sa++) addPredScorer(predScorersA[sa])
+        for (let sb = 0; sb < predScorersB.length; sb++) addPredScorer(predScorersB[sb])
+
+        const matchedScorers = []
+        for (const normPred in predInfo) {
+          const itemInfo = predInfo[normPred]
+          const countPalpite = itemInfo.count
+          let matchedReal = realScorersMap[normPred]
+          if (!matchedReal) {
+            for (const rNorm in realScorersMap) {
+              if (rNorm.indexOf(normPred) >= 0 || normPred.indexOf(rNorm) >= 0) {
+                matchedReal = realScorersMap[rNorm]
+                break
+              }
+            }
+          }
+
+          if (matchedReal && matchedReal.countReal > 0) {
+            const g = Math.min(matchedReal.countReal, countPalpite)
+            if (g > 0) {
+              const targetPosStr = String(itemInfo.posicao || matchedReal.position || '')
+                .toLowerCase()
+                .trim()
+              let unitPoints = matchedReal.points
+              let displayPos = matchedReal.position
+
+              if (itemInfo.golContra || targetPosStr.indexOf('contra') >= 0) {
+                unitPoints = 5
+                displayPos = 'Gol Contra'
+              } else if (
+                targetPosStr.indexOf('defensor') >= 0 ||
+                targetPosStr.indexOf('zagueiro') >= 0 ||
+                targetPosStr.indexOf('lateral') >= 0 ||
+                targetPosStr === 'd'
+              ) {
+                unitPoints = 3
+                displayPos = 'Defensor'
+              } else if (targetPosStr.indexOf('goleiro') >= 0 || targetPosStr === 'g') {
+                unitPoints = 10
+                displayPos = 'Goleiro'
+              } else if (
+                targetPosStr.indexOf('atacante') >= 0 ||
+                targetPosStr.indexOf('meia') >= 0 ||
+                targetPosStr.indexOf('meio') >= 0 ||
+                targetPosStr === 'a'
+              ) {
+                unitPoints = 1
+                displayPos = 'Atacante'
+              }
+
+              const ptsTotal = g * unitPoints
+              pontos += ptsTotal
+
+              const minsToUse = (matchedReal.minutes || []).slice(0, g)
+              let txt = ''
+              if (minsToUse.length > 0) {
+                const minsStr = minsToUse.map((m) => m + "'").join(', ')
+                txt =
+                  matchedReal.displayName +
+                  ' ' +
+                  minsStr +
+                  ' [' +
+                  displayPos +
+                  '] (+' +
+                  ptsTotal +
+                  ' pt' +
+                  (ptsTotal > 1 ? 's' : '') +
+                  ')'
+              } else if (g > 1) {
+                txt =
+                  matchedReal.displayName +
+                  ' ×' +
+                  g +
+                  ' [' +
+                  displayPos +
+                  '] (+' +
+                  ptsTotal +
+                  ' pt' +
+                  (ptsTotal > 1 ? 's' : '') +
+                  ')'
+              } else {
+                txt =
+                  matchedReal.displayName +
+                  ' [' +
+                  displayPos +
+                  '] (+' +
+                  ptsTotal +
+                  ' pt' +
+                  (ptsTotal > 1 ? 's' : '') +
+                  ')'
+              }
+              matchedScorers.push(txt)
+            }
+          }
+        }
+
+        if (matchedScorers.length > 0) {
+          detalhamento.push('Gols acertados: ' + matchedScorers.join(', '))
+        }
+
+        if (temPenaltis) {
+          const predPenaltis = (palpite.getString('vencedor_penaltis') || '').toUpperCase().trim()
+          if (
+            predPenaltis &&
+            predPenaltis === vencedorPenaltisReal &&
+            (predPenaltis === 'A' || predPenaltis === 'B')
+          ) {
+            pontos += 2
+            detalhamento.push('Vencedor nos Pênaltis (+2 pts)')
+          }
+        }
+
+        palpite.set('pontuacao_jogo', pontos)
+        palpite.set('detalhamento', detalhamento)
+        $app.save(palpite)
       }
 
-      const importedPts = part.getInt('pontos_importados') || 0
-      part.set('pontuacao_total', importedPts + totalPoints)
-      $app.save(part)
+      // Reacumula pontuação total dos participantes
+      const participantes = $app.findRecordsByFilter(
+        'participantes',
+        "bolao = '" + bolaoId + "'",
+        '',
+        200,
+        0,
+      )
+      for (let pi = 0; pi < participantes.length; pi++) {
+        const part = participantes[pi]
+        const partPalpites = $app.findRecordsByFilter(
+          'palpites',
+          "bolao = '" + bolaoId + "' && participante = '" + part.id + "'",
+          '',
+          500,
+          0,
+        )
+
+        let totalPoints = 0
+        for (let ppi = 0; ppi < partPalpites.length; ppi++) {
+          const p = partPalpites[ppi]
+          const pJogoId = p.getString('jogo')
+          try {
+            const gameRec = $app.findRecordById('jogos', pJogoId)
+            if (gameRec && gameRec.getBool('resultado_finalizado')) {
+              totalPoints += p.getInt('pontuacao_jogo')
+            }
+          } catch (_) {}
+        }
+
+        const importedPts = part.getInt('pontos_importados') || 0
+        part.set('pontuacao_total', importedPts + totalPoints)
+        $app.save(part)
+      }
+
+      try {
+        const bolao = $app.findRecordById('boloes', bolaoId)
+        bolao.set('ultima_atualizacao', new Date().toISOString())
+        $app.save(bolao)
+      } catch (_) {}
+
+      recalculou = true
+    } catch (errRecalc) {
+      console.log('[atualizar-jogo] Erro ao recalcular pontuação:', errRecalc)
     }
 
-    try {
-      const bolao = $app.findRecordById('boloes', bolaoId)
-      bolao.set('ultima_atualizacao', new Date().toISOString())
-      $app.save(bolao)
-    } catch (_) {}
-
-    recalculou = true
-  } catch (errRecalc) {
-    console.log('[atualizar-jogo] Erro ao recalcular pontuação:', errRecalc)
-  }
-
-  return c.json(200, {
-    success: true,
-    message: 'Placar e marcadores atualizados com sucesso da API-Sports!',
-    jogo: {
-      id: jogoRecord.id,
-      bolao: jogoRecord.get('bolao'),
-      placar_a: jogoRecord.get('placar_a'),
-      placar_b: jogoRecord.get('placar_b'),
-      status: jogoRecord.get('status'),
-      resultado_finalizado: jogoRecord.get('resultado_finalizado'),
-      gols_time_a: jogoRecord.get('gols_time_a'),
-      gols_time_b: jogoRecord.get('gols_time_b'),
-      marcadores: jogoRecord.get('marcadores'),
-      fixture_id: jogoRecord.get('fixture_id'),
-    },
-    status_fixture: statusShort,
-    elapsed: statusInfo.elapsed || null,
-    recalculou,
-  })
-})
+    return e.json(200, {
+      success: true,
+      message: 'Placar e marcadores atualizados com sucesso da API-Sports!',
+      jogo: {
+        id: jogoRecord.id,
+        bolao: jogoRecord.get('bolao'),
+        placar_a: jogoRecord.get('placar_a'),
+        placar_b: jogoRecord.get('placar_b'),
+        status: jogoRecord.get('status'),
+        resultado_finalizado: jogoRecord.get('resultado_finalizado'),
+        gols_time_a: jogoRecord.get('gols_time_a'),
+        gols_time_b: jogoRecord.get('gols_time_b'),
+        marcadores: jogoRecord.get('marcadores'),
+        fixture_id: jogoRecord.get('fixture_id'),
+      },
+      status_fixture: statusShort,
+      elapsed: statusInfo.elapsed || null,
+      recalculou,
+    })
+  },
+  $apis.requireAuth(),
+)

@@ -1,15 +1,15 @@
 {
-  "generatedAt": "2026-09-24T19:18:57.103Z",
+  "generatedAt": "2026-09-24T19:44:05.517Z",
   "collections": [
     {
       "name": "users",
       "type": "auth",
       "apiRules": {
-        "list": "id = @request.auth.id || @request.auth.name = 'Douglas'",
-        "view": "id = @request.auth.id || @request.auth.name = 'Douglas'",
+        "list": "id = @request.auth.id || @request.auth.name = 'Douglas' || @request.auth.email = 'douglas@repress.com.br' || @request.auth.email = 'douglas.manoel@repress.com.br'",
+        "view": "id = @request.auth.id || @request.auth.name = 'Douglas' || @request.auth.email = 'douglas@repress.com.br' || @request.auth.email = 'douglas.manoel@repress.com.br'",
         "create": "",
-        "update": "id = @request.auth.id || @request.auth.name = 'Douglas'",
-        "delete": "@request.auth.name = 'Douglas'"
+        "update": "id = @request.auth.id || @request.auth.name = 'Douglas' || @request.auth.email = 'douglas@repress.com.br' || @request.auth.email = 'douglas.manoel@repress.com.br'",
+        "delete": "@request.auth.name = 'Douglas' || @request.auth.email = 'douglas@repress.com.br' || @request.auth.email = 'douglas.manoel@repress.com.br'"
       },
       "fields": [
         {
@@ -202,9 +202,9 @@
       "apiRules": {
         "list": "@request.auth.id != ''",
         "view": "@request.auth.id != ''",
-        "create": "@request.auth.name = 'Douglas'",
-        "update": "@request.auth.name = 'Douglas'",
-        "delete": "@request.auth.name = 'Douglas'"
+        "create": "@request.auth.name = 'Douglas' || @request.auth.email = 'douglas@repress.com.br' || @request.auth.email = 'douglas.manoel@repress.com.br'",
+        "update": "@request.auth.name = 'Douglas' || @request.auth.email = 'douglas@repress.com.br' || @request.auth.email = 'douglas.manoel@repress.com.br'",
+        "delete": "@request.auth.name = 'Douglas' || @request.auth.email = 'douglas@repress.com.br' || @request.auth.email = 'douglas.manoel@repress.com.br'"
       },
       "fields": [
         {
@@ -493,10 +493,10 @@
       "name": "config_integracoes",
       "type": "base",
       "apiRules": {
-        "list": null,
-        "view": null,
-        "create": null,
-        "update": null,
+        "list": "@request.auth.name = 'Douglas' || @request.auth.email = 'douglas@repress.com.br' || @request.auth.email = 'douglas.manoel@repress.com.br'",
+        "view": "@request.auth.name = 'Douglas' || @request.auth.email = 'douglas@repress.com.br' || @request.auth.email = 'douglas.manoel@repress.com.br'",
+        "create": "@request.auth.name = 'Douglas' || @request.auth.email = 'douglas@repress.com.br' || @request.auth.email = 'douglas.manoel@repress.com.br'",
+        "update": "@request.auth.name = 'Douglas' || @request.auth.email = 'douglas@repress.com.br' || @request.auth.email = 'douglas.manoel@repress.com.br'",
         "delete": null
       },
       "fields": [

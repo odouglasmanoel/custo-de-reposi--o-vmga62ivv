@@ -629,6 +629,30 @@ export function readEscudoCache(teamName: string): string | null {
     return psgOfficial
   }
 
+  // Escudos oficiais conhecidos para seleções/times recorrentes (fallback instantâneo da API-Sports)
+  const KNOWN_OFFICIAL_BADGES: Record<string, string> = {
+    paisdegales: 'https://media.api-sports.io/football/teams/767.png',
+    gales: 'https://media.api-sports.io/football/teams/767.png',
+    wales: 'https://media.api-sports.io/football/teams/767.png',
+    portugal: 'https://media.api-sports.io/football/teams/27.png',
+    dinamarca: 'https://media.api-sports.io/football/teams/21.png',
+    denmark: 'https://media.api-sports.io/football/teams/21.png',
+    noruega: 'https://media.api-sports.io/football/teams/1090.png',
+    norway: 'https://media.api-sports.io/football/teams/1090.png',
+    brasil: 'https://media.api-sports.io/football/teams/6.png',
+    argentina: 'https://media.api-sports.io/football/teams/26.png',
+    franca: 'https://media.api-sports.io/football/teams/2.png',
+    espanha: 'https://media.api-sports.io/football/teams/9.png',
+    inglaterra: 'https://media.api-sports.io/football/teams/10.png',
+    alemanha: 'https://media.api-sports.io/football/teams/25.png',
+    italia: 'https://media.api-sports.io/football/teams/768.png',
+    holanda: 'https://media.api-sports.io/football/teams/1118.png',
+    paisesbaixos: 'https://media.api-sports.io/football/teams/1118.png',
+    belgica: 'https://media.api-sports.io/football/teams/1.png',
+    croacia: 'https://media.api-sports.io/football/teams/3.png',
+    uruguai: 'https://media.api-sports.io/football/teams/7.png',
+  }
+
   // 1. Memória RAM
   const fromMem = escudoMemoryCache.get(key)
   if (fromMem !== undefined) {
@@ -653,6 +677,13 @@ export function readEscudoCache(teamName: string): string | null {
   } catch {
     // LocalStorage indisponível
   }
+
+  if (KNOWN_OFFICIAL_BADGES[key]) {
+    const badge = KNOWN_OFFICIAL_BADGES[key]
+    setWithBoundedCapacity(escudoMemoryCache, key, badge, 200)
+    return badge
+  }
+
   return null
 }
 

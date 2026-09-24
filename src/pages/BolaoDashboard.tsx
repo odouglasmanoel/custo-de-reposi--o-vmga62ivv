@@ -79,24 +79,44 @@ function TeamShield({
   textClass?: string
 }) {
   const [hasError, setHasError] = useState(false)
-  if (!escudo || hasError) {
+  const [currentSrc, setCurrentSrc] = useState<string | undefined>(escudo)
+
+  useEffect(() => {
+    setCurrentSrc(escudo)
+    setHasError(false)
+  }, [escudo])
+
+  const handleError = () => {
+    // Tenta fallback com busca direta de cache oficial para times como País de Gales, Dinamarca, etc.
+    if (nomeTime) {
+      const fallbackBadge = readEscudoCache(nomeTime)
+      if (fallbackBadge && fallbackBadge !== currentSrc) {
+        setCurrentSrc(fallbackBadge)
+        return
+      }
+    }
+    setHasError(true)
+  }
+
+  if (!currentSrc || hasError) {
     return (
       <div
         className={`${sizeClass} rounded-full bg-slate-100 border border-slate-300 flex items-center justify-center shrink-0 ${textClass}`}
+        title={nomeTime}
       >
-        {sigla}
+        {sigla || (nomeTime ? nomeTime.slice(0, 2).toUpperCase() : '?')}
       </div>
     )
   }
   return (
     <div className={`${sizeClass} shrink-0 flex items-center justify-center`}>
       <img
-        src={escudo}
+        src={currentSrc}
         alt={nomeTime}
         className="w-full h-full object-contain drop-shadow-xs"
         loading="eager"
         decoding="async"
-        onError={() => setHasError(true)}
+        onError={handleError}
       />
     </div>
   )
@@ -508,20 +528,24 @@ export default function BolaoDashboard() {
         [jogo.id]: novaSobrescrita,
       }))
 
-      // Persiste via endpoint autenticado ou direto no PocketBase
-      const headers: Record<string, string> = {
-        'Content-Type': 'application/json',
-      }
-      if (pb.authStore.token) {
-        headers['Authorization'] = pb.authStore.token
+      // Tenta refresh proativo da sessão se o token expirou ou estiver perto de expirar
+      if (pb.authStore.isValid) {
+        try {
+          await pb.collection('users').authRefresh()
+        } catch (_) {
+          // segue com o token atual
+        }
       }
 
-      const res = await fetch(
-        `${import.meta.env.VITE_POCKETBASE_URL}/backend/v1/placar-ao-vivo/sobrescrever`,
-        {
+      let resBackend: { success?: boolean; message?: string; error?: string } | null = null
+      try {
+        resBackend = await pb.send<{
+          success?: boolean
+          message?: string
+          error?: string
+        }>('/backend/v1/placar-ao-vivo/sobrescrever', {
           method: 'POST',
-          headers,
-          body: JSON.stringify({
+          body: {
             jogo_id: jogo.id,
             placar_a: parsedA,
             placar_b: parsedB,
@@ -529,11 +553,26 @@ export default function BolaoDashboard() {
             marcadores_a: marcListA,
             marcadores_b: marcListB,
             status: 'Ao Vivo (Manual)',
-          }),
-        },
-      )
+          },
+        })
+      } catch (errSend: any) {
+        const status = errSend?.status || errSend?.statusCode
+        if (status === 401 || status === 403) {
+          toast({
+            title: 'Sessão expirada',
+            description: 'Sua sessão expirou. Faça login novamente.',
+            variant: 'destructive',
+          })
+          navigate('/login', {
+            state: { from: location.pathname, sessionExpired: true },
+            replace: true,
+          })
+          return
+        }
+        resBackend = null
+      }
 
-      if (!res.ok) {
+      if (!resBackend?.success) {
         // Fallback direto via SDK do PocketBase
         let rec
         try {
@@ -568,10 +607,38 @@ export default function BolaoDashboard() {
         }
       }
 
+      toast({
+        title: 'Sobrescrita salva',
+        description: 'Placar e marcadores manuais salvos com sucesso.',
+      })
+
       setAdminSobrescritaJogo(null)
-    } catch (err) {
+    } catch (err: any) {
       console.error('Erro ao salvar sobrescrita manual:', err)
-      alert('Erro ao salvar sobrescrita manual. Verifique sua conexão.')
+      const isAuthError =
+        err?.status === 401 ||
+        err?.status === 403 ||
+        err?.message?.includes('401') ||
+        err?.message?.includes('Não autorizado') ||
+        err?.message?.includes('Sua sessão expirou')
+
+      if (isAuthError) {
+        toast({
+          title: 'Sessão expirada',
+          description: 'Sua sessão expirou. Faça login novamente.',
+          variant: 'destructive',
+        })
+        navigate('/login', {
+          state: { from: location.pathname, sessionExpired: true },
+          replace: true,
+        })
+      } else {
+        toast({
+          title: 'Erro ao salvar sobrescrita',
+          description: err?.message || 'Erro ao salvar sobrescrita manual. Verifique sua conexão.',
+          variant: 'destructive',
+        })
+      }
       setAdminSobrescritaJogo((prev) => (prev ? { ...prev, isSaving: false } : null))
     }
   }
@@ -591,6 +658,16 @@ export default function BolaoDashboard() {
 
     try {
       setUpdatingLiveGameId(jogo.id)
+
+      // Se a sessão estiver ativa, garante token atualizado
+      if (pb.authStore.isValid) {
+        try {
+          await pb.collection('users').authRefresh()
+        } catch (_) {
+          // segue com o token atual
+        }
+      }
+
       const res = await pb.send<{
         success: boolean
         message?: string
@@ -627,6 +704,27 @@ export default function BolaoDashboard() {
         })
       }
     } catch (err: any) {
+      const status = err?.status || err?.statusCode
+      const isAuthError =
+        status === 401 ||
+        status === 403 ||
+        err?.data?.error?.toLowerCase?.().includes('não autorizado') ||
+        err?.data?.error?.toLowerCase?.().includes('sessão expirou') ||
+        err?.message?.toLowerCase?.().includes('não autorizado')
+
+      if (isAuthError) {
+        toast({
+          title: 'Sessão expirada',
+          description: 'Sua sessão expirou. Faça login novamente.',
+          variant: 'destructive',
+        })
+        navigate('/login', {
+          state: { from: location.pathname, sessionExpired: true },
+          replace: true,
+        })
+        return
+      }
+
       const errMsg =
         err?.data?.error ||
         err?.message ||
@@ -653,26 +751,44 @@ export default function BolaoDashboard() {
     })
 
     try {
-      const headers: Record<string, string> = {
-        'Content-Type': 'application/json',
-      }
-      if (pb.authStore.token) {
-        headers['Authorization'] = pb.authStore.token
+      if (pb.authStore.isValid) {
+        try {
+          await pb.collection('users').authRefresh()
+        } catch {
+          /* intentionally ignored */
+        }
       }
 
-      const res = await fetch(
-        `${import.meta.env.VITE_POCKETBASE_URL}/backend/v1/placar-ao-vivo/sobrescrever`,
-        {
-          method: 'POST',
-          headers,
-          body: JSON.stringify({
-            jogo_id: jogoId,
-            remover: true,
-          }),
-        },
-      )
+      let resBackend: { success?: boolean } | null = null
+      try {
+        resBackend = await pb.send<{ success?: boolean }>(
+          '/backend/v1/placar-ao-vivo/sobrescrever',
+          {
+            method: 'POST',
+            body: {
+              jogo_id: jogoId,
+              remover: true,
+            },
+          },
+        )
+      } catch (errSend: any) {
+        const status = errSend?.status || errSend?.statusCode
+        if (status === 401 || status === 403) {
+          toast({
+            title: 'Sessão expirada',
+            description: 'Sua sessão expirou. Faça login novamente.',
+            variant: 'destructive',
+          })
+          navigate('/login', {
+            state: { from: location.pathname, sessionExpired: true },
+            replace: true,
+          })
+          return
+        }
+        resBackend = null
+      }
 
-      if (!res.ok) {
+      if (!resBackend?.success) {
         const rec = await pb
           .collection('config_integracoes')
           .getFirstListItem("chave = 'sobrescrita_jogos'")

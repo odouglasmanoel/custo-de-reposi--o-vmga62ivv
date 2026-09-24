@@ -148,6 +148,15 @@ export default function AdminJogos() {
 
     try {
       setUpdatingLiveGameId(jogo.id)
+
+      if (pb.authStore.isValid) {
+        try {
+          await pb.collection('users').authRefresh()
+        } catch {
+          /* intentionally ignored */
+        }
+      }
+
       const res = await pb.send<{
         success: boolean
         message?: string
@@ -183,6 +192,27 @@ export default function AdminJogos() {
         })
       }
     } catch (err: any) {
+      const status = err?.status || err?.statusCode
+      const isAuthError =
+        status === 401 ||
+        status === 403 ||
+        err?.data?.error?.toLowerCase?.().includes('não autorizado') ||
+        err?.data?.error?.toLowerCase?.().includes('sessão expirou') ||
+        err?.message?.toLowerCase?.().includes('não autorizado')
+
+      if (isAuthError) {
+        toast({
+          title: 'Sessão expirada',
+          description: 'Sua sessão expirou. Faça login novamente.',
+          variant: 'destructive',
+        })
+        navigate('/login', {
+          state: { from: location.pathname, sessionExpired: true },
+          replace: true,
+        })
+        return
+      }
+
       const errMsg =
         err?.data?.error ||
         err?.message ||

@@ -3922,15 +3922,23 @@ routerAdd('POST', '/backend/v1/admin/resetar-contador-api', (e) => {
 // -------------------------------------------------------------
 routerAdd('POST', '/backend/v1/placar-ao-vivo/sobrescrever', (e) => {
   try {
-    const authRecord = e.auth
+    const authRecord = e.auth || (e.get ? e.get('authRecord') : null)
     if (!authRecord) {
-      return e.unauthorizedError('Usuário não autenticado')
+      return e.unauthorizedError('Sua sessão expirou. Faça login novamente.')
     }
 
-    const authName = (authRecord.getString('name') || authRecord.getString('username') || '')
+    const authName = (
+      (authRecord.getString ? authRecord.getString('name') : authRecord.get('name')) ||
+      (authRecord.getString ? authRecord.getString('username') : authRecord.get('username')) ||
+      ''
+    )
       .trim()
       .toLowerCase()
-    const authEmail = (authRecord.getString('email') || '').trim().toLowerCase()
+    const authEmail = (
+      (authRecord.getString ? authRecord.getString('email') : authRecord.get('email')) || ''
+    )
+      .trim()
+      .toLowerCase()
     const isAdmin =
       authName === 'douglas' ||
       authEmail === 'douglas@repress.com.br' ||

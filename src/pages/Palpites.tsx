@@ -1088,23 +1088,42 @@ export default function Palpites() {
     textClass?: string
   }) {
     const [hasError, setHasError] = useState(false)
-    if (!escudo || hasError) {
+    const [currentSrc, setCurrentSrc] = useState<string | undefined>(escudo)
+
+    useEffect(() => {
+      setCurrentSrc(escudo)
+      setHasError(false)
+    }, [escudo])
+
+    const handleError = () => {
+      if (nomeTime) {
+        const fallbackBadge = readEscudoCache(nomeTime)
+        if (fallbackBadge && fallbackBadge !== currentSrc) {
+          setCurrentSrc(fallbackBadge)
+          return
+        }
+      }
+      setHasError(true)
+    }
+
+    if (!currentSrc || hasError) {
       return (
         <div
           className={`${sizeClass} rounded-full bg-slate-100 border border-slate-300 flex items-center justify-center ${textClass}`}
+          title={nomeTime}
         >
-          {sigla}
+          {sigla || (nomeTime ? nomeTime.slice(0, 2).toUpperCase() : '?')}
         </div>
       )
     }
     return (
       <img
-        src={escudo}
+        src={currentSrc}
         alt={nomeTime}
         className={`${sizeClass} object-contain drop-shadow-xs`}
         loading="eager"
         decoding="async"
-        onError={() => setHasError(true)}
+        onError={handleError}
       />
     )
   }
