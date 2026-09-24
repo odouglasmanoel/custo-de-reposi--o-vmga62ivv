@@ -1622,7 +1622,10 @@ export default function Enquetes() {
                       {jogo.time_a.slice(0, 2).toUpperCase()}
                     </span>
                   </div>
-                  <span className="text-xs font-bold text-slate-800 line-clamp-1">
+                  <span
+                    className="text-[11px] sm:text-xs font-bold text-slate-800 leading-tight break-words line-clamp-2 sm:line-clamp-3"
+                    title={jogo.time_a}
+                  >
                     {jogo.time_a}
                   </span>
                 </div>
@@ -1632,7 +1635,10 @@ export default function Enquetes() {
 
                 {/* Time B */}
                 <div className="flex flex-1 items-center justify-end gap-2 text-right min-w-0">
-                  <span className="text-xs font-bold text-slate-800 line-clamp-1">
+                  <span
+                    className="text-[11px] sm:text-xs font-bold text-slate-800 leading-tight break-words line-clamp-2 sm:line-clamp-3 text-right"
+                    title={jogo.time_b}
+                  >
                     {jogo.time_b}
                   </span>
                   {jogo.logo_visitante ? (
@@ -2381,12 +2387,15 @@ export default function Enquetes() {
                                     {jogo.time_a.slice(0, 2).toUpperCase()}
                                   </span>
                                 </div>
-                                <span className="text-sm font-bold text-slate-900">
+                                <span
+                                  className="text-xs sm:text-sm font-bold text-slate-900 leading-tight break-words"
+                                  title={jogo.time_a}
+                                >
                                   {jogo.time_a}
                                 </span>
                               </div>
 
-                              <span className="text-xs font-black text-slate-400">x</span>
+                              <span className="text-xs font-black text-slate-400 shrink-0">x</span>
 
                               {/* Escudo Visitante */}
                               <div className="flex items-center gap-1.5">
@@ -2415,7 +2424,10 @@ export default function Enquetes() {
                                     {jogo.time_b.slice(0, 2).toUpperCase()}
                                   </span>
                                 </div>
-                                <span className="text-sm font-bold text-slate-900">
+                                <span
+                                  className="text-xs sm:text-sm font-bold text-slate-900 leading-tight break-words"
+                                  title={jogo.time_b}
+                                >
                                   {jogo.time_b}
                                 </span>
                               </div>
@@ -2944,8 +2956,13 @@ export default function Enquetes() {
                               {j.time_a.slice(0, 2).toUpperCase()}
                             </span>
                           </div>
-                          <span className="font-bold text-slate-800">{j.time_a}</span>
-                          <span className="text-slate-400 font-bold text-[10px]">x</span>
+                          <span
+                            className="font-bold text-slate-800 break-words leading-tight"
+                            title={j.time_a}
+                          >
+                            {j.time_a}
+                          </span>
+                          <span className="text-slate-400 font-bold text-[10px] shrink-0">x</span>
                           {/* Escudo Visitante */}
                           {j.logo_visitante ? (
                             <img
@@ -2972,7 +2989,12 @@ export default function Enquetes() {
                               {j.time_b.slice(0, 2).toUpperCase()}
                             </span>
                           </div>
-                          <span className="font-bold text-slate-800">{j.time_b}</span>
+                          <span
+                            className="font-bold text-slate-800 break-words leading-tight"
+                            title={j.time_b}
+                          >
+                            {j.time_b}
+                          </span>
                           {isManual && (
                             <Badge
                               variant="outline"
@@ -3136,8 +3158,13 @@ export default function Enquetes() {
                       {j.time_a.slice(0, 2).toUpperCase()}
                     </span>
                   </div>
-                  <span className="font-bold text-slate-800">{j.time_a}</span>
-                  <span className="text-[10px] font-bold text-slate-400">x</span>
+                  <span
+                    className="font-bold text-slate-800 break-words leading-tight"
+                    title={j.time_a}
+                  >
+                    {j.time_a}
+                  </span>
+                  <span className="text-[10px] font-bold text-slate-400 shrink-0">x</span>
                   {j.logo_visitante ? (
                     <img
                       src={j.logo_visitante}
@@ -3162,7 +3189,12 @@ export default function Enquetes() {
                       {j.time_b.slice(0, 2).toUpperCase()}
                     </span>
                   </div>
-                  <span className="font-bold text-slate-800">{j.time_b}</span>
+                  <span
+                    className="font-bold text-slate-800 break-words leading-tight"
+                    title={j.time_b}
+                  >
+                    {j.time_b}
+                  </span>
                 </div>
                 <span className="text-slate-500 text-[11px]">
                   ({j.campeonato} — {formatDataBR(j.data)} {formatHoraBR(j.horario || '16:00')})

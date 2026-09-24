@@ -1084,7 +1084,7 @@ export default function AdminJogos() {
                       <td className="px-4 py-3.5">
                         <div className="flex flex-wrap items-center gap-1.5">
                           <span
-                            className="font-bold text-[#0F172A] line-clamp-2 leading-tight"
+                            className="font-bold text-[#0F172A] break-words leading-tight line-clamp-3 sm:line-clamp-none"
                             title={`${jogo.time_a} x ${jogo.time_b}`}
                           >
                             {jogo.time_a} x {jogo.time_b}
@@ -1674,7 +1674,7 @@ export default function AdminJogos() {
                         <div key={idx} className="flex items-center justify-between py-1 text-xs">
                           <div className="flex flex-col min-w-0 max-w-[220px]">
                             <span
-                              className="font-semibold text-slate-700 line-clamp-2 leading-tight"
+                              className="font-semibold text-slate-700 break-words leading-tight line-clamp-3 sm:line-clamp-none"
                               title={`${game.time_a} x ${game.time_b}`}
                             >
                               {game.time_a} x {game.time_b}

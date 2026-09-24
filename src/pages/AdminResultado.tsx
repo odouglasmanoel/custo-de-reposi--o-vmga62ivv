@@ -471,7 +471,7 @@ export default function AdminResultado() {
               </span>
               <div className="flex flex-wrap items-center gap-2">
                 <h1
-                  className="text-xl font-bold tracking-tight text-[#0F172A] sm:text-2xl line-clamp-2 leading-tight"
+                  className="text-xl font-bold tracking-tight text-[#0F172A] sm:text-2xl break-words leading-tight line-clamp-3 sm:line-clamp-none"
                   title={`${jogo.time_a} x ${jogo.time_b}`}
                 >
                   {jogo.time_a} x {jogo.time_b}
