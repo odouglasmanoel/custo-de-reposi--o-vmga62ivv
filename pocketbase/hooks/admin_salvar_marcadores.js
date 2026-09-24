@@ -124,6 +124,27 @@ routerAdd('POST', '/backend/v1/admin/salvar-marcadores', (e) => {
     palpiteRec.set('goleadores_b', goleadoresB)
     $app.save(palpiteRec)
 
+    // Se a partida estiver sendo finalizada (placar final presente), setar status='finalizado' e resultado_finalizado=true
+    try {
+      const pRealA = jogoRec.get('placar_a')
+      const pRealB = jogoRec.get('placar_b')
+      const hasPlacar =
+        pRealA !== null &&
+        pRealA !== undefined &&
+        pRealA !== '' &&
+        pRealB !== null &&
+        pRealB !== undefined &&
+        pRealB !== ''
+
+      if (hasPlacar) {
+        jogoRec.set('status', 'finalizado')
+        jogoRec.set('resultado_finalizado', true)
+        $app.save(jogoRec)
+      }
+    } catch (errStatusJogo) {
+      console.log('[salvar-marcadores] Aviso ao atualizar status do jogo:', errStatusJogo)
+    }
+
     // Sincroniza posições no cadastro de gols do jogo se existirem em gols_time_a / gols_time_b
     try {
       const normalizarParaMatch = (str) => {

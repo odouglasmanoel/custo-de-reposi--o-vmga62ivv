@@ -46,6 +46,7 @@ export interface Jogo extends RecordModel {
   placar_a?: number | null
   placar_b?: number | null
   resultado_finalizado: boolean
+  status?: string
   gols_time_a?: ScorerItem[]
   gols_time_b?: ScorerItem[]
   tem_penaltis: boolean

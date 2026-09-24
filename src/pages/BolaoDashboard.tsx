@@ -1214,12 +1214,55 @@ export default function BolaoDashboard() {
   // Exclui qualquer jogo concluído (no banco, no status ou já encerrado na API de futebol)
   const jogosLiberados = useMemo(() => {
     const targetGames = isGeral ? allJogos : jogos
+    const FINALIZADO_STATUSES = new Set(['finalizado', 'encerrado', 'ft', 'finished', 'aet', 'pen'])
+    const NAO_FINALIZADO_STATUSES = new Set([
+      'pendente',
+      'em_andamento',
+      'ao_vivo',
+      'live',
+      '1h',
+      '2h',
+      'ht',
+      'aguardando',
+      'agendado',
+    ])
+
     return targetGames
       .filter((j) => {
+        // 1. Descartar se resultado_finalizado for true
+        if (j.resultado_finalizado === true) return false
+
         const jogoDataISO = normalizeDataISO(j.data)
         const matchedLive = resolveLiveScoreForGame(j, apiFixtures, 0.55, jogoDataISO)
+
+        // 5. Descartar se matchedLive?.isFinished === true
+        if (matchedLive?.isFinished === true) return false
+
         const concluido = isJogoConcluido(j, matchedLive)
         if (concluido) return false
+
+        // 2. Normalizar status
+        const st = (j.status || '').toLowerCase().trim()
+
+        // 3. Descartar se st ∈ ['finalizado', 'encerrado', 'ft', 'finished', 'aet', 'pen']
+        if (FINALIZADO_STATUSES.has(st)) return false
+
+        // 4. Incluir SOMENTE partidas com status de não-finalizado:
+        // st ∈ ['pendente', 'em_andamento', 'ao_vivo', 'live', '1h', '2h', 'ht', 'aguardando', 'agendado']
+        // ou st vazio com kickoff futuro/não iniciado e sem placar final preenchido.
+        const temPlacarFinal =
+          j.placar_a !== null &&
+          j.placar_a !== undefined &&
+          j.placar_b !== null &&
+          j.placar_b !== undefined
+
+        if (st) {
+          if (!NAO_FINALIZADO_STATUSES.has(st)) return false
+        } else {
+          // Status vazio: descartar se placar final já estiver preenchido
+          if (temPlacarFinal) return false
+        }
+
         if (!isPalpiteEncerrado(j.data, j.hora, nowMs)) return false
 
         const kickoffMs = getJogoKickoffTimestamp(j.data, j.hora)

@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-09-24T11:45:47.210Z",
+  "generatedAt": "2026-09-24T12:37:57.590Z",
   "collections": [
     {
       "name": "users",
@@ -326,6 +326,12 @@
         },
         {
           "name": "url_escudo_visitante",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "status",
           "type": "text",
           "required": false,
           "system": false

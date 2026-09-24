@@ -12,6 +12,12 @@ routerAdd('POST', '/backend/v1/calcular-pontuacao', (e) => {
       return e.notFoundError('Jogo não encontrado')
     }
 
+    // Quando o payload indicar resultado finalizado (placar preenchido/finalização),
+    // garantir status='finalizado' e resultado_finalizado=true antes de salvar
+    jogo.set('status', 'finalizado')
+    jogo.set('resultado_finalizado', true)
+    $app.save(jogo)
+
     const bolaoId = jogo.getString('bolao')
     const placarRealA = jogo.getInt('placar_a')
     const placarRealB = jogo.getInt('placar_b')

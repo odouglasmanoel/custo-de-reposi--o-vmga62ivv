@@ -369,6 +369,7 @@ export default function AdminResultado() {
       const gamePayload: Record<string, unknown> = {
         placar_a: Number(placarA),
         placar_b: Number(placarB),
+        status: 'finalizado',
         resultado_finalizado: true,
         gols_time_a: golsA.filter((g) => g.nome.trim()),
         gols_time_b: golsB.filter((g) => g.nome.trim()),
