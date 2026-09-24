@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useNavigate, useLocation } from 'react-router-dom'
 import {
   KeyRound,
   Shield,
@@ -55,6 +55,8 @@ interface ConfigState {
 export default function AdminConfiguracoes() {
   const { isAdmin } = useAuth()
   const { toast } = useToast()
+  const navigate = useNavigate()
+  const location = useLocation()
 
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
@@ -91,49 +93,80 @@ export default function AdminConfiguracoes() {
     waiting_reset: boolean
   } | null>(null)
 
+  const handleAuthOrApiError = (
+    err: unknown,
+    fallbackTitle: string,
+    fallbackDescription: string,
+  ): boolean => {
+    const errorObj = err as {
+      status?: number
+      statusCode?: number
+      message?: string
+      data?: { message?: string; error?: string }
+    } | null
+    const status = errorObj?.status || errorObj?.statusCode
+    const msg = errorObj?.data?.message || errorObj?.data?.error || errorObj?.message || ''
+
+    if (
+      status === 401 ||
+      status === 403 ||
+      msg.includes('401') ||
+      msg.includes('403') ||
+      msg.toLowerCase().includes('token') ||
+      msg.toLowerCase().includes('não autenticado')
+    ) {
+      toast({
+        title: 'Sessão Expirada',
+        description: 'Sua sessão expirou. Por favor, faça login novamente para continuar.',
+        variant: 'destructive',
+      })
+      navigate('/login', {
+        state: { from: location, sessionExpired: true },
+        replace: true,
+      })
+      return true
+    }
+
+    const cleanDesc =
+      !msg || msg.toLowerCase().includes('failed to fetch') ? fallbackDescription : msg
+
+    toast({
+      title: fallbackTitle,
+      description: cleanDesc,
+      variant: 'destructive',
+    })
+    return false
+  }
+
   const loadConfig = async () => {
     try {
       setLoading(true)
-      const headers: Record<string, string> = {}
-      if (pb.authStore.token) {
-        headers['Authorization'] = pb.authStore.token
-      }
-      const res = await fetch(
-        `${import.meta.env.VITE_POCKETBASE_URL}/backend/v1/placar-ao-vivo/config`,
-        { headers },
-      )
-      if (res.ok) {
-        const data = await res.json()
-        setConfig({
-          provedor: 'api_football',
-          hasKey: Boolean(data.hasKey),
-          hasDbKey: Boolean(data.hasDbKey),
-          hasSecretFallback: Boolean(data.hasSecretFallback),
-          maskedKey: data.maskedKey || '',
-          ativo: data.ativo !== false,
-          api_validada: data.api_validada || null,
-        })
-        setAtivoInput(data.ativo !== false)
-        if (data.usage) {
-          setDailyUsageInfo(data.usage)
-          setMaxLimitInput(String(data.usage.max_limit || 80))
-          setTravaDesativadaInput(Boolean(data.usage.trava_desativada))
-        }
-      } else {
-        const err = await res.json().catch(() => ({}))
-        toast({
-          title: 'Erro ao carregar configurações',
-          description: err.message || 'Falha na resposta do servidor',
-          variant: 'destructive',
-        })
+      const data: any = await pb.send('/backend/v1/placar-ao-vivo/config', {
+        method: 'GET',
+      })
+
+      setConfig({
+        provedor: 'api_football',
+        hasKey: Boolean(data.hasKey),
+        hasDbKey: Boolean(data.hasDbKey),
+        hasSecretFallback: Boolean(data.hasSecretFallback),
+        maskedKey: data.maskedKey || '',
+        ativo: data.ativo !== false,
+        api_validada: data.api_validada || null,
+      })
+      setAtivoInput(data.ativo !== false)
+      if (data.usage) {
+        setDailyUsageInfo(data.usage)
+        setMaxLimitInput(String(data.usage.max_limit || 80))
+        setTravaDesativadaInput(Boolean(data.usage.trava_desativada))
       }
     } catch (err: unknown) {
       console.error('Erro ao carregar configurações de integração:', err)
-      toast({
-        title: 'Erro de comunicação',
-        description: 'Não foi possível carregar as configurações de integração.',
-        variant: 'destructive',
-      })
+      handleAuthOrApiError(
+        err,
+        'Erro de comunicação',
+        'Não foi possível carregar as configurações de integração do servidor.',
+      )
     } finally {
       setLoading(false)
     }
@@ -148,13 +181,6 @@ export default function AdminConfiguracoes() {
     setSaving(true)
     setTestResult(null)
     try {
-      const headers: Record<string, string> = {
-        'Content-Type': 'application/json',
-      }
-      if (pb.authStore.token) {
-        headers['Authorization'] = pb.authStore.token
-      }
-
       const parsedMaxLimit = parseInt(maxLimitInput, 10)
       const payload: {
         provedor: 'api_football'
@@ -173,45 +199,31 @@ export default function AdminConfiguracoes() {
         payload.api_key = apiKeyInput.trim()
       }
 
-      const res = await fetch(
-        `${import.meta.env.VITE_POCKETBASE_URL}/backend/v1/placar-ao-vivo/config`,
-        {
-          method: 'POST',
-          headers,
-          body: JSON.stringify(payload),
-        },
-      )
-
-      if (res.ok) {
-        const data = await res.json()
-        toast({
-          title: 'Configurações salvas!',
-          description: 'Configurações e limites da API-Football gravados com sucesso.',
-        })
-        setConfig({
-          provedor: 'api_football',
-          hasKey: Boolean(data.hasKey),
-          hasDbKey: true,
-          hasSecretFallback: config.hasSecretFallback,
-          maskedKey: data.maskedKey,
-          ativo: data.ativo,
-        })
-        setApiKeyInput('') // Limpa campo de edição
-        await loadConfig()
-      } else {
-        const err = await res.json().catch(() => ({}))
-        toast({
-          title: 'Erro ao salvar',
-          description: err.message || 'Falha ao salvar no banco de dados',
-          variant: 'destructive',
-        })
-      }
-    } catch (err: unknown) {
-      toast({
-        title: 'Erro ao salvar',
-        description: err instanceof Error ? err.message : 'Falha na requisição',
-        variant: 'destructive',
+      const data: any = await pb.send('/backend/v1/placar-ao-vivo/config', {
+        method: 'POST',
+        body: payload,
       })
+
+      toast({
+        title: 'Configurações salvas!',
+        description: 'Configurações e limites da API-Football gravados com sucesso.',
+      })
+      setConfig({
+        provedor: 'api_football',
+        hasKey: Boolean(data.hasKey),
+        hasDbKey: true,
+        hasSecretFallback: config.hasSecretFallback,
+        maskedKey: data.maskedKey,
+        ativo: data.ativo,
+      })
+      setApiKeyInput('') // Limpa campo de edição
+      await loadConfig()
+    } catch (err: unknown) {
+      handleAuthOrApiError(
+        err,
+        'Erro ao salvar',
+        'Não foi possível salvar as configurações no servidor.',
+      )
     } finally {
       setSaving(false)
     }
@@ -220,23 +232,11 @@ export default function AdminConfiguracoes() {
   const handleResetApiCounter = async () => {
     setResettingApiCounter(true)
     try {
-      const headers: Record<string, string> = {
-        'Content-Type': 'application/json',
-      }
-      if (pb.authStore.token) {
-        headers['Authorization'] = pb.authStore.token
-      }
+      const data: any = await pb.send('/backend/v1/admin/resetar-contador-api', {
+        method: 'POST',
+      })
 
-      const res = await fetch(
-        `${import.meta.env.VITE_POCKETBASE_URL}/backend/v1/admin/resetar-contador-api`,
-        {
-          method: 'POST',
-          headers,
-        },
-      )
-
-      const data = await res.json().catch(() => ({}))
-      if (res.ok && data.success) {
+      if (data && data.success) {
         toast({
           title: 'Contador da API Resetado! 🔄',
           description:
@@ -250,16 +250,16 @@ export default function AdminConfiguracoes() {
       } else {
         toast({
           title: 'Erro ao resetar contador',
-          description: data.error || data.message || 'Falha na resposta do servidor',
+          description: data?.error || data?.message || 'Falha na resposta do servidor',
           variant: 'destructive',
         })
       }
     } catch (err: unknown) {
-      toast({
-        title: 'Erro ao resetar contador',
-        description: err instanceof Error ? err.message : 'Falha na requisição',
-        variant: 'destructive',
-      })
+      handleAuthOrApiError(
+        err,
+        'Erro ao resetar contador',
+        'Não foi possível resetar o contador da API no servidor.',
+      )
     } finally {
       setResettingApiCounter(false)
     }
@@ -269,27 +269,15 @@ export default function AdminConfiguracoes() {
     setTesting(true)
     setTestResult(null)
     try {
-      const headers: Record<string, string> = {
-        'Content-Type': 'application/json',
-      }
-      if (pb.authStore.token) {
-        headers['Authorization'] = pb.authStore.token
-      }
-
-      const res = await fetch(
-        `${import.meta.env.VITE_POCKETBASE_URL}/backend/v1/placar-ao-vivo/test`,
-        {
-          method: 'POST',
-          headers,
-          body: JSON.stringify({
-            provedor: 'api_football',
-            api_key: apiKeyInput.trim() || undefined,
-          }),
+      const data: any = await pb.send('/backend/v1/placar-ao-vivo/test', {
+        method: 'POST',
+        body: {
+          provedor: 'api_football',
+          api_key: apiKeyInput.trim() || undefined,
         },
-      )
+      })
 
-      const data = await res.json().catch(() => ({}))
-      if (res.ok && data.success) {
+      if (data && data.success) {
         setTestResult({
           success: true,
           message: data.message || 'Conexão testada com sucesso!',
@@ -301,19 +289,26 @@ export default function AdminConfiguracoes() {
       } else {
         setTestResult({
           success: false,
-          message: data.message || 'Falha ao conectar com a API-Football.',
+          message: data?.message || 'Falha ao conectar com a API-Football.',
         })
         toast({
-          title: data.rate_limited ? 'Limite da API atingido' : 'Falha no teste de conexão',
-          description: data.message || 'Verifique a chave informada.',
-          variant: data.rate_limited ? 'default' : 'destructive',
+          title: data?.rate_limited ? 'Limite da API atingido' : 'Falha no teste de conexão',
+          description: data?.message || 'Verifique a chave informada.',
+          variant: data?.rate_limited ? 'default' : 'destructive',
         })
       }
     } catch (err: unknown) {
-      setTestResult({
-        success: false,
-        message: err instanceof Error ? err.message : 'Erro de rede ou timeout.',
-      })
+      const handled = handleAuthOrApiError(
+        err,
+        'Falha no teste de conexão',
+        'Não foi possível conectar à API-Football no momento.',
+      )
+      if (!handled) {
+        setTestResult({
+          success: false,
+          message: 'Erro de comunicação ao testar conexão.',
+        })
+      }
     } finally {
       setTesting(false)
     }
@@ -322,23 +317,11 @@ export default function AdminConfiguracoes() {
   const handleClearCache = async () => {
     setClearingCache(true)
     try {
-      const headers: Record<string, string> = {
-        'Content-Type': 'application/json',
-      }
-      if (pb.authStore.token) {
-        headers['Authorization'] = pb.authStore.token
-      }
+      const data: any = await pb.send('/backend/v1/placar-ao-vivo/limpar-cache', {
+        method: 'POST',
+      })
 
-      const res = await fetch(
-        `${import.meta.env.VITE_POCKETBASE_URL}/backend/v1/placar-ao-vivo/limpar-cache`,
-        {
-          method: 'POST',
-          headers,
-        },
-      )
-
-      const data = await res.json().catch(() => ({}))
-      if (res.ok && data.success) {
+      if (data && data.success) {
         toast({
           title: 'Cache limpo com sucesso! 🧹',
           description: data.message || 'Cache limpo — próxima busca será direto na API-Football',
@@ -346,16 +329,16 @@ export default function AdminConfiguracoes() {
       } else {
         toast({
           title: 'Erro ao limpar cache',
-          description: data.error || data.message || 'Falha ao comunicar com o servidor',
+          description: data?.error || data?.message || 'Falha ao comunicar com o servidor',
           variant: 'destructive',
         })
       }
     } catch (err: unknown) {
-      toast({
-        title: 'Erro ao limpar cache',
-        description: err instanceof Error ? err.message : 'Falha na requisição',
-        variant: 'destructive',
-      })
+      handleAuthOrApiError(
+        err,
+        'Erro ao limpar cache',
+        'Não foi possível limpar o cache no servidor.',
+      )
     } finally {
       setClearingCache(false)
     }

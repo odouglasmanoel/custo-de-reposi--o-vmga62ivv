@@ -23,7 +23,7 @@ export const ProtectedRoute: React.FC<{ children: React.ReactNode }> = ({ childr
   }
 
   if (!user && !loading && !pb.authStore.isValid) {
-    return <Navigate to="/login" state={{ from: location }} replace />
+    return <Navigate to="/login" state={{ from: location, sessionExpired: true }} replace />
   }
 
   return <>{children}</>
@@ -47,7 +47,7 @@ export const BolaoRoute: React.FC<{ children: React.ReactNode }> = ({ children }
   }
 
   if (!user && !loading && !pb.authStore.isValid) {
-    return <Navigate to="/login" state={{ from: location }} replace />
+    return <Navigate to="/login" state={{ from: location, sessionExpired: true }} replace />
   }
 
   if (!isBolaoMember && !loading) {
@@ -59,6 +59,7 @@ export const BolaoRoute: React.FC<{ children: React.ReactNode }> = ({ children }
 
 export const AdminRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { user, loading, isAdmin } = useAuth()
+  const location = useLocation()
 
   const hasValidAuth = !!user || pb.authStore.isValid
 
@@ -76,7 +77,7 @@ export const AdminRoute: React.FC<{ children: React.ReactNode }> = ({ children }
   }
 
   if (!user && !loading && !pb.authStore.isValid) {
-    return <Navigate to="/login" replace />
+    return <Navigate to="/login" state={{ from: location, sessionExpired: true }} replace />
   }
 
   if (!isAdmin && !loading) {

@@ -92,7 +92,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, [user])
 
   const isAdmin = useMemo(() => {
-    return isAdminName(user?.name)
+    if (!user) return false
+    const name = user.name || user.username || ''
+    const email = user.email || ''
+    return (
+      isAdminName(name) ||
+      isAdminName(email) ||
+      email.toLowerCase() === 'douglas@repress.com.br' ||
+      email.toLowerCase() === 'douglas.manoel@repress.com.br'
+    )
   }, [user])
 
   const logout = () => {

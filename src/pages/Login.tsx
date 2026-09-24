@@ -18,6 +18,11 @@ export default function Login() {
   const [loginError, setLoginError] = useState<string | null>(null)
   const [passwordError, setPasswordError] = useState<string | null>(null)
 
+  // Detecta se o usuário foi redirecionado por sessão expirada
+  const sessionExpired = Boolean(
+    (location.state as { sessionExpired?: boolean } | undefined)?.sessionExpired,
+  )
+
   // Desvio imediato não-bloqueante se o usuário já estiver logado no PocketBase
   React.useEffect(() => {
     if (pb.authStore.isValid && pb.authStore.record) {
@@ -157,6 +162,13 @@ export default function Login() {
               </h2>
               <p className="mt-1 text-sm text-[#64748B]">Entre com seu login para continuar.</p>
             </div>
+
+            {sessionExpired && !error && (
+              <div className="mb-5 flex items-center gap-2.5 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
+                <AlertCircle className="h-4 w-4 shrink-0 text-amber-600" />
+                <span>Sua sessão expirou. Por favor, faça login novamente para continuar.</span>
+              </div>
+            )}
 
             {error && (
               <div className="mb-5 flex items-center gap-2.5 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">

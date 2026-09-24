@@ -3291,10 +3291,16 @@ routerAdd('GET', '/backend/v1/placar-ao-vivo/config', (e) => {
 
     const internalSecretHeader = e.requestInfo().headers['x-internal-secret'] || ''
     const isTestParam = e.requestInfo().query.test === '1'
-    const userName = (authRecord.getString('name') || authRecord.getString('username') || '')
+    const authName = (authRecord.getString('name') || authRecord.getString('username') || '')
       .trim()
       .toLowerCase()
-    if (userName !== 'douglas' && internalSecretHeader !== 'skip-cron' && !isTestParam) {
+    const authEmail = (authRecord.getString('email') || '').trim().toLowerCase()
+    const isAdmin =
+      authName === 'douglas' ||
+      authEmail === 'douglas@repress.com.br' ||
+      authEmail === 'douglas.manoel@repress.com.br'
+
+    if (!isAdmin && internalSecretHeader !== 'skip-cron' && !isTestParam) {
       return e.forbiddenError('Acesso restrito ao administrador Douglas.')
     }
 
@@ -3405,10 +3411,16 @@ routerAdd('POST', '/backend/v1/placar-ao-vivo/config', (e) => {
       return e.unauthorizedError('Usuário não autenticado')
     }
 
-    const userName = (authRecord.getString('name') || authRecord.getString('username') || '')
+    const authName = (authRecord.getString('name') || authRecord.getString('username') || '')
       .trim()
       .toLowerCase()
-    if (userName !== 'douglas') {
+    const authEmail = (authRecord.getString('email') || '').trim().toLowerCase()
+    const isAdmin =
+      authName === 'douglas' ||
+      authEmail === 'douglas@repress.com.br' ||
+      authEmail === 'douglas.manoel@repress.com.br'
+
+    if (!isAdmin) {
       return e.forbiddenError('Acesso restrito ao administrador Douglas.')
     }
 
@@ -3534,12 +3546,18 @@ routerAdd('POST', '/backend/v1/placar-ao-vivo/test', (e) => {
       return e.unauthorizedError('Usuário não autenticado')
     }
 
-    const userName = authRecord
+    const authName = authRecord
       ? (authRecord.getString('name') || authRecord.getString('username') || '')
           .trim()
           .toLowerCase()
       : ''
-    if (userName !== 'douglas' && internalSecretHeader !== 'skip-cron' && !isTestCall) {
+    const authEmail = authRecord ? (authRecord.getString('email') || '').trim().toLowerCase() : ''
+    const isAdmin =
+      authName === 'douglas' ||
+      authEmail === 'douglas@repress.com.br' ||
+      authEmail === 'douglas.manoel@repress.com.br'
+
+    if (!isAdmin && internalSecretHeader !== 'skip-cron' && !isTestCall) {
       return e.forbiddenError('Acesso restrito ao administrador Douglas.')
     }
 
@@ -3706,10 +3724,16 @@ routerAdd('POST', '/backend/v1/placar-ao-vivo/limpar-cache', (e) => {
       return e.unauthorizedError('Usuário não autenticado')
     }
 
-    const userName = (authRecord.getString('name') || authRecord.getString('username') || '')
+    const authName = (authRecord.getString('name') || authRecord.getString('username') || '')
       .trim()
       .toLowerCase()
-    if (userName !== 'douglas') {
+    const authEmail = (authRecord.getString('email') || '').trim().toLowerCase()
+    const isAdmin =
+      authName === 'douglas' ||
+      authEmail === 'douglas@repress.com.br' ||
+      authEmail === 'douglas.manoel@repress.com.br'
+
+    if (!isAdmin) {
       return e.forbiddenError('Acesso restrito ao administrador Douglas.')
     }
 
@@ -3753,10 +3777,16 @@ routerAdd('POST', '/backend/v1/limpar-cache', (e) => {
       return e.unauthorizedError('Usuário não autenticado')
     }
 
-    const userName = (authRecord.getString('name') || authRecord.getString('username') || '')
+    const authName = (authRecord.getString('name') || authRecord.getString('username') || '')
       .trim()
       .toLowerCase()
-    if (userName !== 'douglas') {
+    const authEmail = (authRecord.getString('email') || '').trim().toLowerCase()
+    const isAdmin =
+      authName === 'douglas' ||
+      authEmail === 'douglas@repress.com.br' ||
+      authEmail === 'douglas.manoel@repress.com.br'
+
+    if (!isAdmin) {
       return e.forbiddenError('Acesso restrito ao administrador Douglas.')
     }
 
@@ -3897,10 +3927,16 @@ routerAdd('POST', '/backend/v1/placar-ao-vivo/sobrescrever', (e) => {
       return e.unauthorizedError('Usuário não autenticado')
     }
 
-    const userName = (authRecord.getString('name') || authRecord.getString('username') || '')
+    const authName = (authRecord.getString('name') || authRecord.getString('username') || '')
       .trim()
       .toLowerCase()
-    if (userName !== 'douglas') {
+    const authEmail = (authRecord.getString('email') || '').trim().toLowerCase()
+    const isAdmin =
+      authName === 'douglas' ||
+      authEmail === 'douglas@repress.com.br' ||
+      authEmail === 'douglas.manoel@repress.com.br'
+
+    if (!isAdmin) {
       return e.forbiddenError('Acesso restrito ao administrador Douglas.')
     }
 
