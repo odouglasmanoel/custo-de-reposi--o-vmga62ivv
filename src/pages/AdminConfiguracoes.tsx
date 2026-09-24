@@ -60,6 +60,7 @@ export default function AdminConfiguracoes() {
   const [saving, setSaving] = useState(false)
   const [testing, setTesting] = useState(false)
   const [clearingCache, setClearingCache] = useState(false)
+  const [resettingApiCounter, setResettingApiCounter] = useState(false)
 
   const [config, setConfig] = useState<ConfigState>({
     provedor: 'api_football',
@@ -73,6 +74,8 @@ export default function AdminConfiguracoes() {
   const [apiKeyInput, setApiKeyInput] = useState('')
   const [showKeyText, setShowKeyText] = useState(false)
   const [ativoInput, setAtivoInput] = useState(true)
+  const [maxLimitInput, setMaxLimitInput] = useState('80')
+  const [travaDesativadaInput, setTravaDesativadaInput] = useState(false)
 
   // Status feedback do teste
   const [testResult, setTestResult] = useState<{
@@ -83,6 +86,8 @@ export default function AdminConfiguracoes() {
   const [dailyUsageInfo, setDailyUsageInfo] = useState<{
     count: number
     max_limit: number
+    trava_desativada?: boolean
+    blocked?: boolean
     waiting_reset: boolean
   } | null>(null)
 
@@ -111,6 +116,8 @@ export default function AdminConfiguracoes() {
         setAtivoInput(data.ativo !== false)
         if (data.usage) {
           setDailyUsageInfo(data.usage)
+          setMaxLimitInput(String(data.usage.max_limit || 80))
+          setTravaDesativadaInput(Boolean(data.usage.trava_desativada))
         }
       } else {
         const err = await res.json().catch(() => ({}))
@@ -148,13 +155,18 @@ export default function AdminConfiguracoes() {
         headers['Authorization'] = pb.authStore.token
       }
 
+      const parsedMaxLimit = parseInt(maxLimitInput, 10)
       const payload: {
         provedor: 'api_football'
         api_key?: string
         ativo: boolean
+        max_limit?: number
+        trava_desativada?: boolean
       } = {
         provedor: 'api_football',
         ativo: ativoInput,
+        max_limit: isNaN(parsedMaxLimit) || parsedMaxLimit <= 0 ? 80 : parsedMaxLimit,
+        trava_desativada: travaDesativadaInput,
       }
 
       if (apiKeyInput.trim()) {
@@ -174,7 +186,7 @@ export default function AdminConfiguracoes() {
         const data = await res.json()
         toast({
           title: 'Configurações salvas!',
-          description: 'A chave da API-Football foi gravada com sucesso no banco de dados.',
+          description: 'Configurações e limites da API-Football gravados com sucesso.',
         })
         setConfig({
           provedor: 'api_football',
@@ -185,6 +197,7 @@ export default function AdminConfiguracoes() {
           ativo: data.ativo,
         })
         setApiKeyInput('') // Limpa campo de edição
+        await loadConfig()
       } else {
         const err = await res.json().catch(() => ({}))
         toast({
@@ -201,6 +214,54 @@ export default function AdminConfiguracoes() {
       })
     } finally {
       setSaving(false)
+    }
+  }
+
+  const handleResetApiCounter = async () => {
+    setResettingApiCounter(true)
+    try {
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+      }
+      if (pb.authStore.token) {
+        headers['Authorization'] = pb.authStore.token
+      }
+
+      const res = await fetch(
+        `${import.meta.env.VITE_POCKETBASE_URL}/backend/v1/admin/resetar-contador-api`,
+        {
+          method: 'POST',
+          headers,
+        },
+      )
+
+      const data = await res.json().catch(() => ({}))
+      if (res.ok && data.success) {
+        toast({
+          title: 'Contador da API Resetado! 🔄',
+          description:
+            data.message ||
+            'O contador diário de requisições foi zerado e o bloqueio removido imediatamente.',
+        })
+        if (data.usage) {
+          setDailyUsageInfo(data.usage)
+        }
+        await loadConfig()
+      } else {
+        toast({
+          title: 'Erro ao resetar contador',
+          description: data.error || data.message || 'Falha na resposta do servidor',
+          variant: 'destructive',
+        })
+      }
+    } catch (err: unknown) {
+      toast({
+        title: 'Erro ao resetar contador',
+        description: err instanceof Error ? err.message : 'Falha na requisição',
+        variant: 'destructive',
+      })
+    } finally {
+      setResettingApiCounter(false)
     }
   }
 
@@ -343,6 +404,27 @@ export default function AdminConfiguracoes() {
             type="button"
             variant="outline"
             size="sm"
+            onClick={handleResetApiCounter}
+            disabled={resettingApiCounter || loading}
+            className="h-8 rounded-lg border-emerald-300 bg-emerald-50 px-3 text-xs font-semibold text-emerald-900 shadow-xs hover:bg-emerald-100"
+            title="Zera o contador diário de requisições da API no banco e remove qualquer bloqueio imediatamente"
+          >
+            {resettingApiCounter ? (
+              <>
+                <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin text-emerald-700" />
+                Resetando...
+              </>
+            ) : (
+              <>
+                <RefreshCw className="mr-1.5 h-3.5 w-3.5 text-emerald-700" />
+                Resetar Contador Diário da API
+              </>
+            )}
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
             onClick={handleClearCache}
             disabled={clearingCache || loading}
             className="h-8 rounded-lg border-rose-300 bg-rose-50/50 text-xs font-semibold text-rose-800 hover:bg-rose-100 hover:text-rose-900"
@@ -469,6 +551,45 @@ export default function AdminConfiguracoes() {
                         </Badge>
                       )}
                     </div>
+
+                    {/* Exibição do Contador de Requisições do Dia com Botão de Reset Integrado */}
+                    <div className="mt-2.5 flex flex-wrap items-center justify-between gap-2 border-t border-slate-200/80 pt-2 text-[11px]">
+                      <div className="flex items-center gap-1.5">
+                        <span className="font-semibold text-slate-700">Uso diário interno:</span>
+                        <span className="font-mono font-bold text-slate-900">
+                          {dailyUsageInfo?.count ?? 0} / {dailyUsageInfo?.max_limit ?? 80} reqs
+                        </span>
+                        {dailyUsageInfo?.trava_desativada ? (
+                          <Badge className="bg-amber-100 text-amber-800 text-[9px]">
+                            Trava Desativada
+                          </Badge>
+                        ) : dailyUsageInfo && dailyUsageInfo.count >= dailyUsageInfo.max_limit ? (
+                          <Badge variant="destructive" className="text-[9px]">
+                            Limite Atingido
+                          </Badge>
+                        ) : (
+                          <Badge className="bg-emerald-100 text-emerald-800 text-[9px]">
+                            Liberado
+                          </Badge>
+                        )}
+                      </div>
+
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={handleResetApiCounter}
+                        disabled={resettingApiCounter || loading}
+                        className="h-6 rounded border-emerald-300 bg-emerald-50 px-2 text-[10px] font-bold text-emerald-800 hover:bg-emerald-100"
+                        title="Zerar contador do dia atual e remover bloqueios"
+                      >
+                        {resettingApiCounter ? (
+                          <Loader2 className="h-3 w-3 animate-spin text-emerald-700" />
+                        ) : (
+                          'Resetar Contador Diário da API'
+                        )}
+                      </Button>
+                    </div>
                   </div>
 
                   {/* Campo de texto da Chave de API */}
@@ -558,6 +679,55 @@ export default function AdminConfiguracoes() {
                     )}
                   </div>
 
+                  {/* Configurações de Limite Diário e Trava de Segurança */}
+                  <div className="rounded-lg border border-slate-200 bg-slate-50/50 p-3.5 space-y-3">
+                    <div className="text-xs font-bold text-slate-800">
+                      Controle da Trava Diária de Requisições
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 items-center">
+                      <div>
+                        <Label
+                          htmlFor="max-limit-input"
+                          className="text-[11px] font-semibold text-slate-700"
+                        >
+                          Limite Máximo Diário (req/dia)
+                        </Label>
+                        <Input
+                          id="max-limit-input"
+                          type="number"
+                          min="1"
+                          max="100"
+                          value={maxLimitInput}
+                          onChange={(e) => setMaxLimitInput(e.target.value)}
+                          className="mt-1 h-8 font-mono text-xs border-[#CBD5E1]"
+                        />
+                        <p className="mt-1 text-[10px] text-slate-500">
+                          Padrão: 80 req/dia (Cota total gratuita da API-Sports: 100/dia).
+                        </p>
+                      </div>
+
+                      <div className="pt-2 sm:pt-0">
+                        <label className="flex items-start gap-2 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={travaDesativadaInput}
+                            onChange={(e) => setTravaDesativadaInput(e.target.checked)}
+                            className="mt-0.5 h-4 w-4 rounded border-slate-300 text-amber-600 focus:ring-amber-500"
+                          />
+                          <div>
+                            <span className="text-xs font-semibold text-slate-800">
+                              Desativar trava interna diária
+                            </span>
+                            <p className="text-[10px] text-slate-500">
+                              Permite que requisições continuem mesmo acima do limite configurado
+                              enquanto houver saldo real na API-Sports.
+                            </p>
+                          </div>
+                        </label>
+                      </div>
+                    </div>
+                  </div>
+
                   {/* Toggle Ativo */}
                   <div className="flex items-center gap-2 pt-1">
                     <input
@@ -577,30 +747,53 @@ export default function AdminConfiguracoes() {
 
                   {/* Botões de Ação */}
                   <div className="flex flex-wrap items-center justify-between gap-3 pt-3 border-t border-slate-100">
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      onClick={handleClearCache}
-                      disabled={clearingCache || saving}
-                      className="h-10 rounded-lg border-rose-300 bg-rose-50/50 text-xs font-semibold text-rose-800 hover:bg-rose-100"
-                    >
-                      {clearingCache ? (
-                        <>
-                          <Loader2 className="mr-2 h-4 w-4 animate-spin text-rose-700" />
-                          Limpando caches do servidor...
-                        </>
-                      ) : (
-                        <>
-                          <RefreshCw className="mr-2 h-4 w-4 text-rose-700" />
-                          Limpar Cache do Servidor
-                        </>
-                      )}
-                    </Button>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={handleResetApiCounter}
+                        disabled={resettingApiCounter || saving}
+                        className="h-10 rounded-lg border-emerald-300 bg-emerald-50 px-4 text-xs font-semibold text-emerald-900 hover:bg-emerald-100"
+                      >
+                        {resettingApiCounter ? (
+                          <>
+                            <Loader2 className="mr-2 h-4 w-4 animate-spin text-emerald-700" />
+                            Resetando contador...
+                          </>
+                        ) : (
+                          <>
+                            <RefreshCw className="mr-2 h-4 w-4 text-emerald-700" />
+                            Resetar Contador Diário da API
+                          </>
+                        )}
+                      </Button>
+
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={handleClearCache}
+                        disabled={clearingCache || saving}
+                        className="h-10 rounded-lg border-rose-300 bg-rose-50/50 text-xs font-semibold text-rose-800 hover:bg-rose-100"
+                      >
+                        {clearingCache ? (
+                          <>
+                            <Loader2 className="mr-2 h-4 w-4 animate-spin text-rose-700" />
+                            Limpando caches do servidor...
+                          </>
+                        ) : (
+                          <>
+                            <RefreshCw className="mr-2 h-4 w-4 text-rose-700" />
+                            Limpar Cache do Servidor
+                          </>
+                        )}
+                      </Button>
+                    </div>
 
                     <Button
                       type="submit"
-                      disabled={saving || testing || clearingCache}
+                      disabled={saving || testing || clearingCache || resettingApiCounter}
                       className="h-10 rounded-lg bg-[#0F2A43] px-6 text-xs font-semibold text-white shadow-xs hover:bg-[#1B3A5C]"
                     >
                       {saving ? (
@@ -696,14 +889,15 @@ export default function AdminConfiguracoes() {
                 do Bolão e gravam o registro <code>api_validada</code> no banco.
               </p>
               <div className="rounded-lg bg-emerald-50 border border-emerald-200 p-2.5 text-emerald-900 font-medium">
-                Trava dura de segurança: máx <strong>15 requisições de dados/dia</strong>.
+                Trava de segurança: máx{' '}
+                <strong>{dailyUsageInfo?.max_limit || 80} requisições de dados/dia</strong>.
                 {dailyUsageInfo && (
                   <div className="mt-1 text-[11px] font-normal text-emerald-800">
                     Consumo de dados hoje:{' '}
                     <strong>
                       {dailyUsageInfo.count} / {dailyUsageInfo.max_limit}
                     </strong>
-                    .
+                    {dailyUsageInfo.trava_desativada && ' (trava desativada)'}.
                   </div>
                 )}
               </div>

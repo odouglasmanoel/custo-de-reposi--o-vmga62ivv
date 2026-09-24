@@ -3346,6 +3346,32 @@ routerAdd('GET', '/backend/v1/placar-ao-vivo/config', (e) => {
       apiValidada = null
     }
 
+    // Leitura das estatísticas e limites de uso diário
+    let usageInfo = null
+    try {
+      const usageRec = $app.findFirstRecordByData(
+        'config_integracoes',
+        'chave',
+        'api_football_daily_usage',
+      )
+      if (usageRec) {
+        const rawUsage = usageRec.getString('api_key') || ''
+        if (rawUsage) {
+          usageInfo = JSON.parse(rawUsage)
+        }
+      }
+    } catch (_) {}
+
+    if (!usageInfo) {
+      usageInfo = {
+        count: 0,
+        max_limit: 80,
+        trava_desativada: false,
+        blocked: false,
+        date_utc: new Date().toISOString().slice(0, 10),
+      }
+    }
+
     return e.json(200, {
       provedor: 'api_football',
       hasKey: hasDbKey || hasSecretFallback,
@@ -3360,6 +3386,7 @@ routerAdd('GET', '/backend/v1/placar-ao-vivo/config', (e) => {
       maskedTsdbKey: '',
       ativo: ativo,
       api_validada: apiValidada,
+      usage: usageInfo,
     })
   } catch (err) {
     return e.json(500, {
@@ -3405,6 +3432,54 @@ routerAdd('POST', '/backend/v1/placar-ao-vivo/config', (e) => {
     }
 
     $app.save(record)
+
+    // Atualiza opções de max_limit ou trava_desativada se fornecidas no body
+    if (body.max_limit !== undefined || body.trava_desativada !== undefined) {
+      try {
+        const colUsage = $app.findCollectionByNameOrId('config_integracoes')
+        let usageRec = null
+        try {
+          usageRec = $app.findFirstRecordByData(
+            'config_integracoes',
+            'chave',
+            'api_football_daily_usage',
+          )
+        } catch (_) {
+          usageRec = new Record(colUsage)
+          usageRec.set('chave', 'api_football_daily_usage')
+          usageRec.set('provedor', 'api_football')
+          usageRec.set('ativo', true)
+        }
+        let uData = {
+          date_utc: new Date().toISOString().slice(0, 10),
+          count: 0,
+          max_limit: 80,
+          trava_desativada: false,
+          blocked: false,
+        }
+        try {
+          const rawU = usageRec.getString('api_key')
+          if (rawU) uData = Object.assign(uData, JSON.parse(rawU))
+        } catch (_) {}
+
+        if (body.max_limit !== undefined) {
+          const newMax = parseInt(body.max_limit, 10)
+          if (!isNaN(newMax) && newMax > 0) {
+            uData.max_limit = newMax
+          }
+        }
+        if (body.trava_desativada !== undefined) {
+          uData.trava_desativada = Boolean(body.trava_desativada)
+        }
+        usageRec.set('api_key', JSON.stringify(uData))
+        $app.save(usageRec)
+      } catch (errUsageSave) {
+        console.log(
+          '[placar-ao-vivo/config] Erro ao salvar max_limit/trava_desativada:',
+          errUsageSave,
+        )
+      }
+    }
 
     // Invalida caches ao salvar nova chave para que o admin possa testar imediatamente
     try {
@@ -3701,6 +3776,113 @@ routerAdd('POST', '/backend/v1/limpar-cache', (e) => {
     return e.json(500, {
       success: false,
       error: err ? err.message : 'Erro ao limpar cache do servidor',
+    })
+  }
+})
+
+// -------------------------------------------------------------
+// POST /backend/v1/admin/resetar-contador-api
+// -------------------------------------------------------------
+// Zera o contador interno de requisições do dia atual no banco de dados,
+// limpa os bloqueios imediatos e mantém o histórico seguro.
+routerAdd('POST', '/backend/v1/admin/resetar-contador-api', (e) => {
+  try {
+    const authRecord = e.auth
+    if (!authRecord) {
+      return e.unauthorizedError('Usuário não autenticado')
+    }
+
+    const authName = (authRecord.getString('name') || '').trim()
+    const authEmail = (authRecord.getString('email') || '').trim().toLowerCase()
+    const isAdmin =
+      authName.toLowerCase() === 'douglas' ||
+      authEmail === 'douglas@repress.com.br' ||
+      authEmail === 'douglas.manoel@repress.com.br'
+
+    if (!isAdmin) {
+      return e.forbiddenError('Acesso restrito ao administrador Douglas.')
+    }
+
+    const hojeUtc = new Date().toISOString().slice(0, 10)
+    let usageRec = null
+    const colInteg = $app.findCollectionByNameOrId('config_integracoes')
+
+    try {
+      usageRec = $app.findFirstRecordByData(
+        'config_integracoes',
+        'chave',
+        'api_football_daily_usage',
+      )
+    } catch (_) {
+      usageRec = new Record(colInteg)
+      usageRec.set('chave', 'api_football_daily_usage')
+      usageRec.set('provedor', 'api_football')
+      usageRec.set('ativo', true)
+    }
+
+    let usageData = {
+      date_utc: hojeUtc,
+      count: 0,
+      max_limit: 80,
+      trava_desativada: false,
+      blocked: false,
+      last_reset_utc: new Date().toISOString(),
+      last_request_utc: null,
+    }
+
+    try {
+      const rawKey = usageRec.getString('api_key')
+      if (rawKey) {
+        const parsed = JSON.parse(rawKey)
+        if (parsed && typeof parsed === 'object') {
+          usageData = Object.assign(usageData, parsed)
+        }
+      }
+    } catch (_) {}
+
+    // Executa reset estrito do dia atual
+    usageData.date_utc = hojeUtc
+    usageData.count = 0
+    usageData.blocked = false
+    if (!usageData.max_limit || Number(usageData.max_limit) < 80) {
+      usageData.max_limit = 80
+    }
+    usageData.last_reset_utc = new Date().toISOString()
+
+    usageRec.set('api_key', JSON.stringify(usageData))
+    usageRec.set('ativo', true)
+    usageRec.set('provedor', 'api_football')
+    $app.save(usageRec)
+
+    // Limpa também eventuais flags em memória global
+    if (typeof globalThis !== 'undefined') {
+      if (globalThis.__apiFootballCircuitBreaker) {
+        globalThis.__apiFootballCircuitBreaker = {
+          isBlocked: false,
+          blockedUntil: 0,
+          probing: false,
+          reason: '',
+        }
+      }
+      if (globalThis.__apiFootballThrottle) {
+        globalThis.__apiFootballThrottle = { lastCallTimestamp: 0, minIntervalMs: 15 * 60 * 1000 }
+      }
+    }
+
+    console.log(
+      '[Admin Reset API] Contador diário resetado com sucesso pelo administrador Douglas.',
+    )
+
+    return e.json(200, {
+      success: true,
+      message: 'Contador diário da API-Football zerado e chamadas liberadas com sucesso!',
+      usage: usageData,
+    })
+  } catch (err) {
+    console.error('[Admin Reset API] Erro ao resetar contador da API:', err)
+    return e.json(500, {
+      success: false,
+      error: err ? err.message : 'Erro ao resetar contador diário',
     })
   }
 })

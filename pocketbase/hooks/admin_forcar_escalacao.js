@@ -76,7 +76,7 @@ routerAdd(
       }
 
       // Helper inline para checar e incrementar cota da API-Football (chave: api_football_daily_usage)
-      const DAILY_LIMIT = 15
+      const DAILY_LIMIT = 80
       const checarCotaApiFootball = () => {
         const hojeUtc = new Date().toISOString().slice(0, 10)
         let rec = null
@@ -93,6 +93,8 @@ routerAdd(
           date_utc: hojeUtc,
           count: 0,
           max_limit: DAILY_LIMIT,
+          trava_desativada: false,
+          blocked: false,
           last_reset_utc: new Date().toISOString(),
           last_request_utc: null,
         }
@@ -111,7 +113,10 @@ routerAdd(
           if (usageData.date_utc !== hojeUtc) {
             usageData.date_utc = hojeUtc
             usageData.count = 0
-            usageData.max_limit = DAILY_LIMIT
+            usageData.blocked = false
+            if (!usageData.max_limit || Number(usageData.max_limit) < DAILY_LIMIT) {
+              usageData.max_limit = DAILY_LIMIT
+            }
             usageData.last_reset_utc = new Date().toISOString()
             rec.set('api_key', JSON.stringify(usageData))
             rec.set('ativo', true)
@@ -132,14 +137,17 @@ routerAdd(
 
         const count = Number(usageData.count) || 0
         const maxLimit = Number(usageData.max_limit) || DAILY_LIMIT
-        const blocked = count >= maxLimit
+        const travaDesativada = Boolean(usageData.trava_desativada)
+        // Ação manual do admin não é bloqueada pelo limite interno se a API externa não deu 429
+        const isBlocked = Boolean(usageData.blocked)
 
         return {
           rec: rec,
           usageData: usageData,
           count: count,
           max_limit: maxLimit,
-          blocked: blocked,
+          trava_desativada: travaDesativada,
+          blocked: isBlocked,
         }
       }
 
@@ -289,7 +297,10 @@ routerAdd(
           if (!jaTentouScanHoje) {
             $app.store().set(storeKeyDate, '1')
             const cotaDate = checarCotaApiFootball()
-            if (!cotaDate.blocked && cotaDate.count < cotaDate.max_limit) {
+            if (
+              !cotaDate.blocked &&
+              (cotaDate.trava_desativada || cotaDate.count < cotaDate.max_limit)
+            ) {
               try {
                 const isRapid = apiKey.length > 40
                 const urlDate = isRapid
@@ -366,13 +377,20 @@ routerAdd(
       }
 
       // 3. Consulta /fixtures/lineups com checagem inline da cota diária
+      // Por ser uma ação manual expressa do Administrador ("Forçar Escalação"),
+      // só bloqueamos se a API externa tiver retornado rate-limit real (cotaDate.blocked === true)
+      // ou se a trava estiver ativa E o contador tiver excedido o teto configurado
       const cotaLineups = checarCotaApiFootball()
-      if (cotaLineups.blocked || cotaLineups.count >= cotaLineups.max_limit) {
+      if (
+        cotaLineups.blocked ||
+        (!cotaLineups.trava_desativada && cotaLineups.count >= cotaLineups.max_limit)
+      ) {
         return e.json(429, {
           success: false,
           rate_limited: true,
           waiting_reset: true,
-          error: 'Limite diário da API atingido. Aguardando reset às 21h (Brasília).',
+          error:
+            'Limite diário da API atingido. Aguardando reset às 21h (Brasília) ou reset manual.',
           reason: 'daily_limit_reached',
         })
       }
@@ -423,9 +441,9 @@ routerAdd(
         Boolean(apiErrors.token)
 
       if (isRateLimited) {
-        // Marca contador como esgotado para proteger a cota
+        // Marca contador como esgotado para proteger a cota externa
         try {
-          cotaLineups.usageData.count = cotaLineups.max_limit
+          cotaLineups.usageData.blocked = true
           if (cotaLineups.rec) {
             cotaLineups.rec.set('api_key', JSON.stringify(cotaLineups.usageData))
             $app.save(cotaLineups.rec)
@@ -436,7 +454,8 @@ routerAdd(
           success: false,
           rate_limited: true,
           waiting_reset: true,
-          error: 'Limite diário da API atingido. Aguardando reset às 21h (Brasília).',
+          error:
+            'A API externa retornou cota excedida (Rate Limit). Aguardando reset às 21h (Brasília).',
           reason: 'api_returned_rate_limit',
         })
       }

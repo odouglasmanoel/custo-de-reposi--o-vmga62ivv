@@ -85,7 +85,10 @@ routerAdd('POST', '/backend/v1/admin/vincular-fixtures', (e) => {
 
       // Checa se limiter já bloqueou novas chamadas hoje
       const statusLimiter = obterStatusLimiter()
-      if (statusLimiter.consumidasHoje >= statusLimiter.limiteDiario) {
+      const bloqueado =
+        statusLimiter.blocked ||
+        (!statusLimiter.trava_desativada && statusLimiter.count >= statusLimiter.max_limit)
+      if (bloqueado) {
         puladosLimiteCount++
         detalhes.push({
           jogo_id: jRec.id,
@@ -95,7 +98,6 @@ routerAdd('POST', '/backend/v1/admin/vincular-fixtures', (e) => {
         })
         break
       }
-
       // Marca tentativa diária no store
       $app.store().set(storeKey, '1')
 

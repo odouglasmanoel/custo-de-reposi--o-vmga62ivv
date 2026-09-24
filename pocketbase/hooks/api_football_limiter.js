@@ -1,13 +1,17 @@
 // pocketbase/hooks/api_football_limiter.js
-// Centralizador único e limitador diário estrito para a API-Football (v3.football.api-sports.io / RapidAPI)
-// Cota gratuita: 100 req/dia. Trava dura do Bolão: max 15 requisições por dia UTC (reseta às 00:00 UTC = 21h Brasília).
+// Centralizador único e limitador diário para a API-Football (v3.football.api-sports.io / RapidAPI)
+// Cota do plano: 100 req/dia. Trava interna do Bolão: padrão 80 requisições por dia UTC (reseta às 00:00 UTC = 21h Brasília).
+// Suporta:
+// - Alteração do max_limit dinâmico salvo no banco (config_integracoes)
+// - Desativação opcional da trava pelo Admin (trava_desativada = true)
+// - Reset manual do contador pelo Admin Douglas
 // Prioridades:
 //   1 = Placar ao vivo de jogos do bolão (máxima urgência)
-//   2 = Escalações pré-jogo (janela 60 min, consolidada)
-//   3 = Busca matinal Jogos do Dia (se count >= 10, suprime preventivamente)
+//   2 = Escalações pré-jogo (janela 60 min, consolidada) / requisições manuais do admin
+//   3 = Busca matinal Jogos do Dia (se count >= 70, suprime preventivamente)
 
-const DAILY_LIMIT = 15
-const P3_SUPPRESS_THRESHOLD = 10
+const DAILY_LIMIT = 80
+const P3_SUPPRESS_THRESHOLD = 70
 const USAGE_RECORD_CHAVE = 'api_football_daily_usage'
 
 function getTodayUtcString() {
@@ -32,6 +36,8 @@ function obterOuCriarRegistroUso() {
     date_utc: hojeUtc,
     count: 0,
     max_limit: DAILY_LIMIT,
+    trava_desativada: false,
+    blocked: false,
     last_reset_utc: new Date().toISOString(),
     last_request_utc: null,
   }
@@ -50,14 +56,17 @@ function obterOuCriarRegistroUso() {
       usageData = Object.assign(usageData, parsed)
     }
 
-    // Reset diário às 00:00 UTC
+    // Reset diário às 00:00 UTC (21h Brasília)
     if (usageData.date_utc !== hojeUtc) {
       console.log(
         `[API-Football Rate Limit] Novo dia UTC detectado (${hojeUtc} vs ${usageData.date_utc}). Resetando contador diário.`,
       )
       usageData.date_utc = hojeUtc
       usageData.count = 0
-      usageData.max_limit = DAILY_LIMIT
+      usageData.blocked = false
+      if (!usageData.max_limit || Number(usageData.max_limit) < DAILY_LIMIT) {
+        usageData.max_limit = DAILY_LIMIT
+      }
       usageData.last_reset_utc = new Date().toISOString()
 
       rec.set('api_key', JSON.stringify(usageData))
@@ -69,7 +78,7 @@ function obterOuCriarRegistroUso() {
     return { rec, usageData }
   }
 
-  // Criação inicial do registro de uso
+  // Criação inicial do registro de uso se não existir
   try {
     const col = $app.findCollectionByNameOrId('config_integracoes')
     const newRec = new Record(col)
@@ -104,16 +113,19 @@ function incrementarUso(rec, usageData) {
  *
  * @param {string} url - URL completa (ex: https://v3.football.api-sports.io/...)
  * @param {object} options - Opções para $http.send (method, headers, timeout, etc)
- * @param {number} prioridade - 1 (placar ao vivo), 2 (escalações), 3 (jogos do dia / busca)
+ * @param {number} prioridade - 1 (placar ao vivo), 2 (escalações/admin), 3 (jogos do dia / busca)
  * @returns {object} { blocked: boolean, reason?: string, status?: number, rawResponse?: object, json?: any, usage: object }
  */
 function enviarRequisicaoApiFootball(url, options, prioridade) {
   const prio = Number(prioridade) || 1
   const isTestOrStatus =
     Boolean(options && options.isTest) || (url && url.indexOf('/status') !== -1)
+  const isManualAdmin = Boolean(options && options.isAdminManual)
   const { rec, usageData } = obterOuCriarRegistroUso()
   const hojeUtc = usageData.date_utc
   const currentCount = Number(usageData.count) || 0
+  const maxLimit = Number(usageData.max_limit) || DAILY_LIMIT
+  const travaDesativada = Boolean(usageData.trava_desativada)
 
   // Chamadas de teste /status não consomem a cota diária
   if (isTestOrStatus) {
@@ -126,6 +138,7 @@ function enviarRequisicaoApiFootball(url, options, prioridade) {
         options || {},
       )
       delete sendOptions.isTest
+      delete sendOptions.isAdminManual
 
       console.log(`[API-Football Limiter] Teste de conexão isento de cota: ${url}`)
       const res = $http.send(Object.assign({ url }, sendOptions))
@@ -154,9 +167,11 @@ function enviarRequisicaoApiFootball(url, options, prioridade) {
     }
   }
 
-  // 1. TRAVA DURA: se count >= 15, bloqueia IMEDIATAMENTE antes do $http.send
-  if (currentCount >= DAILY_LIMIT) {
-    const logMsg = `[API-Football Rate Limit] Limite diário de ${DAILY_LIMIT} requisições atingido para a data UTC ${hojeUtc}. Requisição suprimida sem erro em tela.`
+  // 1. TRAVA DURA: se count >= maxLimit e a trava NÃO estiver desativada
+  // Requisições manuais de admin também são liberadas caso a trava não esteja explicitamente bloqueada pela API externa
+  const isBlockedByLimit = !travaDesativada && currentCount >= maxLimit && !isManualAdmin
+  if (isBlockedByLimit) {
+    const logMsg = `[API-Football Rate Limit] Limite diário de ${maxLimit} requisições atingido para a data UTC ${hojeUtc}. Requisição suprimida.`
     console.log(logMsg)
     return {
       blocked: true,
@@ -170,8 +185,9 @@ function enviarRequisicaoApiFootball(url, options, prioridade) {
   }
 
   // 2. SUPRESSÃO PREVENTIVA P3 (Busca matinal / jogos do dia gerais)
-  if (prio >= 3 && currentCount >= P3_SUPPRESS_THRESHOLD) {
-    const logMsg = `[API-Football Rate Limit] Prioridade 3 suprimida preventivamente (uso atual: ${currentCount}/${DAILY_LIMIT}). Preservando cota para jogos ao vivo do Bolão.`
+  const p3Threshold = Math.max(10, maxLimit - 10)
+  if (prio >= 3 && !travaDesativada && currentCount >= p3Threshold && !isManualAdmin) {
+    const logMsg = `[API-Football Rate Limit] Prioridade 3 suprimida preventivamente (uso atual: ${currentCount}/${maxLimit}). Preservando cota para jogos ao vivo do Bolão.`
     console.log(logMsg)
     return {
       blocked: true,
@@ -193,14 +209,13 @@ function enviarRequisicaoApiFootball(url, options, prioridade) {
       },
       options || {},
     )
+    delete sendOptions.isAdminManual
+    delete sendOptions.isTest
 
     console.log(
-      `[API-Football Limiter] Enviando req (${currentCount + 1}/${DAILY_LIMIT}) [Prio ${prio}]: ${url}`,
+      `[API-Football Limiter] Enviando req (${currentCount + 1}/${maxLimit}) [Prio ${prio}]: ${url}`,
     )
     const res = $http.send(Object.assign({ url }, sendOptions))
-
-    // Incrementa contador persistido
-    incrementarUso(rec, usageData)
 
     const statusCode = res.statusCode
     let jsonBody = null
@@ -220,11 +235,11 @@ function enviarRequisicaoApiFootball(url, options, prioridade) {
 
     if (hasRateLimitError) {
       console.warn(
-        `[API-Football Rate Limit] Provedor externo respondeu com bloqueio de cota (${statusCode}):`,
+        `[API-Football Rate Limit] Provedor externo respondeu com bloqueio de cota real (${statusCode}):`,
         JSON.stringify(apiErrors),
       )
-      // Força o contador para o limite para evitar novos disparos no ciclo
-      usageData.count = DAILY_LIMIT
+      // Marca bloqueio real retornado pela API-Sports
+      usageData.blocked = true
       if (rec) {
         rec.set('api_key', JSON.stringify(usageData))
         $app.save(rec)
@@ -240,6 +255,9 @@ function enviarRequisicaoApiFootball(url, options, prioridade) {
         usage: usageData,
       }
     }
+
+    // Apenas requisições que não deram erro de rate-limit e retornaram status HTTP válido contam no uso
+    incrementarUso(rec, usageData)
 
     return {
       blocked: false,
@@ -265,6 +283,9 @@ function enviarRequisicaoApiFootball(url, options, prioridade) {
 function obterStatusLimiter() {
   const { usageData } = obterOuCriarRegistroUso()
   const count = Number(usageData.count) || 0
+  const maxLimit = Number(usageData.max_limit) || DAILY_LIMIT
+  const travaDesativada = Boolean(usageData.trava_desativada)
+  const isBlocked = Boolean(usageData.blocked) || (!travaDesativada && count >= maxLimit)
 
   let apiValidada = null
   try {
@@ -284,10 +305,11 @@ function obterStatusLimiter() {
   return {
     date_utc: usageData.date_utc,
     count: count,
-    max_limit: DAILY_LIMIT,
-    remaining: Math.max(0, DAILY_LIMIT - count),
-    waiting_reset: count >= DAILY_LIMIT,
-    blocked: count >= DAILY_LIMIT,
+    max_limit: maxLimit,
+    trava_desativada: travaDesativada,
+    remaining: Math.max(0, maxLimit - count),
+    waiting_reset: isBlocked,
+    blocked: isBlocked,
     last_reset_utc: usageData.last_reset_utc,
     last_request_utc: usageData.last_request_utc,
     api_validada: apiValidada,
@@ -302,6 +324,7 @@ function checarApiValidadaECota() {
     cota_disponivel: !status.waiting_reset,
     count: status.count,
     max_limit: status.max_limit,
+    trava_desativada: status.trava_desativada,
     remaining: status.remaining,
     waiting_reset: status.waiting_reset,
   }
@@ -311,5 +334,6 @@ module.exports = {
   enviarRequisicaoApiFootball,
   obterStatusLimiter,
   checarApiValidadaECota,
+  obterOuCriarRegistroUso,
   DAILY_LIMIT,
 }

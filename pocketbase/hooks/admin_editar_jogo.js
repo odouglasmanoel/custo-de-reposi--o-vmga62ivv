@@ -216,7 +216,7 @@ routerAdd('POST', '/backend/v1/admin/editar-jogo', (e) => {
     // Helper inline para checar e incrementar cota da API-Football
     const checarCotaApiFootball = () => {
       const hojeUtc = new Date().toISOString().slice(0, 10)
-      const DAILY_LIMIT = 15
+      const DAILY_LIMIT = 80
       let rec = null
       try {
         rec = $app.findFirstRecordByFilter(
@@ -231,6 +231,8 @@ routerAdd('POST', '/backend/v1/admin/editar-jogo', (e) => {
         date_utc: hojeUtc,
         count: 0,
         max_limit: DAILY_LIMIT,
+        trava_desativada: false,
+        blocked: false,
         last_reset_utc: new Date().toISOString(),
         last_request_utc: null,
       }
@@ -249,7 +251,10 @@ routerAdd('POST', '/backend/v1/admin/editar-jogo', (e) => {
         if (usageData.date_utc !== hojeUtc) {
           usageData.date_utc = hojeUtc
           usageData.count = 0
-          usageData.max_limit = DAILY_LIMIT
+          usageData.blocked = false
+          if (!usageData.max_limit || Number(usageData.max_limit) < DAILY_LIMIT) {
+            usageData.max_limit = DAILY_LIMIT
+          }
           usageData.last_reset_utc = new Date().toISOString()
           rec.set('api_key', JSON.stringify(usageData))
           rec.set('ativo', true)
@@ -270,14 +275,16 @@ routerAdd('POST', '/backend/v1/admin/editar-jogo', (e) => {
 
       const count = Number(usageData.count) || 0
       const maxLimit = Number(usageData.max_limit) || DAILY_LIMIT
-      const blocked = count >= maxLimit
+      const travaDesativada = Boolean(usageData.trava_desativada)
+      const isBlocked = Boolean(usageData.blocked) || (!travaDesativada && count >= maxLimit)
 
       return {
         rec: rec,
         usageData: usageData,
         count: count,
         max_limit: maxLimit,
-        blocked: blocked,
+        trava_desativada: travaDesativada,
+        blocked: isBlocked,
       }
     }
 
@@ -352,7 +359,9 @@ routerAdd('POST', '/backend/v1/admin/editar-jogo', (e) => {
         // (b) Se nada encontrado localmente e temos data válida, checa cota e busca na API externa
         if (!fixtureResultado && curIsoDate) {
           const cota = checarCotaApiFootball()
-          if (cota.blocked || cota.count >= cota.max_limit) {
+          const cotaBloqueada =
+            cota.blocked || (!cota.trava_desativada && cota.count >= cota.max_limit)
+          if (cotaBloqueada) {
             aviso = 'Cota diária da API-Football esgotada. Dados salvos, busca de fixture adiada.'
           } else {
             // Obter API Key
@@ -497,7 +506,10 @@ routerAdd('POST', '/backend/v1/admin/editar-jogo', (e) => {
     if (fixtureManualInformado && (!curLogoCasa || !curLogoVis) && effectiveFixtureId) {
       try {
         const cotaFixture = checarCotaApiFootball()
-        if (!cotaFixture.blocked && cotaFixture.count < cotaFixture.max_limit) {
+        const cotaFixBloqueada =
+          cotaFixture.blocked ||
+          (!cotaFixture.trava_desativada && cotaFixture.count >= cotaFixture.max_limit)
+        if (!cotaFixBloqueada) {
           let apiKey = ''
           try {
             const cfgRec = $app.findFirstRecordByData(

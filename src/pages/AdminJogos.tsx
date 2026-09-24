@@ -865,6 +865,51 @@ export default function AdminJogos() {
             )}
           </Button>
 
+          {/* Botão de Reset Rápido do Contador da API */}
+          <Button
+            type="button"
+            onClick={async () => {
+              try {
+                const headers: Record<string, string> = {
+                  'Content-Type': 'application/json',
+                }
+                if (pb.authStore.token) {
+                  headers['Authorization'] = pb.authStore.token
+                }
+                const res = await fetch(
+                  `${import.meta.env.VITE_POCKETBASE_URL}/backend/v1/admin/resetar-contador-api`,
+                  { method: 'POST', headers },
+                )
+                const data = await res.json().catch(() => ({}))
+                if (res.ok && data.success) {
+                  toast({
+                    title: 'Contador da API Resetado! 🔄',
+                    description: data.message || 'Contador diário zerado e chamadas liberadas.',
+                  })
+                } else {
+                  toast({
+                    title: 'Erro ao resetar contador',
+                    description: data.error || data.message || 'Falha ao processar.',
+                    variant: 'destructive',
+                  })
+                }
+              } catch (err: unknown) {
+                toast({
+                  title: 'Erro de comunicação',
+                  description: err instanceof Error ? err.message : 'Falha na requisição.',
+                  variant: 'destructive',
+                })
+              }
+            }}
+            variant="outline"
+            size="sm"
+            className="h-8 rounded-lg border-emerald-300 bg-emerald-50 px-3 text-xs font-semibold text-emerald-900 shadow-xs hover:bg-emerald-100"
+            title="Zerar contador diário da API-Football e destravar chamadas"
+          >
+            <RefreshCw className="mr-1 h-3.5 w-3.5 text-emerald-600" />
+            <span>Resetar Contador Diário da API</span>
+          </Button>
+
           {/* Upload Planilha individual por bolão */}
           <Button
             type="button"

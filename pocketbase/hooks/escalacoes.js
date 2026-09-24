@@ -212,7 +212,7 @@ routerAdd(
       }
 
       // Helper inline para checar e incrementar cota da API-Football
-      const DAILY_LIMIT = 15
+      const DAILY_LIMIT = 80
       const checarCotaApiFootball = () => {
         const hojeUtc = new Date().toISOString().slice(0, 10)
         let rec = null
@@ -229,6 +229,8 @@ routerAdd(
           date_utc: hojeUtc,
           count: 0,
           max_limit: DAILY_LIMIT,
+          trava_desativada: false,
+          blocked: false,
           last_reset_utc: new Date().toISOString(),
           last_request_utc: null,
         }
@@ -247,7 +249,10 @@ routerAdd(
           if (usageData.date_utc !== hojeUtc) {
             usageData.date_utc = hojeUtc
             usageData.count = 0
-            usageData.max_limit = DAILY_LIMIT
+            usageData.blocked = false
+            if (!usageData.max_limit || Number(usageData.max_limit) < DAILY_LIMIT) {
+              usageData.max_limit = DAILY_LIMIT
+            }
             usageData.last_reset_utc = new Date().toISOString()
             rec.set('api_key', JSON.stringify(usageData))
             rec.set('ativo', true)
@@ -268,14 +273,16 @@ routerAdd(
 
         const count = Number(usageData.count) || 0
         const maxLimit = Number(usageData.max_limit) || DAILY_LIMIT
-        const blocked = count >= maxLimit
+        const travaDesativada = Boolean(usageData.trava_desativada)
+        const isBlocked = Boolean(usageData.blocked) || (!travaDesativada && count >= maxLimit)
 
         return {
           rec: rec,
           usageData: usageData,
           count: count,
           max_limit: maxLimit,
-          blocked: blocked,
+          trava_desativada: travaDesativada,
+          blocked: isBlocked,
         }
       }
 
@@ -294,7 +301,7 @@ routerAdd(
 
       // 4. Executa chamada externa ÚNICA respeitando a trava diária
       const cotaState = checarCotaApiFootball()
-      if (cotaState.blocked || cotaState.count >= cotaState.max_limit) {
+      if (cotaState.blocked) {
         console.log('[Escalacoes] Requisição bloqueada: cota diária esgotada')
         const fallbackRateLimited = {
           status: 'indisponivel',
@@ -347,7 +354,7 @@ routerAdd(
 
       if (hasRateLimitError) {
         try {
-          cotaState.usageData.count = cotaState.max_limit
+          cotaState.usageData.blocked = true
           if (cotaState.rec) {
             cotaState.rec.set('api_key', JSON.stringify(cotaState.usageData))
             $app.save(cotaState.rec)
@@ -505,7 +512,7 @@ cronAdd('cron_escalacoes_pre_jogo_5m', '*/5 * * * *', () => {
     if (!apiKey) return
 
     // Checagem inline da cota antes de qualquer requisição
-    const DAILY_LIMIT = 15
+    const DAILY_LIMIT = 80
     const checarCotaCron = () => {
       const hojeUtc = new Date().toISOString().slice(0, 10)
       let rec = null
@@ -522,6 +529,8 @@ cronAdd('cron_escalacoes_pre_jogo_5m', '*/5 * * * *', () => {
         date_utc: hojeUtc,
         count: 0,
         max_limit: DAILY_LIMIT,
+        trava_desativada: false,
+        blocked: false,
         last_reset_utc: new Date().toISOString(),
         last_request_utc: null,
       }
@@ -540,7 +549,10 @@ cronAdd('cron_escalacoes_pre_jogo_5m', '*/5 * * * *', () => {
         if (usageData.date_utc !== hojeUtc) {
           usageData.date_utc = hojeUtc
           usageData.count = 0
-          usageData.max_limit = DAILY_LIMIT
+          usageData.blocked = false
+          if (!usageData.max_limit || Number(usageData.max_limit) < DAILY_LIMIT) {
+            usageData.max_limit = DAILY_LIMIT
+          }
           usageData.last_reset_utc = new Date().toISOString()
           rec.set('api_key', JSON.stringify(usageData))
           rec.set('ativo', true)
@@ -561,14 +573,16 @@ cronAdd('cron_escalacoes_pre_jogo_5m', '*/5 * * * *', () => {
 
       const count = Number(usageData.count) || 0
       const maxLimit = Number(usageData.max_limit) || DAILY_LIMIT
-      const blocked = count >= maxLimit
+      const travaDesativada = Boolean(usageData.trava_desativada)
+      const isBlocked = Boolean(usageData.blocked) || (!travaDesativada && count >= maxLimit)
 
       return {
         rec: rec,
         usageData: usageData,
         count: count,
         max_limit: maxLimit,
-        blocked: blocked,
+        trava_desativada: travaDesativada,
+        blocked: isBlocked,
       }
     }
 
@@ -586,7 +600,7 @@ cronAdd('cron_escalacoes_pre_jogo_5m', '*/5 * * * *', () => {
     }
 
     const cotaCron = checarCotaCron()
-    if (cotaCron.blocked || cotaCron.count >= cotaCron.max_limit) {
+    if (cotaCron.blocked) {
       console.log('[Cron Escalações 5m] Cota diária esgotada. Pulando ciclo silenciosamente.')
       return
     }
@@ -826,7 +840,7 @@ cronAdd('cron_escalacoes_pre_jogo_5m', '*/5 * * * *', () => {
 
     if (hasRateLimit) {
       try {
-        cotaLineupCron.usageData.count = cotaLineupCron.max_limit
+        cotaLineupCron.usageData.blocked = true
         if (cotaLineupCron.rec) {
           cotaLineupCron.rec.set('api_key', JSON.stringify(cotaLineupCron.usageData))
           $app.save(cotaLineupCron.rec)
