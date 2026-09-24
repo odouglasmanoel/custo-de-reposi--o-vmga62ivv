@@ -38,6 +38,7 @@ import {
   formatDateTimeBR,
   isPalpiteEncerrado,
   isJogoHoje,
+  isJogoHojeBrasilia,
   isJogoHojeNaoIniciado,
   getJogoKickoffTimestamp,
   getHojeDataSaoPaulo,
@@ -60,7 +61,8 @@ import {
 import { AdminEditMarcadoresModal } from '@/components/AdminEditMarcadoresModal'
 import { ParticipantScorersView } from '@/components/ParticipantScorersView'
 import { ParticipantBetsModal } from '@/components/ParticipantBetsModal'
-import { Users, ChevronRight } from 'lucide-react'
+import { Users, ChevronRight, RefreshCw } from 'lucide-react'
+import { useToast } from '@/hooks/use-toast'
 import { buscarEscudoTime, readEscudoCache } from '@/services/enquetes'
 
 function TeamShield({
@@ -171,25 +173,25 @@ function writeDashboardCache(bolaoId: string, data: Omit<DashboardCachePayload, 
 export default function BolaoDashboard() {
   const { user, isAdmin, participantName } = useAuth()
   const { boloes, activeBolao, activeBolaoId, setActiveBolaoId } = useActivePool()
+  const { toast } = useToast()
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
 
   const bolaoQueryParam = searchParams.get('bolao')
 
-  // Ao abrir /inicio ou /bolao: se houver ?bolao=..., respeitar com prioridade;
-  // caso contrário, na montagem do componente, garantir 'geral' (ou o ID correspondente ao Ranking Geral Unificado)
+  // ActivePoolContext é a ÚNICA fonte de verdade do bolão ativo.
+  // Sincroniza bolaoQueryParam apenas na montagem inicial se especificado e válido, sem loop com activeBolaoId.
+  const initialQueryParamProcessedRef = useRef<boolean>(false)
   useEffect(() => {
-    if (bolaoQueryParam) {
-      if (activeBolaoId !== bolaoQueryParam) {
-        setActiveBolaoId(bolaoQueryParam)
-      }
-    } else {
-      // Força 'geral' na montagem e em qualquer navegação sem ?bolao=
-      if (activeBolaoId !== GERAL_BOLAO_ID) {
-        setActiveBolaoId(GERAL_BOLAO_ID)
-      }
+    if (
+      !initialQueryParamProcessedRef.current &&
+      bolaoQueryParam &&
+      bolaoQueryParam !== activeBolaoId
+    ) {
+      initialQueryParamProcessedRef.current = true
+      setActiveBolaoId(bolaoQueryParam)
     }
-  }, [bolaoQueryParam])
+  }, [bolaoQueryParam, activeBolaoId, setActiveBolaoId])
 
   // Cache de dois níveis (memória + localStorage + sessionStorage) para inicialização instantânea (SWR)
   const currentTargetKey = activeBolaoId || GERAL_BOLAO_ID
@@ -278,6 +280,9 @@ export default function BolaoDashboard() {
 
   // Estado para feedback do botão "Cobrar WhatsApp"
   const [copiado, setCopiado] = useState(false)
+
+  // Estado de loading individual para o botão de atualizar placar ao vivo
+  const [updatingLiveGameId, setUpdatingLiveGameId] = useState<string | null>(null)
 
   // Modal de sobrescrita manual de partida em andamento pelo Admin Douglas
   const [adminSobrescritaJogo, setAdminSobrescritaJogo] = useState<{
@@ -571,6 +576,71 @@ export default function BolaoDashboard() {
     }
   }
 
+  // Atualização direta do placar ao vivo e marcadores via API-Sports
+  const handleAtualizarPlacarAoVivo = async (jogo: Jogo) => {
+    if (!isAdmin) return
+    const fid = (jogo.fixture_id || '').trim()
+    if (!fid) {
+      toast({
+        title: 'ID não vinculado',
+        description: 'Vincule o ID da partida antes de atualizar',
+        variant: 'destructive',
+      })
+      return
+    }
+
+    try {
+      setUpdatingLiveGameId(jogo.id)
+      const res = await pb.send<{
+        success: boolean
+        message?: string
+        error?: string
+        rate_limited?: boolean
+        jogo?: Partial<Jogo>
+      }>('/backend/v1/placar-ao-vivo/atualizar-jogo', {
+        method: 'POST',
+        body: {
+          jogoId: jogo.id,
+          fixture_id: fid,
+        },
+      })
+
+      if (res?.success) {
+        toast({
+          title: 'Placar sincronizado',
+          description: res.message || 'Placar e marcadores atualizados com sucesso da API-Sports!',
+        })
+
+        // Atualização instantânea do estado local com o jogo retornado para refletir na hora na Dashboard e Classificação
+        if (res.jogo) {
+          const updatedJogo = res.jogo
+          setJogos((prev) => prev.map((j) => (j.id === jogo.id ? { ...j, ...updatedJogo } : j)))
+          setAllJogos((prev) => prev.map((j) => (j.id === jogo.id ? { ...j, ...updatedJogo } : j)))
+        }
+
+        await loadData(true)
+      } else {
+        toast({
+          title: 'Aviso',
+          description: res?.error || 'Não foi possível atualizar o placar.',
+          variant: 'destructive',
+        })
+      }
+    } catch (err: any) {
+      const errMsg =
+        err?.data?.error ||
+        err?.message ||
+        'Falha ao atualizar placar ao vivo. Verifique a conexão.'
+      toast({
+        title: 'Erro na atualização',
+        description: errMsg,
+        variant: 'destructive',
+      })
+    } finally {
+      setUpdatingLiveGameId(null)
+    }
+  }
+
   const handleRemoverSobrescritaAdmin = async (jogoId: string) => {
     if (!confirm('Deseja remover a sobrescrita manual e voltar para a API / banco?')) {
       return
@@ -645,14 +715,17 @@ export default function BolaoDashboard() {
     loadSobrescritasFromDb()
   }, [])
 
-  // Carregamento resiliente com tolerância a timeout (10s), deduplicação de chamadas paralelas e cache SWR
+  // Carregamento resiliente com tolerância a timeout reduzido (8s), deduplicação de chamadas paralelas e cache SWR
   const loadData = useCallback(
     async (isManualRefresh: boolean = false) => {
       if (!activeBolaoId) return
 
-      // Evita refetches redundantes em menos de 2.5s a não ser que seja refresh manual
+      // Evita refetches redundantes em menos de 1s a não ser que seja refresh manual
       const now = Date.now()
-      if (!isManualRefresh && now - lastFetchTimeRef.current < 2500) {
+      const currentHasData =
+        gamesRef.current.jogos.length > 0 || gamesRef.current.allJogos.length > 0
+
+      if (!isManualRefresh && currentHasData && now - lastFetchTimeRef.current < 1000) {
         return
       }
 
@@ -660,9 +733,6 @@ export default function BolaoDashboard() {
       if (activeFetchPromiseRef.current) {
         return activeFetchPromiseRef.current
       }
-
-      const currentHasData =
-        gamesRef.current.jogos.length > 0 || gamesRef.current.allJogos.length > 0
 
       if (isManualRefresh) {
         setIsRefreshing(true)
@@ -672,12 +742,12 @@ export default function BolaoDashboard() {
         setLoading(true)
       }
 
-      // Promise com timeout de 10s para que NUNCA trave o dashboard infinitamente
+      // Promise com timeout de 8s para que NUNCA trave o dashboard infinitamente em skeleton
       const fetchWithTimeout = async () => {
         lastFetchTimeRef.current = Date.now()
 
         const timeoutPromise = new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error('Tempo de resposta excedido (timeout)')), 10000),
+          setTimeout(() => reject(new Error('Tempo de resposta excedido (timeout)')), 8000),
         )
 
         try {
@@ -705,8 +775,6 @@ export default function BolaoDashboard() {
               const pend = allGames.filter((j) => !j.resultado_finalizado).length
               const newStats = { registrados: reg, pendentes: pend }
               setLastValidStats(newStats)
-
-              // Nunca auto-finalizar jogos em background silenciosamente por placar default ou tempo
 
               // Grava em cache de 2 níveis para renderização instantânea nas próximas visitas
               writeDashboardCache(GERAL_BOLAO_ID, {
@@ -770,8 +838,6 @@ export default function BolaoDashboard() {
               const newStats = { registrados: reg, pendentes: pend }
               setLastValidStats(newStats)
 
-              // Nunca auto-finalizar jogos em background silenciosamente por placar default ou tempo
-
               // Grava no cache de 2 níveis
               writeDashboardCache(activeBolaoId, {
                 participantes: partList,
@@ -808,9 +874,8 @@ export default function BolaoDashboard() {
           }
         } catch (err: any) {
           console.warn('Alerta no carregamento do dashboard (mantendo último cache válido):', err)
-          // Transição cache->dados novos silenciosa (sem setLoadError para tempo de resposta lento)
-          // NUNCA esvazia os arrays nem zera lastValidStats! Preserva o que já está na tela
         } finally {
+          // Incondicionalmente encerra os loadings para evitar skeleton infinito quando cache está vazio
           setLoading(false)
           setIsRefreshing(false)
           setIsRevalidating(false)
@@ -825,42 +890,69 @@ export default function BolaoDashboard() {
     [activeBolaoId],
   )
 
-  // Real-time updates com debounce natural
+  // Ref estável para loadData: evita recriação de listeners e efeitos cíclicos
+  const loadDataRef = useRef(loadData)
+  loadDataRef.current = loadData
+
+  // Real-time updates com ref estável
   useRealtime<Participante>('participantes', () => {
-    loadData()
+    loadDataRef.current?.()
   })
 
   useRealtime<Jogo>('jogos', () => {
-    loadData()
+    loadDataRef.current?.()
   })
 
   useRealtime<Palpite>('palpites', () => {
-    loadData()
+    loadDataRef.current?.()
   })
 
   // Hidratação e revalidação SWR instantânea ao mudar de bolão
   useEffect(() => {
-    if (activeBolaoId) {
-      if (prevDashboardScopeRef.current !== activeBolaoId) {
-        prevDashboardScopeRef.current = activeBolaoId
-        const cached = readDashboardCache(activeBolaoId)
-        if (cached && (cached.jogos.length > 0 || cached.allJogos.length > 0)) {
-          setParticipantes(cached.participantes)
-          setAllParticipantes(cached.allParticipantes)
-          setAllJogos(cached.allJogos)
-          setJogos(cached.jogos)
-          setPalpites(cached.palpites)
-          if (cached.stats) setLastValidStats(cached.stats)
-          setLoading(false)
-          setIsRevalidating(true)
-        } else {
-          setLoading(true)
-          setIsRevalidating(false)
+    if (!activeBolaoId) return
+    const cached = readDashboardCache(activeBolaoId)
+    if (cached && (cached.jogos.length > 0 || cached.allJogos.length > 0)) {
+      setParticipantes(cached.participantes)
+      setAllParticipantes(cached.allParticipantes)
+      setAllJogos(cached.allJogos)
+      setJogos(cached.jogos)
+      setPalpites(cached.palpites)
+      if (cached.stats) setLastValidStats(cached.stats)
+      setLoading(false)
+      setIsRevalidating(true)
+    } else {
+      // Tentar sessionStorage legado de fallback
+      try {
+        const rawGames =
+          sessionStorage.getItem(`bolao_cache_jogos_${activeBolaoId}`) ||
+          sessionStorage.getItem('bolao_cache_all_jogos')
+        const rawParts =
+          sessionStorage.getItem(`bolao_cache_parts_${activeBolaoId}`) ||
+          sessionStorage.getItem('bolao_cache_all_parts')
+        const rawPalpites = sessionStorage.getItem(`bolao_cache_palpites_${activeBolaoId}`)
+        const rawStats = sessionStorage.getItem(`bolao_cache_stats_${activeBolaoId}`)
+        if (rawGames) {
+          const parsedGames = JSON.parse(rawGames)
+          if (Array.isArray(parsedGames) && parsedGames.length > 0) {
+            setJogos(parsedGames)
+            setAllJogos(parsedGames)
+            if (rawParts) {
+              const p = JSON.parse(rawParts)
+              setParticipantes(p)
+              setAllParticipantes(p)
+            }
+            if (rawPalpites) setPalpites(JSON.parse(rawPalpites))
+            if (rawStats) setLastValidStats(JSON.parse(rawStats))
+            setLoading(false)
+            setIsRevalidating(true)
+          }
         }
+      } catch {
+        /* ignore */
       }
-      loadData()
     }
-  }, [activeBolaoId, loadData])
+    loadDataRef.current?.()
+  }, [activeBolaoId])
 
   // Mapa de pontuação ao vivo acumulada por participanteId para jogos em andamento
   // (kickoff já iniciado e !resultado_finalizado com placar válido na API, sobrescrita ou banco)
@@ -1317,12 +1409,13 @@ export default function BolaoDashboard() {
       })
   }, [isGeral, allJogos, jogos, nowMs, apiFixtures, isJogoConcluido])
 
-  // Jogos de Hoje (fuso America/Sao_Paulo)
-  // Regra dinâmica: APENAS jogos do dia atual que ainda NÃO iniciaram (dataHoraJogo > dataHoraAtual)
+  // Jogos de Hoje (fuso America/Sao_Paulo / Brasília)
+  // No modo Geral (Todas as Copas) soma TODAS as competições de allJogos
+  // Exibir TODOS os jogos da data de hoje em Brasília (não só os não iniciados), com badge de status
   const jogosDeHoje = useMemo(() => {
-    const gamesToUse = isGeral ? allJogos : jogos
+    const gamesToUse = isGeral ? (allJogos.length > 0 ? allJogos : jogos) : jogos
     return gamesToUse
-      .filter((j) => isJogoHojeNaoIniciado(j.data, j.hora, nowMs))
+      .filter((j) => isJogoHojeBrasilia(j.data, nowMs))
       .sort((a, b) => {
         const kickA = getJogoKickoffTimestamp(a.data, a.hora) ?? 0
         const kickB = getJogoKickoffTimestamp(b.data, b.hora) ?? 0
@@ -1588,66 +1681,70 @@ export default function BolaoDashboard() {
 
   // Quick stats com fallback para o último valor válido conhecido
   // NUNCA zera as estatísticas por falta de tempo de resposta ou carregamento
-  // Jogos com isJogoConcluido=true são contabilizados como Jogos Encerrados (registrados)
+  // No modo Geral (Todas as Copas) soma TODAS as competições de allJogos
+  // Encerrados = jogos com resultado_finalizado true (ou status FT/encerrado)
+  // Pendentes = jogos futuros/abertos ainda sem palpite do usuário logado
   const stats: { registrados: number; pendentes: number } | null = useMemo(() => {
-    const gamesToUse = isGeral ? allJogos : jogos
-    if (gamesToUse.length > 0) {
-      const registrados = gamesToUse.filter((j) => {
-        const jogoDataISO = normalizeDataISO(j.data)
-        const matchedLive = resolveLiveScoreForGame(j, apiFixtures, 0.55, jogoDataISO)
-        return isJogoConcluido(j, matchedLive)
-      }).length
-
-      // 1. Jogo aberto: não concluído e com horário de encerramento ainda não atingido
-      const jogosAbertos = gamesToUse.filter((j) => {
-        const jogoDataISO = normalizeDataISO(j.data)
-        const matchedLive = resolveLiveScoreForGame(j, apiFixtures, 0.55, jogoDataISO)
-        const concluido = isJogoConcluido(j, matchedLive)
-        return !concluido && !isPalpiteEncerrado(j.data, j.hora, nowMs)
-      })
-
-      // Identificar os IDs dos participantes que pertencem ao usuário logado
-      const targetParts = isGeral ? allParticipantes : participantes
-      const userPartIds = new Set<string>()
-
-      if (participantName) {
-        const normTarget = normalizeMemberName(participantName).toLowerCase()
-        const lowerRaw = participantName.trim().toLowerCase()
-
-        for (const p of targetParts) {
-          const normP = normalizeMemberName(p.nome).toLowerCase()
-          const rawP = p.nome.trim().toLowerCase()
-          if (normP === normTarget || rawP === lowerRaw) {
-            userPartIds.add(p.id)
-          }
-        }
-      }
-
-      // Palpites salvos válidos do usuário com placar_a != null && placar_b != null
-      const userPalpitesGameIds = new Set<string>()
-      for (const palpite of palpites) {
-        if (
-          userPartIds.has(palpite.participante) &&
-          palpite.placar_a != null &&
-          palpite.placar_b != null
-        ) {
-          userPalpitesGameIds.add(palpite.jogo)
-        }
-      }
-
-      // 3. pendentes = jogos abertos − jogos abertos já palpitados pelo usuário
-      const abertosPalpitados = jogosAbertos.filter((j) => userPalpitesGameIds.has(j.id)).length
-      const pendentes = Math.max(0, jogosAbertos.length - abertosPalpitados)
-
-      return {
-        registrados,
-        pendentes,
-      }
-    }
-    if (lastValidStats) {
+    const gamesToUse = isGeral ? (allJogos.length > 0 ? allJogos : jogos) : jogos
+    if (gamesToUse.length === 0) {
       return lastValidStats
     }
-    return null
+
+    const registrados = gamesToUse.filter((j) => {
+      const jogoDataISO = normalizeDataISO(j.data)
+      const matchedLive = resolveLiveScoreForGame(j, apiFixtures, 0.55, jogoDataISO)
+      return isJogoConcluido(j, matchedLive)
+    }).length
+
+    // Jogos abertos: não concluídos e que ainda aceitam palpite (!isPalpiteEncerrado via data de Brasília / kickoff)
+    const jogosAbertos = gamesToUse.filter((j) => {
+      const jogoDataISO = normalizeDataISO(j.data)
+      const matchedLive = resolveLiveScoreForGame(j, apiFixtures, 0.55, jogoDataISO)
+      const concluido = isJogoConcluido(j, matchedLive)
+      return !concluido && !isPalpiteEncerrado(j.data, j.hora, nowMs)
+    })
+
+    // Identificar os IDs dos participantes pertencentes ao usuário logado
+    const targetParts = isGeral
+      ? allParticipantes.length > 0
+        ? allParticipantes
+        : participantes
+      : participantes
+    const userPartIds = new Set<string>()
+
+    if (participantName) {
+      const normTarget = normalizeMemberName(participantName).toLowerCase()
+      const lowerRaw = participantName.trim().toLowerCase()
+
+      for (const p of targetParts) {
+        const normP = normalizeMemberName(p.nome).toLowerCase()
+        const rawP = p.nome.trim().toLowerCase()
+        if (normP === normTarget || rawP === lowerRaw) {
+          userPartIds.add(p.id)
+        }
+      }
+    }
+
+    // Palpites válidos do usuário logado
+    const userPalpitesGameIds = new Set<string>()
+    for (const palpite of palpites) {
+      if (
+        userPartIds.has(palpite.participante) &&
+        palpite.placar_a != null &&
+        palpite.placar_b != null
+      ) {
+        userPalpitesGameIds.add(palpite.jogo)
+      }
+    }
+
+    // pendentes = jogos abertos onde o usuário ainda não palpitou
+    const abertosPalpitados = jogosAbertos.filter((j) => userPalpitesGameIds.has(j.id)).length
+    const pendentes = Math.max(0, jogosAbertos.length - abertosPalpitados)
+
+    return {
+      registrados,
+      pendentes,
+    }
   }, [
     isGeral,
     allJogos,
@@ -1803,7 +1900,8 @@ export default function BolaoDashboard() {
           <div className="flex items-center justify-between">
             <div>
               <p className="text-xs font-medium text-[#64748B]">Jogos Encerrados</p>
-              {stats === null && loading ? (
+              {stats === null ||
+              ((isGeral ? allJogos.length === 0 : jogos.length === 0) && loading) ? (
                 <div className="mt-2 h-7 w-16 animate-pulse rounded bg-slate-200" />
               ) : (
                 <p className="mt-1 text-2xl font-black text-[#0F172A]">{stats?.registrados ?? 0}</p>
@@ -1815,7 +1913,9 @@ export default function BolaoDashboard() {
           </div>
         </Card>
 
-        {stats && stats.pendentes === 0 ? (
+        {stats &&
+        stats.pendentes === 0 &&
+        !(isGeral ? allJogos.length === 0 : jogos.length === 0) ? (
           <Card
             tabIndex={-1}
             className="cursor-default opacity-80 pointer-events-none rounded-[14px] border-[#E2E8F0] bg-white p-4 shadow-xs"
@@ -1826,7 +1926,8 @@ export default function BolaoDashboard() {
                 <div className="flex items-center gap-1.5">
                   <p className="text-xs font-medium text-[#64748B]">Jogos Pendentes</p>
                 </div>
-                {stats === null && loading ? (
+                {stats === null ||
+                ((isGeral ? allJogos.length === 0 : jogos.length === 0) && loading) ? (
                   <div className="mt-2 h-7 w-16 animate-pulse rounded bg-slate-200" />
                 ) : (
                   <p className="mt-1 text-2xl font-black text-[#0F172A]">0</p>
@@ -1862,7 +1963,8 @@ export default function BolaoDashboard() {
                   </p>
                   <ArrowRight className="h-3.5 w-3.5 text-slate-400 opacity-0 group-hover:opacity-100 group-hover:translate-x-0.5 transition-all text-amber-600" />
                 </div>
-                {stats === null && loading ? (
+                {stats === null ||
+                ((isGeral ? allJogos.length === 0 : jogos.length === 0) && loading) ? (
                   <div className="mt-2 h-7 w-16 animate-pulse rounded bg-slate-200" />
                 ) : (
                   <p className="mt-1 text-2xl font-black text-[#0F172A]">{stats?.pendentes ?? 0}</p>
@@ -2015,9 +2117,33 @@ export default function BolaoDashboard() {
                           </span>
                         )}
                       </div>
-                      <span className="shrink-0 font-bold text-[#0F2A43] bg-white border border-slate-200 px-2 py-0.5 rounded text-[11px]">
-                        {formatHoraBR(jogo.hora) || '—'}
-                      </span>
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        {isAdmin && (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => handleAtualizarPlacarAoVivo(jogo)}
+                            disabled={updatingLiveGameId === jogo.id}
+                            className="h-6 px-2 text-[10px] font-semibold border-emerald-300 bg-emerald-50 text-emerald-800 hover:bg-emerald-100 flex items-center gap-1"
+                            title="Atualizar Placar Ao Vivo / Marcadores da partida via API-Sports"
+                          >
+                            <RefreshCw
+                              className={cn(
+                                'h-3 w-3 text-emerald-700',
+                                updatingLiveGameId === jogo.id && 'animate-spin',
+                              )}
+                            />
+                            <span>
+                              {updatingLiveGameId === jogo.id
+                                ? 'Atualizando...'
+                                : 'Atualizar Placar'}
+                            </span>
+                          </Button>
+                        )}
+                        <span className="font-bold text-[#0F2A43] bg-white border border-slate-200 px-2 py-0.5 rounded text-[11px]">
+                          {formatHoraBR(jogo.hora) || '—'}
+                        </span>
+                      </div>
                     </div>
 
                     {/* Confronto com escudos padronizados de Palpites (h-9 w-9 sm:h-10 sm:w-10, object-contain) */}
@@ -2336,6 +2462,30 @@ export default function BolaoDashboard() {
                               <Clock className="h-3 w-3 text-amber-600" />
                               <span>Aguardando atualização</span>
                             </Badge>
+                          )}
+
+                          {/* Botão de Atualizar Placar Ao Vivo e Marcadores via API-Sports (Admin) */}
+                          {isAdmin && (
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => handleAtualizarPlacarAoVivo(jogo)}
+                              disabled={updatingLiveGameId === jogo.id}
+                              className="h-6 px-2 text-[10px] font-semibold border-emerald-300 bg-emerald-50 text-emerald-800 hover:bg-emerald-100 flex items-center gap-1"
+                              title="Atualizar Placar Ao Vivo / Marcadores da partida via API-Sports"
+                            >
+                              <RefreshCw
+                                className={cn(
+                                  'h-3 w-3 text-emerald-700',
+                                  updatingLiveGameId === jogo.id && 'animate-spin',
+                                )}
+                              />
+                              <span>
+                                {updatingLiveGameId === jogo.id
+                                  ? 'Atualizando...'
+                                  : 'Atualizar Placar'}
+                              </span>
+                            </Button>
                           )}
 
                           {/* Botão de Sobrescrita Manual exclusivo para o Admin (Douglas) */}

@@ -48,6 +48,7 @@ import {
 import { AdminManageParticipantesModal } from '@/components/AdminManageParticipantesModal'
 import { useToast } from '@/hooks/use-toast'
 import { getErrorMessage } from '@/lib/pocketbase/errors'
+import { cn } from '@/lib/utils'
 
 export default function AdminJogos() {
   const { boloes, activeBolao, activeBolaoId, setActiveBolaoId, refreshBoloes } = useActivePool()
@@ -129,6 +130,72 @@ export default function AdminJogos() {
   // Delete confirmation
   const [gameToDelete, setGameToDelete] = useState<Jogo | null>(null)
   const [deleting, setDeleting] = useState(false)
+
+  // Loading por jogo para atualização pontual do placar ao vivo
+  const [updatingLiveGameId, setUpdatingLiveGameId] = useState<string | null>(null)
+
+  // Atualização direta do placar ao vivo e marcadores via API-Sports
+  const handleAtualizarPlacarAoVivo = async (jogo: Jogo) => {
+    const fid = (jogo.fixture_id || '').trim()
+    if (!fid) {
+      toast({
+        title: 'ID não vinculado',
+        description: 'Vincule o ID da partida (fixture_id) antes de atualizar.',
+        variant: 'destructive',
+      })
+      return
+    }
+
+    try {
+      setUpdatingLiveGameId(jogo.id)
+      const res = await pb.send<{
+        success: boolean
+        message?: string
+        error?: string
+        rate_limited?: boolean
+        jogo?: Partial<Jogo>
+      }>('/backend/v1/placar-ao-vivo/atualizar-jogo', {
+        method: 'POST',
+        body: {
+          jogoId: jogo.id,
+          fixture_id: fid,
+        },
+      })
+
+      if (res?.success) {
+        toast({
+          title: 'Placar sincronizado',
+          description: res.message || 'Placar e marcadores atualizados com sucesso da API-Sports!',
+        })
+
+        // Atualização instantânea do estado local
+        if (res.jogo) {
+          const updatedJogo = res.jogo
+          setJogos((prev) => prev.map((j) => (j.id === jogo.id ? { ...j, ...updatedJogo } : j)))
+        }
+
+        await loadJogos()
+      } else {
+        toast({
+          title: 'Aviso',
+          description: res?.error || 'Não foi possível atualizar o placar.',
+          variant: 'destructive',
+        })
+      }
+    } catch (err: any) {
+      const errMsg =
+        err?.data?.error ||
+        err?.message ||
+        'Falha ao atualizar placar ao vivo. Verifique a conexão.'
+      toast({
+        title: 'Erro na atualização',
+        description: errMsg,
+        variant: 'destructive',
+      })
+    } finally {
+      setUpdatingLiveGameId(null)
+    }
+  }
 
   useRealtime<Jogo>('jogos', () => {
     loadJogos()
@@ -1192,6 +1259,28 @@ export default function AdminJogos() {
                       </td>
                       <td className="px-4 py-3.5 text-right">
                         <div className="flex items-center justify-end gap-2">
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            onClick={() => handleAtualizarPlacarAoVivo(jogo)}
+                            disabled={updatingLiveGameId === jogo.id}
+                            className="h-8 rounded-md border-emerald-300 bg-emerald-50 px-2.5 text-xs font-semibold text-emerald-800 hover:bg-emerald-100 hover:text-emerald-900 flex items-center gap-1"
+                            title="Atualizar Placar Ao Vivo e Marcadores da partida via API-Sports"
+                          >
+                            <RefreshCw
+                              className={cn(
+                                'h-3.5 w-3.5 text-emerald-700',
+                                updatingLiveGameId === jogo.id && 'animate-spin',
+                              )}
+                            />
+                            <span>
+                              {updatingLiveGameId === jogo.id
+                                ? 'Atualizando...'
+                                : 'Atualizar Placar Ao Vivo'}
+                            </span>
+                          </Button>
+
                           <Button
                             type="button"
                             size="sm"
