@@ -3,6 +3,7 @@ import {
   parseRawScorerList,
   inferPosicaoFromNameOrItem,
   formatScorerListPayload,
+  type ScorerInputState,
 } from './AdminEditMarcadoresModal'
 import type { Palpite } from '@/types/bolao'
 
@@ -216,6 +217,36 @@ describe('AdminEditMarcadoresModal - Persistência de Posição', () => {
     const parsedUponReopen = parseRawScorerList(parentAdminEditingState?.palpite.goleadores_a, 1)
     expect(parsedUponReopen[0].posicao).toBe('Defensor')
     expect(parsedUponReopen[0].nome).toBe('Cristian Romero')
+  })
+
+  it('sanitiza e normaliza payload enviado ao endpoint /backend/v1/admin/salvar-marcadores', () => {
+    const rawInputList: ScorerInputState[] = [
+      {
+        nome: '  Cristian Romero  ',
+        posicao: 'Defensor',
+        gol_contra: false,
+      },
+      {
+        nome: 'Alisson Becker (gol contra)',
+        posicao: 'Goleiro',
+        gol_contra: true,
+      },
+    ]
+
+    const payload = formatScorerListPayload(rawInputList)
+    expect(payload).toHaveLength(2)
+    expect(payload[0]).toEqual({
+      nome: 'Cristian Romero',
+      posicao: 'Defensor',
+      quantidade: 1,
+      gol_contra: false,
+    })
+    expect(payload[1]).toEqual({
+      nome: 'Alisson Becker (gol contra)',
+      posicao: 'Gol Contra',
+      quantidade: 1,
+      gol_contra: true,
+    })
   })
 
   it('cenário: palpite com Romero (Defensor) e Richarlison (Atacante) - alterar Richarlison para Son preserva Romero como Defensor', () => {

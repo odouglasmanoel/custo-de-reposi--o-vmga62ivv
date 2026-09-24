@@ -15,6 +15,7 @@ import {
   FileSpreadsheet,
   Settings,
   Users,
+  RefreshCw,
 } from 'lucide-react'
 import pb from '@/lib/pocketbase/client'
 import { useActivePool } from '@/context/ActivePoolContext'
@@ -90,6 +91,7 @@ export default function AdminJogos() {
 
   // Modal Gerenciar Participantes
   const [modalGerenciarParticipantes, setModalGerenciarParticipantes] = useState(false)
+  const [forcingEscalacaoId, setForcingEscalacaoId] = useState<string | null>(null)
 
   // Upload Planilha states
   const [modalUpload, setModalUpload] = useState(false)
@@ -510,6 +512,59 @@ export default function AdminJogos() {
     }
   }
 
+  // Ação de forçar busca de escalação sob demanda (Douglas)
+  const handleForcarEscalacao = async (jogoTarget: Jogo) => {
+    setForcingEscalacaoId(jogoTarget.id)
+    try {
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+      }
+      if (pb.authStore.token) {
+        headers['Authorization'] = pb.authStore.token
+      }
+
+      const res = await fetch(
+        `${import.meta.env.VITE_POCKETBASE_URL}/backend/v1/admin/forcar-escalacao`,
+        {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({ jogo_id: jogoTarget.id }),
+        },
+      )
+
+      const data = await res.json()
+
+      if (!res.ok || data.success === false) {
+        const errorMsg =
+          data.error ||
+          data.notice ||
+          'Não foi possível obter escalações da API externa no momento.'
+        toast({
+          title: 'Aviso sobre escalação',
+          description: errorMsg,
+          variant: data.rate_limited ? 'destructive' : 'default',
+        })
+      } else {
+        toast({
+          title: 'Escalação sincronizada!',
+          description: `Escalações do confronto ${jogoTarget.time_a} x ${jogoTarget.time_b} foram atualizadas com sucesso.`,
+        })
+      }
+
+      // Recarrega jogos para refletir o novo fixture_id e escalacoes salvos
+      loadJogos()
+    } catch (err: unknown) {
+      console.error('Erro ao forçar busca de escalação:', err)
+      toast({
+        title: 'Erro na requisição',
+        description: 'Falha de comunicação ao solicitar busca de escalação.',
+        variant: 'destructive',
+      })
+    } finally {
+      setForcingEscalacaoId(null)
+    }
+  }
+
   // Confirm import into active bolão
   const handleConfirmImport = async () => {
     if (!activeBolaoId || (parsedScores.length === 0 && parsedGames.length === 0)) return
@@ -906,6 +961,25 @@ export default function AdminJogos() {
                       </td>
                       <td className="px-4 py-3.5 text-right">
                         <div className="flex items-center justify-end gap-2">
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            onClick={() => handleForcarEscalacao(jogo)}
+                            disabled={forcingEscalacaoId === jogo.id}
+                            className="h-8 rounded-md border-indigo-200 bg-indigo-50/70 px-2.5 text-xs font-semibold text-indigo-700 hover:bg-indigo-100 hover:text-indigo-900"
+                            title="Buscar ou forçar atualização de escalação na API-Football"
+                          >
+                            {forcingEscalacaoId === jogo.id ? (
+                              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                            ) : (
+                              <>
+                                <RefreshCw className="mr-1 h-3.5 w-3.5" />
+                                <span className="hidden xl:inline">Forçar Escalação</span>
+                              </>
+                            )}
+                          </Button>
+
                           <Link to={`/bolao/admin/jogos/${jogo.id}/resultado`}>
                             <Button
                               size="sm"

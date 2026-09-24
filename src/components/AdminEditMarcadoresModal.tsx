@@ -218,88 +218,46 @@ export function AdminEditMarcadoresModal({
       const cleanA = formatScorerListPayload(scorersA)
       const cleanB = formatScorerListPayload(scorersB)
 
-      // Atualiza o palpite no banco PocketBase preservando objetos estruturados
-      const updatedRecord = await pb.collection('palpites').update<Palpite>(palpite.id, {
-        goleadores_a: cleanA as any,
-        goleadores_b: cleanB as any,
-      })
+      // Centralizado: chamada ao endpoint de backend administrativo com $app
+      // Isso contorna a restrição de RLS de jogos/palpites no cliente e normaliza posições e tipos
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+      }
+      if (pb.authStore.token) {
+        headers['Authorization'] = pb.authStore.token
+      }
 
-      // Atualiza também no jogo as posições dos marcadores cadastrados em jogos.gols_time_a / gols_time_b
-      try {
-        const game = await pb.collection('jogos').getOne(palpite.jogo)
-        const existingGolsA: any[] = Array.isArray((game as any).gols_time_a)
-          ? (game as any).gols_time_a
-          : []
-        const existingGolsB: any[] = Array.isArray((game as any).gols_time_b)
-          ? (game as any).gols_time_b
-          : []
-
-        const normalizeScorerString = (name: string): string => {
-          return (name || '')
-            .normalize('NFD')
-            .replace(/[\u0300-\u036f]/g, '')
-            .toLowerCase()
-            .replace(/\s*\d+\s*['’]/g, '')
-            .replace(/\(gol contra\)|\(contra\)/gi, '')
-            .replace(/[^a-z0-9]/g, '')
-            .trim()
-        }
-
-        const isMatchScorer = (itemA: string, itemB: string): boolean => {
-          const normA = normalizeScorerString(itemA)
-          const normB = normalizeScorerString(itemB)
-          if (!normA || !normB) return false
-          return normA === normB || normA.includes(normB) || normB.includes(normA)
-        }
-
-        const resolveTargetPosicao = (existingPos: any, matchItem: ScorerInputState): string => {
-          if (matchItem.gol_contra) return 'Gol Contra'
-          if (matchItem.posicao) return matchItem.posicao
-          return existingPos || 'Atacante'
-        }
-
-        const newGolsA = existingGolsA.map((g: any) => {
-          const matchA = scorersA.find((s) => isMatchScorer(s.nome, String(g.nome || '')))
-          if (!matchA) return g
-          return {
-            nome: g.nome,
-            posicao: resolveTargetPosicao(g.posicao, matchA),
-            quantidade: g.quantidade || 1,
-            gol_contra: matchA.gol_contra,
-          }
-        })
-
-        const newGolsB = existingGolsB.map((g: any) => {
-          const matchB = scorersB.find((s) => isMatchScorer(s.nome, String(g.nome || '')))
-          if (!matchB) return g
-          return {
-            nome: g.nome,
-            posicao: resolveTargetPosicao(g.posicao, matchB),
-            quantidade: g.quantidade || 1,
-            gol_contra: matchB.gol_contra,
-          }
-        })
-
-        await pb.collection('jogos').update(game.id, {
-          gols_time_a: newGolsA,
-          gols_time_b: newGolsB,
-        })
-
-        // Aciona recálculo de pontuação no backend SEMPRE que o admin salvar o modal,
-        // mesmo para jogos ao vivo (resultado_finalizado: false) para manter cards e rankings atualizados.
-        const headers: Record<string, string> = {
-          'Content-Type': 'application/json',
-        }
-        if (pb.authStore.token) {
-          headers['Authorization'] = pb.authStore.token
-        }
-        await fetch(`${import.meta.env.VITE_POCKETBASE_URL}/backend/v1/calcular-pontuacao`, {
+      const res = await fetch(
+        `${import.meta.env.VITE_POCKETBASE_URL}/backend/v1/admin/salvar-marcadores`,
+        {
           method: 'POST',
           headers,
-          body: JSON.stringify({ jogo_id: palpite.jogo }),
-        })
-      } catch (errCalc) {
-        console.warn('Aviso: atualização de jogo e recálculo após edição de marcadores:', errCalc)
+          body: JSON.stringify({
+            palpite_id: palpite.id,
+            jogo_id: palpite.jogo,
+            goleadores_a: cleanA,
+            goleadores_b: cleanB,
+          }),
+        },
+      )
+
+      if (!res.ok) {
+        let errDesc = 'Falha ao salvar marcadores no servidor'
+        try {
+          const errData = await res.json()
+          if (errData && errData.message) errDesc = errData.message
+          else if (errData && errData.error) errDesc = errData.error
+        } catch {
+          /* intentionally ignored */
+        }
+        throw new Error(errDesc)
+      }
+
+      const data = await res.json()
+      const updatedRecord: Palpite = (data && data.palpite) || {
+        ...palpite,
+        goleadores_a: cleanA as any,
+        goleadores_b: cleanB as any,
       }
 
       // Invalida cache de estatísticas para cards e tabela refletirem imediatamente
@@ -310,8 +268,8 @@ export function AdminEditMarcadoresModal({
       }
 
       toast({
-        title: 'Marcadores atualizados!',
-        description: `Marcadores e posições do palpite de ${nomeParticipante || 'Participante'} salvos com sucesso.`,
+        title: 'Marcadores atualizados com sucesso!',
+        description: `Os marcadores e posições do palpite de ${nomeParticipante || 'Participante'} foram salvos e as pontuações recalculadas.`,
       })
 
       if (onSuccess) {
@@ -321,10 +279,17 @@ export function AdminEditMarcadoresModal({
       onOpenChange(false)
     } catch (err: unknown) {
       console.error('Erro ao atualizar marcadores do palpite:', err)
-      const msg = err instanceof Error ? err.message : 'Falha ao salvar as alterações'
+      const rawMsg = err instanceof Error ? err.message : 'Falha ao salvar as alterações'
+      const friendlyMsg =
+        rawMsg.includes('Failed to fetch') || rawMsg.includes('NetworkError')
+          ? 'Erro de conexão com o servidor. Verifique sua internet.'
+          : rawMsg.includes('Something went wrong')
+            ? 'Não foi possível salvar os marcadores. Verifique se você está autenticado como administrador.'
+            : rawMsg
+
       toast({
         title: 'Erro ao salvar marcadores',
-        description: msg,
+        description: friendlyMsg,
         variant: 'destructive',
       })
     } finally {

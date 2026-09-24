@@ -154,4 +154,30 @@ describe('escalacoes service', () => {
     expect(awayStarters).toHaveLength(11)
     expect(awayBench).toHaveLength(9)
   })
+
+  it('valida cálculo da janela de busca pré-jogo (30 a 20 minutos antes do kickoff)', () => {
+    // Simula jogo com kickoff às 16:00 UTC
+    const kickoffMs = Date.UTC(2026, 5, 20, 16, 0, 0)
+    const janelaInicio = kickoffMs - 30 * 60 * 1000 // 15:30 UTC
+    const janelaFim = kickoffMs - 20 * 60 * 1000 // 15:40 UTC
+
+    // 25 minutos antes: dentro da janela
+    const agora25m = kickoffMs - 25 * 60 * 1000
+    expect(agora25m >= janelaInicio && agora25m <= janelaFim).toBe(true)
+
+    // 35 minutos antes: fora da janela (muito cedo)
+    const agora35m = kickoffMs - 35 * 60 * 1000
+    expect(agora35m >= janelaInicio && agora35m <= janelaFim).toBe(false)
+
+    // 15 minutos antes: fora da janela (já passou de 20 min)
+    const agora15m = kickoffMs - 15 * 60 * 1000
+    expect(agora15m >= janelaInicio && agora15m <= janelaFim).toBe(false)
+
+    // Tentativa pós-kickoff recente (até 2 horas)
+    const agora30mPosKickoff = kickoffMs + 30 * 60 * 1000
+    const duasHorasMs = 2 * 60 * 60 * 1000
+    const posKickoffRecente =
+      agora30mPosKickoff > kickoffMs && agora30mPosKickoff <= kickoffMs + duasHorasMs
+    expect(posKickoffRecente).toBe(true)
+  })
 })

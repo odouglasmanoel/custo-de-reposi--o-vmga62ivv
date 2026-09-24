@@ -10,6 +10,7 @@ import {
   ChevronDown,
   ChevronUp,
   Edit3,
+  RefreshCw,
 } from 'lucide-react'
 import pb from '@/lib/pocketbase/client'
 import type { Jogo, Palpite, Normalizacao, ScorerItem } from '@/types/bolao'
@@ -53,6 +54,7 @@ export default function AdminResultado() {
   const [showNormalizer, setShowNormalizer] = useState(false)
   const [mappingInputs, setMappingInputs] = useState<Record<string, string>>({})
   const [savingNorms, setSavingNorms] = useState(false)
+  const [forcingEscalacao, setForcingEscalacao] = useState(false)
   const [participantesMap, setParticipantesMap] = useState<Record<string, string>>({})
   const [editingPalpite, setEditingPalpite] = useState<{
     palpite: Palpite
@@ -225,6 +227,66 @@ export default function AdminResultado() {
     // If it's already an exact match with a real scorer, it doesn't strictly need normalization, but Douglas can edit if desired
     return true
   })
+
+  // Forçar busca de escalação na API-Football
+  const handleForcarEscalacao = async () => {
+    if (!jogo) return
+    setForcingEscalacao(true)
+    try {
+      const reqHeaders: Record<string, string> = {
+        'Content-Type': 'application/json',
+      }
+      if (pb.authStore.token) {
+        reqHeaders['Authorization'] = pb.authStore.token
+      }
+
+      const res = await fetch(
+        `${import.meta.env.VITE_POCKETBASE_URL}/backend/v1/admin/forcar-escalacao`,
+        {
+          method: 'POST',
+          headers: reqHeaders,
+          body: JSON.stringify({ jogo_id: jogo.id }),
+        },
+      )
+
+      const data = await res.json()
+      if (!res.ok || data.success === false) {
+        const errorMsg =
+          data.error ||
+          data.notice ||
+          'Não foi possível obter escalações da API externa no momento.'
+        toast({
+          title: 'Aviso sobre escalação',
+          description: errorMsg,
+          variant: data.rate_limited ? 'destructive' : 'default',
+        })
+      } else {
+        toast({
+          title: 'Escalação sincronizada!',
+          description: `Escalações do confronto ${jogo.time_a} x ${jogo.time_b} obtidas com sucesso na API externa.`,
+        })
+        if (data.fixture_id && data.fixture_id !== fixtureId) {
+          setFixtureId(data.fixture_id)
+        }
+      }
+
+      // Atualiza os dados locais do jogo
+      const updatedGame = await pb.collection('jogos').getOne<Jogo>(jogo.id)
+      setJogo(updatedGame)
+      if (updatedGame.fixture_id) {
+        setFixtureId(updatedGame.fixture_id)
+      }
+    } catch (err) {
+      console.error('Erro ao forçar busca de escalação:', err)
+      toast({
+        title: 'Erro na requisição',
+        description: 'Falha de comunicação ao solicitar busca de escalação.',
+        variant: 'destructive',
+      })
+    } finally {
+      setForcingEscalacao(false)
+    }
+  }
 
   const handleSaveNormalizations = async () => {
     if (!jogo) return
@@ -472,20 +534,44 @@ export default function AdminResultado() {
           Informe a quantidade de gols no tempo normal (ou prorrogação) de cada time.
         </p>
 
-        <div className="mt-4 mb-4 max-w-sm">
-          <Label htmlFor="edit-fixture-id" className="text-xs font-semibold text-[#0F172A]">
-            ID da Partida (API-Football)
-          </Label>
-          <Input
-            id="edit-fixture-id"
-            placeholder="Ex: 1208456 (consulta direta)"
-            value={fixtureId}
-            onChange={(e) => setFixtureId(e.target.value)}
-            className="mt-1 h-9 border-[#CBD5E1] text-xs focus-visible:border-[#10B981] focus-visible:ring-[#10B981]"
-          />
-          <p className="mt-1 text-[10px] text-slate-500">
-            Associa este jogo diretamente à fixture da API-Football.
-          </p>
+        <div className="mt-4 mb-4 flex flex-col sm:flex-row sm:items-end gap-3 max-w-lg">
+          <div className="flex-1">
+            <Label htmlFor="edit-fixture-id" className="text-xs font-semibold text-[#0F172A]">
+              ID da Partida (API-Football)
+            </Label>
+            <Input
+              id="edit-fixture-id"
+              placeholder="Ex: 1208456 (consulta direta)"
+              value={fixtureId}
+              onChange={(e) => setFixtureId(e.target.value)}
+              className="mt-1 h-9 border-[#CBD5E1] text-xs focus-visible:border-[#10B981] focus-visible:ring-[#10B981]"
+            />
+            <p className="mt-1 text-[10px] text-slate-500">
+              Associa este jogo diretamente à fixture da API-Football.
+            </p>
+          </div>
+
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={handleForcarEscalacao}
+            disabled={forcingEscalacao}
+            className="h-9 shrink-0 border-indigo-200 bg-indigo-50/70 text-xs font-semibold text-indigo-700 hover:bg-indigo-100 hover:text-indigo-900"
+            title="Consulta e armazena escalações no PocketBase via API-Football"
+          >
+            {forcingEscalacao ? (
+              <>
+                <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                Buscando...
+              </>
+            ) : (
+              <>
+                <RefreshCw className="mr-1.5 h-3.5 w-3.5" />
+                Forçar Busca de Escalação
+              </>
+            )}
+          </Button>
         </div>
 
         <div className="mt-6 flex flex-wrap items-center justify-center gap-4 sm:gap-8">
