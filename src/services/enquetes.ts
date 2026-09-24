@@ -573,6 +573,20 @@ export function isApiSportsLogo(url?: string | null): boolean {
   return url.includes('media.api-sports.io')
 }
 
+export function isTheSportsDbLogo(url?: string | null): boolean {
+  if (!url) return false
+  return url.includes('thesportsdb.com')
+}
+
+export interface SalvarJogoEnqueteResult {
+  jogo: EnqueteJogoModel
+  fixtureIdEncontrado?: string
+  escudosAtualizados?: boolean
+  autoLookupSucesso?: boolean
+  rateLimited?: boolean
+  aviso?: string
+}
+
 /**
  * Consulta detalhes da fixture pelo ID na API-Sports via endpoint backend (/backend/v1/enquetes/fixture-detalhes)
  * Respeita a cota diária de 80 requisições (reset 21h Brasília).
@@ -689,24 +703,70 @@ export async function adicionarJogoManualNaEnquete(params: {
   logo_casa?: string
   logo_visitante?: string
   campeonato_logo?: string
-}): Promise<EnqueteJogoModel> {
-  const cleanFixtureId = (params.fixture_id || '').replace(/\D/g, '').trim()
+}): Promise<EnqueteJogoModel & { _saveMeta?: SalvarJogoEnqueteResult }> {
+  let cleanFixtureId = (params.fixture_id || '').replace(/\D/g, '').trim()
   let logoCasa = params.logo_casa || ''
   let logoVisitante = params.logo_visitante || ''
+  let fixtureIdEncontrado = ''
+  let escudosAtualizados = false
+  let autoLookupSucesso = false
+  let rateLimited = false
+  let aviso = ''
 
-  // Se fixture_id foi fornecido, consulta os logos oficiais da fixture via backend (API-Sports)
-  // Substitui URLs nos campos pelos logos oficiais da API, sobrepondo links de terceiros (TheSportsDB),
-  // a menos que a URL informada já seja oficial da API-Sports (media.api-sports.io).
+  // 1. Se o campo 'ID da Partida' estiver VAZIO:
+  // Faz busca automática por confronto na API-Football (endpoint /fixtures por data + times tolerantes)
+  if (!cleanFixtureId && params.time_a && params.time_b && params.data) {
+    try {
+      const lookupRes = await buscarFixtureAutoLookup({
+        mandante: params.time_a,
+        visitante: params.time_b,
+        data: params.data,
+      })
+      if (lookupRes.success && lookupRes.fixture?.id) {
+        cleanFixtureId = String(lookupRes.fixture.id).replace(/\D/g, '').trim()
+        fixtureIdEncontrado = cleanFixtureId
+        autoLookupSucesso = true
+
+        // Substitui URLs de escudo pelos logos oficiais da API
+        if (lookupRes.fixture.homeTeamLogo) {
+          logoCasa = lookupRes.fixture.homeTeamLogo
+          escudosAtualizados = true
+        }
+        if (lookupRes.fixture.awayTeamLogo) {
+          logoVisitante = lookupRes.fixture.awayTeamLogo
+          escudosAtualizados = true
+        }
+      } else if (lookupRes.rate_limited) {
+        rateLimited = true
+        aviso =
+          'Cota diária da API atingida (80/dia, reset 21h). O jogo foi cadastrado com sucesso.'
+      }
+    } catch (errLookup) {
+      console.warn('[adicionarJogoManualNaEnquete] Aviso no auto-lookup ao salvar:', errLookup)
+    }
+  }
+
+  // 2. Se o ID já estiver preenchido manualmente:
+  // Consulta diretamente a API-Football pelo fixture ID (/fixtures?id={api_fixture_id})
+  // e atualiza/sobrescreve as URLs de escudos/bandeiras com as imagens oficiais da partida
+  // (substituindo links antigos do TheSportsDB). URLs que já são oficiais (media.api-sports.io)
+  // são preservadas para economia de cota.
   if (cleanFixtureId && (!isApiSportsLogo(logoCasa) || !isApiSportsLogo(logoVisitante))) {
     try {
       const res = await buscarFixtureDetalhes(cleanFixtureId)
       if (res.success && res.fixture) {
         if (res.fixture.homeTeamLogo && !isApiSportsLogo(logoCasa)) {
           logoCasa = res.fixture.homeTeamLogo
+          escudosAtualizados = true
         }
         if (res.fixture.awayTeamLogo && !isApiSportsLogo(logoVisitante)) {
           logoVisitante = res.fixture.awayTeamLogo
+          escudosAtualizados = true
         }
+      } else if (res.rate_limited) {
+        rateLimited = true
+        aviso =
+          'Cota diária da API atingida (80/dia, reset 21h). O jogo foi cadastrado com o ID intacto.'
       }
     } catch (errFixture) {
       console.warn('[adicionarJogoManualNaEnquete] Aviso ao buscar logos da fixture:', errFixture)
@@ -730,7 +790,17 @@ export async function adicionarJogoManualNaEnquete(params: {
     origem: 'manual',
   })
   invalidateEnqueteCache(params.enqueteId)
-  return novoJogo
+
+  const meta: SalvarJogoEnqueteResult = {
+    jogo: novoJogo,
+    fixtureIdEncontrado: fixtureIdEncontrado || undefined,
+    escudosAtualizados,
+    autoLookupSucesso,
+    rateLimited,
+    aviso: aviso || undefined,
+  }
+
+  return Object.assign(novoJogo, { _saveMeta: meta })
 }
 
 /**
@@ -956,7 +1026,7 @@ export async function editarJogoEnquete(
     logo_casa?: string
     logo_visitante?: string
   },
-): Promise<EnqueteJogoModel> {
+): Promise<EnqueteJogoModel & { _saveMeta?: SalvarJogoEnqueteResult }> {
   // Obtém o registro existente para preservar fixture_id se o novo vier vazio
   let jogoExistente: EnqueteJogoModel | null = null
   try {
@@ -982,19 +1052,64 @@ export async function editarJogoEnquete(
       ? params.logo_visitante.trim()
       : jogoExistente?.logo_visitante || ''
 
-  // Se houver fixture_id final e os escudos ainda não forem os oficiais da API-Sports,
-  // consulta automaticamente pelo ID via backend e atualiza com os logos oficiais da API-Sports,
-  // sobrepondo links de terceiros como TheSportsDB.
+  let fixtureIdEncontrado = ''
+  let escudosAtualizados = false
+  let autoLookupSucesso = false
+  let rateLimited = false
+  let aviso = ''
+
+  // 1. Se o campo 'ID da Partida' estiver VAZIO e o jogo NÃO tem ID no banco:
+  // Faz busca automática por confronto na API-Football (endpoint /fixtures por data + times tolerantes)
+  if (!fixtureIdFinal && params.time_a && params.time_b && params.data) {
+    try {
+      const lookupRes = await buscarFixtureAutoLookup({
+        mandante: params.time_a,
+        visitante: params.time_b,
+        data: params.data,
+      })
+      if (lookupRes.success && lookupRes.fixture?.id) {
+        fixtureIdFinal = String(lookupRes.fixture.id).replace(/\D/g, '').trim()
+        fixtureIdEncontrado = fixtureIdFinal
+        autoLookupSucesso = true
+
+        // Substitui escudos pelos oficiais retornados pela API
+        if (lookupRes.fixture.homeTeamLogo) {
+          logoCasaFinal = lookupRes.fixture.homeTeamLogo
+          escudosAtualizados = true
+        }
+        if (lookupRes.fixture.awayTeamLogo) {
+          logoVisitanteFinal = lookupRes.fixture.awayTeamLogo
+          escudosAtualizados = true
+        }
+      } else if (lookupRes.rate_limited) {
+        rateLimited = true
+        aviso = 'Cota diária da API atingida (80/dia, reset 21h). Alterações salvas com sucesso.'
+      }
+    } catch (errLookup) {
+      console.warn('[editarJogoEnquete] Erro no auto-lookup ao salvar:', errLookup)
+    }
+  }
+
+  // 2. Se o ID já estiver preenchido (manualmente ou preservado do banco):
+  // Consulta diretamente a API-Football (/fixtures?id={api_fixture_id}) e atualiza/sobrescreve
+  // as URLs dos escudos/bandeiras com as imagens oficiais retornadas pela API (substituindo TheSportsDB).
+  // URLs que já sejam media.api-sports.io não precisam de nova requisição se ambas forem oficiais.
   if (fixtureIdFinal && (!isApiSportsLogo(logoCasaFinal) || !isApiSportsLogo(logoVisitanteFinal))) {
     try {
       const res = await buscarFixtureDetalhes(fixtureIdFinal)
       if (res.success && res.fixture) {
         if (res.fixture.homeTeamLogo && !isApiSportsLogo(logoCasaFinal)) {
           logoCasaFinal = res.fixture.homeTeamLogo
+          escudosAtualizados = true
         }
         if (res.fixture.awayTeamLogo && !isApiSportsLogo(logoVisitanteFinal)) {
           logoVisitanteFinal = res.fixture.awayTeamLogo
+          escudosAtualizados = true
         }
+      } else if (res.rate_limited) {
+        rateLimited = true
+        aviso =
+          'Cota diária da API atingida (80/dia, reset 21h). Alterações salvas com o ID intacto.'
       }
     } catch (errFixture) {
       console.warn('[editarJogoEnquete] Aviso ao buscar logos da fixture:', errFixture)
@@ -1061,7 +1176,16 @@ export async function editarJogoEnquete(
     console.warn('[editarJogoEnquete] Falha ao sincronizar com tabela de jogos:', syncErr)
   }
 
-  return atualizado
+  const meta: SalvarJogoEnqueteResult = {
+    jogo: atualizado,
+    fixtureIdEncontrado: fixtureIdEncontrado || undefined,
+    escudosAtualizados,
+    autoLookupSucesso,
+    rateLimited,
+    aviso: aviso || undefined,
+  }
+
+  return Object.assign(atualizado, { _saveMeta: meta })
 }
 
 /**

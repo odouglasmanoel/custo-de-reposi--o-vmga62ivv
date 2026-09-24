@@ -1116,8 +1116,27 @@ export default function Enquetes() {
         horario: horaFinal,
       })
 
-      // Se o usuário informou fixture_id e os logos não vieram do backend nem do form, avisa amigavelmente
-      if (fixtureIdClean && (!novoRegistro.logo_casa || !novoRegistro.logo_visitante)) {
+      const saveMeta = (novoRegistro as any)._saveMeta
+
+      // Feedback amigável conforme o que foi resolvido ao salvar:
+      if (saveMeta?.autoLookupSucesso && saveMeta?.fixtureIdEncontrado) {
+        toast({
+          title: 'ID e escudos vinculados!',
+          description: `Partida localizada na API-Football (ID #${saveMeta.fixtureIdEncontrado}) e escudos oficiais salvos automaticamente.`,
+        })
+      } else if (saveMeta?.escudosAtualizados) {
+        toast({
+          title: 'Escudos oficiais salvos!',
+          description: 'URLs de escudos atualizadas com as imagens oficiais da API-Football.',
+        })
+      }
+
+      if (saveMeta?.rateLimited && saveMeta?.aviso) {
+        toast({
+          title: 'Cota diária da API',
+          description: saveMeta.aviso,
+        })
+      } else if (fixtureIdClean && (!novoRegistro.logo_casa || !novoRegistro.logo_visitante)) {
         toast({
           title: 'Escudos pendentes',
           description:
@@ -1129,6 +1148,8 @@ export default function Enquetes() {
       const spNovo = formatDataHoraSaoPaulo(novoRegistro.data, novoRegistro.horario)
       const novoJogoComVotos: JogoComVotos = {
         ...novoRegistro,
+        fixture_id:
+          novoRegistro.fixture_id || fixtureIdClean || saveMeta?.fixtureIdEncontrado || '',
         logo_casa: novoRegistro.logo_casa || logoAFinal,
         logo_visitante: novoRegistro.logo_visitante || logoBFinal,
         data: spNovo.data || novoRegistro.data,
@@ -1519,8 +1540,27 @@ export default function Enquetes() {
         horario: horaFinal,
       })
 
-      // Se informou fixture_id e os escudos permaneceram vazios, avisa amigavelmente
-      if (cleanEditFixtureId && (!atualizado.logo_casa || !atualizado.logo_visitante)) {
+      const saveMeta = (atualizado as any)._saveMeta
+
+      // Feedback amigável conforme o que foi resolvido ao salvar:
+      if (saveMeta?.autoLookupSucesso && saveMeta?.fixtureIdEncontrado) {
+        toast({
+          title: 'ID e escudos vinculados!',
+          description: `Partida localizada na API-Football (ID #${saveMeta.fixtureIdEncontrado}) e escudos oficiais salvos automaticamente.`,
+        })
+      } else if (saveMeta?.escudosAtualizados) {
+        toast({
+          title: 'Escudos oficiais salvos!',
+          description: 'URLs de escudos atualizadas com as imagens oficiais da API-Football.',
+        })
+      }
+
+      if (saveMeta?.rateLimited && saveMeta?.aviso) {
+        toast({
+          title: 'Cota diária da API',
+          description: saveMeta.aviso,
+        })
+      } else if (cleanEditFixtureId && (!atualizado.logo_casa || !atualizado.logo_visitante)) {
         toast({
           title: 'Escudos pendentes',
           description:

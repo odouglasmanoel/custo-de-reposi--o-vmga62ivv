@@ -9,7 +9,10 @@ import {
   writeListaEnquetesCache,
   readEnqueteDetalhesCache,
   writeEnqueteDetalhesCache,
+  adicionarJogoManualNaEnquete,
+  editarJogoEnquete,
   type EnqueteModel,
+  type EnqueteJogoModel,
   type JogoComVotos,
 } from './enquetes'
 import { ordenarEnquetesCrescente } from '@/lib/dateUtils'
@@ -651,7 +654,235 @@ describe('Serviço de Enquetes - Otimizações de Carregamento, Cache e Requisi�
     })
   })
 
-  describe('5. Alternância de Voto (toggleVotoJogo) e Tratamento de Erros', () => {
+  describe('5. Busca de ID e Escudos ao Salvar (Manual e Edição)', () => {
+    it('adicionarJogoManualNaEnquete sem ID executa auto-lookup e persiste fixture_id e escudos oficiais', async () => {
+      // Mock do endpoint de auto-lookup
+      globalThis.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          success: true,
+          fixture: {
+            id: 998877,
+            homeTeam: 'Flamengo',
+            awayTeam: 'Fluminense',
+            homeTeamLogo: 'https://media.api-sports.io/football/teams/127.png',
+            awayTeamLogo: 'https://media.api-sports.io/football/teams/124.png',
+          },
+        }),
+      }) as any
+
+      const createSpy = vi.fn().mockImplementation(async (data: any) => ({
+        id: 'novo_manual_1',
+        ...data,
+      }))
+
+      vi.spyOn(pb, 'collection').mockImplementation((col: string) => {
+        if (col === 'enquete_jogos') {
+          return {
+            create: createSpy,
+          } as any
+        }
+        return {} as any
+      })
+
+      const res = await adicionarJogoManualNaEnquete({
+        enqueteId: 'enq_ativa',
+        time_a: 'Flamengo',
+        time_b: 'Fluminense',
+        data: '2025-05-10',
+        horario: '16:00',
+        fixture_id: '', // vazio!
+        logo_casa: 'https://r2.thesportsdb.com/flamengo.png',
+        logo_visitante: 'https://r2.thesportsdb.com/fluminense.png',
+      })
+
+      expect(res.fixture_id).toBe('998877')
+      expect(res.logo_casa).toBe('https://media.api-sports.io/football/teams/127.png')
+      expect(res.logo_visitante).toBe('https://media.api-sports.io/football/teams/124.png')
+      expect(res._saveMeta?.autoLookupSucesso).toBe(true)
+      expect(res._saveMeta?.fixtureIdEncontrado).toBe('998877')
+      expect(res._saveMeta?.escudosAtualizados).toBe(true)
+      expect(createSpy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          fixture_id: '998877',
+          logo_casa: 'https://media.api-sports.io/football/teams/127.png',
+          logo_visitante: 'https://media.api-sports.io/football/teams/124.png',
+        }),
+      )
+    })
+
+    it('adicionarJogoManualNaEnquete com ID preenchido busca detalhes da fixture e substitui escudos TheSportsDB', async () => {
+      // Mock do endpoint /fixtures?id=554433
+      globalThis.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          success: true,
+          fixture: {
+            id: 554433,
+            homeTeam: 'Palmeiras',
+            awayTeam: 'Corinthians',
+            homeTeamLogo: 'https://media.api-sports.io/football/teams/128.png',
+            awayTeamLogo: 'https://media.api-sports.io/football/teams/131.png',
+          },
+        }),
+      }) as any
+
+      const createSpy = vi.fn().mockImplementation(async (data: any) => ({
+        id: 'novo_manual_2',
+        ...data,
+      }))
+
+      vi.spyOn(pb, 'collection').mockImplementation((col: string) => {
+        if (col === 'enquete_jogos') {
+          return {
+            create: createSpy,
+          } as any
+        }
+        return {} as any
+      })
+
+      const res = await adicionarJogoManualNaEnquete({
+        enqueteId: 'enq_ativa',
+        time_a: 'Palmeiras',
+        time_b: 'Corinthians',
+        data: '2025-05-11',
+        fixture_id: '554433', // preenchido manualmente
+        logo_casa: 'https://r2.thesportsdb.com/palmeiras.png',
+        logo_visitante: 'https://r2.thesportsdb.com/corinthians.png',
+      })
+
+      expect(res.fixture_id).toBe('554433')
+      expect(res.logo_casa).toBe('https://media.api-sports.io/football/teams/128.png')
+      expect(res.logo_visitante).toBe('https://media.api-sports.io/football/teams/131.png')
+      expect(res._saveMeta?.escudosAtualizados).toBe(true)
+    })
+
+    it('editarJogoEnquete preserva fixture_id existente no banco se campo vier vazio e atualiza escudos', async () => {
+      // Mock da API para a fixture existente 777888
+      globalThis.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          success: true,
+          fixture: {
+            id: 777888,
+            homeTeam: 'São Paulo',
+            awayTeam: 'Santos',
+            homeTeamLogo: 'https://media.api-sports.io/football/teams/126.png',
+            awayTeamLogo: 'https://media.api-sports.io/football/teams/129.png',
+          },
+        }),
+      }) as any
+
+      const existingRecord: EnqueteJogoModel = {
+        id: 'jogo_existente_1',
+        collectionId: 'enquete_jogos',
+        collectionName: 'enquete_jogos',
+        enquete: 'enq_1',
+        time_a: 'São Paulo',
+        time_b: 'Santos',
+        data: '2025-05-12',
+        horario: '16:00',
+        fixture_id: '777888',
+        logo_casa: 'https://r2.thesportsdb.com/spfc.png',
+        logo_visitante: 'https://r2.thesportsdb.com/santos.png',
+        origem: 'manual',
+        selecionado_admin: false,
+        cadastrado_bolao: false,
+        created: '2025-01-01',
+        updated: '2025-01-01',
+      }
+
+      const updateSpy = vi.fn().mockImplementation(async (id: string, data: any) => ({
+        ...existingRecord,
+        ...data,
+      }))
+
+      vi.spyOn(pb, 'collection').mockImplementation((col: string) => {
+        if (col === 'enquete_jogos') {
+          return {
+            getOne: vi.fn().mockResolvedValue(existingRecord),
+            update: updateSpy,
+          } as any
+        }
+        if (col === 'jogos') {
+          return {
+            getFullList: vi.fn().mockResolvedValue([]),
+          } as any
+        }
+        return {} as any
+      })
+
+      // Usuário edita horário e manda fixture_id vazio
+      const res = await editarJogoEnquete('jogo_existente_1', {
+        time_a: 'São Paulo',
+        time_b: 'Santos',
+        data: '2025-05-12',
+        horario: '18:30',
+        fixture_id: '', // vazio no formulário de edição!
+        logo_casa: 'https://r2.thesportsdb.com/spfc.png',
+        logo_visitante: 'https://r2.thesportsdb.com/santos.png',
+      })
+
+      // Regra de ouro: fixture_id não foi apagado
+      expect(res.fixture_id).toBe('777888')
+      expect(updateSpy).toHaveBeenCalledWith(
+        'jogo_existente_1',
+        expect.objectContaining({
+          fixture_id: '777888',
+          horario: '18:30',
+          logo_casa: 'https://media.api-sports.io/football/teams/126.png',
+          logo_visitante: 'https://media.api-sports.io/football/teams/129.png',
+        }),
+      )
+    })
+
+    it('quando cota diária está esgotada (rate_limited: true), salva o jogo normalmente sem perder dados', async () => {
+      globalThis.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          success: false,
+          rate_limited: true,
+          error: 'Limite diário de requisições da API atingido',
+        }),
+      }) as any
+
+      const createSpy = vi.fn().mockImplementation(async (data: any) => ({
+        id: 'novo_com_cota_esgotada',
+        ...data,
+      }))
+
+      vi.spyOn(pb, 'collection').mockImplementation((col: string) => {
+        if (col === 'enquete_jogos') {
+          return {
+            create: createSpy,
+          } as any
+        }
+        return {} as any
+      })
+
+      const res = await adicionarJogoManualNaEnquete({
+        enqueteId: 'enq_ativa',
+        time_a: 'Grêmio',
+        time_b: 'Internacional',
+        data: '2025-05-18',
+        fixture_id: '123456',
+        logo_casa: 'https://r2.thesportsdb.com/gremio.png',
+        logo_visitante: 'https://r2.thesportsdb.com/inter.png',
+      })
+
+      // O jogo foi salvo mesmo com rate limit!
+      expect(res.fixture_id).toBe('123456')
+      expect(res.logo_casa).toBe('https://r2.thesportsdb.com/gremio.png')
+      expect(res._saveMeta?.rateLimited).toBe(true)
+      expect(res._saveMeta?.aviso).toContain('Cota diária da API atingida')
+    })
+  })
+
+  describe('6. Alternância de Voto (toggleVotoJogo) e Tratamento de Erros', () => {
     it('bloqueia e avisa quando usuário não está autenticado', async () => {
       // Força pb.authStore sem usuário logado
       const originalRecord = pb.authStore.record
