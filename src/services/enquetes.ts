@@ -548,18 +548,21 @@ export async function toggleVotoJogo(
 /**
  * Admin: Adiciona um jogo manualmente a uma enquete já ativa/criada
  */
+export interface FixtureDetalhesItem {
+  id: number | string
+  homeTeamName?: string
+  awayTeamName?: string
+  homeTeamLogo?: string
+  awayTeamLogo?: string
+  leagueName?: string
+  date?: string
+}
+
 export interface FixtureDetalhesResultado {
   success: boolean
   auto_lookup?: boolean
-  fixture?: {
-    id: number | string
-    homeTeamName?: string
-    awayTeamName?: string
-    homeTeamLogo?: string
-    awayTeamLogo?: string
-    leagueName?: string
-    date?: string
-  }
+  fixture?: FixtureDetalhesItem
+  alternativas?: FixtureDetalhesItem[]
   error?: string
   rate_limited?: boolean
   matches_found?: number
@@ -671,6 +674,7 @@ export async function buscarFixtureAutoLookup(params: {
     if (!res.ok || !dataRes?.success) {
       return {
         success: false,
+        alternativas: Array.isArray(dataRes?.alternativas) ? dataRes.alternativas : undefined,
         error: dataRes?.error || `Nenhuma partida correspondente (status ${res.status}).`,
         rate_limited: Boolean(dataRes?.rate_limited || res.status === 429),
         matches_found: dataRes?.matches_found,
@@ -681,6 +685,7 @@ export async function buscarFixtureAutoLookup(params: {
       success: true,
       auto_lookup: true,
       fixture: dataRes.fixture,
+      alternativas: Array.isArray(dataRes.alternativas) ? dataRes.alternativas : undefined,
     }
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err)

@@ -64,6 +64,7 @@ import { ParticipantBetsModal } from '@/components/ParticipantBetsModal'
 import { Users, ChevronRight, RefreshCw } from 'lucide-react'
 import { useToast } from '@/hooks/use-toast'
 import { buscarEscudoTime, readEscudoCache } from '@/services/enquetes'
+import { getFlagCdnUrl, resolveTeamBadgeUrl } from '@/lib/flags'
 
 function TeamShield({
   escudo,
@@ -79,26 +80,57 @@ function TeamShield({
   textClass?: string
 }) {
   const [hasError, setHasError] = useState(false)
+  const [triedFlagCdn, setTriedFlagCdn] = useState(false)
   const [currentSrc, setCurrentSrc] = useState<string | undefined>(escudo)
 
   useEffect(() => {
     setCurrentSrc(escudo)
     setHasError(false)
+    setTriedFlagCdn(false)
   }, [escudo])
 
   const handleError = () => {
-    // Tenta fallback com busca direta de cache oficial para times como País de Gales, Dinamarca, etc.
+    // 1º fallback: Tenta cache oficial em memória/localStorage
     if (nomeTime) {
       const fallbackBadge = readEscudoCache(nomeTime)
       if (fallbackBadge && fallbackBadge !== currentSrc) {
         setCurrentSrc(fallbackBadge)
         return
       }
+      // 2º fallback: Se for seleção nacional, recorre a FlagCDN (garante que seleções NUNCA fiquem sem imagem)
+      if (!triedFlagCdn) {
+        setTriedFlagCdn(true)
+        const flagUrl = getFlagCdnUrl(nomeTime)
+        if (flagUrl && flagUrl !== currentSrc) {
+          setCurrentSrc(flagUrl)
+          return
+        }
+      }
     }
     setHasError(true)
   }
 
   if (!currentSrc || hasError) {
+    // Se a imagem falhou mas for seleção conhecida e ainda não tentamos a FlagCDN diretamente:
+    const flagFallback = !triedFlagCdn && nomeTime ? getFlagCdnUrl(nomeTime) : null
+    if (flagFallback && flagFallback !== currentSrc) {
+      return (
+        <div className={`${sizeClass} shrink-0 flex items-center justify-center`}>
+          <img
+            src={flagFallback}
+            alt={nomeTime}
+            className="w-full h-full object-contain drop-shadow-xs"
+            loading="eager"
+            decoding="async"
+            onError={() => {
+              setTriedFlagCdn(true)
+              setHasError(true)
+            }}
+          />
+        </div>
+      )
+    }
+
     return (
       <div
         className={`${sizeClass} rounded-full bg-slate-100 border border-slate-300 flex items-center justify-center shrink-0 ${textClass}`}
@@ -2307,22 +2339,26 @@ export default function BolaoDashboard() {
                 const escudoMapB = escudosMap[timeBNome]
                 const escudoMapValidoB = !isCorrompido(timeBNome, escudoMapB) ? escudoMapB : ''
 
+                const liveOrCacheA =
+                  matchedLive?.homeTeamLogo || readEscudoCache(timeANome) || escudoMapValidoA || ''
+                const liveOrCacheB =
+                  matchedLive?.awayTeamLogo || readEscudoCache(timeBNome) || escudoMapValidoB || ''
+
+                // Prioridade: 1º oficial salvo (media.api-sports.io), 2º live/cache, 3º FlagCDN seleções, 4º monograma
                 const logoCasa =
-                  (!isCorrompido(timeANome, jogo.url_escudo_mandante)
-                    ? jogo.url_escudo_mandante
-                    : '') ||
-                  matchedLive?.homeTeamLogo ||
-                  readEscudoCache(timeANome) ||
-                  escudoMapValidoA ||
-                  ''
+                  resolveTeamBadgeUrl({
+                    teamName: timeANome,
+                    savedBadge: jogo.url_escudo_mandante,
+                    liveOrCacheBadge: liveOrCacheA,
+                    isCorrompido,
+                  }) || ''
                 const logoVisitante =
-                  (!isCorrompido(timeBNome, jogo.url_escudo_visitante)
-                    ? jogo.url_escudo_visitante
-                    : '') ||
-                  matchedLive?.awayTeamLogo ||
-                  readEscudoCache(timeBNome) ||
-                  escudoMapValidoB ||
-                  ''
+                  resolveTeamBadgeUrl({
+                    teamName: timeBNome,
+                    savedBadge: jogo.url_escudo_visitante,
+                    liveOrCacheBadge: liveOrCacheB,
+                    isCorrompido,
+                  }) || ''
                 const initialsA = (jogo.time_a || '').slice(0, 2).toUpperCase()
                 const initialsB = (jogo.time_b || '').slice(0, 2).toUpperCase()
 
@@ -2687,22 +2723,32 @@ export default function BolaoDashboard() {
                               ? escudoMapB
                               : ''
 
-                            const logoCasa =
-                              (!isCorrompido(timeANome, jogo.url_escudo_mandante)
-                                ? jogo.url_escudo_mandante
-                                : '') ||
+                            const liveOrCacheA =
                               matchedLive?.homeTeamLogo ||
                               readEscudoCache(timeANome) ||
                               escudoMapValidoA ||
                               ''
-                            const logoVisitante =
-                              (!isCorrompido(timeBNome, jogo.url_escudo_visitante)
-                                ? jogo.url_escudo_visitante
-                                : '') ||
+                            const liveOrCacheB =
                               matchedLive?.awayTeamLogo ||
                               readEscudoCache(timeBNome) ||
                               escudoMapValidoB ||
                               ''
+
+                            // Prioridade: 1º oficial salvo, 2º live/cache, 3º FlagCDN, 4º monograma
+                            const logoCasa =
+                              resolveTeamBadgeUrl({
+                                teamName: timeANome,
+                                savedBadge: jogo.url_escudo_mandante,
+                                liveOrCacheBadge: liveOrCacheA,
+                                isCorrompido,
+                              }) || ''
+                            const logoVisitante =
+                              resolveTeamBadgeUrl({
+                                teamName: timeBNome,
+                                savedBadge: jogo.url_escudo_visitante,
+                                liveOrCacheBadge: liveOrCacheB,
+                                isCorrompido,
+                              }) || ''
                             const initialsA = (jogo.time_a || '').slice(0, 2).toUpperCase()
                             const initialsB = (jogo.time_b || '').slice(0, 2).toUpperCase()
 

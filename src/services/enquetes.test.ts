@@ -631,6 +631,43 @@ describe('Serviço de Enquetes - Otimizações de Carregamento, Cache e Requisi�
       expect(calledUrl).toContain('data=2026-09-28')
     })
 
+    it('buscarFixtureAutoLookup retorna alternativas quando houver múltiplas partidas ou sem match exato', async () => {
+      globalThis.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          success: false,
+          error: 'Múltiplas partidas encontradas para os times informados.',
+          matches_found: 2,
+          alternativas: [
+            {
+              id: 1528881,
+              homeTeamName: 'Jamaica',
+              awayTeamName: 'Honduras',
+              homeTeamLogo: 'https://media.api-sports.io/football/teams/jamaica.png',
+              awayTeamLogo: 'https://media.api-sports.io/football/teams/honduras.png',
+            },
+            {
+              id: 1528882,
+              homeTeamName: 'Jamaica U20',
+              awayTeamName: 'Honduras U20',
+            },
+          ],
+        }),
+      }) as any
+
+      const { buscarFixtureAutoLookup } = await import('./enquetes')
+      const res = await buscarFixtureAutoLookup({
+        mandante: 'Jamaica',
+        visitante: 'Honduras',
+        data: '2026-09-28',
+      })
+
+      expect(res.success).toBe(false)
+      expect(res.alternativas?.length).toBe(2)
+      expect(res.alternativas?.[0].id).toBe(1528881)
+    })
+
     it('buscarFixtureAutoLookup trata cota esgotada (429) de forma limpa sem quebrar', async () => {
       globalThis.fetch = vi.fn().mockResolvedValue({
         ok: false,

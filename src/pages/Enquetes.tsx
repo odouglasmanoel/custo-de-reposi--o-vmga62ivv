@@ -25,6 +25,7 @@ import {
   ChevronUp,
   Share2,
   Check,
+  Search,
 } from 'lucide-react'
 import pb from '@/lib/pocketbase/client'
 import { useAuth } from '@/context/AuthContext'
@@ -64,6 +65,7 @@ import {
   type EnqueteModel,
   type JogoComVotos,
   type JogoBuscado,
+  type FixtureDetalhesItem,
   getDefaultDatasIntervalo,
   buscarJogosIntervalo,
   buscarEscudoTime,
@@ -84,6 +86,7 @@ import {
   readListaEnquetesCache,
   readEnqueteDetalhesCache,
 } from '@/services/enquetes'
+import { getFlagCdnUrl, resolveTeamBadgeUrl } from '@/lib/flags'
 
 function WhatsAppIcon({ className = 'h-4 w-4 shrink-0' }: { className?: string }) {
   return (
@@ -234,6 +237,8 @@ export default function Enquetes() {
   const [ativaManualAvisoDuplicado, setAtivaManualAvisoDuplicado] = useState<string | null>(null)
   const [autoLookupAtivaFeedback, setAutoLookupAtivaFeedback] = useState<string | null>(null)
   const [buscandoAutoLookupAtiva, setBuscandoAutoLookupAtiva] = useState(false)
+  const [alternativasAtiva, setAlternativasAtiva] = useState<FixtureDetalhesItem[]>([])
+  const [avisoBuscaAtiva, setAvisoBuscaAtiva] = useState<string | null>(null)
 
   // Admin: Modal de Edição de Jogo da Enquete
   const [jogoEmEdicao, setJogoEmEdicao] = useState<JogoComVotos | null>(null)
@@ -252,6 +257,8 @@ export default function Enquetes() {
   const [buscandoFixtureAtiva, setBuscandoFixtureAtiva] = useState(false)
   const [autoLookupEditFeedback, setAutoLookupEditFeedback] = useState<string | null>(null)
   const [buscandoAutoLookupEdit, setBuscandoAutoLookupEdit] = useState(false)
+  const [alternativasEdit, setAlternativasEdit] = useState<FixtureDetalhesItem[]>([])
+  const [avisoBuscaEdit, setAvisoBuscaEdit] = useState<string | null>(null)
 
   // Admin: Modal de Exclusão de Jogo Individual da Enquete
   const [jogoEmExclusao, setJogoEmExclusao] = useState<JogoComVotos | null>(null)
@@ -1159,8 +1166,6 @@ export default function Enquetes() {
   }
 
   // Admin: Função utilitária para buscar escudos pela fixture na edição
-  // Substitui automaticamente as URLs nos campos de escudo pelas oficiais da API,
-  // inclusive sobrepondo links de terceiros (como TheSportsDB), exceto se já forem media.api-sports.io
   const handleBuscarEscudosPorFixtureEdit = async (
     fidParam?: string,
     forcedLogos?: { home?: string; away?: string },
@@ -1168,7 +1173,6 @@ export default function Enquetes() {
     const rawFid = fidParam !== undefined ? fidParam : editFixtureId
     const cleanId = rawFid.replace(/\D/g, '').trim()
 
-    // Se já recebemos os logos oficiais diretamente da chamada de auto-lookup:
     if (forcedLogos?.home || forcedLogos?.away) {
       if (forcedLogos.home && !isApiSportsLogo(editLogoCasa)) {
         setEditLogoCasa(forcedLogos.home)
@@ -1180,8 +1184,6 @@ export default function Enquetes() {
     }
 
     if (!cleanId) return
-
-    // Se ambos já são media.api-sports.io, não precisa refazer a busca
     if (isApiSportsLogo(editLogoCasa) && isApiSportsLogo(editLogoVisitante)) return
 
     setBuscandoFixtureEdit(true)
@@ -1218,8 +1220,6 @@ export default function Enquetes() {
   }
 
   // Admin: Função utilitária para buscar escudos pela fixture na adição manual
-  // Substitui automaticamente as URLs nos campos de escudo pelas oficiais da API,
-  // inclusive sobrepondo links de terceiros (como TheSportsDB), exceto se já forem media.api-sports.io
   const handleBuscarEscudosPorFixtureAtiva = async (
     fidParam?: string,
     forcedLogos?: { home?: string; away?: string },
@@ -1227,7 +1227,6 @@ export default function Enquetes() {
     const rawFid = fidParam !== undefined ? fidParam : ativaManualFixtureId
     const cleanId = rawFid.replace(/\D/g, '').trim()
 
-    // Se já recebemos os logos oficiais diretamente do auto-lookup:
     if (forcedLogos?.home || forcedLogos?.away) {
       if (forcedLogos.home && !isApiSportsLogo(ativaManualLogoCasa)) {
         setAtivaManualLogoCasa(forcedLogos.home)
@@ -1239,8 +1238,6 @@ export default function Enquetes() {
     }
 
     if (!cleanId) return
-
-    // Se ambos já são media.api-sports.io, evita refetch desnecessário
     if (isApiSportsLogo(ativaManualLogoCasa) && isApiSportsLogo(ativaManualLogoVisitante)) return
 
     setBuscandoFixtureAtiva(true)
@@ -1274,6 +1271,170 @@ export default function Enquetes() {
     } finally {
       setBuscandoFixtureAtiva(false)
     }
+  }
+
+  // Admin: Botão explícito "Buscar ID" no modal Adicionar Jogo Manual na Enquete Ativa
+  const handleBuscarIdManualAtiva = async () => {
+    const mandante = ativaManualMandante.trim()
+    const visitante = ativaManualVisitante.trim()
+    const data = ativaManualData.trim()
+
+    if (!mandante || !data) {
+      toast({
+        title: 'Preencha os campos',
+        description: 'Preencha ao menos o Mandante e a Data do jogo para buscar o ID na API.',
+        variant: 'destructive',
+      })
+      return
+    }
+
+    setBuscandoAutoLookupAtiva(true)
+    setAvisoBuscaAtiva(null)
+    try {
+      const res = await buscarFixtureAutoLookup({ mandante, visitante, data })
+      if (res.success && res.fixture?.id) {
+        const fidStr = String(res.fixture.id).replace(/\D/g, '')
+        setAtivaManualFixtureId(fidStr)
+        setAutoLookupAtivaFeedback(`ID #${fidStr} encontrado`)
+        setAlternativasAtiva([])
+        setAvisoBuscaAtiva(null)
+
+        // Preenche/sobrescreve escudos se forem vazios ou links não oficiais
+        if (res.fixture.homeTeamLogo && !isApiSportsLogo(ativaManualLogoCasa)) {
+          setAtivaManualLogoCasa(res.fixture.homeTeamLogo)
+        }
+        if (res.fixture.awayTeamLogo && !isApiSportsLogo(ativaManualLogoVisitante)) {
+          setAtivaManualLogoVisitante(res.fixture.awayTeamLogo)
+        }
+
+        toast({
+          title: 'ID Encontrado!',
+          description: `ID #${fidStr} e escudos oficiais vinculados com sucesso.`,
+        })
+      } else if (res.rate_limited) {
+        const aviso =
+          'Cota diária da API atingida (80/dia, reset às 21h). Você ainda pode salvar manualmente.'
+        setAvisoBuscaAtiva(aviso)
+        toast({
+          title: 'Cota de requisições atingida',
+          description: aviso,
+        })
+      } else {
+        // Não encontrou correspondência única
+        const alts = Array.isArray(res.alternativas) ? res.alternativas : []
+        setAlternativasAtiva(alts)
+        const msgAviso =
+          alts.length > 0
+            ? `Encontradas ${alts.length} partidas naquela data. Selecione uma abaixo para preencher o formulário:`
+            : 'Nenhuma correspondência exata encontrada para a data informada. Verifique os nomes ou selecione uma alternativa.'
+        setAvisoBuscaAtiva(msgAviso)
+      }
+    } catch {
+      setAvisoBuscaAtiva('Falha na comunicação com o serviço de busca da API.')
+    } finally {
+      setBuscandoAutoLookupAtiva(false)
+    }
+  }
+
+  // Admin: Botão explícito "Buscar ID" no modal Editar Jogo da Enquete
+  const handleBuscarIdManualEdit = async () => {
+    const mandante = editMandante.trim()
+    const visitante = editVisitante.trim()
+    const data = editData.trim()
+
+    if (!mandante || !data) {
+      toast({
+        title: 'Preencha os campos',
+        description: 'Preencha ao menos o Mandante e a Data do jogo para buscar o ID na API.',
+        variant: 'destructive',
+      })
+      return
+    }
+
+    setBuscandoAutoLookupEdit(true)
+    setAvisoBuscaEdit(null)
+    try {
+      const res = await buscarFixtureAutoLookup({ mandante, visitante, data })
+      if (res.success && res.fixture?.id) {
+        const fidStr = String(res.fixture.id).replace(/\D/g, '')
+        setEditFixtureId(fidStr)
+        setAutoLookupEditFeedback(`ID #${fidStr} encontrado`)
+        setAlternativasEdit([])
+        setAvisoBuscaEdit(null)
+
+        // Preenche/sobrescreve escudos se forem vazios ou links não oficiais
+        if (res.fixture.homeTeamLogo && !isApiSportsLogo(editLogoCasa)) {
+          setEditLogoCasa(res.fixture.homeTeamLogo)
+        }
+        if (res.fixture.awayTeamLogo && !isApiSportsLogo(editLogoVisitante)) {
+          setEditLogoVisitante(res.fixture.awayTeamLogo)
+        }
+
+        toast({
+          title: 'ID Encontrado!',
+          description: `ID #${fidStr} e escudos oficiais vinculados com sucesso.`,
+        })
+      } else if (res.rate_limited) {
+        const aviso =
+          'Cota diária da API atingida (80/dia, reset às 21h). Você ainda pode salvar manualmente.'
+        setAvisoBuscaEdit(aviso)
+        toast({
+          title: 'Cota de requisições atingida',
+          description: aviso,
+        })
+      } else {
+        const alts = Array.isArray(res.alternativas) ? res.alternativas : []
+        setAlternativasEdit(alts)
+        const msgAviso =
+          alts.length > 0
+            ? `Encontradas ${alts.length} partidas naquela data. Selecione uma abaixo para preencher o formulário:`
+            : 'Nenhuma correspondência exata encontrada para a data informada. Verifique os nomes ou selecione uma alternativa.'
+        setAvisoBuscaEdit(msgAviso)
+      }
+    } catch {
+      setAvisoBuscaEdit('Falha na comunicação com o serviço de busca da API.')
+    } finally {
+      setBuscandoAutoLookupEdit(false)
+    }
+  }
+
+  // Preenche formulário a partir de uma alternativa selecionada (Adição Manual)
+  const handleSelecionarAlternativaAtiva = (alt: FixtureDetalhesItem) => {
+    const fidStr = String(alt.id).replace(/\D/g, '')
+    setAtivaManualFixtureId(fidStr)
+    setAutoLookupAtivaFeedback(`ID #${fidStr} selecionado`)
+    if (alt.homeTeamName && !ativaManualMandante) setAtivaManualMandante(alt.homeTeamName)
+    if (alt.awayTeamName && !ativaManualVisitante) setAtivaManualVisitante(alt.awayTeamName)
+    if (alt.homeTeamLogo && !isApiSportsLogo(ativaManualLogoCasa))
+      setAtivaManualLogoCasa(alt.homeTeamLogo)
+    if (alt.awayTeamLogo && !isApiSportsLogo(ativaManualLogoVisitante))
+      setAtivaManualLogoVisitante(alt.awayTeamLogo)
+    if (alt.leagueName && !ativaManualCompeticao) setAtivaManualCompeticao(alt.leagueName)
+    setAlternativasAtiva([])
+    setAvisoBuscaAtiva(null)
+    toast({
+      title: 'Partida selecionada',
+      description: `ID #${fidStr} e escudos aplicados ao formulário.`,
+    })
+  }
+
+  // Preenche formulário a partir de uma alternativa selecionada (Edição)
+  const handleSelecionarAlternativaEdit = (alt: FixtureDetalhesItem) => {
+    const fidStr = String(alt.id).replace(/\D/g, '')
+    setEditFixtureId(fidStr)
+    setAutoLookupEditFeedback(`ID #${fidStr} selecionado`)
+    if (alt.homeTeamName) setEditMandante(alt.homeTeamName)
+    if (alt.awayTeamName) setEditVisitante(alt.awayTeamName)
+    if (alt.homeTeamLogo && !isApiSportsLogo(editLogoCasa)) setEditLogoCasa(alt.homeTeamLogo)
+    if (alt.awayTeamLogo && !isApiSportsLogo(editLogoVisitante))
+      setEditLogoVisitante(alt.awayTeamLogo)
+    if (alt.leagueName && !editCompeticao) setEditCompeticao(alt.leagueName)
+    setAlternativasEdit([])
+    setAvisoBuscaEdit(null)
+    toast({
+      title: 'Partida selecionada',
+      description: `ID #${fidStr} e escudos aplicados ao formulário.`,
+    })
   }
 
   // Auto-Lookup com Debounce para Modal de Criação Manual (800ms)
@@ -1868,78 +2029,103 @@ export default function Enquetes() {
               </div>
 
               {/* Confronto */}
-              <div className="my-3 flex items-center justify-between gap-2">
-                {/* Time A */}
-                <div className="flex flex-1 items-center gap-2 min-w-0">
-                  {jogo.logo_casa ? (
-                    <img
-                      src={jogo.logo_casa}
-                      alt={jogo.time_a}
-                      className="h-7 w-7 object-contain shrink-0"
-                      loading="lazy"
-                      decoding="async"
-                      onError={(e) => {
-                        e.currentTarget.style.display = 'none'
-                        const fallback = e.currentTarget.nextElementSibling as HTMLElement | null
-                        if (fallback) fallback.style.display = 'flex'
-                      }}
-                    />
-                  ) : null}
-                  <div
-                    className={`h-7 w-7 rounded-full bg-slate-100 border border-slate-200 items-center justify-center shrink-0 ${
-                      jogo.logo_casa ? 'hidden' : 'flex'
-                    }`}
-                    title={jogo.time_a}
-                  >
-                    <span className="text-[10px] font-black uppercase text-slate-700">
-                      {jogo.time_a.slice(0, 2).toUpperCase()}
-                    </span>
-                  </div>
-                  <span
-                    className="text-[11px] sm:text-xs font-bold text-slate-800 leading-tight break-words line-clamp-2 sm:line-clamp-3"
-                    title={jogo.time_a}
-                  >
-                    {jogo.time_a}
-                  </span>
-                </div>
+              {(() => {
+                const logoA = resolveTeamBadgeUrl({
+                  teamName: jogo.time_a,
+                  savedBadge: jogo.logo_casa,
+                })
+                const logoB = resolveTeamBadgeUrl({
+                  teamName: jogo.time_b,
+                  savedBadge: jogo.logo_visitante,
+                })
 
-                {/* Versus */}
-                <div className="px-1 text-[11px] font-black text-slate-400 shrink-0">x</div>
+                return (
+                  <div className="my-3 flex items-center justify-between gap-2">
+                    {/* Time A */}
+                    <div className="flex flex-1 items-center gap-2 min-w-0">
+                      {logoA ? (
+                        <img
+                          src={logoA}
+                          alt={jogo.time_a}
+                          className="h-7 w-7 object-contain shrink-0"
+                          loading="lazy"
+                          decoding="async"
+                          onError={(e) => {
+                            const flagUrl = getFlagCdnUrl(jogo.time_a)
+                            if (flagUrl && e.currentTarget.src !== flagUrl) {
+                              e.currentTarget.src = flagUrl
+                              return
+                            }
+                            e.currentTarget.style.display = 'none'
+                            const fallback = e.currentTarget
+                              .nextElementSibling as HTMLElement | null
+                            if (fallback) fallback.style.display = 'flex'
+                          }}
+                        />
+                      ) : null}
+                      <div
+                        className={`h-7 w-7 rounded-full bg-slate-100 border border-slate-200 items-center justify-center shrink-0 ${
+                          logoA ? 'hidden' : 'flex'
+                        }`}
+                        title={jogo.time_a}
+                      >
+                        <span className="text-[10px] font-black uppercase text-slate-700">
+                          {jogo.time_a.slice(0, 2).toUpperCase()}
+                        </span>
+                      </div>
+                      <span
+                        className="text-[11px] sm:text-xs font-bold text-slate-800 leading-tight break-words line-clamp-2 sm:line-clamp-3"
+                        title={jogo.time_a}
+                      >
+                        {jogo.time_a}
+                      </span>
+                    </div>
 
-                {/* Time B */}
-                <div className="flex flex-1 items-center justify-end gap-2 text-right min-w-0">
-                  <span
-                    className="text-[11px] sm:text-xs font-bold text-slate-800 leading-tight break-words line-clamp-2 sm:line-clamp-3 text-right"
-                    title={jogo.time_b}
-                  >
-                    {jogo.time_b}
-                  </span>
-                  {jogo.logo_visitante ? (
-                    <img
-                      src={jogo.logo_visitante}
-                      alt={jogo.time_b}
-                      className="h-7 w-7 object-contain shrink-0"
-                      loading="lazy"
-                      decoding="async"
-                      onError={(e) => {
-                        e.currentTarget.style.display = 'none'
-                        const fallback = e.currentTarget.nextElementSibling as HTMLElement | null
-                        if (fallback) fallback.style.display = 'flex'
-                      }}
-                    />
-                  ) : null}
-                  <div
-                    className={`h-7 w-7 rounded-full bg-slate-100 border border-slate-200 items-center justify-center shrink-0 ${
-                      jogo.logo_visitante ? 'hidden' : 'flex'
-                    }`}
-                    title={jogo.time_b}
-                  >
-                    <span className="text-[10px] font-black uppercase text-slate-700">
-                      {jogo.time_b.slice(0, 2).toUpperCase()}
-                    </span>
+                    {/* Versus */}
+                    <div className="px-1 text-[11px] font-black text-slate-400 shrink-0">x</div>
+
+                    {/* Time B */}
+                    <div className="flex flex-1 items-center justify-end gap-2 text-right min-w-0">
+                      <span
+                        className="text-[11px] sm:text-xs font-bold text-slate-800 leading-tight break-words line-clamp-2 sm:line-clamp-3 text-right"
+                        title={jogo.time_b}
+                      >
+                        {jogo.time_b}
+                      </span>
+                      {logoB ? (
+                        <img
+                          src={logoB}
+                          alt={jogo.time_b}
+                          className="h-7 w-7 object-contain shrink-0"
+                          loading="lazy"
+                          decoding="async"
+                          onError={(e) => {
+                            const flagUrl = getFlagCdnUrl(jogo.time_b)
+                            if (flagUrl && e.currentTarget.src !== flagUrl) {
+                              e.currentTarget.src = flagUrl
+                              return
+                            }
+                            e.currentTarget.style.display = 'none'
+                            const fallback = e.currentTarget
+                              .nextElementSibling as HTMLElement | null
+                            if (fallback) fallback.style.display = 'flex'
+                          }}
+                        />
+                      ) : null}
+                      <div
+                        className={`h-7 w-7 rounded-full bg-slate-100 border border-slate-200 items-center justify-center shrink-0 ${
+                          logoB ? 'hidden' : 'flex'
+                        }`}
+                        title={jogo.time_b}
+                      >
+                        <span className="text-[10px] font-black uppercase text-slate-700">
+                          {jogo.time_b.slice(0, 2).toUpperCase()}
+                        </span>
+                      </div>
+                    </div>
                   </div>
-                </div>
-              </div>
+                )
+              })()}
 
               {/* Rodapé do Card: Checkbox e Contagem de Votos */}
               <div className="flex items-center justify-between pt-2 border-t border-slate-100">
@@ -2631,127 +2817,153 @@ export default function Enquetes() {
                           </div>
 
                           {/* Times e Detalhes */}
-                          <div>
-                            <div className="flex flex-wrap items-center gap-2">
-                              {/* Escudo Mandante */}
-                              <div className="flex items-center gap-1.5">
-                                {jogo.logo_casa ? (
-                                  <img
-                                    src={jogo.logo_casa}
-                                    alt={jogo.time_a}
-                                    className="h-5 w-5 object-contain shrink-0"
-                                    loading="lazy"
-                                    decoding="async"
-                                    onError={(e) => {
-                                      e.currentTarget.style.display = 'none'
-                                      const fallback = e.currentTarget
-                                        .nextElementSibling as HTMLElement | null
-                                      if (fallback) fallback.style.display = 'flex'
-                                    }}
-                                  />
-                                ) : null}
-                                <div
-                                  className={`h-5 w-5 rounded-full bg-slate-100 border border-slate-200 items-center justify-center shrink-0 ${
-                                    jogo.logo_casa ? 'hidden' : 'flex'
-                                  }`}
-                                  title={jogo.time_a}
-                                >
-                                  <span className="text-[8px] font-black uppercase text-slate-700">
-                                    {jogo.time_a.slice(0, 2).toUpperCase()}
+                          {(() => {
+                            const logoA = resolveTeamBadgeUrl({
+                              teamName: jogo.time_a,
+                              savedBadge: jogo.logo_casa,
+                            })
+                            const logoB = resolveTeamBadgeUrl({
+                              teamName: jogo.time_b,
+                              savedBadge: jogo.logo_visitante,
+                            })
+
+                            return (
+                              <div>
+                                <div className="flex flex-wrap items-center gap-2">
+                                  {/* Escudo Mandante */}
+                                  <div className="flex items-center gap-1.5">
+                                    {logoA ? (
+                                      <img
+                                        src={logoA}
+                                        alt={jogo.time_a}
+                                        className="h-5 w-5 object-contain shrink-0"
+                                        loading="lazy"
+                                        decoding="async"
+                                        onError={(e) => {
+                                          const flagUrl = getFlagCdnUrl(jogo.time_a)
+                                          if (flagUrl && e.currentTarget.src !== flagUrl) {
+                                            e.currentTarget.src = flagUrl
+                                            return
+                                          }
+                                          e.currentTarget.style.display = 'none'
+                                          const fallback = e.currentTarget
+                                            .nextElementSibling as HTMLElement | null
+                                          if (fallback) fallback.style.display = 'flex'
+                                        }}
+                                      />
+                                    ) : null}
+                                    <div
+                                      className={`h-5 w-5 rounded-full bg-slate-100 border border-slate-200 items-center justify-center shrink-0 ${
+                                        logoA ? 'hidden' : 'flex'
+                                      }`}
+                                      title={jogo.time_a}
+                                    >
+                                      <span className="text-[8px] font-black uppercase text-slate-700">
+                                        {jogo.time_a.slice(0, 2).toUpperCase()}
+                                      </span>
+                                    </div>
+                                    <span
+                                      className="text-xs sm:text-sm font-bold text-slate-900 leading-tight break-words"
+                                      title={jogo.time_a}
+                                    >
+                                      {jogo.time_a}
+                                    </span>
+                                  </div>
+
+                                  <span className="text-xs font-black text-slate-400 shrink-0">
+                                    x
                                   </span>
+
+                                  {/* Escudo Visitante */}
+                                  <div className="flex items-center gap-1.5">
+                                    {logoB ? (
+                                      <img
+                                        src={logoB}
+                                        alt={jogo.time_b}
+                                        className="h-5 w-5 object-contain shrink-0"
+                                        loading="lazy"
+                                        decoding="async"
+                                        onError={(e) => {
+                                          const flagUrl = getFlagCdnUrl(jogo.time_b)
+                                          if (flagUrl && e.currentTarget.src !== flagUrl) {
+                                            e.currentTarget.src = flagUrl
+                                            return
+                                          }
+                                          e.currentTarget.style.display = 'none'
+                                          const fallback = e.currentTarget
+                                            .nextElementSibling as HTMLElement | null
+                                          if (fallback) fallback.style.display = 'flex'
+                                        }}
+                                      />
+                                    ) : null}
+                                    <div
+                                      className={`h-5 w-5 rounded-full bg-slate-100 border border-slate-200 items-center justify-center shrink-0 ${
+                                        logoB ? 'hidden' : 'flex'
+                                      }`}
+                                      title={jogo.time_b}
+                                    >
+                                      <span className="text-[8px] font-black uppercase text-slate-700">
+                                        {jogo.time_b.slice(0, 2).toUpperCase()}
+                                      </span>
+                                    </div>
+                                    <span
+                                      className="text-xs sm:text-sm font-bold text-slate-900 leading-tight break-words"
+                                      title={jogo.time_b}
+                                    >
+                                      {jogo.time_b}
+                                    </span>
+                                  </div>
+
+                                  {jogo.origem === 'manual' && (
+                                    <Badge
+                                      variant="outline"
+                                      className="border-amber-300 bg-amber-50 text-[10px] font-bold text-amber-700"
+                                    >
+                                      Manual
+                                    </Badge>
+                                  )}
+
+                                  {isTop4 && (
+                                    <Badge className="border-none bg-amber-500 text-[10px] font-black uppercase text-white">
+                                      Top 4
+                                    </Badge>
+                                  )}
+
+                                  {isSelectedByAdmin && (
+                                    <Badge className="border border-amber-300 bg-amber-100 text-[10px] font-bold text-amber-900">
+                                      Aprovado pelo Admin
+                                    </Badge>
+                                  )}
+
+                                  {isCadastradoNoBolao && (
+                                    <Badge className="border border-emerald-300 bg-emerald-100 text-[10px] font-bold text-emerald-900">
+                                      Cadastrado na Copa Coni
+                                    </Badge>
+                                  )}
                                 </div>
-                                <span
-                                  className="text-xs sm:text-sm font-bold text-slate-900 leading-tight break-words"
-                                  title={jogo.time_a}
-                                >
-                                  {jogo.time_a}
-                                </span>
-                              </div>
 
-                              <span className="text-xs font-black text-slate-400 shrink-0">x</span>
-
-                              {/* Escudo Visitante */}
-                              <div className="flex items-center gap-1.5">
-                                {jogo.logo_visitante ? (
-                                  <img
-                                    src={jogo.logo_visitante}
-                                    alt={jogo.time_b}
-                                    className="h-5 w-5 object-contain shrink-0"
-                                    loading="lazy"
-                                    decoding="async"
-                                    onError={(e) => {
-                                      e.currentTarget.style.display = 'none'
-                                      const fallback = e.currentTarget
-                                        .nextElementSibling as HTMLElement | null
-                                      if (fallback) fallback.style.display = 'flex'
-                                    }}
-                                  />
-                                ) : null}
-                                <div
-                                  className={`h-5 w-5 rounded-full bg-slate-100 border border-slate-200 items-center justify-center shrink-0 ${
-                                    jogo.logo_visitante ? 'hidden' : 'flex'
-                                  }`}
-                                  title={jogo.time_b}
-                                >
-                                  <span className="text-[8px] font-black uppercase text-slate-700">
-                                    {jogo.time_b.slice(0, 2).toUpperCase()}
-                                  </span>
-                                </div>
-                                <span
-                                  className="text-xs sm:text-sm font-bold text-slate-900 leading-tight break-words"
-                                  title={jogo.time_b}
-                                >
-                                  {jogo.time_b}
-                                </span>
-                              </div>
-
-                              {jogo.origem === 'manual' && (
-                                <Badge
-                                  variant="outline"
-                                  className="border-amber-300 bg-amber-50 text-[10px] font-bold text-amber-700"
-                                >
-                                  Manual
-                                </Badge>
-                              )}
-
-                              {isTop4 && (
-                                <Badge className="border-none bg-amber-500 text-[10px] font-black uppercase text-white">
-                                  Top 4
-                                </Badge>
-                              )}
-
-                              {isSelectedByAdmin && (
-                                <Badge className="border border-amber-300 bg-amber-100 text-[10px] font-bold text-amber-900">
-                                  Aprovado pelo Admin
-                                </Badge>
-                              )}
-
-                              {isCadastradoNoBolao && (
-                                <Badge className="border border-emerald-300 bg-emerald-100 text-[10px] font-bold text-emerald-900">
-                                  Cadastrado na Copa Coni
-                                </Badge>
-                              )}
-                            </div>
-
-                            <div className="mt-0.5 flex flex-wrap items-center gap-2 text-xs text-slate-500">
-                              <span>{jogo.campeonato}</span>
-                              <span>•</span>
-                              <span>
-                                {formatDataBR(jogo.data)} às {formatHoraBR(jogo.horario || '16:00')}
-                              </span>
-                              {jogo.votantes.length > 0 && (
-                                <>
+                                <div className="mt-0.5 flex flex-wrap items-center gap-2 text-xs text-slate-500">
+                                  <span>{jogo.campeonato}</span>
                                   <span>•</span>
-                                  <span className="text-slate-600">
-                                    Votantes:{' '}
-                                    <strong className="text-slate-800">
-                                      {jogo.votantes.join(', ')}
-                                    </strong>
+                                  <span>
+                                    {formatDataBR(jogo.data)} às{' '}
+                                    {formatHoraBR(jogo.horario || '16:00')}
                                   </span>
-                                </>
-                              )}
-                            </div>
-                          </div>
+                                  {jogo.votantes.length > 0 && (
+                                    <>
+                                      <span>•</span>
+                                      <span className="text-slate-600">
+                                        Votantes:{' '}
+                                        <strong className="text-slate-800">
+                                          {jogo.votantes.join(', ')}
+                                        </strong>
+                                      </span>
+                                    </>
+                                  )}
+                                </div>
+                              </div>
+                            )
+                          })()}
                         </div>
 
                         {/* Placar de Votos e Controle Admin */}
@@ -3551,7 +3763,7 @@ export default function Enquetes() {
               </div>
             </div>
 
-            {/* ID da Partida (API-Football) / api_fixture_id */}
+            {/* ID da Partida (API-Football) / api_fixture_id com Botão Buscar ID */}
             <div className="space-y-1">
               <Label
                 htmlFor="ativa-manual-fixture-id"
@@ -3574,32 +3786,91 @@ export default function Enquetes() {
                       : 'Opcional'}
                 </span>
               </Label>
-              <div className="relative">
-                <Input
-                  id="ativa-manual-fixture-id"
-                  type="text"
-                  inputMode="numeric"
-                  pattern="[0-9]*"
-                  placeholder="Ex.: 1528881"
-                  value={ativaManualFixtureId}
-                  onChange={(e) => {
-                    const clean = e.target.value.replace(/\D/g, '')
-                    setAtivaManualFixtureId(clean)
-                    setAutoLookupAtivaFeedback(null)
-                  }}
-                  onBlur={() => {
-                    if (ativaManualFixtureId) {
-                      handleBuscarEscudosPorFixtureAtiva(ativaManualFixtureId)
-                    }
-                  }}
-                  className="h-9 bg-white text-xs"
-                />
-                {(buscandoFixtureAtiva || buscandoAutoLookupAtiva) && (
-                  <div className="absolute right-2.5 top-2.5">
-                    <RefreshCw className="h-4 w-4 animate-spin text-amber-600" />
-                  </div>
-                )}
+              <div className="flex items-center gap-2">
+                <div className="relative flex-1">
+                  <Input
+                    id="ativa-manual-fixture-id"
+                    type="text"
+                    inputMode="numeric"
+                    pattern="[0-9]*"
+                    placeholder="Ex.: 1528881"
+                    value={ativaManualFixtureId}
+                    onChange={(e) => {
+                      const clean = e.target.value.replace(/\D/g, '')
+                      setAtivaManualFixtureId(clean)
+                      setAutoLookupAtivaFeedback(null)
+                    }}
+                    onBlur={() => {
+                      if (ativaManualFixtureId) {
+                        handleBuscarEscudosPorFixtureAtiva(ativaManualFixtureId)
+                      }
+                    }}
+                    className="h-9 bg-white text-xs"
+                  />
+                  {(buscandoFixtureAtiva || buscandoAutoLookupAtiva) && (
+                    <div className="absolute right-2.5 top-2.5">
+                      <RefreshCw className="h-4 w-4 animate-spin text-amber-600" />
+                    </div>
+                  )}
+                </div>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={handleBuscarIdManualAtiva}
+                  disabled={buscandoAutoLookupAtiva || buscandoFixtureAtiva}
+                  className="h-9 shrink-0 gap-1.5 border-emerald-200 bg-emerald-50 text-xs font-bold text-emerald-800 hover:bg-emerald-100 hover:text-emerald-900"
+                  title="Buscar ID e escudos oficiais na API-Football"
+                >
+                  <Search className="h-3.5 w-3.5 text-emerald-700" />
+                  Buscar ID
+                </Button>
               </div>
+
+              {/* Aviso suave amigável e Lista de Alternativas (se houver múltiplas ou sem match exato) */}
+              {avisoBuscaAtiva && (
+                <div className="rounded-md border border-amber-200 bg-amber-50/80 p-2 text-[11px] text-amber-800">
+                  <div className="flex items-start gap-1.5">
+                    <Info className="h-3.5 w-3.5 shrink-0 text-amber-600 mt-0.5" />
+                    <span className="flex-1">{avisoBuscaAtiva}</span>
+                  </div>
+                  {alternativasAtiva.length > 0 && (
+                    <div className="mt-2 space-y-1.5 max-h-40 overflow-y-auto">
+                      {alternativasAtiva.map((alt) => (
+                        <button
+                          key={alt.id}
+                          type="button"
+                          onClick={() => handleSelecionarAlternativaAtiva(alt)}
+                          className="w-full flex items-center justify-between gap-2 p-1.5 rounded bg-white border border-amber-200 hover:bg-emerald-50 hover:border-emerald-300 text-left transition"
+                        >
+                          <div className="flex items-center gap-1.5 min-w-0">
+                            {alt.homeTeamLogo ? (
+                              <img
+                                src={alt.homeTeamLogo}
+                                alt=""
+                                className="h-4 w-4 object-contain shrink-0"
+                              />
+                            ) : null}
+                            <span className="font-bold text-slate-800 truncate text-[11px]">
+                              {alt.homeTeamName || 'Mandante'} x {alt.awayTeamName || 'Visitante'}
+                            </span>
+                            {alt.awayTeamLogo ? (
+                              <img
+                                src={alt.awayTeamLogo}
+                                alt=""
+                                className="h-4 w-4 object-contain shrink-0"
+                              />
+                            ) : null}
+                          </div>
+                          <span className="text-[10px] font-black text-emerald-700 shrink-0">
+                            ID #{alt.id}
+                          </span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
 
             {/* Escudos Opcionais (Mandante e Visitante) */}
@@ -3791,7 +4062,7 @@ export default function Enquetes() {
               </div>
             </div>
 
-            {/* ID da Partida (API-Football) / api_fixture_id */}
+            {/* ID da Partida (API-Football) / api_fixture_id com Botão Buscar ID */}
             <div className="space-y-1">
               <Label
                 htmlFor="edit-fixture-id"
@@ -3814,32 +4085,91 @@ export default function Enquetes() {
                       : 'Opcional'}
                 </span>
               </Label>
-              <div className="relative">
-                <Input
-                  id="edit-fixture-id"
-                  type="text"
-                  inputMode="numeric"
-                  pattern="[0-9]*"
-                  placeholder="Ex.: 1528881"
-                  value={editFixtureId}
-                  onChange={(e) => {
-                    const clean = e.target.value.replace(/\D/g, '')
-                    setEditFixtureId(clean)
-                    setAutoLookupEditFeedback(null)
-                  }}
-                  onBlur={() => {
-                    if (editFixtureId) {
-                      handleBuscarEscudosPorFixtureEdit(editFixtureId)
-                    }
-                  }}
-                  className="h-9 bg-white text-xs"
-                />
-                {(buscandoFixtureEdit || buscandoAutoLookupEdit) && (
-                  <div className="absolute right-2.5 top-2.5">
-                    <RefreshCw className="h-4 w-4 animate-spin text-amber-600" />
-                  </div>
-                )}
+              <div className="flex items-center gap-2">
+                <div className="relative flex-1">
+                  <Input
+                    id="edit-fixture-id"
+                    type="text"
+                    inputMode="numeric"
+                    pattern="[0-9]*"
+                    placeholder="Ex.: 1528881"
+                    value={editFixtureId}
+                    onChange={(e) => {
+                      const clean = e.target.value.replace(/\D/g, '')
+                      setEditFixtureId(clean)
+                      setAutoLookupEditFeedback(null)
+                    }}
+                    onBlur={() => {
+                      if (editFixtureId) {
+                        handleBuscarEscudosPorFixtureEdit(editFixtureId)
+                      }
+                    }}
+                    className="h-9 bg-white text-xs"
+                  />
+                  {(buscandoFixtureEdit || buscandoAutoLookupEdit) && (
+                    <div className="absolute right-2.5 top-2.5">
+                      <RefreshCw className="h-4 w-4 animate-spin text-amber-600" />
+                    </div>
+                  )}
+                </div>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={handleBuscarIdManualEdit}
+                  disabled={buscandoAutoLookupEdit || buscandoFixtureEdit}
+                  className="h-9 shrink-0 gap-1.5 border-emerald-200 bg-emerald-50 text-xs font-bold text-emerald-800 hover:bg-emerald-100 hover:text-emerald-900"
+                  title="Buscar ID e escudos oficiais na API-Football"
+                >
+                  <Search className="h-3.5 w-3.5 text-emerald-700" />
+                  Buscar ID
+                </Button>
               </div>
+
+              {/* Aviso suave amigável e Lista de Alternativas (se houver múltiplas ou sem match exato) */}
+              {avisoBuscaEdit && (
+                <div className="rounded-md border border-amber-200 bg-amber-50/80 p-2 text-[11px] text-amber-800">
+                  <div className="flex items-start gap-1.5">
+                    <Info className="h-3.5 w-3.5 shrink-0 text-amber-600 mt-0.5" />
+                    <span className="flex-1">{avisoBuscaEdit}</span>
+                  </div>
+                  {alternativasEdit.length > 0 && (
+                    <div className="mt-2 space-y-1.5 max-h-40 overflow-y-auto">
+                      {alternativasEdit.map((alt) => (
+                        <button
+                          key={alt.id}
+                          type="button"
+                          onClick={() => handleSelecionarAlternativaEdit(alt)}
+                          className="w-full flex items-center justify-between gap-2 p-1.5 rounded bg-white border border-amber-200 hover:bg-emerald-50 hover:border-emerald-300 text-left transition"
+                        >
+                          <div className="flex items-center gap-1.5 min-w-0">
+                            {alt.homeTeamLogo ? (
+                              <img
+                                src={alt.homeTeamLogo}
+                                alt=""
+                                className="h-4 w-4 object-contain shrink-0"
+                              />
+                            ) : null}
+                            <span className="font-bold text-slate-800 truncate text-[11px]">
+                              {alt.homeTeamName || 'Mandante'} x {alt.awayTeamName || 'Visitante'}
+                            </span>
+                            {alt.awayTeamLogo ? (
+                              <img
+                                src={alt.awayTeamLogo}
+                                alt=""
+                                className="h-4 w-4 object-contain shrink-0"
+                              />
+                            ) : null}
+                          </div>
+                          <span className="text-[10px] font-black text-emerald-700 shrink-0">
+                            ID #{alt.id}
+                          </span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
 
             {/* Escudos Mandante e Visitante (Pré-preenchidos) */}
