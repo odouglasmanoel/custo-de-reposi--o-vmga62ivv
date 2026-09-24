@@ -16,6 +16,7 @@ import {
   Settings,
   Users,
   RefreshCw,
+  Pencil,
 } from 'lucide-react'
 import pb from '@/lib/pocketbase/client'
 import { useActivePool } from '@/context/ActivePoolContext'
@@ -113,6 +114,16 @@ export default function AdminJogos() {
   const [horaJogo, setHoraJogo] = useState('')
   const [temPenaltis, setTemPenaltis] = useState(false)
   const [formError, setFormError] = useState<string | null>(null)
+
+  // Edit Jogo Modal state
+  const [editingJogo, setEditingJogo] = useState<Jogo | null>(null)
+  const [editTimeA, setEditTimeA] = useState('')
+  const [editTimeB, setEditTimeB] = useState('')
+  const [editData, setEditData] = useState('')
+  const [editHora, setEditHora] = useState('')
+  const [editCompeticao, setEditCompeticao] = useState('')
+  const [savingEditJogo, setSavingEditJogo] = useState(false)
+  const [editJogoError, setEditJogoError] = useState<string | null>(null)
 
   // Delete confirmation
   const [gameToDelete, setGameToDelete] = useState<Jogo | null>(null)
@@ -510,6 +521,104 @@ export default function AdminJogos() {
       setUploadError(err instanceof Error ? err.message : 'Erro ao ler o arquivo')
     } finally {
       setParsingSpreadsheet(false)
+    }
+  }
+
+  const handleOpenEditJogo = (jogo: Jogo) => {
+    setEditingJogo(jogo)
+    setEditTimeA(jogo.time_a || '')
+    setEditTimeB(jogo.time_b || '')
+    // Extrai YYYY-MM-DD se estiver no formato ISO
+    const rawData = jogo.data || ''
+    const matchIso = rawData.match(/^(\d{4}-\d{2}-\d{2})/)
+    setEditData(matchIso ? matchIso[1] : rawData)
+    setEditHora(jogo.hora || '')
+    setEditCompeticao(jogo.competicao || '')
+    setEditJogoError(null)
+  }
+
+  const handleSaveEditJogo = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!editingJogo) return
+    setEditJogoError(null)
+
+    if (!editTimeA.trim() || !editTimeB.trim()) {
+      setEditJogoError('Os nomes dos times mandante e visitante são obrigatórios.')
+      return
+    }
+
+    setSavingEditJogo(true)
+    try {
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+      }
+      if (pb.authStore.token) {
+        headers['Authorization'] = pb.authStore.token
+      }
+
+      let dataIsoFormatada = editData.trim()
+      if (dataIsoFormatada && !dataIsoFormatada.includes('T')) {
+        dataIsoFormatada = `${dataIsoFormatada}T00:00:00.000Z`
+      }
+
+      const res = await fetch(
+        `${import.meta.env.VITE_POCKETBASE_URL}/backend/v1/admin/editar-jogo`,
+        {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({
+            jogo_id: editingJogo.id,
+            time_a: editTimeA.trim(),
+            time_b: editTimeB.trim(),
+            data: dataIsoFormatada || undefined,
+            hora: editHora.trim() || undefined,
+            competicao: editCompeticao.trim() || undefined,
+          }),
+        },
+      )
+
+      const data = await res.json()
+
+      if (!res.ok || data.success === false) {
+        const errorMsg = data.error || 'Não foi possível salvar as alterações do jogo.'
+        setEditJogoError(errorMsg)
+        toast({
+          title: 'Erro ao editar jogo',
+          description: errorMsg,
+          variant: 'destructive',
+        })
+      } else {
+        if (data.fixture_vinculado || data.escudos_atualizados) {
+          const escudosTxt = data.escudos_atualizados ? ' e escudos sincronizados' : ''
+          const fixtureTxt = data.fixture_vinculado
+            ? 'Fixture vinculada com sucesso'
+            : 'Dados salvos'
+          toast({
+            title: 'Jogo atualizado com sucesso!',
+            description: `${fixtureTxt}${escudosTxt}.`,
+          })
+        } else {
+          toast({
+            title: 'Dados cadastrais salvos',
+            description:
+              data.aviso ||
+              'Nomes atualizados. Fixture/escudos permanecem pendentes (sem correspondência ou cota).',
+          })
+        }
+        setEditingJogo(null)
+        loadJogos(activeBolaoId || 'geral')
+      }
+    } catch (err: unknown) {
+      console.error('Erro ao editar jogo:', err)
+      const msg = err instanceof Error ? err.message : 'Falha na comunicação com o servidor.'
+      setEditJogoError(msg)
+      toast({
+        title: 'Erro de comunicação',
+        description: msg,
+        variant: 'destructive',
+      })
+    } finally {
+      setSavingEditJogo(false)
     }
   }
 
@@ -1057,6 +1166,18 @@ export default function AdminJogos() {
                             )}
                           </Button>
 
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            onClick={() => handleOpenEditJogo(jogo)}
+                            className="h-8 rounded-md border-amber-200 bg-amber-50/70 px-2.5 text-xs font-semibold text-amber-800 hover:bg-amber-100 hover:text-amber-900"
+                            title="Editar informações cadastrais do jogo (nomes, data, hora, competição)"
+                          >
+                            <Pencil className="mr-1 h-3.5 w-3.5" />
+                            <span>Editar Jogo</span>
+                          </Button>
+
                           <Link to={`/bolao/admin/jogos/${jogo.id}/resultado`}>
                             <Button
                               size="sm"
@@ -1086,6 +1207,138 @@ export default function AdminJogos() {
           </div>
         )}
       </Card>
+
+      {/* Dialog Editar Jogo */}
+      <Dialog open={!!editingJogo} onOpenChange={(open) => !open && setEditingJogo(null)}>
+        <DialogContent className="rounded-xl bg-white sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-base font-bold text-[#0F172A]">
+              <Pencil className="h-4 w-4 text-amber-600" />
+              Editar Jogo Cadastrado
+            </DialogTitle>
+            <DialogDescription className="text-xs text-[#64748B]">
+              Atualize os dados do confronto. Nomes oficiais em inglês (ex.:{' '}
+              <strong className="text-slate-700">&quot;Japan&quot;</strong>,{' '}
+              <strong className="text-slate-700">&quot;South Korea&quot;</strong>) facilitam a
+              correspondência automática na API-Football e TheSportsDB.
+            </DialogDescription>
+          </DialogHeader>
+
+          {editJogoError && (
+            <div className="flex items-center gap-2 rounded-lg border border-red-200 bg-red-50 p-3 text-xs text-red-700">
+              <AlertCircle className="h-4 w-4 shrink-0 text-red-600" />
+              <span>{editJogoError}</span>
+            </div>
+          )}
+
+          <form onSubmit={handleSaveEditJogo} className="space-y-3 pt-1">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <Label htmlFor="edit-time-a" className="text-xs font-bold text-slate-700">
+                  Time A (Mandante)
+                </Label>
+                <Input
+                  id="edit-time-a"
+                  placeholder="Ex: Japan"
+                  value={editTimeA}
+                  onChange={(e) => setEditTimeA(e.target.value)}
+                  className="mt-1 h-9 border-[#CBD5E1] text-xs focus-visible:border-amber-500 focus-visible:ring-amber-500"
+                  required
+                />
+              </div>
+
+              <div>
+                <Label htmlFor="edit-time-b" className="text-xs font-bold text-slate-700">
+                  Time B (Visitante)
+                </Label>
+                <Input
+                  id="edit-time-b"
+                  placeholder="Ex: South Korea"
+                  value={editTimeB}
+                  onChange={(e) => setEditTimeB(e.target.value)}
+                  className="mt-1 h-9 border-[#CBD5E1] text-xs focus-visible:border-amber-500 focus-visible:ring-amber-500"
+                  required
+                />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <Label htmlFor="edit-data" className="text-xs font-bold text-slate-700">
+                  Data
+                </Label>
+                <Input
+                  id="edit-data"
+                  type="date"
+                  value={editData}
+                  onChange={(e) => setEditData(e.target.value)}
+                  className="mt-1 h-9 border-[#CBD5E1] text-xs focus-visible:border-amber-500 focus-visible:ring-amber-500"
+                />
+              </div>
+
+              <div>
+                <Label htmlFor="edit-hora" className="text-xs font-bold text-slate-700">
+                  Hora (HH:MM)
+                </Label>
+                <Input
+                  id="edit-hora"
+                  placeholder="Ex: 20:00"
+                  value={editHora}
+                  onChange={(e) => setEditHora(e.target.value)}
+                  className="mt-1 h-9 border-[#CBD5E1] text-xs focus-visible:border-amber-500 focus-visible:ring-amber-500"
+                />
+              </div>
+            </div>
+
+            <div>
+              <Label htmlFor="edit-competicao" className="text-xs font-bold text-slate-700">
+                Competição (Opcional)
+              </Label>
+              <Input
+                id="edit-competicao"
+                placeholder="Ex: Copa Coni, Amistoso Internacional"
+                value={editCompeticao}
+                onChange={(e) => setEditCompeticao(e.target.value)}
+                className="mt-1 h-9 border-[#CBD5E1] text-xs focus-visible:border-amber-500 focus-visible:ring-amber-500"
+              />
+            </div>
+
+            <div className="rounded-lg bg-amber-50/70 border border-amber-200 p-2.5 text-[11px] text-amber-900 leading-relaxed">
+              💡 <strong>Dica da API:</strong> Ao salvar, o sistema tenta vincular automaticamente o{' '}
+              <code>fixture_id</code> e os escudos dos clubes. Nomes internacionais em inglês
+              aumentam a taxa de correspondência com o provedor.
+            </div>
+
+            <DialogFooter className="mt-4 flex gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={savingEditJogo}
+                onClick={() => setEditingJogo(null)}
+                className="text-xs"
+              >
+                Cancelar
+              </Button>
+              <Button
+                type="submit"
+                size="sm"
+                disabled={savingEditJogo}
+                className="bg-[#0F2A43] text-xs font-semibold text-white hover:bg-[#1B3A5C]"
+              >
+                {savingEditJogo ? (
+                  <>
+                    <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                    Salvando e Vinculando...
+                  </>
+                ) : (
+                  'Salvar Alterações'
+                )}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
 
       {/* Delete confirmation dialog */}
       <Dialog open={!!gameToDelete} onOpenChange={(open) => !open && setGameToDelete(null)}>

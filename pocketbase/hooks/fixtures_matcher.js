@@ -121,8 +121,8 @@ function obterApiKeyApiFootball() {
  * Retorna string vazia se não encontrar ou cota esgotada.
  * NUNCA lança exceção fatal.
  */
-function buscarFixtureIdNaApi(timeA, timeB, dataRaw) {
-  if (!timeA || !timeB) return ''
+function buscarFixtureDetalhadaNaApi(timeA, timeB, dataRaw) {
+  if (!timeA || !timeB) return null
 
   // 1. Tenta resolver primeiro via jogos_do_dia local (sem gastar cota externa)
   try {
@@ -138,10 +138,21 @@ function buscarFixtureIdNaApi(timeA, timeB, dataRaw) {
       if (matchDir || matchInv) {
         const fid = (jdds[i].getString('fixture_id') || '').trim()
         if (fid && /^\d+$/.test(fid)) {
+          const logoA = matchDir
+            ? jdds[i].getString('logo_casa')
+            : jdds[i].getString('logo_visitante')
+          const logoB = matchDir
+            ? jdds[i].getString('logo_visitante')
+            : jdds[i].getString('logo_casa')
           console.log(
             `[fixtures_matcher] Fixture encontrada em jogos_do_dia: ${fid} (${timeA} x ${timeB})`,
           )
-          return fid
+          return {
+            fixture_id: fid,
+            logo_mandante: logoA || '',
+            logo_visitante: logoB || '',
+            origem: 'jogos_do_dia',
+          }
         }
       }
     }
@@ -151,12 +162,12 @@ function buscarFixtureIdNaApi(timeA, timeB, dataRaw) {
 
   // 2. Busca na API-Football por data
   const isoDate = formatarDataISO(dataRaw)
-  if (!isoDate) return ''
+  if (!isoDate) return null
 
   const apiKey = obterApiKeyApiFootball()
   if (!apiKey) {
     console.log('[fixtures_matcher] API Key ausente para consulta de fixture.')
-    return ''
+    return null
   }
 
   try {
@@ -179,7 +190,7 @@ function buscarFixtureIdNaApi(timeA, timeB, dataRaw) {
         '[fixtures_matcher] Chamada à API-Football bloqueada pelo limiter:',
         limiterRes.reason,
       )
-      return ''
+      return null
     }
 
     const resJson = limiterRes.json
@@ -195,10 +206,19 @@ function buscarFixtureIdNaApi(timeA, timeB, dataRaw) {
         if (matchDir || matchInv) {
           const fid = item.fixture && item.fixture.id ? String(item.fixture.id) : ''
           if (fid && /^\d+$/.test(fid)) {
+            const hLogo = (item.teams && item.teams.home && item.teams.home.logo) || ''
+            const aLogo = (item.teams && item.teams.away && item.teams.away.logo) || ''
+            const logoMandante = matchDir ? hLogo : aLogo
+            const logoVisitante = matchDir ? aLogo : hLogo
             console.log(
               `[fixtures_matcher] Fixture ${fid} identificada com sucesso na API para ${timeA} x ${timeB}!`,
             )
-            return fid
+            return {
+              fixture_id: fid,
+              logo_mandante: logoMandante || '',
+              logo_visitante: logoVisitante || '',
+              origem: 'api_football',
+            }
           }
         }
       }
@@ -207,11 +227,17 @@ function buscarFixtureIdNaApi(timeA, timeB, dataRaw) {
     console.log('[fixtures_matcher] Erro na busca de fixture na API:', errApi)
   }
 
-  return ''
+  return null
+}
+
+function buscarFixtureIdNaApi(timeA, timeB, dataRaw) {
+  const res = buscarFixtureDetalhadaNaApi(timeA, timeB, dataRaw)
+  return res && res.fixture_id ? res.fixture_id : ''
 }
 
 module.exports = {
   buscarFixtureIdNaApi,
+  buscarFixtureDetalhadaNaApi,
   formatarDataISO,
   timesCoincidemHelper,
   normalizeStrHelper,

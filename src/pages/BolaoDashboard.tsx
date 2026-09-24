@@ -66,8 +66,8 @@ function TeamShield({
   escudo,
   nomeTime,
   sigla,
-  sizeClass = 'h-6 w-6',
-  textClass = 'text-[10px] font-bold text-slate-700',
+  sizeClass = 'h-9 w-9 sm:h-10 sm:w-10',
+  textClass = 'text-xs font-bold text-slate-700',
 }: {
   escudo: string | undefined
   nomeTime: string
@@ -86,14 +86,16 @@ function TeamShield({
     )
   }
   return (
-    <img
-      src={escudo}
-      alt={nomeTime}
-      className={`${sizeClass} object-contain shrink-0 drop-shadow-xs`}
-      loading="eager"
-      decoding="async"
-      onError={() => setHasError(true)}
-    />
+    <div className={`${sizeClass} shrink-0 flex items-center justify-center`}>
+      <img
+        src={escudo}
+        alt={nomeTime}
+        className="w-full h-full object-contain drop-shadow-xs"
+        loading="eager"
+        decoding="async"
+        onError={() => setHasError(true)}
+      />
+    </div>
   )
 }
 
@@ -1824,187 +1826,199 @@ export default function BolaoDashboard() {
             </div>
           </div>
         </Card>
+      </div>
 
-        <Card className="rounded-[14px] border-[#E2E8F0] bg-white p-4 shadow-xs transition hover:-translate-y-0.5 hover:shadow-md">
-          {' '}
-          <div className="flex items-center justify-between">
-            <div className="min-w-0 flex-1">
-              <div className="flex items-center justify-between pr-2 gap-2 flex-wrap">
-                <p className="text-xs font-medium text-[#64748B]">Jogos de Hoje</p>
-                {loading && (isGeral ? allJogos.length === 0 : jogos.length === 0) ? (
-                  <div className="h-4 w-12 animate-pulse rounded bg-slate-200" />
-                ) : (
-                  <div className="flex items-center gap-1.5 shrink-0">
-                    <Badge
-                      variant="outline"
-                      className="border-blue-200 bg-blue-50/60 text-[10px] font-semibold text-[#0F2A43]"
-                    >
-                      {jogosDeHoje.length} jogo(s)
-                    </Badge>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      onClick={handleCopiarWhatsApp}
-                      disabled={jogosDeHoje.length === 0}
-                      className={cn(
-                        'h-7 px-2 text-[10px] font-bold transition-all',
-                        copiado
-                          ? 'border-emerald-300 bg-emerald-50 text-emerald-800 hover:bg-emerald-100'
-                          : 'border-slate-300 text-slate-700 hover:bg-slate-50',
-                      )}
-                      title="Copiar lista de pendentes formatada para o WhatsApp"
-                    >
-                      {copiado ? (
-                        <>
-                          <Check className="h-3 w-3 text-emerald-600 mr-1 shrink-0" />
-                          <span>Copiado!</span>
-                        </>
-                      ) : (
-                        <>
-                          <Copy className="h-3 w-3 text-slate-600 mr-1 shrink-0" />
-                          <span>Cobrar WhatsApp</span>
-                        </>
-                      )}
-                    </Button>
-                  </div>
-                )}
-              </div>
-              {loading && (isGeral ? allJogos.length === 0 : jogos.length === 0) ? (
-                <div className="mt-2 space-y-1.5">
-                  <div className="h-3 w-3/4 animate-pulse rounded bg-slate-200" />
-                  <div className="h-3 w-1/2 animate-pulse rounded bg-slate-200" />
-                </div>
-              ) : jogosDeHoje.length === 0 ? (
-                <p className="mt-1 text-sm font-medium text-slate-400">
-                  Nenhum jogo agendado para hoje
-                </p>
-              ) : (
-                <div className="mt-1.5 space-y-2 max-h-60 overflow-y-auto pr-1">
-                  {jogosDeHoje.map((jogo) => {
-                    const bolaoOrigem = isGeral ? bolaoMap.get(jogo.bolao) : null
-                    const jogoDataISO = normalizeDataISO(jogo.data)
-                    const matchedLive = resolveLiveScoreForGame(
-                      jogo,
-                      apiFixtures,
-                      0.55,
-                      jogoDataISO,
-                    )
-                    const logoCasa =
-                      escudosMap[jogo.time_a?.trim()] ||
-                      matchedLive?.homeTeamLogo ||
-                      readEscudoCache(jogo.time_a?.trim() || '') ||
-                      ''
-                    const logoVisitante =
-                      escudosMap[jogo.time_b?.trim()] ||
-                      matchedLive?.awayTeamLogo ||
-                      readEscudoCache(jogo.time_b?.trim() || '') ||
-                      ''
-                    const initialsA = (jogo.time_a || '').slice(0, 2).toUpperCase()
-                    const initialsB = (jogo.time_b || '').slice(0, 2).toUpperCase()
-
-                    return (
-                      <div
-                        key={jogo.id}
-                        className="rounded-md border border-slate-100 bg-slate-50/50 p-1.5 text-xs"
-                      >
-                        <div className="flex items-center justify-between gap-2 py-0.5">
-                          <div className="flex items-center gap-1.5 min-w-0 flex-1">
-                            {bolaoOrigem && (
-                              <Badge
-                                variant="secondary"
-                                className="border border-[#CBD5E1] bg-slate-100 text-[#0F2A43] font-semibold text-[9px] px-1 py-0 shrink-0"
-                              >
-                                {bolaoOrigem.nome.replace('Copa ', '')}
-                              </Badge>
-                            )}
-                            <div className="flex items-center gap-1.5 min-w-0 flex-1">
-                              <span className="flex items-center gap-1 min-w-0 flex-1">
-                                <TeamShield
-                                  escudo={logoCasa}
-                                  nomeTime={jogo.time_a}
-                                  sigla={initialsA}
-                                  sizeClass="h-5 w-5"
-                                  textClass="text-[8px] font-black"
-                                />
-                                <span
-                                  className="font-bold text-[#0F172A] min-w-0 line-clamp-2 leading-tight"
-                                  title={jogo.time_a}
-                                >
-                                  {jogo.time_a}
-                                </span>
-                              </span>
-                              <span className="text-slate-400 font-bold px-0.5 shrink-0">x</span>
-                              <span className="flex items-center gap-1 min-w-0 flex-1">
-                                <TeamShield
-                                  escudo={logoVisitante}
-                                  nomeTime={jogo.time_b}
-                                  sigla={initialsB}
-                                  sizeClass="h-5 w-5"
-                                  textClass="text-[8px] font-black"
-                                />
-                                <span
-                                  className="font-bold text-[#0F172A] min-w-0 line-clamp-2 leading-tight"
-                                  title={jogo.time_b}
-                                >
-                                  {jogo.time_b}
-                                </span>
-                              </span>
-                            </div>
-                          </div>
-                          <span className="shrink-0 font-semibold text-[#0F2A43] bg-slate-100 px-1.5 py-0.5 rounded text-[11px]">
-                            {formatHoraBR(jogo.hora) || '—'}
-                          </span>
-                        </div>
-
-                        {/* Linha discreta de palpites por membro ativo */}
-                        <div className="mt-1.5 flex flex-wrap items-center gap-1.5 pt-1 border-t border-slate-100">
-                          <span className="text-[10px] font-medium text-slate-500 mr-0.5">
-                            Palpites:
-                          </span>
-                          {membrosAtivos.map((membro) => {
-                            const jaPalpitou = checarPalpiteRegistrado(
-                              jogo.id,
-                              membro.nome,
-                              membro.ids,
-                            )
-                            return (
-                              <span
-                                key={membro.nome}
-                                className={cn(
-                                  'inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold transition-colors',
-                                  jaPalpitou
-                                    ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                                    : 'bg-rose-50 text-rose-700 border border-rose-200',
-                                )}
-                                title={
-                                  jaPalpitou
-                                    ? `${membro.nome}: Palpite registrado`
-                                    : `${membro.nome}: Palpite pendente`
-                                }
-                              >
-                                {jaPalpitou ? (
-                                  <CheckCircle2 className="h-3 w-3 text-emerald-600 shrink-0" />
-                                ) : (
-                                  <XCircle className="h-3 w-3 text-rose-600 shrink-0" />
-                                )}
-                                <span>{membro.nome}</span>
-                              </span>
-                            )
-                          })}
-                        </div>
-                      </div>
-                    )
-                  })}
-                </div>
-              )}{' '}
-            </div>
-            <div className="ml-2 rounded-lg bg-blue-50 p-2.5 text-[#0F2A43] shrink-0 self-start">
+      {/* Quadro "Jogos de Hoje" em bloco dedicado de largura total */}
+      <Card className="rounded-[14px] border-[#E2E8F0] bg-white p-5 shadow-xs transition hover:shadow-md">
+        <div className="flex items-center justify-between pb-3 border-b border-slate-100 gap-2 flex-wrap">
+          <div className="flex items-center gap-2">
+            <div className="rounded-lg bg-blue-50 p-2 text-[#0F2A43] shrink-0">
               <Calendar className="h-5 w-5" />
             </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <h2 className="text-base font-bold text-[#0F172A]">Jogos de Hoje</h2>
+                <Badge
+                  variant="outline"
+                  className="border-blue-200 bg-blue-50/60 text-xs font-semibold text-[#0F2A43]"
+                >
+                  {jogosDeHoje.length} jogo(s)
+                </Badge>
+              </div>
+              <p className="text-xs text-[#64748B]">
+                Partidas programadas para a data de hoje com status de palpites da equipe.
+              </p>
+            </div>
           </div>
-        </Card>
-      </div>
+
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={handleCopiarWhatsApp}
+            disabled={jogosDeHoje.length === 0}
+            className={cn(
+              'h-8 px-3 text-xs font-bold transition-all',
+              copiado
+                ? 'border-emerald-300 bg-emerald-50 text-emerald-800 hover:bg-emerald-100'
+                : 'border-slate-300 text-slate-700 hover:bg-slate-50',
+            )}
+            title="Copiar lista de pendentes formatada para o WhatsApp"
+          >
+            {copiado ? (
+              <>
+                <Check className="h-3.5 w-3.5 text-emerald-600 mr-1.5 shrink-0" />
+                <span>Copiado!</span>
+              </>
+            ) : (
+              <>
+                <Copy className="h-3.5 w-3.5 text-slate-600 mr-1.5 shrink-0" />
+                <span>Cobrar WhatsApp</span>
+              </>
+            )}
+          </Button>
+        </div>
+
+        <div className="pt-3">
+          {loading && (isGeral ? allJogos.length === 0 : jogos.length === 0) ? (
+            <div className="space-y-2 py-4">
+              <div className="h-4 w-3/4 animate-pulse rounded bg-slate-200" />
+              <div className="h-4 w-1/2 animate-pulse rounded bg-slate-200" />
+            </div>
+          ) : jogosDeHoje.length === 0 ? (
+            <div className="py-8 text-center">
+              <p className="text-sm font-medium text-slate-400">Nenhum jogo agendado para hoje.</p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              {jogosDeHoje.map((jogo) => {
+                const bolaoOrigem = isGeral ? bolaoMap.get(jogo.bolao) : null
+                const jogoDataISO = normalizeDataISO(jogo.data)
+                const matchedLive = resolveLiveScoreForGame(jogo, apiFixtures, 0.55, jogoDataISO)
+                // Prioridade de fonte do escudo:
+                // url_escudo_mandante/visitante do jogo -> escudosMap -> matchedLive -> cache de enquetes
+                const logoCasa =
+                  jogo.url_escudo_mandante ||
+                  escudosMap[jogo.time_a?.trim()] ||
+                  matchedLive?.homeTeamLogo ||
+                  readEscudoCache(jogo.time_a?.trim() || '') ||
+                  ''
+                const logoVisitante =
+                  jogo.url_escudo_visitante ||
+                  escudosMap[jogo.time_b?.trim()] ||
+                  matchedLive?.awayTeamLogo ||
+                  readEscudoCache(jogo.time_b?.trim() || '') ||
+                  ''
+                const initialsA = (jogo.time_a || '').slice(0, 2).toUpperCase()
+                const initialsB = (jogo.time_b || '').slice(0, 2).toUpperCase()
+
+                return (
+                  <div
+                    key={jogo.id}
+                    className="rounded-xl border border-slate-200 bg-slate-50/50 p-3 text-xs flex flex-col justify-between"
+                  >
+                    <div className="flex items-center justify-between gap-2 pb-2 border-b border-slate-200/60">
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        {bolaoOrigem && (
+                          <Badge
+                            variant="secondary"
+                            className="border border-[#CBD5E1] bg-white text-[#0F2A43] font-semibold text-[10px] px-1.5 py-0 shrink-0"
+                          >
+                            {bolaoOrigem.nome.replace('Copa ', '')}
+                          </Badge>
+                        )}
+                        {jogo.competicao && (
+                          <span className="text-[10px] text-slate-500 font-medium">
+                            {jogo.competicao}
+                          </span>
+                        )}
+                      </div>
+                      <span className="shrink-0 font-bold text-[#0F2A43] bg-white border border-slate-200 px-2 py-0.5 rounded text-[11px]">
+                        {formatHoraBR(jogo.hora) || '—'}
+                      </span>
+                    </div>
+
+                    {/* Confronto com escudos padronizados de Palpites (h-9 w-9 sm:h-10 sm:w-10, object-contain) */}
+                    <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-2 py-2.5">
+                      {/* Mandante */}
+                      <div className="flex items-center gap-2 min-w-0">
+                        <TeamShield
+                          escudo={logoCasa}
+                          nomeTime={jogo.time_a}
+                          sigla={initialsA}
+                          sizeClass="h-9 w-9 sm:h-10 sm:w-10"
+                          textClass="text-xs font-bold text-slate-700"
+                        />
+                        <span
+                          className="font-bold text-[#0F172A] text-xs sm:text-sm line-clamp-2 leading-tight"
+                          title={jogo.time_a}
+                        >
+                          {jogo.time_a}
+                        </span>
+                      </div>
+
+                      {/* VS / Placar */}
+                      <div className="flex flex-col items-center justify-center px-1 shrink-0">
+                        <span className="text-xs font-black text-slate-400 tracking-wider">VS</span>
+                      </div>
+
+                      {/* Visitante */}
+                      <div className="flex items-center justify-end gap-2 min-w-0 text-right">
+                        <span
+                          className="font-bold text-[#0F172A] text-xs sm:text-sm line-clamp-2 leading-tight"
+                          title={jogo.time_b}
+                        >
+                          {jogo.time_b}
+                        </span>
+                        <TeamShield
+                          escudo={logoVisitante}
+                          nomeTime={jogo.time_b}
+                          sigla={initialsB}
+                          sizeClass="h-9 w-9 sm:h-10 sm:w-10"
+                          textClass="text-xs font-bold text-slate-700"
+                        />
+                      </div>
+                    </div>
+
+                    {/* Linha discreta de palpites por membro ativo */}
+                    <div className="mt-2 flex flex-wrap items-center gap-1.5 pt-2 border-t border-slate-200/60">
+                      <span className="text-[10px] font-medium text-slate-500 mr-0.5">
+                        Palpites:
+                      </span>
+                      {membrosAtivos.map((membro) => {
+                        const jaPalpitou = checarPalpiteRegistrado(jogo.id, membro.nome, membro.ids)
+                        return (
+                          <span
+                            key={membro.nome}
+                            className={cn(
+                              'inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold transition-colors',
+                              jaPalpitou
+                                ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                                : 'bg-rose-50 text-rose-700 border border-rose-200',
+                            )}
+                            title={
+                              jaPalpitou
+                                ? `${membro.nome}: Palpite registrado`
+                                : `${membro.nome}: Palpite pendente`
+                            }
+                          >
+                            {jaPalpitou ? (
+                              <CheckCircle2 className="h-3 w-3 text-emerald-600 shrink-0" />
+                            ) : (
+                              <XCircle className="h-3 w-3 text-rose-600 shrink-0" />
+                            )}
+                            <span>{membro.nome}</span>
+                          </span>
+                        )
+                      })}
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          )}
+        </div>
+      </Card>
 
       {/* Bloco: Palpites Liberados do Grupo (Posicionado entre Jogos de Hoje e a Tabela de Classificação) */}
       <Card className="rounded-[14px] border-[#E2E8F0] bg-white p-6 shadow-xs">
@@ -2169,13 +2183,13 @@ export default function BolaoDashboard() {
                             const initialsB = (jogo.time_b || '').slice(0, 2).toUpperCase()
 
                             return (
-                              <div className="flex items-center gap-1.5 shrink-0">
+                              <div className="flex items-center gap-2 shrink-0">
                                 <TeamShield
                                   escudo={logoCasa}
                                   nomeTime={jogo.time_a}
                                   sigla={initialsA}
-                                  sizeClass="h-5 w-5"
-                                  textClass="text-[9px] font-black"
+                                  sizeClass="h-7 w-7 sm:h-8 sm:w-8"
+                                  textClass="text-[10px] font-bold text-slate-700"
                                 />
                                 <span className="font-bold text-sm text-[#0F172A] tracking-tight">
                                   {tituloConfronto}
@@ -2184,8 +2198,8 @@ export default function BolaoDashboard() {
                                   escudo={logoVisitante}
                                   nomeTime={jogo.time_b}
                                   sigla={initialsB}
-                                  sizeClass="h-5 w-5"
-                                  textClass="text-[9px] font-black"
+                                  sizeClass="h-7 w-7 sm:h-8 sm:w-8"
+                                  textClass="text-[10px] font-bold text-slate-700"
                                 />
                               </div>
                             )
