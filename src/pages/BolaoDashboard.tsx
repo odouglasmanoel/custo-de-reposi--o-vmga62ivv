@@ -135,6 +135,46 @@ interface DashboardCachePayload {
 const DASHBOARD_CACHE_PREFIX = 'cr_dashboard_cache_v3'
 const dashboardMemoryCache = new Map<string, DashboardCachePayload>()
 
+export function clearDashboardCache(bolaoId?: string) {
+  if (bolaoId) {
+    dashboardMemoryCache.delete(bolaoId)
+    try {
+      localStorage.removeItem(`${DASHBOARD_CACHE_PREFIX}_${bolaoId}`)
+      sessionStorage.removeItem(`bolao_cache_jogos_${bolaoId}`)
+      sessionStorage.removeItem(`bolao_cache_parts_${bolaoId}`)
+      sessionStorage.removeItem(`bolao_cache_palpites_${bolaoId}`)
+      sessionStorage.removeItem(`bolao_cache_stats_${bolaoId}`)
+    } catch {
+      /* ignore */
+    }
+  } else {
+    dashboardMemoryCache.clear()
+    try {
+      if (typeof window !== 'undefined') {
+        const removeKeysLocal: string[] = []
+        for (let i = 0; i < localStorage.length; i++) {
+          const k = localStorage.key(i)
+          if (k && k.startsWith(DASHBOARD_CACHE_PREFIX)) {
+            removeKeysLocal.push(k)
+          }
+        }
+        removeKeysLocal.forEach((k) => localStorage.removeItem(k))
+
+        const removeKeysSession: string[] = []
+        for (let i = 0; i < sessionStorage.length; i++) {
+          const k = sessionStorage.key(i)
+          if (k && (k.startsWith('bolao_cache_') || k.startsWith(DASHBOARD_CACHE_PREFIX))) {
+            removeKeysSession.push(k)
+          }
+        }
+        removeKeysSession.forEach((k) => sessionStorage.removeItem(k))
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+}
+
 function readDashboardCache(bolaoId: string): DashboardCachePayload | null {
   const key = bolaoId || GERAL_BOLAO_ID
   const mem = dashboardMemoryCache.get(key)
@@ -687,6 +727,9 @@ export default function BolaoDashboard() {
           title: 'Placar sincronizado',
           description: res.message || 'Placar e marcadores atualizados com sucesso da API-Sports!',
         })
+
+        // Invalida o cache do dashboard (memória, localStorage e sessionStorage)
+        clearDashboardCache()
 
         // Atualização instantânea do estado local com o jogo retornado para refletir na hora na Dashboard e Classificação
         if (res.jogo) {
@@ -1456,65 +1499,23 @@ export default function BolaoDashboard() {
   }, [])
 
   // Jogos cujos palpites foram liberados:
-  // SOMENTE jogos pendentes (não concluídos) cujo horário de início já passou (dataHoraAtual >= dataHoraJogo)
-  // E que pertençam ao dia de hoje ou tenham kickoff há menos de 24 horas (kickoffMs >= nowMs - 24*60*60*1000)
-  // Exclui qualquer jogo concluído (no banco, no status ou já encerrado na API de futebol)
+  // Jogos cujo horário de início já passou (isPalpiteEncerrado via kickoff)
+  // e que pertençam à rodada/dia atual (de hoje no fuso de Brasília ou com kickoff recente nas últimas 24h).
+  // Jogos de hoje com kickoff passado continuam visíveis aqui exibindo marcadores parciais ou recém-encerrados do dia.
+  // Só exclui jogos realmente antigos (fora da janela do dia / >24h) e NUNCA inclui jogos futuros.
   const jogosLiberados = useMemo(() => {
     const targetGames = isGeral ? allJogos : jogos
-    const FINALIZADO_STATUSES = new Set(['finalizado', 'encerrado', 'ft', 'finished', 'aet', 'pen'])
-    const NAO_FINALIZADO_STATUSES = new Set([
-      'pendente',
-      'em_andamento',
-      'ao_vivo',
-      'live',
-      '1h',
-      '2h',
-      'ht',
-      'aguardando',
-      'agendado',
-    ])
 
     return targetGames
       .filter((j) => {
-        // 1. Descartar se resultado_finalizado for true
-        if (j.resultado_finalizado === true) return false
-
-        const jogoDataISO = normalizeDataISO(j.data)
-        const matchedLive = resolveLiveScoreForGame(j, apiFixtures, 0.55, jogoDataISO)
-
-        // 5. Descartar se matchedLive?.isFinished === true
-        if (matchedLive?.isFinished === true) return false
-
-        const concluido = isJogoConcluido(j, matchedLive)
-        if (concluido) return false
-
-        // 2. Normalizar status
-        const st = (j.status || '').toLowerCase().trim()
-
-        // 3. Descartar se st ∈ ['finalizado', 'encerrado', 'ft', 'finished', 'aet', 'pen']
-        if (FINALIZADO_STATUSES.has(st)) return false
-
-        // 4. Incluir SOMENTE partidas com status de não-finalizado:
-        // st ∈ ['pendente', 'em_andamento', 'ao_vivo', 'live', '1h', '2h', 'ht', 'aguardando', 'agendado']
-        // ou st vazio com kickoff futuro/não iniciado e sem placar final preenchido.
-        const temPlacarFinal =
-          j.placar_a !== null &&
-          j.placar_a !== undefined &&
-          j.placar_b !== null &&
-          j.placar_b !== undefined
-
-        if (st) {
-          if (!NAO_FINALIZADO_STATUSES.has(st)) return false
-        } else {
-          // Status vazio: descartar se placar final já estiver preenchido
-          if (temPlacarFinal) return false
-        }
-
+        // Trava de jogos futuros (0.0.218/0.0.219): nunca exibir jogos cujo kickoff ainda não chegou
         if (!isPalpiteEncerrado(j.data, j.hora, nowMs)) return false
 
         const kickoffMs = getJogoKickoffTimestamp(j.data, j.hora)
-        const isHoje = isJogoHoje(j.data, nowMs)
+        const isHoje = isJogoHojeBrasilia(j.data, nowMs) || isJogoHoje(j.data, nowMs)
         const recentKickoff = kickoffMs !== null && kickoffMs >= nowMs - 24 * 60 * 60 * 1000
+
+        // Permanece visível se for do dia de hoje ou kickoff nas últimas 24h
         return isHoje || recentKickoff
       })
       .sort((a, b) => {
@@ -1523,7 +1524,7 @@ export default function BolaoDashboard() {
         const kickB = getJogoKickoffTimestamp(b.data, b.hora) ?? new Date(b.data).getTime()
         return kickB - kickA
       })
-  }, [isGeral, allJogos, jogos, nowMs, apiFixtures, isJogoConcluido])
+  }, [isGeral, allJogos, jogos, nowMs])
 
   // Jogos de Hoje (fuso America/Sao_Paulo / Brasília)
   // No modo Geral (Todas as Copas) soma TODAS as competições de allJogos
@@ -2195,6 +2196,57 @@ export default function BolaoDashboard() {
                 const bolaoOrigem = isGeral ? bolaoMap.get(jogo.bolao) : null
                 const jogoDataISO = normalizeDataISO(jogo.data)
                 const matchedLive = resolveLiveScoreForGame(jogo, apiFixtures, 0.55, jogoDataISO)
+                const sobrescritaJogo = sobrescritasAdmin[jogo.id]
+
+                // Computa se o jogo está concluído/encerrado
+                const isJogoEncerrado = Boolean(
+                  jogo.resultado_finalizado ||
+                  jogo.status === 'encerrado' ||
+                  jogo.status === 'finalizado' ||
+                  jogo.status === 'ft' ||
+                  matchedLive?.isFinished,
+                )
+
+                // Resolução do placar com a ordem de prioridade solicitada:
+                // a) Sobrescrita manual do Admin (sobrescritaJogo);
+                // b) Dados em memória da API (matchedLive);
+                // c) Banco: se jogo.placar_a e jogo.placar_b não são null/undefined (ou resultado_finalizado)
+                let scoreA: number | string | null = null
+                let scoreB: number | string | null = null
+
+                if (sobrescritaJogo != null) {
+                  scoreA = sobrescritaJogo.placar_a
+                  scoreB = sobrescritaJogo.placar_b
+                } else if (
+                  matchedLive &&
+                  matchedLive.placarA !== null &&
+                  matchedLive.placarB !== null
+                ) {
+                  scoreA = matchedLive.placarA
+                  scoreB = matchedLive.placarB
+                } else if (
+                  (jogo.placar_a !== null &&
+                    jogo.placar_a !== undefined &&
+                    jogo.placar_b !== null &&
+                    jogo.placar_b !== undefined) ||
+                  jogo.resultado_finalizado
+                ) {
+                  scoreA = jogo.placar_a != null ? Number(jogo.placar_a) : 0
+                  scoreB = jogo.placar_b != null ? Number(jogo.placar_b) : 0
+                }
+
+                const hasDisplayScore = scoreA !== null && scoreB !== null
+
+                // Kickoff e estado de tempo
+                const kickoffMs = getJogoKickoffTimestamp(jogo.data, jogo.hora)
+                const kickoffPassou = kickoffMs != null ? nowMs >= kickoffMs : false
+                const isStatusAoVivo =
+                  !isJogoEncerrado &&
+                  (sobrescritaJogo != null ||
+                    Boolean(matchedLive?.isLive) ||
+                    jogo.status === 'ao_vivo' ||
+                    kickoffPassou)
+
                 // Prioridade de fonte do escudo:
                 // url_escudo_mandante/visitante do jogo -> escudosMap -> matchedLive -> cache de enquetes
                 const logoCasa =
@@ -2234,31 +2286,61 @@ export default function BolaoDashboard() {
                         )}
                       </div>
                       <div className="flex items-center gap-1.5 shrink-0">
-                        {isAdmin && (
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            onClick={() => handleAtualizarPlacarAoVivo(jogo)}
-                            disabled={updatingLiveGameId === jogo.id}
-                            className="h-6 px-2 text-[10px] font-semibold border-emerald-300 bg-emerald-50 text-emerald-800 hover:bg-emerald-100 flex items-center gap-1"
-                            title="Atualizar Placar Ao Vivo / Marcadores da partida via API-Sports"
+                        {/* Se o jogo estiver encerrado: exibe Badge 'Jogo Encerrado' com CheckCircle2 e NÃO exibe botão Atualizar Placar */}
+                        {isJogoEncerrado ? (
+                          <Badge
+                            variant="secondary"
+                            className="border border-slate-300 bg-slate-100 text-slate-800 text-[10px] font-bold shadow-2xs flex items-center gap-1"
                           >
-                            <RefreshCw
-                              className={cn(
-                                'h-3 w-3 text-emerald-700',
-                                updatingLiveGameId === jogo.id && 'animate-spin',
-                              )}
-                            />
-                            <span>
-                              {updatingLiveGameId === jogo.id
-                                ? 'Atualizando...'
-                                : 'Atualizar Placar'}
-                            </span>
-                          </Button>
+                            <CheckCircle2 className="h-3 w-3 text-slate-600 shrink-0" />
+                            <span>Jogo Encerrado</span>
+                          </Badge>
+                        ) : (
+                          isAdmin && (
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => handleAtualizarPlacarAoVivo(jogo)}
+                              disabled={updatingLiveGameId === jogo.id}
+                              className="h-6 px-2 text-[10px] font-semibold border-emerald-300 bg-emerald-50 text-emerald-800 hover:bg-emerald-100 flex items-center gap-1"
+                              title="Atualizar Placar Ao Vivo / Marcadores da partida via API-Sports"
+                            >
+                              <RefreshCw
+                                className={cn(
+                                  'h-3 w-3 text-emerald-700',
+                                  updatingLiveGameId === jogo.id && 'animate-spin',
+                                )}
+                              />
+                              <span>
+                                {updatingLiveGameId === jogo.id
+                                  ? 'Atualizando...'
+                                  : 'Atualizar Placar'}
+                              </span>
+                            </Button>
+                          )
                         )}
-                        <span className="font-bold text-[#0F2A43] bg-white border border-slate-200 px-2 py-0.5 rounded text-[11px]">
-                          {formatHoraBR(jogo.hora) || '—'}
-                        </span>
+
+                        {/* Relógio do card: quando kickoff já passou, mostrar estado ('Ao Vivo'/'Encerrado') em vez de horário estático */}
+                        {isJogoEncerrado ? (
+                          <span className="font-bold text-slate-600 bg-slate-100 border border-slate-200 px-2 py-0.5 rounded text-[11px]">
+                            Encerrado
+                          </span>
+                        ) : isStatusAoVivo ? (
+                          <span className="font-bold text-emerald-700 bg-emerald-50 border border-emerald-300 px-2 py-0.5 rounded text-[11px] flex items-center gap-1 animate-pulse">
+                            <Radio className="h-2.5 w-2.5 text-emerald-600" />
+                            <span>
+                              {matchedLive?.elapsed
+                                ? `Ao Vivo ${matchedLive.elapsed}'`
+                                : matchedLive?.statusShort === 'HT'
+                                  ? 'Intervalo'
+                                  : 'Ao Vivo'}
+                            </span>
+                          </span>
+                        ) : (
+                          <span className="font-bold text-[#0F2A43] bg-white border border-slate-200 px-2 py-0.5 rounded text-[11px]">
+                            {formatHoraBR(jogo.hora) || '—'}
+                          </span>
+                        )}
                       </div>
                     </div>
 
@@ -2283,7 +2365,17 @@ export default function BolaoDashboard() {
 
                       {/* VS / Placar */}
                       <div className="flex flex-col items-center justify-center px-1 shrink-0">
-                        <span className="text-xs font-black text-slate-400 tracking-wider">VS</span>
+                        {hasDisplayScore ? (
+                          <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-white border border-slate-200 shadow-2xs">
+                            <span className="text-base font-black text-[#0F2A43]">{scoreA}</span>
+                            <span className="text-xs font-bold text-slate-400">-</span>
+                            <span className="text-base font-black text-[#0F2A43]">{scoreB}</span>
+                          </div>
+                        ) : (
+                          <span className="text-xs font-black text-slate-400 tracking-wider">
+                            VS
+                          </span>
+                        )}
                       </div>
 
                       {/* Visitante */}
@@ -2465,15 +2557,21 @@ export default function BolaoDashboard() {
                         ? 'Football-Data.org'
                         : 'API-Football'
 
+                const isStatusEncerrado = Boolean(
+                  jogo.resultado_finalizado ||
+                  jogo.status === 'encerrado' ||
+                  jogo.status === 'finalizado' ||
+                  jogo.status === 'ft' ||
+                  (matchedLive && matchedLive.isFinished),
+                )
+
                 // Status badge: Ao Vivo (Placar sobrescrito pelo Admin, live pela API ou status 'ao_vivo' persistido)
                 const isStatusAoVivo =
-                  tipoFontePlacar === 'sobrescrita' ||
-                  Boolean(matchedLive?.isLive) ||
-                  jogo.status === 'ao_vivo'
-
-                const isStatusEncerrado = Boolean(
-                  (matchedLive && matchedLive.isFinished) || jogo.resultado_finalizado,
-                )
+                  !isStatusEncerrado &&
+                  (tipoFontePlacar === 'sobrescrita' ||
+                    Boolean(matchedLive?.isLive) ||
+                    jogo.status === 'ao_vivo' ||
+                    isPalpiteEncerrado(jogo.data, jogo.hora, nowMs))
 
                 return (
                   <div
@@ -2580,8 +2678,8 @@ export default function BolaoDashboard() {
                             </Badge>
                           )}
 
-                          {/* Botão de Atualizar Placar Ao Vivo e Marcadores via API-Sports (Admin) */}
-                          {isAdmin && (
+                          {/* Botão de Atualizar Placar Ao Vivo e Marcadores via API-Sports (Admin) - apenas se não encerrado */}
+                          {isAdmin && !isStatusEncerrado && (
                             <Button
                               size="sm"
                               variant="outline"

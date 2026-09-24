@@ -5,76 +5,20 @@ import type { MatchedLiveScore } from '@/lib/apiFootballMatcher'
 // Helper function mirroring the exact logic of jogosLiberados filter in BolaoDashboard.tsx
 export function filterJogosLiberados(
   targetGames: Jogo[],
-  apiFixtures: any[] = [],
+  _apiFixtures: any[] = [],
   nowMs: number = Date.now(),
-  resolveLiveScore: (j: Jogo) => MatchedLiveScore | null = () => null,
-  isJogoConcluidoFn: (j: Jogo, matchedLive?: MatchedLiveScore | null) => boolean = (j, m) => {
-    if (j.resultado_finalizado) return true
-    if (m && m.isFinished) return true
-    if (
-      j.status &&
-      ['ft', 'aet', 'pen', 'finished', 'encerrado', 'finalizado', 'match finished'].includes(
-        j.status.toLowerCase().trim(),
-      )
-    ) {
-      return true
-    }
-    return false
-  },
+  _resolveLiveScore: (j: Jogo) => MatchedLiveScore | null = () => null,
+  _isJogoConcluidoFn?: (j: Jogo, matchedLive?: MatchedLiveScore | null) => boolean,
   isPalpiteEncerradoFn: (_data: string, _hora: string, _now: number) => boolean = () => true,
   isJogoHojeFn: (_data: string, _now: number) => boolean = () => true,
   getJogoKickoffTimestampFn: (_data: string, _hora: string) => number | null = () =>
     nowMs - 3600000,
 ) {
-  const FINALIZADO_STATUSES = new Set(['finalizado', 'encerrado', 'ft', 'finished', 'aet', 'pen'])
-  const NAO_FINALIZADO_STATUSES = new Set([
-    'pendente',
-    'em_andamento',
-    'ao_vivo',
-    'live',
-    '1h',
-    '2h',
-    'ht',
-    'aguardando',
-    'agendado',
-  ])
-
   return targetGames.filter((j) => {
-    // 1. Descartar se resultado_finalizado for true
-    if (j.resultado_finalizado === true) return false
-
-    const matchedLive = resolveLiveScore(j)
-
-    // 5. Descartar se matchedLive?.isFinished === true
-    if (matchedLive?.isFinished === true) return false
-
-    const concluido = isJogoConcluidoFn(j, matchedLive)
-    if (concluido) return false
-
-    // 2. Normalizar status
-    const st = (j.status || '').toLowerCase().trim()
-
-    // 3. Descartar se st ∈ ['finalizado', 'encerrado', 'ft', 'finished', 'aet', 'pen']
-    if (FINALIZADO_STATUSES.has(st)) return false
-
-    // 4. Incluir SOMENTE partidas com status de não-finalizado:
-    // st ∈ ['pendente', 'em_andamento', 'ao_vivo', 'live', '1h', '2h', 'ht', 'aguardando', 'agendado']
-    // ou st vazio com kickoff futuro/não iniciado e sem placar final preenchido.
-    const temPlacarFinal =
-      j.placar_a !== null &&
-      j.placar_a !== undefined &&
-      j.placar_b !== null &&
-      j.placar_b !== undefined
-
-    if (st) {
-      if (!NAO_FINALIZADO_STATUSES.has(st)) return false
-    } else {
-      // Status vazio: descartar se placar final já estiver preenchido
-      if (temPlacarFinal) return false
-    }
-
+    // 1. Trava de jogos futuros: só incluir se kickoff já passou (palpite encerrado)
     if (!isPalpiteEncerradoFn(j.data, j.hora, nowMs)) return false
 
+    // 2. Pertencer ao dia de hoje ou kickoff nas últimas 24h
     const kickoffMs = getJogoKickoffTimestampFn(j.data, j.hora)
     const isHoje = isJogoHojeFn(j.data, nowMs)
     const recentKickoff = kickoffMs !== null && kickoffMs >= nowMs - 24 * 60 * 60 * 1000
@@ -82,7 +26,7 @@ export function filterJogosLiberados(
   })
 }
 
-describe('BolaoDashboard - Filtro jogosLiberados (BUG 1)', () => {
+describe('BolaoDashboard - Filtro jogosLiberados', () => {
   const createMockJogo = (overrides: Partial<Jogo>): Jogo => ({
     id: 'jogo_1',
     collectionId: 'col_jogos',
@@ -99,77 +43,45 @@ describe('BolaoDashboard - Filtro jogosLiberados (BUG 1)', () => {
     ...overrides,
   })
 
-  it('descarta jogos com resultado_finalizado === true', () => {
+  it('mantém visíveis jogos de hoje com kickoff passado mesmo se resultado_finalizado === true ou encerrado', () => {
     const games = [
-      createMockJogo({ id: 'j1', resultado_finalizado: true, status: 'pendente' }),
-      createMockJogo({ id: 'j2', resultado_finalizado: false, status: 'pendente' }),
+      createMockJogo({ id: 'j1', resultado_finalizado: true, status: 'encerrado' }),
+      createMockJogo({ id: 'j2', resultado_finalizado: false, status: 'ao_vivo' }),
     ]
     const res = filterJogosLiberados(games)
-    expect(res.map((g) => g.id)).toEqual(['j2'])
+    expect(res.map((g) => g.id)).toEqual(['j1', 'j2'])
   })
 
-  it('descarta jogos com status terminal: finalizado, encerrado, ft, finished, aet, pen', () => {
-    const statuses = ['finalizado', 'FINALIZADO', 'encerrado', 'ft', 'finished', 'aet', 'pen']
-    const games = statuses.map((st, i) =>
-      createMockJogo({ id: `j_${i}`, resultado_finalizado: false, status: st }),
-    )
-    const res = filterJogosLiberados(games)
-    expect(res).toEqual([])
-  })
-
-  it('inclui jogos com status não finalizado: pendente, em_andamento, ao_vivo, live, 1h, 2h, ht, aguardando, agendado', () => {
-    const validStatuses = [
-      'pendente',
-      'em_andamento',
-      'ao_vivo',
-      'live',
-      '1h',
-      '2h',
-      'ht',
-      'aguardando',
-      'agendado',
-    ]
-    const games = validStatuses.map((st, i) =>
-      createMockJogo({ id: `j_${i}`, resultado_finalizado: false, status: st }),
-    )
-    const res = filterJogosLiberados(games)
-    expect(res.length).toBe(validStatuses.length)
-  })
-
-  it('descarta jogo com status vazio quando placar final está preenchido', () => {
-    const games = [
-      createMockJogo({ id: 'com_placar', status: '', placar_a: 2, placar_b: 1 }),
-      createMockJogo({ id: 'sem_placar', status: '', placar_a: null, placar_b: null }),
-    ]
-    const res = filterJogosLiberados(games)
-    expect(res.map((g) => g.id)).toEqual(['sem_placar'])
-  })
-
-  it('descarta jogo se matchedLive.isFinished for true', () => {
-    const game = createMockJogo({ id: 'j_live_end', status: 'em_andamento' })
+  it('descarta jogos futuros cujo kickoff ainda não chegou', () => {
+    const games = [createMockJogo({ id: 'passado' }), createMockJogo({ id: 'futuro' })]
     const res = filterJogosLiberados(
-      [game],
+      games,
       [],
       Date.now(),
-      () =>
-        ({
-          found: true,
-          homeTeamName: 'Corinthians',
-          awayTeamName: 'Palmeiras',
-          placarA: 2,
-          placarB: 1,
-          fixtureId: 123,
-          goalsHome: 2,
-          goalsAway: 1,
-          statusShort: 'FT',
-          statusLong: 'Match Finished',
-          elapsed: 90,
-          isLive: false,
-          isFinished: true,
-          scorers: [],
-        }) as unknown as MatchedLiveScore,
+      () => null,
+      undefined,
+      (_d, _h, _now) => _d === 'passado', // só passado teve kickoff
     )
-    expect(res).toEqual([])
+    expect(res.map((g) => g.id)).toEqual(['passado'])
+  })
+
+  it('descarta jogos antigos cujo kickoff ocorreu há mais de 24h e não são de hoje', () => {
+    const now = Date.now()
+    const games = [createMockJogo({ id: 'hoje' }), createMockJogo({ id: 'antigo' })]
+    const res = filterJogosLiberados(
+      games,
+      [],
+      now,
+      () => null,
+      undefined,
+      () => true, // kickoff passou
+      (data) => data === '2025-06-01' && false, // não é hoje
+      (data, hora) => {
+        // mock de kickoff timestamp
+        return data === 'antigo' ? now - 48 * 3600 * 1000 : now - 2 * 3600 * 1000
+      },
+    )
+    expect(res.map((g) => g.id)).toEqual(['hoje'])
   })
 })
 
