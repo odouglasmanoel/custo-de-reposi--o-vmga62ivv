@@ -143,4 +143,137 @@ describe('flags.ts - FlagCDN Helper e Seleções Nacionais', () => {
       }),
     ).toBeNull()
   })
+
+  it('mapeia as novas seleções solicitadas (Letônia, Chipre, Armênia, Montenegro, Irlanda, Zimbábue, RD Congo, Guiné Equatorial, Serra Leoa, República Centro-Africana, Burkina Faso)', () => {
+    // Letônia -> lv
+    expect(getCountryIsoCode('Letônia')).toBe('lv')
+    expect(getCountryIsoCode('letonia')).toBe('lv')
+    expect(getCountryIsoCode('Latvia')).toBe('lv')
+    expect(getFlagCdnUrl('Letônia')).toBe('https://flagcdn.com/w80/lv.png')
+    expect(isNationalTeam('Letônia')).toBe(true)
+
+    // Chipre -> cy
+    expect(getCountryIsoCode('Chipre')).toBe('cy')
+    expect(getCountryIsoCode('chipre')).toBe('cy')
+    expect(getCountryIsoCode('Cyprus')).toBe('cy')
+    expect(getFlagCdnUrl('Chipre')).toBe('https://flagcdn.com/w80/cy.png')
+    expect(isNationalTeam('Chipre')).toBe(true)
+
+    // Armênia -> am
+    expect(getCountryIsoCode('Armênia')).toBe('am')
+    expect(getCountryIsoCode('armenia')).toBe('am')
+    expect(getCountryIsoCode('Armenia')).toBe('am')
+    expect(getFlagCdnUrl('Armênia')).toBe('https://flagcdn.com/w80/am.png')
+    expect(isNationalTeam('Armênia')).toBe(true)
+
+    // Montenegro -> me
+    expect(getCountryIsoCode('Montenegro')).toBe('me')
+    expect(getCountryIsoCode('montenegro')).toBe('me')
+    expect(getFlagCdnUrl('Montenegro')).toBe('https://flagcdn.com/w80/me.png')
+    expect(isNationalTeam('Montenegro')).toBe(true)
+
+    // Irlanda -> ie (sem colidir com Irlanda do Norte -> gb-nir)
+    expect(getCountryIsoCode('Irlanda')).toBe('ie')
+    expect(getCountryIsoCode('irlanda')).toBe('ie')
+    expect(getCountryIsoCode('Ireland')).toBe('ie')
+    expect(getCountryIsoCode('Republic of Ireland')).toBe('ie')
+    expect(getFlagCdnUrl('Irlanda')).toBe('https://flagcdn.com/w80/ie.png')
+    expect(isNationalTeam('Irlanda')).toBe(true)
+    // Garantir que Irlanda do Norte NÃO retorna ie:
+    expect(getCountryIsoCode('Irlanda do Norte')).toBe('gb-nir')
+    expect(getCountryIsoCode('Irlanda do Norte')).not.toBe('ie')
+    expect(getCountryIsoCode('Northern Ireland')).toBe('gb-nir')
+    expect(getCountryIsoCode('Northern Ireland')).not.toBe('ie')
+    expect(getFlagCdnUrl('Irlanda do Norte')).toBe('https://flagcdn.com/w80/gb-nir.png')
+
+    // Zimbábue -> zw
+    expect(getCountryIsoCode('Zimbábue')).toBe('zw')
+    expect(getCountryIsoCode('zimbabue')).toBe('zw')
+    expect(getCountryIsoCode('Zimbabwe')).toBe('zw')
+    expect(getFlagCdnUrl('Zimbábue')).toBe('https://flagcdn.com/w80/zw.png')
+    expect(isNationalTeam('Zimbábue')).toBe(true)
+
+    // República Democrática do Congo -> cd (e variações)
+    expect(getCountryIsoCode('República Democrática do Congo')).toBe('cd')
+    expect(getCountryIsoCode('republica democratica do congo')).toBe('cd')
+    expect(getCountryIsoCode('DR Congo')).toBe('cd')
+    expect(getCountryIsoCode('dr congo')).toBe('cd')
+    expect(getCountryIsoCode('Democratic Republic of the Congo')).toBe('cd')
+    expect(getCountryIsoCode('RD Congo')).toBe('cd')
+    expect(getCountryIsoCode('rd congo')).toBe('cd')
+    expect(getCountryIsoCode('Congo Democrático')).toBe('cd')
+    expect(getFlagCdnUrl('República Democrática do Congo')).toBe('https://flagcdn.com/w80/cd.png')
+    expect(isNationalTeam('RD Congo')).toBe(true)
+
+    // Guiné Equatorial -> gq
+    expect(getCountryIsoCode('Guiné Equatorial')).toBe('gq')
+    expect(getCountryIsoCode('guine equatorial')).toBe('gq')
+    expect(getCountryIsoCode('Equatorial Guinea')).toBe('gq')
+    expect(getFlagCdnUrl('Guiné Equatorial')).toBe('https://flagcdn.com/w80/gq.png')
+    expect(isNationalTeam('Guiné Equatorial')).toBe(true)
+
+    // Serra Leoa -> sl
+    expect(getCountryIsoCode('Serra Leoa')).toBe('sl')
+    expect(getCountryIsoCode('serra leoa')).toBe('sl')
+    expect(getCountryIsoCode('Sierra Leone')).toBe('sl')
+    expect(getFlagCdnUrl('Serra Leoa')).toBe('https://flagcdn.com/w80/sl.png')
+    expect(isNationalTeam('Serra Leoa')).toBe(true)
+
+    // República Centro-Africana -> cf
+    expect(getCountryIsoCode('República Centro-Africana')).toBe('cf')
+    expect(getCountryIsoCode('republica centro africana')).toBe('cf')
+    expect(getCountryIsoCode('Centro-Africana')).toBe('cf')
+    expect(getCountryIsoCode('Central African Republic')).toBe('cf')
+    expect(getFlagCdnUrl('República Centro-Africana')).toBe('https://flagcdn.com/w80/cf.png')
+    expect(isNationalTeam('República Centro-Africana')).toBe(true)
+
+    // Burkina Faso -> bf
+    expect(getCountryIsoCode('Burkina Faso')).toBe('bf')
+    expect(getCountryIsoCode('burkina faso')).toBe('bf')
+    expect(getFlagCdnUrl('Burkina Faso')).toBe('https://flagcdn.com/w80/bf.png')
+    expect(isNationalTeam('Burkina Faso')).toBe(true)
+  })
+
+  it('suporta conversão direta por código ISO alpha-2 válido e fallback em resolveTeamBadgeUrl para as novas seleções', () => {
+    // Código direto
+    expect(getCountryIsoCode('lv')).toBe('lv')
+    expect(getCountryIsoCode('cy')).toBe('cy')
+    expect(getCountryIsoCode('am')).toBe('am')
+    expect(getCountryIsoCode('ie')).toBe('ie')
+    expect(getCountryIsoCode('zw')).toBe('zw')
+    expect(getCountryIsoCode('cd')).toBe('cd')
+    expect(getCountryIsoCode('gq')).toBe('gq')
+    expect(getCountryIsoCode('sl')).toBe('sl')
+    expect(getCountryIsoCode('cf')).toBe('cf')
+    expect(getCountryIsoCode('bf')).toBe('bf')
+
+    // resolveTeamBadgeUrl gera FlagCDN para as novas seleções quando não há badge certificado
+    expect(
+      resolveTeamBadgeUrl({
+        teamName: 'Letônia',
+        savedBadge: '',
+      }),
+    ).toBe('https://flagcdn.com/w80/lv.png')
+
+    expect(
+      resolveTeamBadgeUrl({
+        teamName: 'Chipre',
+        savedBadge: 'https://media.api-sports.io/football/teams/192.png', // logo contaminado
+      }),
+    ).toBe('https://flagcdn.com/w80/cy.png')
+
+    expect(
+      resolveTeamBadgeUrl({
+        teamName: 'RD Congo',
+        savedBadge: '',
+      }),
+    ).toBe('https://flagcdn.com/w80/cd.png')
+
+    expect(
+      resolveTeamBadgeUrl({
+        teamName: 'Burkina Faso',
+        savedBadge: '',
+      }),
+    ).toBe('https://flagcdn.com/w80/bf.png')
+  })
 })

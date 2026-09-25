@@ -203,20 +203,119 @@ export const SELECAO_FLAG_MAP: Record<string, string> = {
   greece: 'gr',
   irlanda: 'ie',
   ireland: 'ie',
+  republicofireland: 'ie',
+  republicadeirlanda: 'ie',
+  republicairlanda: 'ie',
   finlandia: 'fi',
   finland: 'fi',
   islandia: 'is',
   iceland: 'is',
+
+  // Novas seleções solicitadas (PT -> EN -> ISO 3166-1 alpha-2):
+  // Letônia / Latvia -> lv
+  letonia: 'lv',
+  latvia: 'lv',
+  latvija: 'lv',
+
+  // Chipre / Cyprus -> cy
+  chipre: 'cy',
+  cyprus: 'cy',
+  kypros: 'cy',
+
+  // Armênia / Armenia -> am
+  armenia: 'am',
+  hayastan: 'am',
+
+  // Montenegro -> me
+  montenegro: 'me',
+  crnagora: 'me',
+
+  // Zimbábue / Zimbabwe -> zw
+  zimbabue: 'zw',
+  zimbabwe: 'zw',
+
+  // República Democrática do Congo / DR Congo / Democratic Republic of the Congo / RD Congo / Congo Democrático -> cd
+  republicademocraticadocongo: 'cd',
+  republicademocraticacongo: 'cd',
+  democraticrepublicofthecongo: 'cd',
+  democraticrepubliccongo: 'cd',
+  drcongo: 'cd',
+  rdcongo: 'cd',
+  congodemocratico: 'cd',
+  congodr: 'cd',
+  drc: 'cd',
+
+  // República do Congo / Congo (Brazzaville) para evitar ambiguidade com RD Congo -> cg
+  republicadocongo: 'cg',
+  republicacongo: 'cg',
+  republicofthecongo: 'cg',
+  congo: 'cg',
+  congobrazzaville: 'cg',
+
+  // Guiné Equatorial / Equatorial Guinea -> gq
+  guineequatorial: 'gq',
+  equatorialguinea: 'gq',
+
+  // Serra Leoa / Sierra Leone -> sl
+  serraleoa: 'sl',
+  sierraleone: 'sl',
+
+  // República Centro-Africana / Central African Republic / Centro-Africana -> cf
+  republicacentroafricana: 'cf',
+  centroafricana: 'cf',
+  centralafricanrepublic: 'cf',
+  republiquecentrafricaine: 'cf',
+  car: 'cf',
+
+  // Burkina Faso -> bf
+  burkinafaso: 'bf',
+  burkina: 'bf',
 }
 
 /**
  * Retorna o código ISO do país se o nome fornecido for uma seleção nacional conhecida.
+ * Suporta busca direta por código ISO alpha-2, nome normalizado no dicionário e busca sanitizada.
  */
 export function getCountryIsoCode(teamName?: string | null): string | null {
   if (!teamName) return null
-  const key = normalizeCountryName(teamName)
-  if (!key) return null
-  return SELECAO_FLAG_MAP[key] || null
+  const trimmed = teamName.trim()
+  if (!trimmed) return null
+
+  // Se o próprio texto informado já for um código ISO de 2 letras (ex: 'lv', 'cy', 'ie', 'am')
+  // ou um subcódigo FlagCDN de 6 caracteres (ex: 'gb-nir', 'gb-eng', 'gb-sct', 'gb-wls')
+  const rawLower = trimmed.toLowerCase()
+  if (/^[a-z]{2}$/.test(rawLower)) {
+    // Verifica se esse código ISO de 2 letras existe como valor no SELECAO_FLAG_MAP
+    const validCodes = new Set(Object.values(SELECAO_FLAG_MAP))
+    if (validCodes.has(rawLower)) {
+      return rawLower
+    }
+  }
+  if (/^gb-(nir|eng|sct|wls)$/.test(rawLower)) {
+    return rawLower
+  }
+
+  // 1. Busca normalizada direta (remove acentos, stop words de/da/do/the/national/team/seleção, etc.)
+  const key = normalizeCountryName(trimmed)
+  if (key && SELECAO_FLAG_MAP[key]) {
+    return SELECAO_FLAG_MAP[key]
+  }
+
+  // 2. Busca sanitizada simples (apenas sem acentos e sem caracteres não-alfanuméricos, preservando palavras)
+  try {
+    const rawSanitized = trimmed
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .toLowerCase()
+      .replace(/[^a-z0-9]/g, '')
+    if (rawSanitized && SELECAO_FLAG_MAP[rawSanitized]) {
+      return SELECAO_FLAG_MAP[rawSanitized]
+    }
+  } catch {
+    /* ignore */
+  }
+
+  return null
 }
 
 /**
