@@ -437,7 +437,7 @@ routerAdd('GET', '/backend/v1/placar-ao-vivo', (e) => {
           var evDetail = ev.detail ? String(ev.detail).toLowerCase() : ''
           if (evType === 'goal' || evType === 'gol') {
             // Ignora se for Missed Penalty explícito para contagem de gols
-            if (evDetail.indexOf('missed') !== -1) {
+            if (evDetail.indexOf('missed') !== -1 || evDetail.indexOf('perdido') !== -1) {
               continue
             }
             var candidates = [

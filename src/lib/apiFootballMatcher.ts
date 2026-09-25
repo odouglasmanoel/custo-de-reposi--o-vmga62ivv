@@ -162,7 +162,9 @@ export function formatFixtureToLiveScore(
         evAny.strPlayerName ||
         evAny.scorer ||
         ''
-      if (ev && ev.type === 'Goal' && rawPlayerName) {
+      const evDetail = (ev?.detail || '').toString().toLowerCase()
+      const isMissedPenalty = evDetail.includes('missed') || evDetail.includes('perdido')
+      if (ev && ev.type === 'Goal' && rawPlayerName && !isMissedPenalty) {
         const isOwnGoal = ev.detail && ev.detail.toLowerCase().includes('own')
         let scorerNameStr = String(rawPlayerName).trim()
         if (isOwnGoal) {
@@ -796,7 +798,9 @@ export function matchGameWithApiFixtures(
         evAny.strPlayerName ||
         evAny.scorer ||
         ''
-      if (ev && ev.type === 'Goal' && rawPlayerName) {
+      const evDetail = (ev?.detail || '').toString().toLowerCase()
+      const isMissedPenalty = evDetail.includes('missed') || evDetail.includes('perdido')
+      if (ev && ev.type === 'Goal' && rawPlayerName && !isMissedPenalty) {
         const isOwnGoal = ev.detail && ev.detail.toLowerCase().includes('own')
         let scorerNameStr = String(rawPlayerName).trim()
         if (isOwnGoal) {

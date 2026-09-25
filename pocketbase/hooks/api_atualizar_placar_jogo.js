@@ -434,6 +434,9 @@ routerAdd(
       const ev = events[i]
       if ((ev.type || '').toString().toLowerCase() === 'goal') {
         const detail = (ev.detail || '').toString().toLowerCase()
+        if (detail.includes('missed') || detail.includes('perdido')) {
+          continue
+        }
         const isContra = detail.includes('own') || detail.includes('contra')
         const playerName = (ev.player?.name || '').toString().trim()
         const minute = ev.time?.elapsed ? String(ev.time.elapsed) : ''

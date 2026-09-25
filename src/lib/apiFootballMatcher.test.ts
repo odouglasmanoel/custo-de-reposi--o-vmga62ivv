@@ -718,5 +718,96 @@ describe('apiFootballMatcher', () => {
       expect(matched).not.toBeNull()
       expect(matched?.scorers[0].name).toBe('Gustavo Gómez (contra)')
     })
+
+    it('deve ignorar eventos de pênalti perdido (Missed Penalty) sem gerar marcador, mantendo Normal Goal, Penalty e Own Goal', () => {
+      const fixtures: ApiFootballFixture[] = [
+        {
+          fixture: { id: 1528881, status: { short: 'FT', long: 'Match Finished' } },
+          teams: {
+            home: { id: 1104, name: 'Geórgia' },
+            away: { id: 771, name: 'Irlanda do Norte' },
+          },
+          goals: { home: 0, away: 1 },
+          events: [
+            {
+              type: 'Goal',
+              detail: 'Missed Penalty',
+              player: { name: 'Khvicha Kvaratskhelia' },
+              time: { elapsed: 65 },
+              team: { id: 1104, name: 'Geórgia' },
+            },
+            {
+              type: 'Goal',
+              detail: 'Normal Goal',
+              player: { name: 'Shea Charles' },
+              time: { elapsed: 90 },
+              team: { id: 771, name: 'Irlanda do Norte' },
+            },
+          ],
+        },
+      ]
+
+      // Teste via matchGameWithApiFixtures
+      const matched = matchGameWithApiFixtures('Geórgia', 'Irlanda do Norte', fixtures)
+      expect(matched).not.toBeNull()
+      expect(matched?.scorers).toHaveLength(1)
+      expect(matched?.scorers[0].name).toBe('Shea Charles')
+      expect(matched?.scorers[0].minute).toBe(90)
+
+      // Teste via formatFixtureToLiveScore (matching direto por fixture_id)
+      const direct = formatFixtureToLiveScore(fixtures[0], 'Geórgia', 'Irlanda do Norte')
+      expect(direct.scorers).toHaveLength(1)
+      expect(direct.scorers[0].name).toBe('Shea Charles')
+      expect(direct.golsSummary).toBe("Gols: Shea Charles 90'")
+    })
+
+    it('deve gerar marcadores válidos para Penalty convertido, Normal Goal e Own Goal', () => {
+      const fixture: ApiFootballFixture = {
+        fixture: { id: 999999, status: { short: 'FT', long: 'Match Finished' } },
+        teams: {
+          home: { id: 10, name: 'Time A' },
+          away: { id: 20, name: 'Time B' },
+        },
+        goals: { home: 2, away: 1 },
+        events: [
+          {
+            type: 'Goal',
+            detail: 'Penalty',
+            player: { name: 'Jogador Penalti' },
+            time: { elapsed: 30 },
+            team: { id: 10, name: 'Time A' },
+          },
+          {
+            type: 'Goal',
+            detail: 'Normal Goal',
+            player: { name: 'Jogador Normal' },
+            time: { elapsed: 55 },
+            team: { id: 10, name: 'Time A' },
+          },
+          {
+            type: 'Goal',
+            detail: 'Own Goal',
+            player: { name: 'Jogador Contra' },
+            time: { elapsed: 75 },
+            team: { id: 20, name: 'Time B' },
+          },
+          {
+            type: 'Goal',
+            detail: 'Penalty Missed',
+            player: { name: 'Jogador Errou' },
+            time: { elapsed: 88 },
+            team: { id: 20, name: 'Time B' },
+          },
+        ],
+      }
+
+      const formatted = formatFixtureToLiveScore(fixture, 'Time A', 'Time B')
+      expect(formatted.scorers).toHaveLength(3)
+      expect(formatted.scorers.map((s) => s.name)).toEqual([
+        'Jogador Penalti',
+        'Jogador Normal',
+        'Jogador Contra (contra)',
+      ])
+    })
   })
 })

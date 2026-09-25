@@ -1252,6 +1252,10 @@ export default function JogosDoDia() {
         const evDetail = String(ev?.detail || '')
           .toLowerCase()
           .trim()
+        const isMissedPenalty = evDetail.includes('missed') || evDetail.includes('perdido')
+        if (isMissedPenalty) {
+          continue
+        }
         if (ev && (evType === 'goal' || evType === 'gol' || evDetail.includes('goal'))) {
           // Nome de ev.player?.name || ev.scorer?.name (via extractNameFromEv)
           const playerName = ev.player?.name || ev.scorer?.name || extractNameFromEv(ev)
