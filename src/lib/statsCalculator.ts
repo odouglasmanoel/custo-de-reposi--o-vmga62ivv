@@ -1063,6 +1063,9 @@ export function calculateStatistics(params: {
   }
 
   // Montar lista de tabela detalhada e calcular aproveitamento (%)
+  // FÓRMULA OFICIAL DO TOTAL DE PONTOS: estritamente [Pontos Fixos Importados das Planilhas] + [Pontos Acumulados nos Palpites do App].
+  // A lógica de parsing (trim/split do '(' via extractPureScoreString) é estritamente isolada aos CONTADORES de métricas/quantidades
+  // (Cravadas, Resultados, Gols, Zaga/Lateral, Quase Cravou, Grandes Jogos) e NUNCA recalcula ou altera o Total de Pontos.
   const tabela: ParticipantStats[] = BOLAO_MEMBERS.map((nome) => {
     const s = statsMap.get(nome)!
     const totalPontos = s.pontosImportados + s.pontosPalpites

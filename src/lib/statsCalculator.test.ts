@@ -1237,4 +1237,121 @@ describe('statsCalculator', () => {
     const douglasCopa = statsCopa.tabela.find((t) => t.nome === 'Douglas')
     expect(douglasCopa?.cravadasExatas).toBe(11)
   })
+
+  it('TOTAL DE PONTOS é estritamente [Pontos Fixos Importados] + [Pontos Palpites do App] e nunca é alterado pelo parsing de cravadas', () => {
+    const boloes: Bolao[] = [
+      {
+        id: 'copa_teste',
+        nome: 'Copa Coni',
+        ativo: true,
+        foco: 'Jogos',
+        created: '',
+        updated: '',
+        collectionId: '',
+        collectionName: '',
+      },
+    ]
+
+    const participantes: Participante[] = [
+      {
+        id: 'p_davi',
+        bolao: 'copa_teste',
+        nome: 'Davi',
+        pontos_importados: 209, // Valor oficial importado
+        pontuacao_total: 749,
+        created: '',
+        updated: '',
+        collectionId: '',
+        collectionName: '',
+      },
+      {
+        id: 'p_douglas',
+        bolao: 'copa_teste',
+        nome: 'Douglas',
+        pontos_importados: 221, // Valor oficial importado
+        pontuacao_total: 616,
+        created: '',
+        updated: '',
+        collectionId: '',
+        collectionName: '',
+      },
+    ]
+
+    // Jogo onde o palpite contém texto com parênteses ("3x0 (Samuel Lino 2x e Carrascal)")
+    // Esse formato gera validação de cravada (contador = 1), mas os pontos do palpite são 5 (não 8)
+    const jogos: Jogo[] = [
+      {
+        id: 'j_1',
+        bolao: 'copa_teste',
+        time_a: 'Atlético',
+        time_b: 'Rival',
+        data: '2026-09-01',
+        hora: '20:00',
+        placar_a: 3,
+        placar_b: 0,
+        resultado_finalizado: true,
+        tem_penaltis: false,
+        created: '',
+        updated: '',
+        collectionId: '',
+        collectionName: '',
+      },
+    ]
+
+    const palpites: Palpite[] = [
+      {
+        id: 'bet_davi',
+        bolao: 'copa_teste',
+        jogo: 'j_1',
+        participante: 'p_davi',
+        placar_a: '3x0 (Samuel Lino 2x e Carrascal)' as unknown as number,
+        placar_b: null as unknown as number,
+        pontuacao_jogo: 5, // Pontuação oficial histórica gravada
+        detalhamento: ['Vencedor e Metade do Placar'],
+        created: '',
+        updated: '',
+        collectionId: '',
+        collectionName: '',
+      },
+      {
+        id: 'bet_douglas',
+        bolao: 'copa_teste',
+        jogo: 'j_1',
+        participante: 'p_douglas',
+        placar_a: 3,
+        placar_b: 0,
+        pontuacao_jogo: 8,
+        detalhamento: ['Placar Exato'],
+        created: '',
+        updated: '',
+        collectionId: '',
+        collectionName: '',
+      },
+    ]
+
+    const res = calculateStatistics({
+      boloes,
+      participantes,
+      jogos,
+      palpites,
+      filtroBolaoId: 'geral',
+    })
+
+    const daviRow = res.tabela.find((t) => t.nome === 'Davi')
+    const douglasRow = res.tabela.find((t) => t.nome === 'Douglas')
+
+    // 1. Contador de cravadas reconheceu a cravada pelo parsing do '(' para Davi e Douglas
+    expect(daviRow?.cravadasExatas).toBe(1)
+    expect(douglasRow?.cravadasExatas).toBe(1)
+
+    // 2. TOTAL DE PONTOS: estritamente [pontos_importados] + [pontuacao_jogo dos palpites]
+    // NUNCA recalculou para 8 os pontos do palpite do Davi!
+    expect(daviRow?.pontosImportados).toBe(209)
+    expect(daviRow?.pontosPalpites).toBe(5)
+    expect(daviRow?.totalPontos).toBe(209 + 5) // 214, não 209 + 8
+
+    expect(douglasRow?.pontosImportados).toBe(221)
+    expect(douglasRow?.pontosPalpites).toBe(8)
+    expect(douglasRow?.totalPontos).toBe(221 + 8) // 229
+  })
 })
