@@ -212,13 +212,20 @@ routerAdd(
     // Consulta fixture por ID
     let fixtureData = null
     try {
-      const url = `https://v3.football.api-sports.io/fixtures?id=${encodeURIComponent(fixtureIdParaUso)}`
+      const isRapid = apiKey.length > 40
+      const url = isRapid
+        ? `https://api-football-v1.p.rapidapi.com/v3/fixtures?id=${encodeURIComponent(fixtureIdParaUso)}`
+        : `https://v3.football.api-sports.io/fixtures?id=${encodeURIComponent(fixtureIdParaUso)}`
+      const headers = isRapid
+        ? { 'x-rapidapi-key': apiKey, 'x-rapidapi-host': 'api-football-v1.p.rapidapi.com' }
+        : { 'x-apisports-key': apiKey }
+
+      console.log(`[atualizar-jogo] [API-Sports] URL: ${url} | Fixture ID: ${fixtureIdParaUso}`)
+
       const res = $http.send({
         url,
         method: 'GET',
-        headers: {
-          'x-apisports-key': apiKey,
-        },
+        headers,
         timeout: 15,
       })
 
@@ -247,6 +254,9 @@ routerAdd(
       }
 
       const json = JSON.parse(res.raw)
+      try {
+        console.log(`[atualizar-jogo] [API-Sports] JSON exato:`, JSON.stringify(json))
+      } catch (_) {}
       if (json.errors && Object.keys(json.errors).length > 0) {
         const errStr = JSON.stringify(json.errors)
         if (errStr.includes('rate') || errStr.includes('Requests')) {

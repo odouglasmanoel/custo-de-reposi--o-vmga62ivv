@@ -745,6 +745,15 @@ export default function BolaoDashboard() {
         ),
       )
 
+      console.log(
+        '[Atualizar Todos os Placares] Disparando requisição em lote para jogos de hoje:',
+        {
+          totalJogosHoje: jogosDeHoje.length,
+          jogoIds: idsDosJogosDeHoje,
+          fixtureIdsEnviados: fixturesDosJogos,
+        },
+      )
+
       const res = await pb.send<{
         success: boolean
         message?: string
@@ -753,7 +762,20 @@ export default function BolaoDashboard() {
         rate_limited?: boolean
         total_jogos?: number
         atualizados?: number
+        fixtures_finalizados?: number
+        fixtures_com_gols?: number
+        fixture_ids_enviados?: string[]
         jogos?: Partial<Jogo>[]
+        debug_logs?: Array<{
+          url: string
+          fixture_ids?: string[]
+          statusCode?: number | null
+          results?: number
+          response_count?: number
+          json_exact?: any
+          error?: string
+          raw?: string | null
+        }>
       }>('/backend/v1/placar-ao-vivo/atualizar-todos', {
         method: 'POST',
         body: {
@@ -762,13 +784,35 @@ export default function BolaoDashboard() {
         },
       })
 
-      if (res?.success) {
-        toast({
-          title: 'Placares e fichas atualizados',
-          description:
-            res.message ||
-            `Placares e fichas técnicas de ${res.atualizados ?? jogosDeHoje.length} partida(s) sincronizados em 1 chamada!`,
+      // Log detalhado e exato do retorno da API-Sports / backend
+      console.log('[Atualizar Todos os Placares] Resposta do backend:', res)
+      if (Array.isArray(res?.debug_logs)) {
+        res.debug_logs.forEach((logItem, idx) => {
+          console.log(
+            `[Atualizar Todos os Placares] [API-Sports Chamada ${idx + 1}] URL: ${logItem.url} | Fixture IDs: ${logItem.fixture_ids?.join(', ')}`,
+          )
+          console.log(
+            `[Atualizar Todos os Placares] [API-Sports Chamada ${idx + 1}] JSON exato retornado:`,
+            logItem.json_exact,
+          )
         })
+      }
+
+      if (res?.success) {
+        if (res.notice) {
+          // Quando a API respondeu sucesso mas sem placar finalizado retornado (ex: jogo ainda não começou ou sem transmissão de resultado)
+          toast({
+            title: 'Aviso',
+            description: res.notice,
+          })
+        } else {
+          toast({
+            title: 'Placares e fichas atualizados',
+            description:
+              res.message ||
+              `Placares e fichas técnicas de ${res.atualizados ?? jogosDeHoje.length} partida(s) sincronizados em 1 chamada!`,
+          })
+        }
 
         // Limpa caches locais de dashboard e fichas técnicas
         clearDashboardCache()
@@ -786,9 +830,13 @@ export default function BolaoDashboard() {
 
         await loadData(true)
       } else if (res?.notice) {
+        const mensagemNotice =
+          res.notice === 'A API-Sports não retornou dados para as partidas consultadas.'
+            ? 'Os jogos selecionados ainda não possuem placar finalizado retornado pela API-Sports.'
+            : res.notice
         toast({
           title: 'Aviso',
-          description: res.notice,
+          description: mensagemNotice,
         })
       } else {
         toast({
@@ -848,6 +896,10 @@ export default function BolaoDashboard() {
     try {
       setUpdatingLiveGameId(jogo.id)
 
+      console.log(
+        `[Atualizar Placar Individual] Disparando atualização para o jogo ${jogo.time_a} x ${jogo.time_b} (fixture_id: ${fid}, id: ${jogo.id})`,
+      )
+
       // Se a sessão estiver ativa, garante token atualizado
       if (pb.authStore.isValid) {
         try {
@@ -870,6 +922,8 @@ export default function BolaoDashboard() {
           fixture_id: fid,
         },
       })
+
+      console.log(`[Atualizar Placar Individual] Resposta para o fixture_id ${fid}:`, res)
 
       if (res?.success) {
         toast({

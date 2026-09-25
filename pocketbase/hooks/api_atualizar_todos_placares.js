@@ -287,6 +287,8 @@ routerAdd(
       chunks.push(uniqueFixtureIds.slice(i, i + 20))
     }
 
+    const rawApiLogs = []
+
     for (let cIdx = 0; cIdx < chunks.length; cIdx++) {
       const chunkIds = chunks[cIdx]
       let url = ''
@@ -295,12 +297,16 @@ routerAdd(
           ? `https://api-football-v1.p.rapidapi.com/v3/fixtures?id=${encodeURIComponent(chunkIds[0])}`
           : `https://v3.football.api-sports.io/fixtures?id=${encodeURIComponent(chunkIds[0])}`
       } else {
-        // Documentação oficial da API-Sports /fixtures: parâmetro ids tem formato "id-id-id"
+        // Documentação oficial da API-Sports /fixtures: parâmetro ids tem formato "id-id-id" (máx 20)
         const idsJoined = chunkIds.join('-')
         url = isRapid
           ? `https://api-football-v1.p.rapidapi.com/v3/fixtures?ids=${encodeURIComponent(idsJoined)}`
           : `https://v3.football.api-sports.io/fixtures?ids=${encodeURIComponent(idsJoined)}`
       }
+
+      console.log(
+        `[atualizar-todos] [API-Sports Req ${cIdx + 1}/${chunks.length}] URL: ${url} | Fixture IDs: ${chunkIds.join(', ')}`,
+      )
 
       const headers = isRapid
         ? { 'x-rapidapi-key': apiKey, 'x-rapidapi-host': 'api-football-v1.p.rapidapi.com' }
@@ -334,6 +340,11 @@ routerAdd(
         } catch (_) {}
       } catch (errSend) {
         console.log('[atualizar-todos] Erro ao enviar requisição HTTP:', errSend)
+        rawApiLogs.push({
+          url,
+          fixture_ids: chunkIds,
+          error: String(errSend),
+        })
         continue
       }
 
@@ -342,6 +353,12 @@ routerAdd(
           '[atualizar-todos] Resposta com status não-200:',
           resHttp ? resHttp.statusCode : 'nulo',
         )
+        rawApiLogs.push({
+          url,
+          fixture_ids: chunkIds,
+          statusCode: resHttp ? resHttp.statusCode : null,
+          raw: resHttp ? (resHttp.raw || '').slice(0, 500) : null,
+        })
         continue
       }
 
@@ -355,6 +372,23 @@ routerAdd(
         json = null
       }
 
+      // Log detalhado e exato retornado pela API-Sports (sem expor apiKey)
+      try {
+        console.log(
+          `[atualizar-todos] [API-Sports Res ${cIdx + 1}/${chunks.length}] JSON exato:`,
+          JSON.stringify(json),
+        )
+      } catch (_) {}
+
+      rawApiLogs.push({
+        url,
+        fixture_ids: chunkIds,
+        statusCode: resHttp.statusCode,
+        results: json && typeof json.results === 'number' ? json.results : 0,
+        response_count: json && Array.isArray(json.response) ? json.response.length : 0,
+        json_exact: json,
+      })
+
       if (json && json.errors && Object.keys(json.errors).length > 0) {
         const errStr = JSON.stringify(json.errors)
         if (errStr.includes('rate') || errStr.includes('Requests')) {
@@ -367,6 +401,7 @@ routerAdd(
             error:
               'Limite de requisições da API-Sports atingido. A cota reinicia às 21h (Brasília).',
             rate_limited: true,
+            debug_logs: rawApiLogs,
           })
         }
       }
@@ -383,14 +418,18 @@ routerAdd(
         success: false,
         notice: 'A API-Sports não retornou dados para as partidas consultadas.',
         total_jogos: jogosRecords.length,
+        fixture_ids_enviados: uniqueFixtureIds,
         atualizados: 0,
         jogos: [],
+        debug_logs: rawApiLogs,
       })
     }
 
     // 5. Processamento e Persistência de Placares, Eventos e Ficha Técnica
     const updatedJogosList = []
     const boloesAfetados = {}
+    let finishedFixturesCount = 0
+    let fixturesWithGoalsCount = 0
 
     for (let f = 0; f < fixtureResponses.length; f++) {
       const fixData = fixtureResponses[f]
@@ -401,14 +440,22 @@ routerAdd(
       const goals = fixData.goals || {}
       const statusInfo = fixData.fixture?.status || {}
       const statusShort = (statusInfo.short || '').toString().toUpperCase().trim()
+      const statusLong = (statusInfo.long || '').toString().trim()
 
       const homeGoals =
         goals.home !== null && goals.home !== undefined ? parseInt(goals.home, 10) : null
       const awayGoals =
         goals.away !== null && goals.away !== undefined ? parseInt(goals.away, 10) : null
 
+      if (homeGoals !== null || awayGoals !== null) {
+        fixturesWithGoalsCount++
+      }
+
       const isLive = ['1H', '2H', 'HT', 'ET', 'BT', 'P', 'LIVE', 'INT'].includes(statusShort)
       const isFinished = ['FT', 'AET', 'PEN'].includes(statusShort)
+      if (isFinished) {
+        finishedFixturesCount++
+      }
 
       const homeTeamLogo = (fixData.teams?.home?.logo || '').toString().trim()
       const awayTeamLogo = (fixData.teams?.away?.logo || '').toString().trim()
@@ -991,12 +1038,25 @@ routerAdd(
       console.log('[atualizar-todos] Erro no recálculo em lote:', errRecalc)
     }
 
+    const temDadosPlacarOuFinalizados = finishedFixturesCount > 0 || fixturesWithGoalsCount > 0
+
+    let messageNotice = null
+    if (!temDadosPlacarOuFinalizados) {
+      messageNotice =
+        'Os jogos selecionados ainda não possuem placar finalizado retornado pela API-Sports.'
+    }
+
     return e.json(200, {
       success: true,
       message: `Placares e fichas de ${updatedJogosList.length} partida(s) sincronizados com sucesso da API-Sports em 1 única requisição!`,
+      notice: messageNotice,
       total_jogos: jogosRecords.length,
       atualizados: updatedJogosList.length,
+      fixtures_finalizados: finishedFixturesCount,
+      fixtures_com_gols: fixturesWithGoalsCount,
+      fixture_ids_enviados: uniqueFixtureIds,
       jogos: updatedJogosList,
+      debug_logs: rawApiLogs,
     })
   },
   $apis.requireAuth(),
