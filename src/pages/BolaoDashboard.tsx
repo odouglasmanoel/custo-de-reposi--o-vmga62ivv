@@ -1745,10 +1745,10 @@ export default function BolaoDashboard() {
   }, [])
 
   // Jogos cujos palpites foram liberados:
-  // Exibe APENAS partidas PENDENTES ou EM ANDAMENTO cujo horário de início já passou (isPalpiteEncerrado via kickoff).
-  // Partidas marcadas como encerradas/finalizadas (resultado_finalizado = true, status terminal 'encerrado'/'finalizado'/'ft'
-  // ou API confirmando partida finalizada) NÃO são exibidas aqui.
-  // Passada a data/horário e estando o jogo encerrado, ele não aparece no feed inicial.
+  // Exibe todos os palpites dos jogos do dia cujo horário de início já passou,
+  // ou esteja com status 'Em Andamento' / 'Ao Vivo' / 'Jogo Encerrado' (do mesmo dia).
+  // Jogos de hoje permanecem visíveis ao longo do dia da rodada mesmo após encerrados.
+  // Jogos de datas anteriores só permanecem se pendentes/atrasados (kickoff nas últimas 24h e não concluídos).
   const jogosLiberados = useMemo(() => {
     const targetGames = isGeral ? allJogos : jogos
 
@@ -1757,17 +1757,22 @@ export default function BolaoDashboard() {
         // 1. Trava de jogos futuros: nunca exibir jogos cujo kickoff ainda não chegou
         if (!isPalpiteEncerrado(j.data, j.hora, nowMs)) return false
 
-        // 2. Trava de jogos encerrados/concluídos: jogos encerrados NÃO aparecem na seção
+        const isHoje = isJogoHojeBrasilia(j.data, nowMs) || isJogoHoje(j.data, nowMs)
+
+        // 2. Para jogos de hoje: permanecem visíveis mesmo quando concluídos/encerrados
+        if (isHoje) {
+          return true
+        }
+
+        // 3. Para jogos de outras datas: apenas jogos atrasados ainda não concluídos (kickoff nas últimas 24h)
         const jogoDataISO = normalizeDataISO(j.data)
         const matchedLive = resolveLiveScoreForGame(j, apiFixtures, 0.55, jogoDataISO)
         if (isJogoConcluido(j, matchedLive)) return false
 
-        // 3. Pertencer ao dia de hoje (Brasília) ou ter kickoff recente nas últimas 24h
         const kickoffMs = getJogoKickoffTimestamp(j.data, j.hora)
-        const isHoje = isJogoHojeBrasilia(j.data, nowMs) || isJogoHoje(j.data, nowMs)
         const recentKickoff = kickoffMs !== null && kickoffMs >= nowMs - 24 * 60 * 60 * 1000
 
-        return isHoje || recentKickoff
+        return recentKickoff
       })
       .sort((a, b) => {
         // Ordenar por horário de kickoff decrescente (mais recentes primeiro)
@@ -2767,11 +2772,11 @@ export default function BolaoDashboard() {
                 Palpites Liberados do Grupo
               </CardTitle>
               <p className="mt-0.5 text-xs text-[#64748B]">
-                Exibição de palpites de confrontos pendentes cujos horários de início já passaram.
+                Exibição de palpites dos confrontos de hoje a partir do horário de início.
               </p>
             </div>
             <Badge variant="outline" className="border-slate-300 text-xs text-slate-700">
-              {jogosLiberados.length} jogo(s) pendente(s) em andamento
+              {jogosLiberados.length} jogo(s) liberado(s)
             </Badge>
           </div>
         </CardHeader>

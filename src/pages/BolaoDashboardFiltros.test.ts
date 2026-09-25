@@ -34,15 +34,20 @@ export function filterJogosLiberados(
     // 1. Trava de jogos futuros: só incluir se kickoff já passou (palpite encerrado)
     if (!isPalpiteEncerradoFn(j.data, j.hora, nowMs)) return false
 
-    // 2. Trava de jogos encerrados: partidas concluídas/finalizadas NÃO aparecem
+    const isHoje = isJogoHojeFn(j.data, nowMs)
+
+    // 2. Jogos de hoje permanecem visíveis mesmo quando concluídos/encerrados
+    if (isHoje) {
+      return true
+    }
+
+    // 3. Para outras datas: descarta concluídos e só inclui se kickoff nas últimas 24h
     const matchedLive = resolveLiveScore(j)
     if (checkConcluido(j, matchedLive)) return false
 
-    // 3. Pertencer ao dia de hoje ou kickoff nas últimas 24h
     const kickoffMs = getJogoKickoffTimestampFn(j.data, j.hora)
-    const isHoje = isJogoHojeFn(j.data, nowMs)
     const recentKickoff = kickoffMs !== null && kickoffMs >= nowMs - 24 * 60 * 60 * 1000
-    return isHoje || recentKickoff
+    return recentKickoff
   })
 }
 
@@ -63,30 +68,63 @@ describe('BolaoDashboard - Filtro jogosLiberados', () => {
     ...overrides,
   })
 
-  it('exclui jogos encerrados ou finalizados e exibe APENAS partidas pendentes ou em andamento', () => {
+  it('mantém jogos de hoje na lista mesmo se encerrados, finalizados ou com resultado_finalizado', () => {
     const games = [
       createMockJogo({ id: 'j1', resultado_finalizado: true, status: 'encerrado' }),
       createMockJogo({ id: 'j2', resultado_finalizado: false, status: 'ao_vivo' }),
       createMockJogo({ id: 'j3', resultado_finalizado: false, status: 'finalizado' }),
-      createMockJogo({ id: 'j4', resultado_finalizado: false, status: 'ft' }),
+      createMockJogo({ id: 'j4', resultado_finalizado: true, status: 'ft' }),
       createMockJogo({ id: 'j5', resultado_finalizado: false, status: 'pendente' }),
     ]
-    const res = filterJogosLiberados(games)
-    // Apenas j2 (ao_vivo) e j5 (pendente com kickoff passado) devem aparecer
-    expect(res.map((g) => g.id)).toEqual(['j2', 'j5'])
+    const res = filterJogosLiberados(
+      games,
+      [],
+      Date.now(),
+      () => null,
+      undefined,
+      () => true,
+      () => true,
+    )
+    // Todos os jogos cujo kickoff já passou e são de hoje permanecem visíveis
+    expect(res.map((g) => g.id)).toEqual(['j1', 'j2', 'j3', 'j4', 'j5'])
   })
 
-  it('exclui partida se o liveScore indicar que a fixture está finalizada (isFinished)', () => {
+  it('mantém jogo de hoje mesmo se liveScore indicar isFinished', () => {
     const games = [
-      createMockJogo({ id: 'j_live_fin', resultado_finalizado: false, status: '' }),
-      createMockJogo({ id: 'j_live_active', resultado_finalizado: false, status: '' }),
+      createMockJogo({ id: 'j_live_fin', resultado_finalizado: true, status: 'encerrado' }),
+      createMockJogo({ id: 'j_live_active', resultado_finalizado: false, status: 'ao_vivo' }),
     ]
-    const res = filterJogosLiberados(games, [], Date.now(), (j) =>
-      j.id === 'j_live_fin'
-        ? ({ isFinished: true, isLive: false } as any)
-        : ({ isFinished: false, isLive: true } as any),
+    const res = filterJogosLiberados(
+      games,
+      [],
+      Date.now(),
+      (j) =>
+        j.id === 'j_live_fin'
+          ? ({ isFinished: true, isLive: false } as any)
+          : ({ isFinished: false, isLive: true } as any),
+      undefined,
+      () => true,
+      () => true,
     )
-    expect(res.map((g) => g.id)).toEqual(['j_live_active'])
+    expect(res.map((g) => g.id)).toEqual(['j_live_fin', 'j_live_active'])
+  })
+
+  it('exclui partida de outra data se concluída/encerrada', () => {
+    const games = [
+      createMockJogo({ id: 'ontem_encerrado', resultado_finalizado: true, status: 'encerrado' }),
+      createMockJogo({ id: 'ontem_pendente', resultado_finalizado: false, status: 'pendente' }),
+    ]
+    const res = filterJogosLiberados(
+      games,
+      [],
+      Date.now(),
+      () => null,
+      undefined,
+      () => true, // kickoff já passou
+      () => false, // NÃO é hoje
+      () => Date.now() - 3600000, // kickoff há 1h (nas últimas 24h)
+    )
+    expect(res.map((g) => g.id)).toEqual(['ontem_pendente'])
   })
 
   it('descarta jogos futuros cujo kickoff ainda não chegou', () => {
