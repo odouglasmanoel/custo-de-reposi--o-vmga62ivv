@@ -12,7 +12,13 @@ import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { formatDataBR, formatHoraBR, formatDateTimeBR, sortJogosDecrescente } from '@/lib/dateUtils'
+import {
+  formatDataBR,
+  formatHoraBR,
+  formatDateTimeBR,
+  sortJogosDecrescente,
+  getJogoKickoffTimestamp,
+} from '@/lib/dateUtils'
 import { getPalpiteMarcadoresPorTime, splitMatchScorersByTeam } from '@/lib/scorerUtils'
 import { AdminEditMarcadoresModal } from '@/components/AdminEditMarcadoresModal'
 import { FichaJogo } from '@/components/FichaJogo'
@@ -318,7 +324,7 @@ export default function Historico() {
             filter: `bolao = '${targetBolaoId}'`,
             sort: 'data,hora',
             fields:
-              'id,bolao,time_a,time_b,data,hora,placar_a,placar_b,resultado_finalizado,gols_time_a,gols_time_b,tem_penaltis,vencedor_penaltis,competicao,fixture_id',
+              'id,bolao,time_a,time_b,data,hora,placar_a,placar_b,resultado_finalizado,status,gols_time_a,gols_time_b,tem_penaltis,vencedor_penaltis,competicao,fixture_id',
           }),
           pb.collection('palpites').getFullList<Palpite>({
             filter: `bolao = '${targetBolaoId}'`,
@@ -719,6 +725,27 @@ export default function Historico() {
                         penWinnerTeam !== 'N',
                       )
 
+                      const rawStatus = (jogo.status || '').toLowerCase().trim()
+                      const kickoffMs = getJogoKickoffTimestamp(jogo.data, jogo.hora)
+                      const kickoffPassou = kickoffMs !== null && Date.now() >= kickoffMs
+                      const isAoVivo =
+                        !jogo.resultado_finalizado &&
+                        (rawStatus === 'ao_vivo' ||
+                          rawStatus === 'em_andamento' ||
+                          rawStatus === '1h' ||
+                          rawStatus === '2h' ||
+                          rawStatus === 'ht' ||
+                          rawStatus === 'et' ||
+                          rawStatus === 'p' ||
+                          rawStatus === 'live' ||
+                          (kickoffPassou && jogo.placar_a !== null && jogo.placar_a !== undefined))
+
+                      const hasPlacar =
+                        jogo.placar_a !== null &&
+                        jogo.placar_a !== undefined &&
+                        jogo.placar_b !== null &&
+                        jogo.placar_b !== undefined
+
                       return (
                         <div key={jogo.id} className="p-4 bg-white hover:bg-slate-50/70">
                           <div className="flex flex-wrap items-center justify-between gap-2">
@@ -730,9 +757,7 @@ export default function Historico() {
                                 {jogo.time_a}
                               </span>
                               <span className="rounded bg-slate-900 px-2 py-0.5 text-xs font-black text-white shrink-0">
-                                {jogo.resultado_finalizado && jogo.placar_a !== null
-                                  ? `${jogo.placar_a} x ${jogo.placar_b}`
-                                  : 'A definir'}
+                                {hasPlacar ? `${jogo.placar_a} x ${jogo.placar_b}` : 'A definir'}
                               </span>
                               <span
                                 className="font-bold text-sm text-[#0F172A] line-clamp-2 leading-tight"
@@ -740,6 +765,18 @@ export default function Historico() {
                               >
                                 {jogo.time_b}
                               </span>
+                              {isAoVivo ? (
+                                <Badge className="border border-emerald-300 bg-emerald-500 text-white font-bold text-[10px] px-2 py-0.5 shadow-xs animate-pulse">
+                                  Ao Vivo
+                                </Badge>
+                              ) : jogo.resultado_finalizado ? (
+                                <Badge
+                                  variant="outline"
+                                  className="border-slate-300 bg-slate-100 text-[10px] font-semibold text-slate-700 px-2 py-0.5"
+                                >
+                                  Encerrado
+                                </Badge>
+                              ) : null}
                               {jogo.competicao && (
                                 <Badge
                                   variant="secondary"
@@ -1008,7 +1045,7 @@ export default function Historico() {
                             golsTimeA={(jogo as any).gols_time_a}
                             golsTimeB={(jogo as any).gols_time_b}
                             isConcluido={Boolean(jogo.resultado_finalizado)}
-                            isAoVivo={false}
+                            isAoVivo={isAoVivo}
                           />
                         </div>
                       )

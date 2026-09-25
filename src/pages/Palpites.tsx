@@ -436,7 +436,7 @@ export default function Palpites() {
               filter: gamesFilter || undefined,
               sort: 'data,hora',
               fields:
-                'id,bolao,time_a,time_b,data,hora,competicao,resultado_finalizado,placar_a,placar_b,tem_penaltis,vencedor_penaltis,fixture_id,url_escudo_mandante,url_escudo_visitante,escalacoes',
+                'id,bolao,time_a,time_b,data,hora,competicao,resultado_finalizado,status,placar_a,placar_b,tem_penaltis,vencedor_penaltis,fixture_id,url_escudo_mandante,url_escudo_visitante,escalacoes',
             })
 
             // Buscar registros de participante deste usuário
@@ -573,7 +573,7 @@ export default function Palpites() {
               filter: specificFilter,
               sort: 'data,hora',
               fields:
-                'id,bolao,time_a,time_b,data,hora,competicao,resultado_finalizado,placar_a,placar_b,tem_penaltis,vencedor_penaltis,fixture_id,url_escudo_mandante,url_escudo_visitante,escalacoes',
+                'id,bolao,time_a,time_b,data,hora,competicao,resultado_finalizado,status,placar_a,placar_b,tem_penaltis,vencedor_penaltis,fixture_id,url_escudo_mandante,url_escudo_visitante,escalacoes',
             })
 
             const [gamesResult] = await Promise.race([
@@ -1406,15 +1406,38 @@ export default function Palpites() {
           '1h',
           '2h',
           'ht',
+          'et',
+          'p',
+          'live',
           'finalizado',
           'encerrado',
           'ft',
+          'aet',
+          'pen',
           'finished',
         ]
         const st = (jogo.status || '').toLowerCase().trim()
         const statusIniciado = STATUS_INICIADOS.includes(st)
-        const jogoIniciou =
-          (kickoffMs != null && nowMs >= kickoffMs) || statusIniciado || Boolean(finalizado)
+        const kickoffPassou = kickoffMs != null && nowMs >= kickoffMs
+        const hasPlacarParcial =
+          jogo.placar_a !== null &&
+          jogo.placar_a !== undefined &&
+          jogo.placar_b !== null &&
+          jogo.placar_b !== undefined
+
+        const isAoVivo =
+          !finalizado &&
+          (st === 'ao_vivo' ||
+            st === 'em_andamento' ||
+            st === '1h' ||
+            st === '2h' ||
+            st === 'ht' ||
+            st === 'et' ||
+            st === 'p' ||
+            st === 'live' ||
+            (kickoffPassou && hasPlacarParcial))
+
+        const jogoIniciou = kickoffPassou || statusIniciado || isAoVivo || Boolean(finalizado)
 
         return (
           <Card className="overflow-hidden rounded-[14px] border-[#E2E8F0] bg-white shadow-xs transition hover:shadow-sm flex flex-col justify-between w-full">
@@ -1488,6 +1511,10 @@ export default function Palpites() {
                   >
                     {pontos > 0 ? `+${pontos} pts` : '0 pts'}
                   </span>
+                ) : isAoVivo ? (
+                  <Badge className="border border-emerald-300 bg-emerald-500 text-white font-bold text-[10px] px-1.5 py-0 shadow-xs animate-pulse">
+                    Ao Vivo
+                  </Badge>
                 ) : !jogoIniciou ? (
                   <span
                     className="rounded-full px-2 py-0.2 text-[10px] font-bold bg-slate-100 text-slate-400 border border-slate-200"
@@ -1536,6 +1563,16 @@ export default function Palpites() {
                         Encerrado
                       </span>
                     </>
+                  ) : isAoVivo ? (
+                    <>
+                      <div className="text-lg sm:text-xl font-black text-emerald-600 tracking-tight whitespace-nowrap">
+                        {jogo.placar_a != null ? Number(jogo.placar_a) : 0} -{' '}
+                        {jogo.placar_b != null ? Number(jogo.placar_b) : 0}
+                      </div>
+                      <span className="mt-0.5 inline-flex items-center rounded-full bg-emerald-500 text-white px-2 py-0.5 text-[10px] font-bold border border-emerald-400 shadow-xs animate-pulse">
+                        Ao Vivo
+                      </span>
+                    </>
                   ) : isExpired ? (
                     <>
                       {jogo.placar_a != null && jogo.placar_b != null ? (
@@ -1545,8 +1582,8 @@ export default function Palpites() {
                       ) : (
                         <div className="text-sm sm:text-base font-extrabold text-slate-400">VS</div>
                       )}
-                      <span className="mt-0.5 inline-flex items-center rounded-full bg-rose-50 px-2 py-0.5 text-[10px] font-bold text-rose-700 border border-rose-200">
-                        Encerrado
+                      <span className="mt-0.5 inline-flex items-center rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-bold text-amber-700 border border-amber-200">
+                        Palpites Fechados
                       </span>
                     </>
                   ) : (
@@ -2350,6 +2387,7 @@ export default function Palpites() {
 
                   {/* Ficha do Jogo (Timeline de eventos ao vivo/concluído) */}
                   {(isExpired ||
+                    isAoVivo ||
                     Boolean(jogo.resultado_finalizado) ||
                     Boolean(jogo.api_fixture_id || (jogo as any).fixture_id)) && (
                     <FichaJogo
@@ -2364,7 +2402,7 @@ export default function Palpites() {
                       golsTimeA={(jogo as any).gols_time_a}
                       golsTimeB={(jogo as any).gols_time_b}
                       isConcluido={Boolean(jogo.resultado_finalizado)}
-                      isAoVivo={isExpired && !jogo.resultado_finalizado}
+                      isAoVivo={isAoVivo}
                     />
                   )}
                 </div>
