@@ -16,6 +16,7 @@ import {
   Clock,
   Snowflake,
   Crown,
+  Wrench,
 } from 'lucide-react'
 import {
   LineChart,
@@ -214,6 +215,36 @@ export default function Estatisticas() {
   const evolucao = statsData?.evolucao || []
   const totalJogosEncerrados = statsData?.totalJogosEncerrados ?? 0
   const totalPalpitesValidos = statsData?.totalPalpitesValidos ?? 0
+
+  // MODO MANUTENÇÃO TEMPORÁRIO
+  // Preserva toda a lógica de cálculo e queries no arquivo para reversão futura
+  const IS_MAINTENANCE_MODE = true
+
+  if (IS_MAINTENANCE_MODE) {
+    return (
+      <div className="flex min-h-[60vh] items-center justify-center py-10 px-4">
+        <Card className="w-full max-w-xl rounded-2xl border border-[#1B3A5C] bg-[#0B1E30] p-8 text-center shadow-2xl">
+          <div className="mx-auto mb-5 flex h-16 w-16 items-center justify-center rounded-2xl bg-[#143452] text-[#F59E0B] shadow-inner ring-1 ring-[#1B3A5C]">
+            <Wrench className="h-8 w-8 animate-pulse text-[#F59E0B]" />
+          </div>
+          <Badge className="mb-3 border-[#1B3A5C] bg-[#143452] px-3 py-1 text-xs font-bold text-amber-400">
+            Aviso do Sistema
+          </Badge>
+          <h2 className="text-xl sm:text-2xl font-black tracking-tight text-white">
+            Aba em Manutenção
+          </h2>
+          <p className="mt-4 text-sm sm:text-base leading-relaxed text-slate-300">
+            Aba em Manutenção — Estamos alinhando e auditando o histórico de cravadas e dados do
+            bolão. Volte em breve!
+          </p>
+          <div className="mt-6 flex items-center justify-center gap-2 text-xs text-slate-400">
+            <span className="inline-block h-2 w-2 rounded-full bg-amber-400 animate-ping" />
+            <span>Auditoria em andamento</span>
+          </div>
+        </Card>
+      </div>
+    )
+  }
 
   return (
     <div className="space-y-6">
