@@ -2533,8 +2533,8 @@ export default function BolaoDashboard() {
                         )}
                       </div>
                       <div className="flex items-center gap-1.5 shrink-0">
-                        {/* Se o jogo estiver encerrado: exibe Badge 'Jogo Encerrado' com CheckCircle2 e NÃO exibe botão Atualizar Placar */}
-                        {isJogoEncerrado ? (
+                        {/* Se o jogo estiver encerrado: exibe Badge 'Jogo Encerrado' com CheckCircle2 */}
+                        {isJogoEncerrado && (
                           <Badge
                             variant="secondary"
                             className="border border-slate-300 bg-slate-100 text-slate-800 text-[10px] font-bold shadow-2xs flex items-center gap-1"
@@ -2542,29 +2542,6 @@ export default function BolaoDashboard() {
                             <CheckCircle2 className="h-3 w-3 text-slate-600 shrink-0" />
                             <span>Jogo Encerrado</span>
                           </Badge>
-                        ) : (
-                          isAdmin && (
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              onClick={() => handleAtualizarPlacarAoVivo(jogo)}
-                              disabled={updatingLiveGameId === jogo.id}
-                              className="h-6 px-2 text-[10px] font-semibold border-emerald-300 bg-emerald-50 text-emerald-800 hover:bg-emerald-100 flex items-center gap-1"
-                              title="Atualizar Placar Ao Vivo / Marcadores da partida via API-Sports"
-                            >
-                              <RefreshCw
-                                className={cn(
-                                  'h-3 w-3 text-emerald-700',
-                                  updatingLiveGameId === jogo.id && 'animate-spin',
-                                )}
-                              />
-                              <span>
-                                {updatingLiveGameId === jogo.id
-                                  ? 'Atualizando...'
-                                  : 'Atualizar Placar'}
-                              </span>
-                            </Button>
-                          )
                         )}
 
                         {/* Relógio do card: quando kickoff já passou, mostrar estado ('Ao Vivo'/'Encerrado') em vez de horário estático */}
