@@ -1,5 +1,31 @@
 import { describe, it, expect } from 'vitest'
-import { jogoPontua, isJogoIniciado } from './jogoStatus'
+import { jogoPontua, isJogoIniciado, isJogoConcluido } from './jogoStatus'
+
+describe('isJogoConcluido', () => {
+  it('retorna true quando resultado_finalizado for true', () => {
+    expect(isJogoConcluido({ resultado_finalizado: true })).toBe(true)
+    expect(isJogoConcluido({ resultado_finalizado: true, status: 'pendente' })).toBe(true)
+  })
+
+  it('retorna true para status de término: finalizado, encerrado, ft, finished, aet, pen', () => {
+    expect(isJogoConcluido({ status: 'finalizado' })).toBe(true)
+    expect(isJogoConcluido({ status: 'encerrado' })).toBe(true)
+    expect(isJogoConcluido({ status: 'FT' })).toBe(true)
+    expect(isJogoConcluido({ status: 'finished' })).toBe(true)
+    expect(isJogoConcluido({ status: 'AET' })).toBe(true)
+    expect(isJogoConcluido({ status: 'PEN' })).toBe(true)
+    expect(isJogoConcluido({ status: 'Match Finished' })).toBe(true)
+  })
+
+  it('retorna false para jogos abertos, agendados, ao vivo ou indefinidos', () => {
+    expect(isJogoConcluido(null)).toBe(false)
+    expect(isJogoConcluido(undefined)).toBe(false)
+    expect(isJogoConcluido({ status: 'pendente', resultado_finalizado: false })).toBe(false)
+    expect(isJogoConcluido({ status: 'ao_vivo', resultado_finalizado: false })).toBe(false)
+    expect(isJogoConcluido({ status: 'em_andamento' })).toBe(false)
+    expect(isJogoConcluido({ status: '1h' })).toBe(false)
+  })
+})
 
 describe('isJogoIniciado', () => {
   const agoraRef = new Date('2026-09-24T12:00:00-03:00').getTime()

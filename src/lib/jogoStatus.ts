@@ -7,6 +7,16 @@ export interface JogoPontuaInput {
   resultado_finalizado?: boolean | null
 }
 
+export const STATUS_CONCLUIDOS = new Set([
+  'finalizado',
+  'encerrado',
+  'ft',
+  'finished',
+  'aet',
+  'pen',
+  'match finished',
+])
+
 const STATUS_NAO_INICIADOS = new Set([
   'pendente',
   'agendado',
@@ -53,6 +63,20 @@ const STATUS_INICIADOS_OU_FINAIS = new Set([
  * 3. horário de kickoff já tiver sido atingido no fuso de Brasília (agoraMs >= kickoffMs),
  *    exceto se o status explicitamente indicar não iniciado (ex: adiado/cancelado).
  */
+/**
+ * Verifica se um jogo está encerrado/finalizado:
+ * - resultado_finalizado === true
+ * - ou status for finalizado, encerrado, ft, finished, aet, pen, match finished
+ */
+export function isJogoConcluido(
+  jogo: { status?: string | null; resultado_finalizado?: boolean | null } | null | undefined,
+): boolean {
+  if (!jogo) return false
+  if (jogo.resultado_finalizado) return true
+  const rawStatus = (jogo.status || '').toLowerCase().trim()
+  return Boolean(rawStatus && STATUS_CONCLUIDOS.has(rawStatus))
+}
+
 export function isJogoIniciado(
   jogo: JogoPontuaInput | null | undefined,
   agoraMs: number = Date.now(),

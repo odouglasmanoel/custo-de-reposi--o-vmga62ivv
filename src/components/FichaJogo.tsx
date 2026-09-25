@@ -10,12 +10,16 @@ import {
 } from 'lucide-react'
 import { resolveTeamBadgeUrl } from '@/lib/flags'
 import { fetchEventosJogo, MatchEvent, FichaJogoResponse } from '@/services/eventosJogo'
+import { useAuth } from '@/context/AuthContext'
+import { isJogoConcluido } from '@/lib/jogoStatus'
 
 export interface FichaJogoProps {
   fixtureId?: string | number | null
   jogoId?: string | null
   timeA: string
   timeB: string
+  status?: string | null
+  resultado_finalizado?: boolean | null
   placarA?: number | null
   placarB?: number | null
   // Marcadores locais para fallback imediato caso a API não tenha eventos
@@ -33,6 +37,8 @@ export const FichaJogo: React.FC<FichaJogoProps> = ({
   jogoId,
   timeA,
   timeB,
+  status,
+  resultado_finalizado,
   placarA,
   placarB,
   golsTimeA = [],
@@ -42,10 +48,17 @@ export const FichaJogo: React.FC<FichaJogoProps> = ({
   className = '',
   defaultOpen = false,
 }) => {
+  const { isAdmin } = useAuth()
   const [isOpen, setIsOpen] = useState(defaultOpen)
   const [loading, setLoading] = useState(false)
   const [data, setData] = useState<FichaJogoResponse | null>(null)
   const [error, setError] = useState<string | null>(null)
+
+  // Determina se o jogo está finalizado/encerrado
+  const jogoFinalizado = useMemo(() => {
+    if (isConcluido) return true
+    return isJogoConcluido({ status, resultado_finalizado })
+  }, [isConcluido, status, resultado_finalizado])
 
   const numFixtureId = useMemo(() => {
     if (!fixtureId) return null
@@ -60,13 +73,18 @@ export const FichaJogo: React.FC<FichaJogoProps> = ({
   const carregarEventos = useCallback(
     async (forceRefresh = false) => {
       if (!numFixtureId && !jogoId) return
+
+      // TRAVA EM JOGOS ENCERRADOS:
+      // Se a partida estiver concluída/encerrada, nunca forçar refresh na API-Football para poupar cota diária
+      const efetivoForceRefresh = forceRefresh && !jogoFinalizado
+
       setLoading(true)
       setError(null)
       try {
         const res = await fetchEventosJogo({
           fixtureId: numFixtureId,
           jogoId: jogoId || undefined,
-          forceRefresh,
+          forceRefresh: efetivoForceRefresh,
         })
         setData(res)
         if (!res.success && res.error) {
@@ -78,7 +96,7 @@ export const FichaJogo: React.FC<FichaJogoProps> = ({
         setLoading(false)
       }
     },
-    [numFixtureId, jogoId],
+    [numFixtureId, jogoId, jogoFinalizado],
   )
 
   // Lazy loading: só busca quando o usuário abre pela primeira vez
@@ -280,13 +298,35 @@ export const FichaJogo: React.FC<FichaJogoProps> = ({
           {isOpen ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
         </button>
 
-        {isOpen && (
+        {/*
+          OCULTAÇÃO PARA NÃO-ADMINS:
+          O botão/ícone "Atualizar eventos" só é exibido se o usuário for Administrador (isAdmin).
+          Para participantes comuns (não-admins), fica oculto completamente.
+
+          TRAVA EM JOGOS ENCERRADOS:
+          Para jogos com status encerrado/finalizado, o botão fica desabilitado para o admin,
+          com tooltip explicativo, evitando qualquer gasto de cota.
+        */}
+        {isOpen && isAdmin && (
           <button
             type="button"
-            onClick={() => carregarEventos(true)}
-            disabled={loading}
-            title="Atualizar eventos"
-            className="text-xs text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 p-1 rounded hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-50"
+            onClick={() => !jogoFinalizado && carregarEventos(true)}
+            disabled={loading || jogoFinalizado}
+            title={
+              jogoFinalizado
+                ? 'Partida encerrada: dados consolidados no banco de dados'
+                : 'Atualizar eventos'
+            }
+            aria-label={
+              jogoFinalizado
+                ? 'Partida encerrada: dados consolidados no banco de dados'
+                : 'Atualizar eventos'
+            }
+            className={`text-xs p-1 rounded transition-colors ${
+              jogoFinalizado
+                ? 'text-slate-300 dark:text-slate-600 cursor-not-allowed'
+                : 'text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-50'
+            }`}
           >
             <RotateCw className={`w-3 h-3 ${loading ? 'animate-spin text-emerald-600' : ''}`} />
           </button>
@@ -445,7 +485,7 @@ export const FichaJogo: React.FC<FichaJogoProps> = ({
               <Clock className="w-5 h-5 mx-auto mb-1.5 opacity-40" />
               <p>Nenhum evento registrado até o momento.</p>
               <p className="text-[11px] text-slate-400/80 mt-0.5">
-                {isConcluido
+                {jogoFinalizado
                   ? 'A partida foi finalizada sem registro de eventos na súmula da API.'
                   : 'Os eventos aparecerão em tempo real conforme a partida avançar.'}
               </p>

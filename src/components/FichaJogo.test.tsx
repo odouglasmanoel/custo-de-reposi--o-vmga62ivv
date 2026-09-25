@@ -1,14 +1,29 @@
-import { describe, it, expect, vi } from 'vitest'
+import { describe, it, expect, vi, beforeEach } from 'vitest'
 import React from 'react'
 import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 import { FichaJogo } from './FichaJogo'
 import * as eventosService from '@/services/eventosJogo'
+
+const mockAuth = {
+  isAdmin: false,
+  user: { id: 'user-1', name: 'Teste' },
+  participantName: 'Teste',
+}
+
+vi.mock('@/context/AuthContext', () => ({
+  useAuth: () => mockAuth,
+}))
 
 vi.mock('@/services/eventosJogo', () => ({
   fetchEventosJogo: vi.fn(),
 }))
 
 describe('Componente FichaJogo', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    mockAuth.isAdmin = false
+    mockAuth.participantName = 'Teste'
+  })
   it('renderiza o botão colapsado por padrão', () => {
     render(<FichaJogo fixtureId="1001" timeA="Brasil" timeB="Argentina" />)
     expect(screen.getByText('Ver Ficha do Jogo')).toBeDefined()
@@ -109,6 +124,96 @@ describe('Componente FichaJogo', () => {
 
     await waitFor(() => {
       expect(screen.getByText(/Cota diária da API-Sports atingida/i)).toBeDefined()
+    })
+  })
+
+  describe('Regras de Exibição e Trava do Botão Atualizar Eventos', () => {
+    it('NÃO exibe o botão Atualizar Eventos para participante comum (não-admin) com ficha aberta', () => {
+      mockAuth.isAdmin = false
+
+      render(
+        <FichaJogo fixtureId="1004" timeA="Portugal" timeB="País de Gales" defaultOpen={true} />,
+      )
+
+      expect(screen.queryByTitle('Atualizar eventos')).toBeNull()
+      expect(screen.queryByLabelText('Atualizar eventos')).toBeNull()
+    })
+
+    it('EXIBE o botão Atualizar Eventos habilitado para Administrador em jogo aberto / em andamento', async () => {
+      mockAuth.isAdmin = true
+
+      vi.mocked(eventosService.fetchEventosJogo).mockResolvedValueOnce({
+        success: true,
+        events: [],
+      })
+
+      render(
+        <FichaJogo
+          fixtureId="1005"
+          timeA="Portugal"
+          timeB="País de Gales"
+          isConcluido={false}
+          defaultOpen={true}
+        />,
+      )
+
+      const refreshBtn = screen.getByTitle('Atualizar eventos')
+      expect(refreshBtn).toBeDefined()
+      expect((refreshBtn as HTMLButtonElement).disabled).toBe(false)
+
+      fireEvent.click(refreshBtn)
+
+      expect(eventosService.fetchEventosJogo).toHaveBeenCalledWith({
+        fixtureId: '1005',
+        jogoId: undefined,
+        forceRefresh: true,
+      })
+    })
+
+    it('DESABILITA o botão Atualizar Eventos para Administrador quando a partida estiver encerrada (isConcluido=true)', () => {
+      mockAuth.isAdmin = true
+
+      render(
+        <FichaJogo
+          fixtureId="1006"
+          timeA="Portugal"
+          timeB="País de Gales"
+          isConcluido={true}
+          defaultOpen={true}
+        />,
+      )
+
+      const refreshBtn = screen.getByRole('button', {
+        name: /Partida encerrada: dados consolidados no banco de dados/i,
+      })
+      expect(refreshBtn).toBeDefined()
+      expect((refreshBtn as HTMLButtonElement).disabled).toBe(true)
+
+      // Clicar no botão desabilitado não dispara nova requisição
+      fireEvent.click(refreshBtn)
+      expect(eventosService.fetchEventosJogo).not.toHaveBeenCalledWith(
+        expect.objectContaining({ forceRefresh: true }),
+      )
+    })
+
+    it('DESABILITA o botão para Administrador quando resultado_finalizado=true ou status="finalizado"', () => {
+      mockAuth.isAdmin = true
+
+      render(
+        <FichaJogo
+          fixtureId="1007"
+          timeA="Brasil"
+          timeB="Argentina"
+          resultado_finalizado={true}
+          defaultOpen={true}
+        />,
+      )
+
+      const refreshBtn = screen.getByRole('button', {
+        name: /Partida encerrada: dados consolidados no banco de dados/i,
+      })
+      expect(refreshBtn).toBeDefined()
+      expect((refreshBtn as HTMLButtonElement).disabled).toBe(true)
     })
   })
 })

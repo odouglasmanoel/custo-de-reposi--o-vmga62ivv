@@ -3359,6 +3359,8 @@ export default function BolaoDashboard() {
                           jogoId={jogo.id}
                           timeA={jogo.time_a}
                           timeB={jogo.time_b}
+                          status={jogo.status}
+                          resultado_finalizado={jogo.resultado_finalizado}
                           placarA={
                             sobrescritaJogo != null
                               ? Number(sobrescritaJogo.placar_a)

@@ -2357,6 +2357,8 @@ export default function Palpites() {
                       jogoId={jogo.id}
                       timeA={jogo.time_a}
                       timeB={jogo.time_b}
+                      status={jogo.status}
+                      resultado_finalizado={jogo.resultado_finalizado}
                       placarA={jogo.placar_a != null ? Number(jogo.placar_a) : null}
                       placarB={jogo.placar_b != null ? Number(jogo.placar_b) : null}
                       golsTimeA={(jogo as any).gols_time_a}

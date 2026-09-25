@@ -41,8 +41,16 @@ routerAdd('GET', '/backend/v1/eventos-jogo', (e) => {
     const isNumericFixtureId = /^\d+$/.test(fixtureIdParam)
 
     // 1. CHECAGEM EM BANCO DE DADOS LOCAL (Custo Zero de Cota)
-    // Se o jogo já possui ficha_detalhes salva no banco com eventos
-    if (matchingJogo && !forceRefresh) {
+    // Se a partida estiver finalizada/encerrada, NUNCA gasta cota externa mesmo se forceRefresh vier true.
+    const isMatchingJogoFinalizado =
+      matchingJogo &&
+      (matchingJogo.getBool('resultado_finalizado') ||
+        ['finalizado', 'encerrado', 'ft', 'finished', 'aet', 'pen', 'match finished'].includes(
+          (matchingJogo.getString('status') || '').toLowerCase().trim(),
+        ))
+
+    // Se o jogo já possui ficha_detalhes salva no banco com eventos (ou se está finalizado)
+    if (matchingJogo && (!forceRefresh || isMatchingJogoFinalizado)) {
       try {
         const fichaRaw = matchingJogo.get('ficha_detalhes')
         if (fichaRaw) {
@@ -56,7 +64,7 @@ routerAdd('GET', '/backend/v1/eventos-jogo', (e) => {
           }
 
           if (parsedFicha && Array.isArray(parsedFicha.events) && parsedFicha.events.length > 0) {
-            const isFinalizado = matchingJogo.getBool('resultado_finalizado')
+            const isFinalizado = Boolean(isMatchingJogoFinalizado)
             return e.json(200, {
               success: true,
               cached: true,
