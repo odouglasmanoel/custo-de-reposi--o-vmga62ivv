@@ -2635,22 +2635,15 @@ export default function BolaoDashboard() {
                         )}
                       </div>
                       <div className="flex items-center gap-1.5 shrink-0">
-                        {/* Se o jogo estiver encerrado: exibe Badge 'Jogo Encerrado' com CheckCircle2 */}
-                        {isJogoEncerrado && (
+                        {/* Relógio do card: quando kickoff já passou, mostrar estado ('Ao Vivo'/'Encerrado') em vez de horário estático */}
+                        {isJogoEncerrado ? (
                           <Badge
                             variant="secondary"
                             className="border border-slate-300 bg-slate-100 text-slate-800 text-[10px] font-bold shadow-2xs flex items-center gap-1"
                           >
                             <CheckCircle2 className="h-3 w-3 text-slate-600 shrink-0" />
-                            <span>Jogo Encerrado</span>
+                            <span>Encerrado</span>
                           </Badge>
-                        )}
-
-                        {/* Relógio do card: quando kickoff já passou, mostrar estado ('Ao Vivo'/'Encerrado') em vez de horário estático */}
-                        {isJogoEncerrado ? (
-                          <span className="font-bold text-slate-600 bg-slate-100 border border-slate-200 px-2 py-0.5 rounded text-[11px]">
-                            Encerrado
-                          </span>
                         ) : isStatusAoVivo ? (
                           <span className="font-bold text-emerald-700 bg-emerald-50 border border-emerald-300 px-2 py-0.5 rounded text-[11px] flex items-center gap-1 animate-pulse">
                             <Radio className="h-2.5 w-2.5 text-emerald-600" />
