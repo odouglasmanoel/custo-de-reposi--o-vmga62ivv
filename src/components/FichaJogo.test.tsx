@@ -85,6 +85,9 @@ describe('Componente FichaJogo', () => {
       expect(screen.getByText("23'")).toBeDefined()
       expect(screen.getByText('De Paul')).toBeDefined()
       expect(screen.getByText("35'")).toBeDefined()
+      // Richarlison entrou (⬆ verde), Endrick saiu (⬇ vermelho)
+      expect(screen.getByText(/⬆ Richarlison/)).toBeDefined()
+      expect(screen.getByText(/⬇ Endrick/)).toBeDefined()
     })
   })
 

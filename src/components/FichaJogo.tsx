@@ -271,8 +271,8 @@ export const FichaJogo: React.FC<FichaJogoProps> = ({
       if (ev.assist?.name) {
         return (
           <span className="text-xs text-slate-500 flex items-center gap-1">
-            <span className="text-emerald-600 font-medium">⬆ {ev.player?.name}</span>
-            <span className="text-red-500 font-medium">⬇ {ev.assist.name}</span>
+            <span className="text-emerald-600 font-medium">⬆ {ev.assist.name}</span>
+            <span className="text-red-500 font-medium">⬇ {ev.player?.name}</span>
           </span>
         )
       }
