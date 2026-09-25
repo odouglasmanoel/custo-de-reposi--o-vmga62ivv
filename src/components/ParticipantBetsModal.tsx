@@ -195,25 +195,7 @@ export function ParticipantBetsModal({
     return items.filter((item) => isJogoIniciado(item.jogo, now))
   }, [items, isAdmin, isOwner])
 
-  // Agrupamento por bolão/copa quando no modo Geral
   const isGeral = !activeBolaoId || activeBolaoId === 'geral'
-
-  const groupedByBolao = useMemo(() => {
-    if (!isGeral) {
-      return [{ bolaoId: activeBolaoId, items: visibleItems }]
-    }
-    const map = new Map<string, BetItemWithGame[]>()
-    for (const item of visibleItems) {
-      const bId = item.palpite.bolao || item.jogo.bolao || 'indefinido'
-      const list = map.get(bId) || []
-      list.push(item)
-      map.set(bId, list)
-    }
-    return Array.from(map.entries()).map(([bolaoId, bItems]) => ({
-      bolaoId,
-      items: bItems,
-    }))
-  }, [isGeral, activeBolaoId, visibleItems])
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -230,8 +212,8 @@ export function ParticipantBetsModal({
                 </DialogTitle>
                 <DialogDescription className="text-xs text-[#64748B]">
                   {isGeral
-                    ? 'Todos os palpites em todas as competições'
-                    : `Palpites para ${boloesMap.get(activeBolaoId)?.nome || 'a competição selecionada'}`}
+                    ? `Todos os palpites em todas as competições (${visibleItems.length} partida${visibleItems.length === 1 ? '' : 's'})`
+                    : `Palpites para ${boloesMap.get(activeBolaoId)?.nome || 'a competição selecionada'} (${visibleItems.length} partida${visibleItems.length === 1 ? '' : 's'})`}
                 </DialogDescription>
               </div>
             </div>
@@ -265,217 +247,198 @@ export function ParticipantBetsModal({
           </div>
         ) : (
           <div className="space-y-6 pt-2">
-            {groupedByBolao.map(({ bolaoId, items: bItems }) => {
-              const bolaoInfo = boloesMap.get(bolaoId)
-              const bolaoNome = bolaoInfo?.nome || (bolaoId === 'geral' ? 'Geral' : 'Competição')
+            <div className="space-y-3">
+              {visibleItems.map(({ palpite, jogo, badges }) => {
+                const bolaoId = jogo.bolao || palpite.bolao
+                const bolaoInfo = boloesMap.get(bolaoId)
+                const nomeCurtoCopa = bolaoInfo?.nome
+                  ? bolaoInfo.nome.replace(/^Copa\s+/i, '')
+                  : null
+                const agoraMs = Date.now()
+                const podePontuar = jogoPontua(jogo, agoraMs)
+                const finalizado = Boolean(jogo.resultado_finalizado) && podePontuar
+                const placarRealA = jogo.placar_a
+                const placarRealB = jogo.placar_b
+                const temResultadoReal =
+                  placarRealA !== null &&
+                  placarRealA !== undefined &&
+                  placarRealB !== null &&
+                  placarRealB !== undefined
 
-              return (
-                <div key={bolaoId} className="space-y-3">
-                  {isGeral && (
-                    <div className="flex items-center gap-2 border-b border-slate-200 pb-1.5">
-                      <Badge
-                        variant="secondary"
-                        className="bg-indigo-50 border border-indigo-200 text-indigo-800 text-xs font-bold"
-                      >
-                        {bolaoNome}
-                      </Badge>
-                      <span className="text-[11px] text-slate-400">
-                        ({bItems.length} partida{bItems.length === 1 ? '' : 's'})
-                      </span>
-                    </div>
-                  )}
+                const ptsJogo = podePontuar ? Number(palpite.pontuacao_jogo) || 0 : 0
 
-                  <div className="space-y-3">
-                    {bItems.map(({ palpite, jogo, badges }) => {
-                      const agoraMs = Date.now()
-                      const podePontuar = jogoPontua(jogo, agoraMs)
-                      const finalizado = Boolean(jogo.resultado_finalizado) && podePontuar
-                      const placarRealA = jogo.placar_a
-                      const placarRealB = jogo.placar_b
-                      const temResultadoReal =
-                        placarRealA !== null &&
-                        placarRealA !== undefined &&
-                        placarRealB !== null &&
-                        placarRealB !== undefined
-
-                      const ptsJogo = podePontuar ? Number(palpite.pontuacao_jogo) || 0 : 0
-
-                      return (
-                        <div
-                          key={palpite.id}
-                          className="rounded-xl border border-slate-200 bg-white p-4 shadow-2xs hover:border-slate-300 transition"
+                return (
+                  <div
+                    key={palpite.id}
+                    className="rounded-xl border border-slate-200 bg-white p-4 shadow-2xs hover:border-slate-300 transition"
+                  >
+                    {/* Cabeçalho do Confronto */}
+                    <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-2.5">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span
+                          className="text-sm font-bold text-[#0F172A] line-clamp-2 leading-tight"
+                          title={`${jogo.time_a} x ${jogo.time_b}`}
                         >
-                          {/* Cabeçalho do Confronto */}
-                          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-2.5">
-                            <div className="flex items-center gap-2 flex-wrap">
-                              <span
-                                className="text-sm font-bold text-[#0F172A] line-clamp-2 leading-tight"
-                                title={`${jogo.time_a} x ${jogo.time_b}`}
-                              >
-                                {jogo.time_a} x {jogo.time_b}
+                          {jogo.time_a} x {jogo.time_b}
+                        </span>
+                        {nomeCurtoCopa && (
+                          <Badge
+                            variant="secondary"
+                            className="border border-[#CBD5E1] bg-white text-[#0F2A43] font-semibold text-[10px] px-1.5 py-0 shrink-0"
+                          >
+                            {nomeCurtoCopa}
+                          </Badge>
+                        )}
+                        {jogo.competicao && (
+                          <span className="text-[10px] text-slate-500 font-medium">
+                            {jogo.competicao}
+                          </span>
+                        )}
+                        {jogo.tem_penaltis && (
+                          <span className="rounded bg-amber-50 px-1.5 py-0.5 text-[10px] font-medium text-amber-700 border border-amber-200">
+                            Mata-mata
+                          </span>
+                        )}
+                      </div>
+
+                      <div className="flex items-center gap-3 text-xs text-slate-500">
+                        <span className="flex items-center gap-1 text-[11px]">
+                          <Calendar className="h-3 w-3 text-slate-400" />
+                          {formatDataBR(jogo.data)}
+                        </span>
+                        <span className="flex items-center gap-1 text-[11px]">
+                          <Clock className="h-3 w-3 text-slate-400" />
+                          {formatHoraBR(jogo.hora)}
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Comparativo: Palpite vs Placar Real */}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 py-3 border-b border-slate-100">
+                      {/* Palpite do participante */}
+                      <div className="rounded-lg bg-emerald-50/50 border border-emerald-100 p-2.5">
+                        <div className="flex items-center justify-between mb-1">
+                          <span className="text-[11px] font-bold text-emerald-900 uppercase tracking-wide">
+                            Palpite de {participante?.nome}:
+                          </span>
+                          <Badge className="bg-emerald-600 text-white font-black text-xs px-2 py-0">
+                            {palpite.placar_a} x {palpite.placar_b}
+                            {palpite.vencedor_penaltis && palpite.vencedor_penaltis !== 'N' && (
+                              <span className="ml-1 text-[9px] font-normal opacity-90">
+                                (Pên:{' '}
+                                {palpite.vencedor_penaltis === 'A' ? jogo.time_a : jogo.time_b})
                               </span>
-                              {jogo.competicao && (
-                                <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-semibold text-slate-600">
-                                  {jogo.competicao}
-                                </span>
-                              )}
-                              {jogo.tem_penaltis && (
-                                <span className="rounded bg-amber-50 px-1.5 py-0.5 text-[10px] font-medium text-amber-700 border border-amber-200">
-                                  Mata-mata
-                                </span>
-                              )}
-                            </div>
+                            )}
+                          </Badge>
+                        </div>
 
-                            <div className="flex items-center gap-3 text-xs text-slate-500">
-                              <span className="flex items-center gap-1 text-[11px]">
-                                <Calendar className="h-3 w-3 text-slate-400" />
-                                {formatDataBR(jogo.data)}
-                              </span>
-                              <span className="flex items-center gap-1 text-[11px]">
-                                <Clock className="h-3 w-3 text-slate-400" />
-                                {formatHoraBR(jogo.hora)}
-                              </span>
-                            </div>
-                          </div>
+                        {/* Marcadores apostados via ParticipantScorersView */}
+                        <ParticipantScorersView
+                          participanteNome={participante?.nome || ''}
+                          timeA={jogo.time_a}
+                          timeB={jogo.time_b}
+                          placarA={palpite.placar_a}
+                          placarB={palpite.placar_b}
+                          rawGolsA={palpite.goleadores_a}
+                          rawGolsB={palpite.goleadores_b}
+                          jogoGolsA={podePontuar ? jogo.gols_time_a : []}
+                          jogoGolsB={podePontuar ? jogo.gols_time_b : []}
+                        />
+                      </div>
 
-                          {/* Comparativo: Palpite vs Placar Real */}
-                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 py-3 border-b border-slate-100">
-                            {/* Palpite do participante */}
-                            <div className="rounded-lg bg-emerald-50/50 border border-emerald-100 p-2.5">
-                              <div className="flex items-center justify-between mb-1">
-                                <span className="text-[11px] font-bold text-emerald-900 uppercase tracking-wide">
-                                  Palpite de {participante?.nome}:
-                                </span>
-                                <Badge className="bg-emerald-600 text-white font-black text-xs px-2 py-0">
-                                  {palpite.placar_a} x {palpite.placar_b}
-                                  {palpite.vencedor_penaltis &&
-                                    palpite.vencedor_penaltis !== 'N' && (
-                                      <span className="ml-1 text-[9px] font-normal opacity-90">
-                                        (Pên:{' '}
-                                        {palpite.vencedor_penaltis === 'A'
-                                          ? jogo.time_a
-                                          : jogo.time_b}
-                                        )
-                                      </span>
-                                    )}
-                                </Badge>
-                              </div>
-
-                              {/* Marcadores apostados via ParticipantScorersView */}
-                              <ParticipantScorersView
-                                participanteNome={participante?.nome || ''}
-                                timeA={jogo.time_a}
-                                timeB={jogo.time_b}
-                                placarA={palpite.placar_a}
-                                placarB={palpite.placar_b}
-                                rawGolsA={palpite.goleadores_a}
-                                rawGolsB={palpite.goleadores_b}
-                                jogoGolsA={podePontuar ? jogo.gols_time_a : []}
-                                jogoGolsB={podePontuar ? jogo.gols_time_b : []}
-                              />
-                            </div>
-
-                            {/* Placar Real da Partida */}
-                            <div className="rounded-lg bg-slate-50 border border-slate-200 p-2.5 flex flex-col justify-between">
-                              <div>
-                                <div className="flex items-center justify-between mb-1">
-                                  <span className="text-[11px] font-bold text-slate-700 uppercase tracking-wide">
-                                    Resultado Real:
-                                  </span>
-                                  {finalizado ? (
-                                    <Badge className="bg-slate-900 text-white font-black text-xs px-2 py-0">
-                                      {placarRealA} x {placarRealB}
-                                      {jogo.vencedor_penaltis && (
-                                        <span className="ml-1 text-[9px] text-amber-300">
-                                          (Pên:{' '}
-                                          {jogo.vencedor_penaltis === 'A'
-                                            ? jogo.time_a
-                                            : jogo.time_b}
-                                          )
-                                        </span>
-                                      )}
-                                    </Badge>
-                                  ) : podePontuar ? (
-                                    <Badge
-                                      variant="outline"
-                                      className="border-amber-300 bg-amber-50 text-amber-800 text-[10px]"
-                                    >
-                                      {temResultadoReal
-                                        ? `Ao Vivo: ${placarRealA} x ${placarRealB}`
-                                        : 'Aguardando jogo'}
-                                    </Badge>
-                                  ) : (
-                                    <Badge
-                                      variant="outline"
-                                      className="border-slate-300 bg-slate-100 text-slate-600 text-[10px]"
-                                    >
-                                      Aguardando início
-                                    </Badge>
-                                  )}
-                                </div>
-                              </div>
-
-                              {/* Pontos obtidos nesta partida */}
-                              <div className="pt-2 flex items-center justify-between border-t border-slate-200/60 mt-1">
-                                <span className="text-xs font-semibold text-slate-600">
-                                  Pontos na Partida:
-                                </span>
-                                <span
-                                  className={`text-sm font-black ${
-                                    ptsJogo > 0 ? 'text-emerald-700' : 'text-slate-500'
-                                  }`}
-                                >
-                                  {podePontuar ? `+${ptsJogo} pts` : '-'}
-                                </span>
-                              </div>
-                            </div>
-                          </div>
-
-                          {/* Detalhamento da Pontuação (Badges) */}
-                          <div className="pt-2.5">
-                            <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block mb-1.5">
-                              Detalhamento de Pontos:
+                      {/* Placar Real da Partida */}
+                      <div className="rounded-lg bg-slate-50 border border-slate-200 p-2.5 flex flex-col justify-between">
+                        <div>
+                          <div className="flex items-center justify-between mb-1">
+                            <span className="text-[11px] font-bold text-slate-700 uppercase tracking-wide">
+                              Resultado Real:
                             </span>
-
-                            {!podePontuar ? (
-                              <span className="text-xs text-slate-400 italic">
-                                Aguardando início
-                              </span>
-                            ) : badges.length > 0 ? (
-                              <div className="flex flex-wrap gap-1.5">
-                                {badges.map((b) => (
-                                  <span
-                                    key={b.id}
-                                    className="inline-flex items-center gap-1 rounded-md bg-emerald-50 border border-emerald-200 px-2 py-0.5 text-[11px] font-medium text-emerald-900"
-                                  >
-                                    <span className="font-semibold">{b.label}</span>
-                                    {b.pointsText && (
-                                      <span className="rounded bg-emerald-600 px-1 py-0 text-[10px] font-bold text-white">
-                                        {b.pointsText}
-                                      </span>
-                                    )}
+                            {finalizado ? (
+                              <Badge className="bg-slate-900 text-white font-black text-xs px-2 py-0">
+                                {placarRealA} x {placarRealB}
+                                {jogo.vencedor_penaltis && (
+                                  <span className="ml-1 text-[9px] text-amber-300">
+                                    (Pên:{' '}
+                                    {jogo.vencedor_penaltis === 'A' ? jogo.time_a : jogo.time_b})
                                   </span>
-                                ))}
-                              </div>
-                            ) : ptsJogo > 0 ? (
-                              <span className="inline-flex items-center gap-1 rounded bg-emerald-50 border border-emerald-200 px-2 py-0.5 text-xs font-semibold text-emerald-800">
-                                +{ptsJogo} pts obtidos
-                              </span>
+                                )}
+                              </Badge>
+                            ) : podePontuar ? (
+                              <Badge
+                                variant="outline"
+                                className="border-amber-300 bg-amber-50 text-amber-800 text-[10px]"
+                              >
+                                {temResultadoReal
+                                  ? `Ao Vivo: ${placarRealA} x ${placarRealB}`
+                                  : 'Aguardando jogo'}
+                              </Badge>
                             ) : (
-                              <span className="text-xs text-slate-400 italic">
-                                {finalizado
-                                  ? 'Nenhuma pontuação nesta partida.'
-                                  : 'Pontuação será calculada após o encerramento.'}
-                              </span>
+                              <Badge
+                                variant="outline"
+                                className="border-slate-300 bg-slate-100 text-slate-600 text-[10px]"
+                              >
+                                Aguardando início
+                              </Badge>
                             )}
                           </div>
                         </div>
-                      )
-                    })}
+
+                        {/* Pontos obtidos nesta partida */}
+                        <div className="pt-2 flex items-center justify-between border-t border-slate-200/60 mt-1">
+                          <span className="text-xs font-semibold text-slate-600">
+                            Pontos na Partida:
+                          </span>
+                          <span
+                            className={`text-sm font-black ${
+                              ptsJogo > 0 ? 'text-emerald-700' : 'text-slate-500'
+                            }`}
+                          >
+                            {podePontuar ? `+${ptsJogo} pts` : '-'}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Detalhamento da Pontuação (Badges) */}
+                    <div className="pt-2.5">
+                      <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block mb-1.5">
+                        Detalhamento de Pontos:
+                      </span>
+
+                      {!podePontuar ? (
+                        <span className="text-xs text-slate-400 italic">Aguardando início</span>
+                      ) : badges.length > 0 ? (
+                        <div className="flex flex-wrap gap-1.5">
+                          {badges.map((b) => (
+                            <span
+                              key={b.id}
+                              className="inline-flex items-center gap-1 rounded-md bg-emerald-50 border border-emerald-200 px-2 py-0.5 text-[11px] font-medium text-emerald-900"
+                            >
+                              <span className="font-semibold">{b.label}</span>
+                              {b.pointsText && (
+                                <span className="rounded bg-emerald-600 px-1 py-0 text-[10px] font-bold text-white">
+                                  {b.pointsText}
+                                </span>
+                              )}
+                            </span>
+                          ))}
+                        </div>
+                      ) : ptsJogo > 0 ? (
+                        <span className="inline-flex items-center gap-1 rounded bg-emerald-50 border border-emerald-200 px-2 py-0.5 text-xs font-semibold text-emerald-800">
+                          +{ptsJogo} pts obtidos
+                        </span>
+                      ) : (
+                        <span className="text-xs text-slate-400 italic">
+                          {finalizado
+                            ? 'Nenhuma pontuação nesta partida.'
+                            : 'Pontuação será calculada após o encerramento.'}
+                        </span>
+                      )}
+                    </div>
                   </div>
-                </div>
-              )
-            })}
+                )
+              })}
+            </div>
           </div>
         )}
       </DialogContent>

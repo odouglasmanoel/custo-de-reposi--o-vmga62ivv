@@ -233,6 +233,32 @@ describe('ParticipantBetsModal - Privacidade de Palpites de Adversários', () =>
     })
   })
 
+  it('exibe a badge da copa dinâmica em cada card e não exibe a tag fixa no topo', async () => {
+    mockAuth.isAdmin = true
+    mockAuth.participantName = 'Douglas'
+    mockAuth.user = { id: 'user-admin', name: 'Douglas' } as any
+
+    render(
+      <ParticipantBetsModal
+        open={true}
+        onOpenChange={vi.fn()}
+        participante={mockParticipanteWillian}
+        activeBolaoId="geral"
+        boloes={mockBoloes as any}
+      />,
+    )
+
+    await waitFor(() => {
+      // Subtítulo agora traz o total de partidas
+      expect(
+        screen.getByText(/Todos os palpites em todas as competições \(3 partidas\)/i),
+      ).toBeDefined()
+      // A badge com o nome curto da copa 'Coni' deve estar presente no card
+      const coniBadges = screen.getAllByText('Coni')
+      expect(coniBadges.length).toBeGreaterThan(0)
+    })
+  })
+
   it('exibe mensagem amigável quando todos os palpites do adversário forem de jogos futuros', async () => {
     mockAuth.isAdmin = false
     mockAuth.participantName = 'Teste'
