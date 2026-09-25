@@ -75,23 +75,117 @@ export function matchParticipantName(rawName: string): string {
 }
 
 /**
- * Parses score string like "2 x 1", "2x1", "2-1", "2 - 1", "2 a 1",
- * or with extra text like "1x2 (Carbonero...)"
+ * Extrai o placar puro cortando tudo a partir do primeiro "(", aplicando trim,
+ * casando o padrão /^(\d+)\s*(?:x|[-:]|a)\s*(\d+)$/i e retornando { placarA, placarB } ou null.
+ * Retorna null também para valores tipo "12/34" ou com datas.
  */
-export function parseScoreString(val: any): { placarA: number; placarB: number } | null {
+export function extractPureScoreString(val: any): { placarA: number; placarB: number } | null {
   if (val === null || val === undefined) return null
-  const str = String(val).trim()
+  let str = String(val).trim()
   if (!str) return null
 
-  // 0. Strings with dates like "01/11 -", "08/11 -", "01/11/2024" are match dates, not scores
+  // Descarta datas como "01/11", "12/34", "01/11/2024"
   if (/\d{1,2}\/\d{1,2}/.test(str)) {
     return null
   }
 
+  // Corta tudo a partir do primeiro "("
+  const parenIdx = str.indexOf('(')
+  if (parenIdx !== -1) {
+    str = str.substring(0, parenIdx).trim()
+  }
+
+  const match = str.match(/^(\d+)\s*(?:x|[-:]|a)\s*(\d+)$/i)
+  if (match) {
+    return {
+      placarA: parseInt(match[1], 10),
+      placarB: parseInt(match[2], 10),
+    }
+  }
+
+  return null
+}
+
+/**
+ * Extrai o conteúdo do primeiro "(...)" e divide por vírgula, ponto-e-vírgula, quebra de linha
+ * ou conectivo " e ", tratando multiplicadores como "Samuel Lino 2x" ou "2x Samuel Lino" -> ["Samuel Lino", "Samuel Lino"].
+ * Retorna lista de autores limpa.
+ */
+export function extractScorersFromParentheses(val: any): string[] {
+  if (val === null || val === undefined) return []
+  const str = String(val).trim()
+  if (!str) return []
+
+  const openIdx = str.indexOf('(')
+  const closeIdx = str.indexOf(')', openIdx)
+  if (openIdx === -1) return []
+
+  const inner =
+    closeIdx !== -1
+      ? str.substring(openIdx + 1, closeIdx).trim()
+      : str.substring(openIdx + 1).trim()
+  if (!inner) return []
+
+  // Divide por vírgula, ponto-e-vírgula, quebra de linha ou " e " / " E "
+  const tokens = inner
+    .split(/[,;\n]+|\s+e\s+/i)
+    .map((s) => s.trim())
+    .filter(Boolean)
+
+  const result: string[] = []
+
+  for (const token of tokens) {
+    let raw = token.trim()
+    if (!raw) continue
+
+    // Verifica multiplicadores como "Samuel Lino 2x", "2x Samuel Lino", "Samuel Lino 2 gols"
+    let multiplier = 1
+    const multAfterMatch = raw.match(/^(.*?)(?:\s+(\d+)\s*[xX]|\s+(\d+)\s*gols?)$/i)
+    const multBeforeMatch = raw.match(/^(?:(\d+)\s*[xX]|\s*(\d+)\s*gols?\s*d[oe]?)\s+(.*?)$/i)
+
+    if (multAfterMatch) {
+      raw = multAfterMatch[1].trim()
+      multiplier = parseInt(multAfterMatch[2] || multAfterMatch[3], 10) || 1
+    } else if (multBeforeMatch) {
+      multiplier = parseInt(multBeforeMatch[1] || multBeforeMatch[2], 10) || 1
+      raw = multBeforeMatch[3].trim()
+    }
+
+    // Limpa pontuações residuais
+    raw = raw.replace(/^[-–—:]+|[-–—:]+$/g, '').trim()
+    if (!raw) continue
+
+    for (let k = 0; k < multiplier; k++) {
+      result.push(raw)
+    }
+  }
+
+  return result
+}
+
+/**
+ * Parses score string like "2 x 1", "2x1", "2-1", "2 - 1", "2 a 1",
+ * or with extra text like "1x2 (Carbonero...)"
+ * Sempre descarta o trecho a partir de "(" antes de buscar o padrão NxN.
+ */
+export function parseScoreString(val: any): { placarA: number; placarB: number } | null {
+  if (val === null || val === undefined) return null
+  let str = String(val).trim()
+  if (!str) return null
+
+  // 0. Strings with dates like "01/11 -", "08/11 -", "01/11/2024", "12/34" are match dates, not scores
+  if (/\d{1,2}\/\d{1,2}/.test(str)) {
+    return null
+  }
+
+  // Corta tudo a partir do primeiro "(" antes de buscar o padrão NxN
+  const parenIdx = str.indexOf('(')
+  if (parenIdx !== -1) {
+    str = str.substring(0, parenIdx).trim()
+  }
+
   // 1. Check for NxN pattern anywhere at the beginning or as full/prefix score:
-  // Accepts "0x0", "1x0", "3x1", "2 x 2", "1-2", "2:1", "2 a 1",
-  // and with or without complementary text: "1x2 (Carbonero...)", "0x0 (pênaltis 4x2)", "3x1 - final", etc.
-  // Regra obrigatória: se a célula contém o padrão de dígitos NxN (0x0, 3x1 etc.), o status do jogo DEVE ser "Encerrado" com aquele placar — nunca Pendente.
+  // Accepts "0x0", "1x0", "3x1", "2 x 2", "1-2", "2:1", "2 a 1", "3x1 - final", etc.
   const match = str.match(/^(\d+)\s*(?:x|[-:]|a)\s*(\d+)(?:\s*.*)?$/i)
   if (match) {
     return {
@@ -773,6 +867,7 @@ export async function parseSpreadsheet(file: File): Promise<{
         let placarA: number | undefined
         let placarB: number | undefined
         let finalizado = false
+        let autoresDoJogoParenteses: string[] = []
 
         if (
           colPlacarFinal !== -1 &&
@@ -780,12 +875,14 @@ export async function parseSpreadsheet(file: File): Promise<{
           row[colPlacarFinal] !== null &&
           row[colPlacarFinal] !== undefined
         ) {
-          const parsed = parseScoreString(row[colPlacarFinal])
+          const rawPF = row[colPlacarFinal]
+          const parsed = extractPureScoreString(rawPF) || parseScoreString(rawPF)
           if (parsed) {
             placarA = parsed.placarA
             placarB = parsed.placarB
             finalizado = true
           }
+          autoresDoJogoParenteses = extractScorersFromParentheses(rawPF)
         } else if (colPlacarA !== -1 && colPlacarB !== -1) {
           const valA = row[colPlacarA]
           const valB = row[colPlacarB]
@@ -830,8 +927,20 @@ export async function parseSpreadsheet(file: File): Promise<{
           colRodada !== -1 && row[colRodada] ? String(row[colRodada]).trim() : undefined
 
         // Real scorers
-        const golsTimeA = colGolsA !== -1 ? parseScorersString(row[colGolsA]) : []
-        const golsTimeB = colGolsB !== -1 ? parseScorersString(row[colGolsB]) : []
+        let golsTimeA = colGolsA !== -1 ? parseScorersString(row[colGolsA]) : []
+        let golsTimeB = colGolsB !== -1 ? parseScorersString(row[colGolsB]) : []
+        if (
+          golsTimeA.length === 0 &&
+          golsTimeB.length === 0 &&
+          autoresDoJogoParenteses.length > 0
+        ) {
+          // Se não há colunas separadas de gols, adiciona autores extraídos dos parênteses do placar
+          golsTimeA = autoresDoJogoParenteses.map((nome) => ({
+            nome,
+            posicao: 'Atacante/Meia',
+            quantidade: 1,
+          }))
+        }
 
         // Predictions for this row
         const palpites: ParsedPrediction[] = []
@@ -840,8 +949,9 @@ export async function parseSpreadsheet(file: File): Promise<{
         if (activeSheetParticipant && colPalpite !== -1) {
           const predCell = row[colPalpite]
           if (predCell !== '' && predCell !== null && predCell !== undefined) {
-            const parsedPred = parseScoreString(predCell)
+            const parsedPred = extractPureScoreString(predCell) || parseScoreString(predCell)
             if (parsedPred) {
+              const predScorers = extractScorersFromParentheses(predCell)
               let pts: number | undefined
               if (
                 colPontuacao !== -1 &&
@@ -869,10 +979,26 @@ export async function parseSpreadsheet(file: File): Promise<{
                 }
               }
 
+              // Se placar palpitado == placar final, garantir 'Placar Exato (+8 pts)' no detalhamento
+              const isExactScore =
+                placarA !== undefined &&
+                placarB !== undefined &&
+                parsedPred.placarA === placarA &&
+                parsedPred.placarB === placarB
+
+              if (isExactScore) {
+                if (!detList) detList = []
+                const hasExact = detList.some((d) => /placar\s*exato/i.test(d))
+                if (!hasExact) {
+                  detList.unshift('Placar Exato (+8 pts)')
+                }
+              }
+
               palpites.push({
                 participanteNome: activeSheetParticipant,
                 placar_a: parsedPred.placarA,
                 placar_b: parsedPred.placarB,
+                goleadores_a: predScorers,
                 pontos: pts,
                 detalhamento: detList,
               })
@@ -885,19 +1011,33 @@ export async function parseSpreadsheet(file: File): Promise<{
           const predCell = row[info.colPred]
           if (predCell === '' || predCell === null || predCell === undefined) continue
 
-          const parsedPred = parseScoreString(predCell)
+          const parsedPred = extractPureScoreString(predCell) || parseScoreString(predCell)
           if (parsedPred) {
+            const predScorers = extractScorersFromParentheses(predCell)
             let pts: number | undefined
             if (info.colPts !== undefined && row[info.colPts] !== '' && row[info.colPts] !== null) {
               const numPts = parseFloat(String(row[info.colPts]).replace(',', '.'))
               if (!isNaN(numPts)) pts = numPts
             }
 
+            let detList: string[] | undefined
+            const isExactScore =
+              placarA !== undefined &&
+              placarB !== undefined &&
+              parsedPred.placarA === placarA &&
+              parsedPred.placarB === placarB
+
+            if (isExactScore) {
+              detList = ['Placar Exato (+8 pts)']
+            }
+
             palpites.push({
               participanteNome: member,
               placar_a: parsedPred.placarA,
               placar_b: parsedPred.placarB,
+              goleadores_a: predScorers,
               pontos: pts,
+              detalhamento: detList,
             })
           }
         }

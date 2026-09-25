@@ -74,6 +74,70 @@ describe('statsCalculator', () => {
     expect(isCravadaExata(palpiteDiferente, jogo)).toBe(false)
   })
 
+  it('isCravadaExata aceita placares históricos com sufixo de marcadores entre parênteses', () => {
+    const jogoComSufixo: Jogo = {
+      id: 'j_hist',
+      bolao: 'b_hist',
+      time_a: 'Atlético de Madrid',
+      time_b: 'Sevilla',
+      data: '2026-06-01',
+      hora: '16:00',
+      placar_a: '3x0 (Samuel Lino 2x e Carrascal)' as any,
+      placar_b: 0 as any,
+      resultado_finalizado: true,
+      tem_penaltis: false,
+      created: '',
+      updated: '',
+      collectionId: '',
+      collectionName: '',
+    }
+
+    const palpiteComSufixo: Palpite = {
+      id: 'p_hist',
+      bolao: 'b_hist',
+      jogo: 'j_hist',
+      participante: 'p_douglas',
+      placar_a: '3x0 (Pedro, Samuel Lino e Léo Pereira)' as any,
+      placar_b: 0 as any,
+      pontuacao_jogo: 9,
+      detalhamento: ['gol do Samuel Lino'],
+      created: '',
+      updated: '',
+      collectionId: '',
+      collectionName: '',
+    }
+
+    expect(isCravadaExata(palpiteComSufixo, jogoComSufixo)).toBe(true)
+    expect(isResultadoAcertado(palpiteComSufixo, jogoComSufixo)).toBe(true)
+
+    // Casos 1x1 e 2x1 normais e com sufixos
+    const jogo1x1: Jogo = {
+      ...jogoComSufixo,
+      placar_a: 1,
+      placar_b: 1,
+    }
+    const palpite1x1: Palpite = {
+      ...palpiteComSufixo,
+      placar_a: 1,
+      placar_b: 1,
+      detalhamento: [],
+    }
+    expect(isCravadaExata(palpite1x1, jogo1x1)).toBe(true)
+
+    const jogo2x1: Jogo = {
+      ...jogoComSufixo,
+      placar_a: 2,
+      placar_b: 1,
+    }
+    const palpite2x1: Palpite = {
+      ...palpiteComSufixo,
+      placar_a: 2,
+      placar_b: 1,
+      detalhamento: [],
+    }
+    expect(isCravadaExata(palpite2x1, jogo2x1)).toBe(true)
+  })
+
   it('detects outcome result (winner/draw) correctly', () => {
     const jogo: Jogo = {
       id: 'j1',

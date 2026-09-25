@@ -1,6 +1,12 @@
 import { describe, it, expect } from 'vitest'
 import * as XLSX from 'xlsx'
-import { parseScoreString, calculateMatchScore, parseSpreadsheet } from './spreadsheetParser'
+import {
+  parseScoreString,
+  extractPureScoreString,
+  extractScorersFromParentheses,
+  calculateMatchScore,
+  parseSpreadsheet,
+} from './spreadsheetParser'
 
 describe('parseScoreString', () => {
   it('handles standard score patterns "1x2", "1 x 2", "1-2", "0x0", "1x0", "3x1", "2 x 2"', () => {
@@ -41,6 +47,80 @@ describe('parseScoreString', () => {
     expect(parseScoreString('08/11 -')).toBeNull()
     expect(parseScoreString('01/11/2024')).toBeNull()
     expect(parseScoreString('01/11')).toBeNull()
+  })
+})
+
+describe('extractPureScoreString e extractScorersFromParentheses', () => {
+  it('extractPureScoreString corta tudo a partir do "(" e retorna o placar puro', () => {
+    expect(extractPureScoreString('3x0 (Samuel Lino 2x e Carrascal)')).toEqual({
+      placarA: 3,
+      placarB: 0,
+    })
+    expect(extractPureScoreString('3x0 (Pedro, Samuel Lino e Léo Pereira)')).toEqual({
+      placarA: 3,
+      placarB: 0,
+    })
+    expect(extractPureScoreString('1x1')).toEqual({ placarA: 1, placarB: 1 })
+    expect(extractPureScoreString('2x1')).toEqual({ placarA: 2, placarB: 1 })
+    expect(extractPureScoreString('2 - 1')).toEqual({ placarA: 2, placarB: 1 })
+    expect(extractPureScoreString('2:1')).toEqual({ placarA: 2, placarB: 1 })
+    expect(extractPureScoreString('2 a 1')).toEqual({ placarA: 2, placarB: 1 })
+    expect(extractPureScoreString('12/34')).toBeNull()
+    expect(extractPureScoreString('01/11 -')).toBeNull()
+    expect(extractPureScoreString('')).toBeNull()
+    expect(extractPureScoreString(null)).toBeNull()
+  })
+
+  it('extractScorersFromParentheses extrai autores tratando multiplicadores', () => {
+    expect(extractScorersFromParentheses('3x0 (Samuel Lino 2x e Carrascal)')).toEqual([
+      'Samuel Lino',
+      'Samuel Lino',
+      'Carrascal',
+    ])
+    expect(extractScorersFromParentheses('3x0 (Pedro, Samuel Lino e Léo Pereira)')).toEqual([
+      'Pedro',
+      'Samuel Lino',
+      'Léo Pereira',
+    ])
+    expect(extractScorersFromParentheses('1x1')).toEqual([])
+    expect(extractScorersFromParentheses('2x1')).toEqual([])
+    expect(extractScorersFromParentheses('3x1 (2x Haaland e De Bruyne)')).toEqual([
+      'Haaland',
+      'Haaland',
+      'De Bruyne',
+    ])
+  })
+
+  it('"3x0 (Samuel Lino 2x e Carrascal)" vs "3x0 (Pedro, Samuel Lino e Léo Pereira)" = cravada + marcadores corretos', () => {
+    const rawPlacarReal = '3x0 (Samuel Lino 2x e Carrascal)'
+    const rawPalpite = '3x0 (Pedro, Samuel Lino e Léo Pereira)'
+
+    const realScore = extractPureScoreString(rawPlacarReal)!
+    const predScore = extractPureScoreString(rawPalpite)!
+    expect(realScore).toEqual({ placarA: 3, placarB: 0 })
+    expect(predScore).toEqual({ placarA: 3, placarB: 0 })
+
+    const realScorers = extractScorersFromParentheses(rawPlacarReal)
+    const predScorers = extractScorersFromParentheses(rawPalpite)
+
+    expect(realScorers).toEqual(['Samuel Lino', 'Samuel Lino', 'Carrascal'])
+    expect(predScorers).toEqual(['Pedro', 'Samuel Lino', 'Léo Pereira'])
+
+    const calc = calculateMatchScore(
+      predScore.placarA,
+      predScore.placarB,
+      realScore.placarA,
+      realScore.placarB,
+      predScorers,
+      [],
+      realScorers.map((nome) => ({ nome, posicao: 'Atacante/Meia', quantidade: 1 })),
+      [],
+    )
+
+    // Cravada exata (+8 pts) + 1 acerto de Samuel Lino (+1 pt) = 9 pts
+    expect(calc.pontos).toBe(9)
+    expect(calc.detalhamento).toContain('Placar Exato (+8 pts)')
+    expect(calc.detalhamento.some((d) => d.includes('Samuel Lino'))).toBe(true)
   })
 })
 

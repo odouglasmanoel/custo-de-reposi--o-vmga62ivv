@@ -1,4 +1,5 @@
 import { BOLAO_MEMBERS } from '@/context/AuthContext'
+import { extractPureScoreString, parseScoreString } from '@/lib/spreadsheetParser'
 import type { Bolao, Jogo, Palpite, Participante } from '@/types/bolao'
 
 export interface ParticipantStats {
@@ -113,7 +114,36 @@ export function normalizeMemberName(name: string): string {
 }
 
 /**
+ * Extrai placar numérico aceitando números, strings simples e strings históricas
+ * com sufixo de marcadores entre parênteses (ex: "3x0 (Samuel Lino 2x e Carrascal)").
+ */
+function resolveScorePair(valA: any, valB: any): { a: number; b: number } | null {
+  if (valA !== null && valA !== undefined && valB !== null && valB !== undefined) {
+    const numA = Number(valA)
+    const numB = Number(valB)
+    if (!isNaN(numA) && !isNaN(numB)) {
+      return { a: numA, b: numB }
+    }
+  }
+  // Se valA contém string completa com placar
+  if (typeof valA === 'string' && valA.trim()) {
+    const parsed = extractPureScoreString(valA) || parseScoreString(valA)
+    if (parsed) {
+      return { a: parsed.placarA, b: parsed.placarB }
+    }
+  }
+  if (typeof valB === 'string' && valB.trim()) {
+    const parsed = extractPureScoreString(valB) || parseScoreString(valB)
+    if (parsed) {
+      return { a: parsed.placarA, b: parsed.placarB }
+    }
+  }
+  return null
+}
+
+/**
  * Verifica se um palpite é uma cravada exata (placar exato)
+ * Aceita placares históricos com sufixo de marcadores entre parênteses.
  */
 export function isCravadaExata(palpite: Palpite, jogo: Jogo): boolean {
   // 1. Detalhamento gravado (funciona mesmo se placar do jogo não estiver preenchido ou for histórico)
@@ -124,34 +154,18 @@ export function isCravadaExata(palpite: Palpite, jogo: Jogo): boolean {
     if (hasExactText) return true
   }
 
-  // 2. Pontuação oficial indicativa de cravada caso não haja placar preenchido
+  const pScore = resolveScorePair(palpite.placar_a, palpite.placar_b)
+  const jScore = resolveScorePair(jogo.placar_a, jogo.placar_b)
+
+  // 2. Pontuação oficial indicativa de cravada caso não haja placar preenchido no jogo
   if (Number(palpite.pontuacao_jogo) >= 8) {
-    // Se recebeu 8 ou mais pontos e tem placar coincidente
-    if (
-      jogo.placar_a !== null &&
-      jogo.placar_a !== undefined &&
-      jogo.placar_b !== null &&
-      jogo.placar_b !== undefined &&
-      Number(palpite.placar_a) === Number(jogo.placar_a) &&
-      Number(palpite.placar_b) === Number(jogo.placar_b)
-    ) {
+    if (pScore && jScore && pScore.a === jScore.a && pScore.b === jScore.b) {
       return true
     }
   }
 
-  // 3. Comparação direta de placar
-  if (
-    jogo.placar_a !== null &&
-    jogo.placar_a !== undefined &&
-    jogo.placar_b !== null &&
-    jogo.placar_b !== undefined &&
-    palpite.placar_a !== null &&
-    palpite.placar_a !== undefined &&
-    palpite.placar_b !== null &&
-    palpite.placar_b !== undefined &&
-    Number(palpite.placar_a) === Number(jogo.placar_a) &&
-    Number(palpite.placar_b) === Number(jogo.placar_b)
-  ) {
+  // 3. Comparação direta de placar (aceitando sufixos entre parênteses)
+  if (pScore && jScore && pScore.a === jScore.a && pScore.b === jScore.b) {
     return true
   }
 
@@ -160,6 +174,7 @@ export function isCravadaExata(palpite: Palpite, jogo: Jogo): boolean {
 
 /**
  * Verifica se o palpite acertou o resultado final (vencedor do jogo ou empate - 3-way)
+ * Aceita placares históricos com sufixo de marcadores entre parênteses.
  */
 export function isResultadoAcertado(palpite: Palpite, jogo: Jogo): boolean {
   // 1. Detalhamento gravado (retroativo / histórico)
@@ -170,32 +185,21 @@ export function isResultadoAcertado(palpite: Palpite, jogo: Jogo): boolean {
     if (hasResultText) return true
   }
 
+  const pScore = resolveScorePair(palpite.placar_a, palpite.placar_b)
+  const jScore = resolveScorePair(jogo.placar_a, jogo.placar_b)
+
   // 2. Pontuação oficial indicando acerto de resultado
   if (Number(palpite.pontuacao_jogo) >= 2) {
-    if (
-      jogo.placar_a === null ||
-      jogo.placar_a === undefined ||
-      jogo.placar_b === null ||
-      jogo.placar_b === undefined
-    ) {
+    if (!jScore) {
       return true
     }
   }
 
   // 3. Comparação direta do vencedor / empate
-  if (
-    jogo.placar_a !== null &&
-    jogo.placar_a !== undefined &&
-    jogo.placar_b !== null &&
-    jogo.placar_b !== undefined &&
-    palpite.placar_a !== null &&
-    palpite.placar_a !== undefined &&
-    palpite.placar_b !== null &&
-    palpite.placar_b !== undefined
-  ) {
+  if (pScore && jScore) {
     const getWinner = (a: number, b: number) => (a > b ? 1 : b > a ? -1 : 0)
-    const realWinner = getWinner(Number(jogo.placar_a), Number(jogo.placar_b))
-    const predWinner = getWinner(Number(palpite.placar_a), Number(palpite.placar_b))
+    const realWinner = getWinner(jScore.a, jScore.b)
+    const predWinner = getWinner(pScore.a, pScore.b)
 
     if (realWinner === predWinner) {
       return true
@@ -226,20 +230,12 @@ function cleanScorerKey(str: string): string {
  * Exemplo: chutou 2x1 e foi 2x2, ou 3x1 e foi 2x1, etc.
  */
 export function isQuaseCravada(palpite: Palpite, jogo: Jogo): boolean {
-  if (jogo.placar_a === null || jogo.placar_a === undefined) return false
-  if (jogo.placar_b === null || jogo.placar_b === undefined) return false
-  if (palpite.placar_a === null || palpite.placar_a === undefined) return false
-  if (palpite.placar_b === null || palpite.placar_b === undefined) return false
+  const pScore = resolveScorePair(palpite.placar_a, palpite.placar_b)
+  const jScore = resolveScorePair(jogo.placar_a, jogo.placar_b)
+  if (!pScore || !jScore) return false
 
-  const pA = Number(palpite.placar_a)
-  const pB = Number(palpite.placar_b)
-  const jA = Number(jogo.placar_a)
-  const jB = Number(jogo.placar_b)
-
-  if (isNaN(pA) || isNaN(pB) || isNaN(jA) || isNaN(jB)) return false
-
-  const diffA = Math.abs(pA - jA)
-  const diffB = Math.abs(pB - jB)
+  const diffA = Math.abs(pScore.a - jScore.a)
+  const diffB = Math.abs(pScore.b - jScore.b)
 
   // Errou por exatamente 1 gol na soma das diferenças
   return diffA + diffB === 1
@@ -260,15 +256,13 @@ function extractScorerPointsFromScoreAndDetails(
   let basePoints = 0
   const combinedText = detList.join(' | ').toLowerCase()
 
+  const pScore = resolveScorePair(palpite.placar_a, palpite.placar_b)
+  const jScore = resolveScorePair(jogo.placar_a, jogo.placar_b)
+
   // 1. Placar Exato: 8 pts
   if (
     combinedText.includes('placar exato') ||
-    (jogo.placar_a !== null &&
-      jogo.placar_b !== null &&
-      palpite.placar_a !== null &&
-      palpite.placar_b !== null &&
-      Number(palpite.placar_a) === Number(jogo.placar_a) &&
-      Number(palpite.placar_b) === Number(jogo.placar_b))
+    (pScore && jScore && pScore.a === jScore.a && pScore.b === jScore.b)
   ) {
     basePoints += 8
   } else {
@@ -284,17 +278,12 @@ function extractScorerPointsFromScoreAndDetails(
     // 3. Diferença de Gols / Saldo: 1 pt
     if (combinedText.includes('diferença de gols') || combinedText.includes('diferenca de gols')) {
       basePoints += 1
-    } else if (
-      jogo.placar_a !== null &&
-      jogo.placar_b !== null &&
-      palpite.placar_a !== null &&
-      palpite.placar_b !== null
-    ) {
+    } else if (pScore && jScore) {
       const getWinner = (a: number, b: number) => (a > b ? 1 : b > a ? -1 : 0)
-      const realWinner = getWinner(Number(jogo.placar_a), Number(jogo.placar_b))
-      const predWinner = getWinner(Number(palpite.placar_a), Number(palpite.placar_b))
-      const realDiff = Math.abs(Number(jogo.placar_a) - Number(jogo.placar_b))
-      const predDiff = Math.abs(Number(palpite.placar_a) - Number(palpite.placar_b))
+      const realWinner = getWinner(jScore.a, jScore.b)
+      const predWinner = getWinner(pScore.a, pScore.b)
+      const realDiff = Math.abs(jScore.a - jScore.b)
+      const predDiff = Math.abs(pScore.a - pScore.b)
       if (realWinner === predWinner && realDiff === predDiff) {
         basePoints += 1
       }
@@ -303,16 +292,8 @@ function extractScorerPointsFromScoreAndDetails(
     // 4. Metade do Placar: 1 pt
     if (combinedText.includes('metade do placar')) {
       basePoints += 1
-    } else if (
-      jogo.placar_a !== null &&
-      jogo.placar_b !== null &&
-      palpite.placar_a !== null &&
-      palpite.placar_b !== null
-    ) {
-      if (
-        Number(palpite.placar_a) === Number(jogo.placar_a) ||
-        Number(palpite.placar_b) === Number(jogo.placar_b)
-      ) {
+    } else if (pScore && jScore) {
+      if (pScore.a === jScore.a || pScore.b === jScore.b) {
         basePoints += 1
       }
     }
