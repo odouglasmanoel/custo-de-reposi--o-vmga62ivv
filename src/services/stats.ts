@@ -119,7 +119,7 @@ export async function fetchStatisticsData(
 
   // Projeção dos campos mínimos estritamente necessários para o cálculo:
   const bolaoFields = 'id,nome,ativo,ultima_atualizacao,foco'
-  const partFields = 'id,bolao,nome,pontuacao_total,pontos_importados'
+  const partFields = 'id,bolao,nome,pontuacao_total,pontos_importados,cravadas_fixas'
   const jogoFields =
     'id,bolao,time_a,time_b,data,hora,placar_a,placar_b,resultado_finalizado,gols_time_a,gols_time_b,tem_penaltis,vencedor_penaltis,competicao'
   const palpiteFields =

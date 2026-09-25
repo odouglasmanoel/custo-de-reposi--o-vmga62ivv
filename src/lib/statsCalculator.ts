@@ -1089,12 +1089,15 @@ export function calculateStatistics(params: {
       s.jogosPalpitadosEncerrados > 0 ? (s.pontosPalpites / tetoMaximo) * 100 : 0
     const aproveitamento = Math.min(100, Math.round(rawAproveitamento * 10) / 10)
 
-    // Cravadas exatas: se há valor consolidado oficial fixo para o participante no recorte selecionado,
-    // o valor fixo oficial prevalece para a coluna CRAVADAS.
-    // Para participantes sem valor fixo informado, preserva a contagem computada dos palpites.
-    const cravadasFinais = cravadasFixasPorMembro.has(nome)
-      ? cravadasFixasPorMembro.get(nome)!
-      : s.cravadasExatas
+    // Cravadas exatas (Fórmula Oficial):
+    // [Cravadas Históricas Importadas (valor fixo por copa)] + [Cravadas computadas de jogos encerrados via App].
+    // No filtro de copa específica: valor fixo daquela copa + cravadas do app daquela copa.
+    // No "Geral (Todas as Copas)": soma dos fixos de todas as copas + cravadas do app.
+    // Se o participante possui valor fixo cadastrado (ex: Douglas com 19 no Geral, ou 0 para outros), soma s.cravadasExatas.
+    // Para compatibilidade com testes unitários em que os valores oficiais declarados já representam o consolidado total desejado,
+    // se s.cravadasExatas já vier dos palpites do app, soma ambos.
+    const fixoImportado = cravadasFixasPorMembro.get(nome) || 0
+    const cravadasFinais = fixoImportado + s.cravadasExatas
 
     return {
       nome,

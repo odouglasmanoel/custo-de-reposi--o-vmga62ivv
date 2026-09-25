@@ -1812,4 +1812,150 @@ describe('statsCalculator', () => {
     })
     expect(statsGenilton.tabela.find((t) => t.nome === 'Douglas')?.cravadasExatas).toBe(3)
   })
+
+  it('valida a fórmula oficial de cravadas: [Cravadas Históricas Importadas] + [Cravadas do App] por copa e no geral', () => {
+    const boloes: Bolao[] = [
+      {
+        id: 'hy6ade9obylh404',
+        nome: 'Copa do Mundo',
+        ativo: false,
+        created: '',
+        updated: '',
+        collectionId: '',
+        collectionName: '',
+      },
+      {
+        id: 'kr20rfjisajd6ro',
+        nome: 'Copa Coni',
+        ativo: true,
+        created: '',
+        updated: '',
+        collectionId: '',
+        collectionName: '',
+      },
+    ]
+
+    const participantes: Participante[] = [
+      {
+        id: 'part_doug_copa',
+        bolao: 'hy6ade9obylh404',
+        nome: 'Douglas',
+        pontos_importados: 150,
+        cravadas_fixas: 8,
+        pontuacao_total: 230,
+        created: '',
+        updated: '',
+        collectionId: '',
+        collectionName: '',
+      },
+      {
+        id: 'part_doug_coni',
+        bolao: 'kr20rfjisajd6ro',
+        nome: 'Douglas',
+        pontos_importados: 61,
+        cravadas_fixas: 6,
+        pontuacao_total: 190,
+        created: '',
+        updated: '',
+        collectionId: '',
+        collectionName: '',
+      },
+      {
+        id: 'part_davi_coni',
+        bolao: 'kr20rfjisajd6ro',
+        nome: 'Davi',
+        pontos_importados: 56,
+        cravadas_fixas: 0,
+        pontuacao_total: 215,
+        created: '',
+        updated: '',
+        collectionId: '',
+        collectionName: '',
+      },
+    ]
+
+    // Jogo encerrado via App na Copa Coni com placar 2x1
+    const appGame: Jogo = {
+      id: 'jogo_app_1',
+      bolao: 'kr20rfjisajd6ro',
+      time_a: 'Corinthians',
+      time_b: 'Palmeiras',
+      data: '2026-09-24',
+      hora: '20:00',
+      placar_a: 2,
+      placar_b: 1,
+      resultado_finalizado: true,
+      tem_penaltis: false,
+      created: '',
+      updated: '',
+      collectionId: '',
+      collectionName: '',
+    }
+
+    // Douglas cravou 2x1 no jogo do App (+1 cravada via App)
+    // Davi cravou 2x1 no jogo do App (+1 cravada via App)
+    const palpites: Palpite[] = [
+      {
+        id: 'bet_doug_app',
+        bolao: 'kr20rfjisajd6ro',
+        jogo: 'jogo_app_1',
+        participante: 'part_doug_coni',
+        placar_a: 2,
+        placar_b: 1,
+        pontuacao_jogo: 8,
+        detalhamento: ['Placar Exato (+8 pts)'],
+        created: '',
+        updated: '',
+        collectionId: '',
+        collectionName: '',
+      },
+      {
+        id: 'bet_davi_app',
+        bolao: 'kr20rfjisajd6ro',
+        jogo: 'jogo_app_1',
+        participante: 'part_davi_coni',
+        placar_a: 2,
+        placar_b: 1,
+        pontuacao_jogo: 8,
+        detalhamento: ['Placar Exato (+8 pts)'],
+        created: '',
+        updated: '',
+        collectionId: '',
+        collectionName: '',
+      },
+    ]
+
+    // 1. Filtro Copa Coni:
+    // Douglas = 6 fixas importadas + 1 cravada app = 7
+    // Davi = 0 fixas importadas + 1 cravada app = 1
+    const statsConi = calculateStatistics({
+      boloes,
+      participantes,
+      jogos: [appGame],
+      palpites,
+      filtroBolaoId: 'kr20rfjisajd6ro',
+    })
+    const dougConiRow = statsConi.tabela.find((t) => t.nome === 'Douglas')
+    const daviConiRow = statsConi.tabela.find((t) => t.nome === 'Davi')
+    expect(dougConiRow?.cravadasExatas).toBe(6 + 1)
+    expect(daviConiRow?.cravadasExatas).toBe(0 + 1)
+
+    // 2. Filtro Geral:
+    // Douglas = (8 + 6) fixas + 1 app = 15 cravadas
+    // Davi = 0 fixas + 1 app = 1 cravada
+    const statsGeral = calculateStatistics({
+      boloes,
+      participantes,
+      jogos: [appGame],
+      palpites,
+      filtroBolaoId: 'geral',
+    })
+    const dougGeralRow = statsGeral.tabela.find((t) => t.nome === 'Douglas')
+    const daviGeralRow = statsGeral.tabela.find((t) => t.nome === 'Davi')
+    expect(dougGeralRow?.cravadasExatas).toBe(14 + 1)
+    expect(daviGeralRow?.cravadasExatas).toBe(0 + 1)
+
+    // Isolamento: total de pontos do Douglas = 150 + 61 + 8 = 219
+    expect(dougGeralRow?.totalPontos).toBe(150 + 61 + 8)
+  })
 })
