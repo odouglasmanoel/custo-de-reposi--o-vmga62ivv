@@ -64,6 +64,7 @@ import { ParticipantBetsModal } from '@/components/ParticipantBetsModal'
 import { FichaJogo } from '@/components/FichaJogo'
 import { Users, ChevronRight, RefreshCw } from 'lucide-react'
 import { useToast } from '@/hooks/use-toast'
+import { clearFichaJogoCache } from '@/services/eventosJogo'
 import { buscarEscudoTime, readEscudoCache } from '@/services/enquetes'
 import { getFlagCdnUrl, resolveTeamBadgeUrl } from '@/lib/flags'
 
@@ -379,6 +380,7 @@ export default function BolaoDashboard() {
 
   // Estado de loading individual para o botão de atualizar placar ao vivo
   const [updatingLiveGameId, setUpdatingLiveGameId] = useState<string | null>(null)
+  const [isUpdatingAllLive, setIsUpdatingAllLive] = useState<boolean>(false)
 
   // Modal de sobrescrita manual de partida em andamento pelo Admin Douglas
   const [adminSobrescritaJogo, setAdminSobrescritaJogo] = useState<{
@@ -720,6 +722,117 @@ export default function BolaoDashboard() {
   }
 
   // Atualização direta do placar ao vivo e marcadores via API-Sports
+  const handleAtualizarTodosPlacares = async () => {
+    if (jogosDeHoje.length === 0) return
+
+    try {
+      setIsUpdatingAllLive(true)
+
+      if (pb.authStore.isValid) {
+        try {
+          await pb.collection('users').authRefresh()
+        } catch (_) {
+          // segue com o token atual
+        }
+      }
+
+      const idsDosJogosDeHoje = jogosDeHoje.map((j) => j.id)
+      const fixturesDosJogos = Array.from(
+        new Set(
+          jogosDeHoje
+            .map((j) => (j.api_fixture_id || j.fixture_id || '').toString().trim())
+            .filter((f) => /^\d+$/.test(f)),
+        ),
+      )
+
+      const res = await pb.send<{
+        success: boolean
+        message?: string
+        notice?: string
+        error?: string
+        rate_limited?: boolean
+        total_jogos?: number
+        atualizados?: number
+        jogos?: Partial<Jogo>[]
+      }>('/backend/v1/placar-ao-vivo/atualizar-todos', {
+        method: 'POST',
+        body: {
+          jogoIds: idsDosJogosDeHoje,
+          fixtureIds: fixturesDosJogos,
+        },
+      })
+
+      if (res?.success) {
+        toast({
+          title: 'Placares e fichas atualizados',
+          description:
+            res.message ||
+            `Placares e fichas técnicas de ${res.atualizados ?? jogosDeHoje.length} partida(s) sincronizados em 1 chamada!`,
+        })
+
+        // Limpa caches locais de dashboard e fichas técnicas
+        clearDashboardCache()
+        clearFichaJogoCache()
+
+        if (Array.isArray(res.jogos) && res.jogos.length > 0) {
+          const mapNovosJogos = new Map(res.jogos.map((j) => [j.id, j]))
+          setJogos((prev) =>
+            prev.map((j) => (mapNovosJogos.has(j.id) ? { ...j, ...mapNovosJogos.get(j.id) } : j)),
+          )
+          setAllJogos((prev) =>
+            prev.map((j) => (mapNovosJogos.has(j.id) ? { ...j, ...mapNovosJogos.get(j.id) } : j)),
+          )
+        }
+
+        await loadData(true)
+      } else if (res?.notice) {
+        toast({
+          title: 'Aviso',
+          description: res.notice,
+        })
+      } else {
+        toast({
+          title: 'Aviso',
+          description: res?.error || 'Não foi possível atualizar todos os placares.',
+          variant: 'destructive',
+        })
+      }
+    } catch (err: any) {
+      const status = err?.status || err?.statusCode
+      const isAuthError =
+        status === 401 ||
+        status === 403 ||
+        err?.data?.error?.toLowerCase?.().includes('não autorizado') ||
+        err?.data?.error?.toLowerCase?.().includes('sessão expirou') ||
+        err?.message?.toLowerCase?.().includes('não autorizado')
+
+      if (isAuthError) {
+        toast({
+          title: 'Sessão expirada',
+          description: 'Sua sessão expirou. Faça login novamente.',
+          variant: 'destructive',
+        })
+        navigate('/login', {
+          state: { from: location.pathname, sessionExpired: true },
+          replace: true,
+        })
+        return
+      }
+
+      const errMsg =
+        err?.data?.error ||
+        err?.message ||
+        'Falha ao atualizar placares em lote. A cota diária pode estar esgotada ou verifique a conexão.'
+      toast({
+        title: status === 429 ? 'Cota Diária da API' : 'Erro na atualização',
+        description: errMsg,
+        variant: status === 429 ? 'default' : 'destructive',
+      })
+    } finally {
+      setIsUpdatingAllLive(false)
+    }
+  }
+
   const handleAtualizarPlacarAoVivo = async (jogo: Jogo) => {
     if (!isAdmin) return
     const fid = (jogo.fixture_id || '').trim()
@@ -2227,32 +2340,59 @@ export default function BolaoDashboard() {
             </div>
           </div>
 
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={handleCopiarWhatsApp}
-            disabled={jogosDeHoje.length === 0}
-            className={cn(
-              'h-8 px-3 text-xs font-bold transition-all',
-              copiado
-                ? 'border-emerald-300 bg-emerald-50 text-emerald-800 hover:bg-emerald-100'
-                : 'border-slate-300 text-slate-700 hover:bg-slate-50',
+          <div className="flex items-center gap-2 flex-wrap">
+            {isAdmin && (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={handleAtualizarTodosPlacares}
+                disabled={isUpdatingAllLive || jogosDeHoje.length === 0}
+                className={cn(
+                  'h-8 px-3 text-xs font-bold transition-all border-emerald-300 bg-emerald-50 text-emerald-800 hover:bg-emerald-100 flex items-center gap-1.5',
+                  isUpdatingAllLive && 'opacity-70 cursor-not-allowed',
+                )}
+                title="Atualizar placares ao vivo e fichas de todos os jogos de hoje em 1 única chamada"
+              >
+                <RefreshCw
+                  className={cn(
+                    'h-3.5 w-3.5 text-emerald-700',
+                    isUpdatingAllLive && 'animate-spin',
+                  )}
+                />
+                <span>
+                  {isUpdatingAllLive ? 'Atualizando Todos...' : 'Atualizar Todos os Placares'}
+                </span>
+              </Button>
             )}
-            title="Copiar lista de pendentes formatada para o WhatsApp"
-          >
-            {copiado ? (
-              <>
-                <Check className="h-3.5 w-3.5 text-emerald-600 mr-1.5 shrink-0" />
-                <span>Copiado!</span>
-              </>
-            ) : (
-              <>
-                <Copy className="h-3.5 w-3.5 text-slate-600 mr-1.5 shrink-0" />
-                <span>Cobrar WhatsApp</span>
-              </>
-            )}
-          </Button>
+
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={handleCopiarWhatsApp}
+              disabled={jogosDeHoje.length === 0}
+              className={cn(
+                'h-8 px-3 text-xs font-bold transition-all',
+                copiado
+                  ? 'border-emerald-300 bg-emerald-50 text-emerald-800 hover:bg-emerald-100'
+                  : 'border-slate-300 text-slate-700 hover:bg-slate-50',
+              )}
+              title="Copiar lista de pendentes formatada para o WhatsApp"
+            >
+              {copiado ? (
+                <>
+                  <Check className="h-3.5 w-3.5 text-emerald-600 mr-1.5 shrink-0" />
+                  <span>Copiado!</span>
+                </>
+              ) : (
+                <>
+                  <Copy className="h-3.5 w-3.5 text-slate-600 mr-1.5 shrink-0" />
+                  <span>Cobrar WhatsApp</span>
+                </>
+              )}
+            </Button>
+          </div>
         </div>
 
         <div className="pt-3">
