@@ -96,6 +96,8 @@ export const SELECAO_FLAG_MAP: Record<string, string> = {
   paisdegales: 'gb-wls',
   gales: 'gb-wls',
   wales: 'gb-wls',
+  cymru: 'gb-wls',
+  alba: 'gb-sct',
   japao: 'jp',
   japan: 'jp',
   uruguai: 'uy',
@@ -318,13 +320,25 @@ export function getCountryIsoCode(teamName?: string | null): string | null {
   return null
 }
 
+// Versão/timestamp estável da sessão para cache-busting de bandeiras FlagCDN
+export const FLAG_CDN_CACHE_VERSION = '20260925_v1'
+
 /**
  * Retorna a URL FlagCDN https://flagcdn.com/w80/{iso}.png para seleções conhecidas, ou null se não for seleção.
+ * Suporta parâmetro opcional cacheBust (ex: ?v=...) para prevenir cache quebrado em navegadores mobile.
  */
-export function getFlagCdnUrl(teamName?: string | null): string | null {
+export function getFlagCdnUrl(
+  teamName?: string | null,
+  options?: { cacheBust?: boolean | string },
+): string | null {
   const iso = getCountryIsoCode(teamName)
   if (!iso) return null
-  return `https://flagcdn.com/w80/${iso.toLowerCase()}.png`
+  const base = `https://flagcdn.com/w80/${iso.toLowerCase()}.png`
+  if (options?.cacheBust) {
+    const v = typeof options.cacheBust === 'string' ? options.cacheBust : FLAG_CDN_CACHE_VERSION
+    return `${base}?v=${v}`
+  }
+  return base
 }
 
 /**
@@ -367,6 +381,8 @@ export const OFFICIAL_NATIONAL_TEAM_IDS: Record<string, number> = {
   paisdegales: 767,
   gales: 767,
   wales: 767,
+  escocia: 1108,
+  scotland: 1108,
   irlandadonorte: 771,
   northernireland: 771,
   noruega: 1090,
@@ -437,13 +453,14 @@ export function resolveTeamBadgeUrl(params: {
   savedBadge?: string | null
   liveOrCacheBadge?: string | null
   isCorrompido?: (name: string, url?: string | null) => boolean
+  cacheBust?: boolean | string
 }): string | null {
-  const { teamName, savedBadge, liveOrCacheBadge, isCorrompido } = params
+  const { teamName, savedBadge, liveOrCacheBadge, isCorrompido, cacheBust } = params
   if (!teamName) return null
 
   const checkCorrompido = isCorrompido || (() => false)
   const isSelecao = isNationalTeam(teamName)
-  const flagUrl = getFlagCdnUrl(teamName)
+  const flagUrl = getFlagCdnUrl(teamName, { cacheBust })
 
   if (isSelecao) {
     // 1. Se houver savedBadge oficial da seleção sem contaminação

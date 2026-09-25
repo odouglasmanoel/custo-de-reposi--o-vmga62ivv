@@ -100,7 +100,7 @@ function TeamShield({
       // 2º fallback: Se for seleção nacional, recorre a FlagCDN (garante que seleções NUNCA fiquem sem imagem)
       if (!triedFlagCdn) {
         setTriedFlagCdn(true)
-        const flagUrl = getFlagCdnUrl(nomeTime)
+        const flagUrl = getFlagCdnUrl(nomeTime, { cacheBust: true })
         if (flagUrl && flagUrl !== currentSrc) {
           setCurrentSrc(flagUrl)
           return
@@ -112,7 +112,8 @@ function TeamShield({
 
   if (!currentSrc || hasError) {
     // Se a imagem falhou mas for seleção conhecida e ainda não tentamos a FlagCDN diretamente:
-    const flagFallback = !triedFlagCdn && nomeTime ? getFlagCdnUrl(nomeTime) : null
+    const flagFallback =
+      !triedFlagCdn && nomeTime ? getFlagCdnUrl(nomeTime, { cacheBust: true }) : null
     if (flagFallback && flagFallback !== currentSrc) {
       return (
         <div className={`${sizeClass} shrink-0 flex items-center justify-center`}>
@@ -122,6 +123,7 @@ function TeamShield({
             className="w-full h-full object-contain drop-shadow-xs"
             loading="eager"
             decoding="async"
+            crossOrigin="anonymous"
             onError={() => {
               setTriedFlagCdn(true)
               setHasError(true)
@@ -148,6 +150,7 @@ function TeamShield({
         className="w-full h-full object-contain drop-shadow-xs"
         loading="eager"
         decoding="async"
+        crossOrigin={currentSrc.includes('flagcdn.com') ? 'anonymous' : undefined}
         onError={handleError}
       />
     </div>

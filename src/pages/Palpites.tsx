@@ -1110,7 +1110,7 @@ export default function Palpites() {
         // 2º fallback: Se for seleção nacional, recorre a FlagCDN (garante que seleções NUNCA fiquem sem imagem ou com monograma)
         if (!triedFlagCdn) {
           setTriedFlagCdn(true)
-          const flagUrl = getFlagCdnUrl(nomeTime)
+          const flagUrl = getFlagCdnUrl(nomeTime, { cacheBust: true })
           if (flagUrl && flagUrl !== currentSrc) {
             setCurrentSrc(flagUrl)
             return
@@ -1121,7 +1121,8 @@ export default function Palpites() {
     }
 
     if (!currentSrc || hasError) {
-      const flagFallback = !triedFlagCdn && nomeTime ? getFlagCdnUrl(nomeTime) : null
+      const flagFallback =
+        !triedFlagCdn && nomeTime ? getFlagCdnUrl(nomeTime, { cacheBust: true }) : null
       if (flagFallback && flagFallback !== currentSrc) {
         return (
           <img
@@ -1130,6 +1131,7 @@ export default function Palpites() {
             className={`${sizeClass} object-contain drop-shadow-xs`}
             loading="eager"
             decoding="async"
+            crossOrigin="anonymous"
             onError={() => {
               setTriedFlagCdn(true)
               setHasError(true)
@@ -1154,6 +1156,7 @@ export default function Palpites() {
         className={`${sizeClass} object-contain drop-shadow-xs`}
         loading="eager"
         decoding="async"
+        crossOrigin={currentSrc.includes('flagcdn.com') ? 'anonymous' : undefined}
         onError={handleError}
       />
     )

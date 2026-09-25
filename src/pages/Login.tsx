@@ -64,8 +64,8 @@ export default function Login() {
 
     // Normalização via função utilitária compartilhada:
     // "brunol" -> "brunol@repress.com.br", "brunox" -> "brunox@repress.com.br"
-    // "douglas.manoel@repress.com.br" -> preservado
-    const normalizedIdentifier = normalizarLogin(rawIdentifier)
+    // "douglas.manoel@repress.com.br" -> preservado (case-insensitive e sem espaços de autocorreção mobile)
+    const normalizedIdentifier = normalizarLogin(rawIdentifier.toLowerCase())
 
     setLoading(true)
     try {
@@ -105,7 +105,12 @@ export default function Login() {
       }
     } catch (err: unknown) {
       console.error('Falha na autenticação:', err)
-      setError('Login ou senha inválidos')
+      const errObj = err as { status?: number; message?: string }
+      if (errObj?.status === 0 || errObj?.message?.toLowerCase().includes('failed to fetch')) {
+        setError('Não foi possível conectar ao servidor. Verifique sua conexão à internet.')
+      } else {
+        setError('Login ou senha inválidos')
+      }
     } finally {
       setLoading(false)
     }
@@ -192,6 +197,9 @@ export default function Login() {
                     onChange={(e) => setLogin(e.target.value)}
                     className="h-11 border-[#CBD5E1] pl-9 text-sm focus-visible:border-[#10B981] focus-visible:ring-[#10B981]"
                     autoComplete="username"
+                    autoCapitalize="none"
+                    autoCorrect="off"
+                    spellCheck={false}
                   />
                 </div>
                 {loginError && <p className="mt-1 text-xs text-red-600">{loginError}</p>}

@@ -185,6 +185,49 @@ describe('flags.ts - FlagCDN Helper e Seleções Nacionais', () => {
     expect(getCountryIsoCode('Northern Ireland')).toBe('gb-nir')
     expect(getCountryIsoCode('Northern Ireland')).not.toBe('ie')
     expect(getFlagCdnUrl('Irlanda do Norte')).toBe('https://flagcdn.com/w80/gb-nir.png')
+  })
+
+  it('trata explicitamente as 4 nações do Reino Unido (País de Gales, Irlanda do Norte, Escócia, Inglaterra)', () => {
+    // País de Gales / Gales -> gb-wls
+    expect(getCountryIsoCode('País de Gales')).toBe('gb-wls')
+    expect(getCountryIsoCode('Gales')).toBe('gb-wls')
+    expect(getCountryIsoCode('Wales')).toBe('gb-wls')
+    expect(getCountryIsoCode('Cymru')).toBe('gb-wls')
+    expect(getFlagCdnUrl('País de Gales')).toBe('https://flagcdn.com/w80/gb-wls.png')
+    expect(getFlagCdnUrl('Gales')).toBe('https://flagcdn.com/w80/gb-wls.png')
+    expect(isNationalTeam('País de Gales')).toBe(true)
+    expect(isNationalTeam('Gales')).toBe(true)
+
+    // Irlanda do Norte -> gb-nir (e nunca ie)
+    expect(getCountryIsoCode('Irlanda do Norte')).toBe('gb-nir')
+    expect(getCountryIsoCode('Northern Ireland')).toBe('gb-nir')
+    expect(getCountryIsoCode('Irlanda do Norte')).not.toBe('ie')
+    expect(getFlagCdnUrl('Irlanda do Norte')).toBe('https://flagcdn.com/w80/gb-nir.png')
+    expect(getCountryIsoCode('Irlanda')).toBe('ie')
+    expect(getFlagCdnUrl('Irlanda')).toBe('https://flagcdn.com/w80/ie.png')
+    expect(isNationalTeam('Irlanda do Norte')).toBe(true)
+
+    // Escócia -> gb-sct
+    expect(getCountryIsoCode('Escócia')).toBe('gb-sct')
+    expect(getCountryIsoCode('escocia')).toBe('gb-sct')
+    expect(getCountryIsoCode('Scotland')).toBe('gb-sct')
+    expect(getFlagCdnUrl('Escócia')).toBe('https://flagcdn.com/w80/gb-sct.png')
+    expect(getFlagCdnUrl('Scotland')).toBe('https://flagcdn.com/w80/gb-sct.png')
+    expect(isNationalTeam('Escócia')).toBe(true)
+
+    // Inglaterra -> gb-eng
+    expect(getCountryIsoCode('Inglaterra')).toBe('gb-eng')
+    expect(getCountryIsoCode('inglaterra')).toBe('gb-eng')
+    expect(getCountryIsoCode('England')).toBe('gb-eng')
+    expect(getFlagCdnUrl('Inglaterra')).toBe('https://flagcdn.com/w80/gb-eng.png')
+    expect(getFlagCdnUrl('England')).toBe('https://flagcdn.com/w80/gb-eng.png')
+    expect(isNationalTeam('Inglaterra')).toBe(true)
+
+    // Suporte a subcódigo direto
+    expect(getCountryIsoCode('gb-wls')).toBe('gb-wls')
+    expect(getCountryIsoCode('gb-nir')).toBe('gb-nir')
+    expect(getCountryIsoCode('gb-sct')).toBe('gb-sct')
+    expect(getCountryIsoCode('gb-eng')).toBe('gb-eng')
 
     // Zimbábue -> zw
     expect(getCountryIsoCode('Zimbábue')).toBe('zw')
@@ -246,6 +289,13 @@ describe('flags.ts - FlagCDN Helper e Seleções Nacionais', () => {
     expect(getCountryIsoCode('sl')).toBe('sl')
     expect(getCountryIsoCode('cf')).toBe('cf')
     expect(getCountryIsoCode('bf')).toBe('bf')
+
+    // Cache busting e crossOrigin support
+    expect(getFlagCdnUrl('País de Gales', { cacheBust: true })).toContain('gb-wls.png?v=')
+    expect(getFlagCdnUrl('Irlanda do Norte', { cacheBust: 'v123' })).toBe(
+      'https://flagcdn.com/w80/gb-nir.png?v=v123',
+    )
+    expect(resolveTeamBadgeUrl({ teamName: 'Escócia', cacheBust: true })).toContain('gb-sct.png?v=')
 
     // resolveTeamBadgeUrl gera FlagCDN para as novas seleções quando não há badge certificado
     expect(

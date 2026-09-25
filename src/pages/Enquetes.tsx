@@ -2050,9 +2050,11 @@ export default function Enquetes() {
                           className="h-7 w-7 object-contain shrink-0"
                           loading="lazy"
                           decoding="async"
+                          crossOrigin={logoA.includes('flagcdn.com') ? 'anonymous' : undefined}
                           onError={(e) => {
-                            const flagUrl = getFlagCdnUrl(jogo.time_a)
+                            const flagUrl = getFlagCdnUrl(jogo.time_a, { cacheBust: true })
                             if (flagUrl && e.currentTarget.src !== flagUrl) {
+                              e.currentTarget.crossOrigin = 'anonymous'
                               e.currentTarget.src = flagUrl
                               return
                             }
@@ -2099,9 +2101,11 @@ export default function Enquetes() {
                           className="h-7 w-7 object-contain shrink-0"
                           loading="lazy"
                           decoding="async"
+                          crossOrigin={logoB.includes('flagcdn.com') ? 'anonymous' : undefined}
                           onError={(e) => {
-                            const flagUrl = getFlagCdnUrl(jogo.time_b)
+                            const flagUrl = getFlagCdnUrl(jogo.time_b, { cacheBust: true })
                             if (flagUrl && e.currentTarget.src !== flagUrl) {
+                              e.currentTarget.crossOrigin = 'anonymous'
                               e.currentTarget.src = flagUrl
                               return
                             }
@@ -2839,9 +2843,15 @@ export default function Enquetes() {
                                         className="h-5 w-5 object-contain shrink-0"
                                         loading="lazy"
                                         decoding="async"
+                                        crossOrigin={
+                                          logoA.includes('flagcdn.com') ? 'anonymous' : undefined
+                                        }
                                         onError={(e) => {
-                                          const flagUrl = getFlagCdnUrl(jogo.time_a)
+                                          const flagUrl = getFlagCdnUrl(jogo.time_a, {
+                                            cacheBust: true,
+                                          })
                                           if (flagUrl && e.currentTarget.src !== flagUrl) {
+                                            e.currentTarget.crossOrigin = 'anonymous'
                                             e.currentTarget.src = flagUrl
                                             return
                                           }
@@ -2883,9 +2893,15 @@ export default function Enquetes() {
                                         className="h-5 w-5 object-contain shrink-0"
                                         loading="lazy"
                                         decoding="async"
+                                        crossOrigin={
+                                          logoB.includes('flagcdn.com') ? 'anonymous' : undefined
+                                        }
                                         onError={(e) => {
-                                          const flagUrl = getFlagCdnUrl(jogo.time_b)
+                                          const flagUrl = getFlagCdnUrl(jogo.time_b, {
+                                            cacheBust: true,
+                                          })
                                           if (flagUrl && e.currentTarget.src !== flagUrl) {
+                                            e.currentTarget.crossOrigin = 'anonymous'
                                             e.currentTarget.src = flagUrl
                                             return
                                           }
@@ -3430,7 +3446,16 @@ export default function Enquetes() {
                                     className="h-5 w-5 object-contain shrink-0"
                                     loading="lazy"
                                     decoding="async"
+                                    crossOrigin={
+                                      badgeA.includes('flagcdn.com') ? 'anonymous' : undefined
+                                    }
                                     onError={(e) => {
+                                      const flagUrl = getFlagCdnUrl(j.time_a, { cacheBust: true })
+                                      if (flagUrl && e.currentTarget.src !== flagUrl) {
+                                        e.currentTarget.crossOrigin = 'anonymous'
+                                        e.currentTarget.src = flagUrl
+                                        return
+                                      }
                                       e.currentTarget.style.display = 'none'
                                       const fallback = e.currentTarget
                                         .nextElementSibling as HTMLElement | null
@@ -3473,7 +3498,16 @@ export default function Enquetes() {
                                     className="h-5 w-5 object-contain shrink-0"
                                     loading="lazy"
                                     decoding="async"
+                                    crossOrigin={
+                                      badgeB.includes('flagcdn.com') ? 'anonymous' : undefined
+                                    }
                                     onError={(e) => {
+                                      const flagUrl = getFlagCdnUrl(j.time_b, { cacheBust: true })
+                                      if (flagUrl && e.currentTarget.src !== flagUrl) {
+                                        e.currentTarget.crossOrigin = 'anonymous'
+                                        e.currentTarget.src = flagUrl
+                                        return
+                                      }
                                       e.currentTarget.style.display = 'none'
                                       const fallback = e.currentTarget
                                         .nextElementSibling as HTMLElement | null
@@ -3657,7 +3691,14 @@ export default function Enquetes() {
                             className="h-4 w-4 object-contain shrink-0"
                             loading="lazy"
                             decoding="async"
+                            crossOrigin={badgeA.includes('flagcdn.com') ? 'anonymous' : undefined}
                             onError={(e) => {
+                              const flagUrl = getFlagCdnUrl(j.time_a, { cacheBust: true })
+                              if (flagUrl && e.currentTarget.src !== flagUrl) {
+                                e.currentTarget.crossOrigin = 'anonymous'
+                                e.currentTarget.src = flagUrl
+                                return
+                              }
                               e.currentTarget.style.display = 'none'
                               const fallback = e.currentTarget
                                 .nextElementSibling as HTMLElement | null
@@ -3689,7 +3730,14 @@ export default function Enquetes() {
                             className="h-4 w-4 object-contain shrink-0"
                             loading="lazy"
                             decoding="async"
+                            crossOrigin={badgeB.includes('flagcdn.com') ? 'anonymous' : undefined}
                             onError={(e) => {
+                              const flagUrl = getFlagCdnUrl(j.time_b, { cacheBust: true })
+                              if (flagUrl && e.currentTarget.src !== flagUrl) {
+                                e.currentTarget.crossOrigin = 'anonymous'
+                                e.currentTarget.src = flagUrl
+                                return
+                              }
                               e.currentTarget.style.display = 'none'
                               const fallback = e.currentTarget
                                 .nextElementSibling as HTMLElement | null
