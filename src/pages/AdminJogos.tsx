@@ -1212,11 +1212,11 @@ export default function AdminJogos() {
             <table className="w-full text-left text-xs">
               <thead>
                 <tr className="border-b border-slate-200 bg-slate-50 text-[11px] font-bold uppercase tracking-wider text-slate-600">
-                  <th className="px-4 py-3">Confronto</th>
-                  <th className="px-4 py-3">Data / Hora</th>
-                  <th className="px-4 py-3 text-center">Placar Final</th>
-                  <th className="px-4 py-3">Status</th>
-                  <th className="px-4 py-3 text-right">Ações</th>
+                  <th className="px-3 py-3">Confronto</th>
+                  <th className="px-3 py-3 whitespace-nowrap">Data / Hora</th>
+                  <th className="px-3 py-3 text-center whitespace-nowrap">Placar Final</th>
+                  <th className="px-3 py-3 whitespace-nowrap">Status</th>
+                  <th className="px-3 py-3 text-right">Ações</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
@@ -1225,10 +1225,10 @@ export default function AdminJogos() {
 
                   return (
                     <tr key={jogo.id} className="hover:bg-slate-50/80">
-                      <td className="px-4 py-3.5">
+                      <td className="px-3 py-3">
                         <div className="flex flex-wrap items-center gap-1.5">
                           <span
-                            className="font-bold text-[#0F172A] break-words leading-tight line-clamp-3 sm:line-clamp-none"
+                            className="font-bold text-[#0F172A] break-words leading-tight"
                             title={`${jogo.time_a} x ${jogo.time_b}`}
                           >
                             {jogo.time_a} x {jogo.time_b}
@@ -1253,17 +1253,21 @@ export default function AdminJogos() {
                           )}
                         </div>
                       </td>
-                      <td className="px-4 py-3.5 text-slate-600">
-                        <div className="flex items-center gap-1.5">
-                          <Calendar className="h-3.5 w-3.5 text-slate-400" />
-                          <span>{formatDataBR(jogo.data)}</span>
-                          <Clock className="ml-1 h-3.5 w-3.5 text-slate-400" />
-                          <span>{formatHoraBR(jogo.hora)}</span>
+                      <td className="px-3 py-3 text-slate-600 whitespace-nowrap">
+                        <div className="flex flex-col gap-1 text-xs">
+                          <div className="flex items-center gap-1.5">
+                            <Calendar className="h-3.5 w-3.5 shrink-0 text-slate-400" />
+                            <span>{formatDataBR(jogo.data)}</span>
+                          </div>
+                          <div className="flex items-center gap-1.5">
+                            <Clock className="h-3.5 w-3.5 shrink-0 text-slate-400" />
+                            <span>{formatHoraBR(jogo.hora)}</span>
+                          </div>
                         </div>
                       </td>
-                      <td className="px-4 py-3.5 text-center">
+                      <td className="px-3 py-3 text-center whitespace-nowrap">
                         {finalizado && jogo.placar_a !== null && jogo.placar_b !== null ? (
-                          <span className="rounded-md bg-slate-900 px-2.5 py-1 text-xs font-black text-white">
+                          <span className="inline-block rounded-md bg-slate-900 px-2.5 py-1 text-xs font-black text-white">
                             {jogo.placar_a} x {jogo.placar_b}
                             {jogo.vencedor_penaltis && (
                               <span className="ml-1 text-[10px] text-amber-300">
@@ -1275,7 +1279,7 @@ export default function AdminJogos() {
                           <span className="text-slate-400">—</span>
                         )}
                       </td>
-                      <td className="px-4 py-3.5">
+                      <td className="px-3 py-3 whitespace-nowrap">
                         {finalizado ? (
                           <Badge className="bg-emerald-100 text-emerald-800 hover:bg-emerald-100">
                             Encerrado
@@ -1289,79 +1293,88 @@ export default function AdminJogos() {
                           </Badge>
                         )}
                       </td>
-                      <td className="px-4 py-3.5 text-right">
+                      <td className="px-3 py-3 text-right">
                         <div className="flex items-center justify-end gap-2">
-                          <Button
-                            type="button"
-                            size="sm"
-                            variant="outline"
-                            onClick={() => handleAtualizarPlacarAoVivo(jogo)}
-                            disabled={updatingLiveGameId === jogo.id}
-                            className="h-8 rounded-md border-emerald-300 bg-emerald-50 px-2.5 text-xs font-semibold text-emerald-800 hover:bg-emerald-100 hover:text-emerald-900 flex items-center gap-1"
-                            title="Atualizar Placar Ao Vivo e Marcadores da partida via API-Sports"
-                          >
-                            <RefreshCw
-                              className={cn(
-                                'h-3.5 w-3.5 text-emerald-700',
-                                updatingLiveGameId === jogo.id && 'animate-spin',
-                              )}
-                            />
-                            <span>
-                              {updatingLiveGameId === jogo.id
-                                ? 'Atualizando...'
-                                : 'Atualizar Placar Ao Vivo'}
-                            </span>
-                          </Button>
-
-                          <Button
-                            type="button"
-                            size="sm"
-                            variant="outline"
-                            onClick={() => handleForcarEscalacao(jogo)}
-                            disabled={forcingEscalacaoId === jogo.id}
-                            className="h-8 rounded-md border-indigo-200 bg-indigo-50/70 px-2.5 text-xs font-semibold text-indigo-700 hover:bg-indigo-100 hover:text-indigo-900"
-                            title="Buscar ou forçar atualização de escalação na API-Football"
-                          >
-                            {forcingEscalacaoId === jogo.id ? (
-                              <>
-                                <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />
-                                <span>Buscando...</span>
-                              </>
-                            ) : (
-                              <>
-                                <RefreshCw className="mr-1 h-3.5 w-3.5" />
-                                <span>Forçar Escalação</span>
-                              </>
-                            )}
-                          </Button>
-
-                          <Button
-                            type="button"
-                            size="sm"
-                            variant="outline"
-                            onClick={() => handleOpenEditJogo(jogo)}
-                            className="h-8 rounded-md border-amber-200 bg-amber-50/70 px-2.5 text-xs font-semibold text-amber-800 hover:bg-amber-100 hover:text-amber-900"
-                            title="Editar informações cadastrais do jogo (nomes, data, hora, competição)"
-                          >
-                            <Pencil className="mr-1 h-3.5 w-3.5" />
-                            <span>Editar Jogo</span>
-                          </Button>
-
-                          <Link to={`/bolao/admin/jogos/${jogo.id}/resultado`}>
+                          {/* Coluna / Grupo de Ações Automáticas da API */}
+                          <div className="flex flex-col gap-1.5 shrink-0">
                             <Button
+                              type="button"
                               size="sm"
-                              className="h-8 rounded-md bg-[#0F2A43] px-3 text-xs font-semibold text-white hover:bg-[#1B3A5C]"
+                              variant="outline"
+                              onClick={() => handleAtualizarPlacarAoVivo(jogo)}
+                              disabled={updatingLiveGameId === jogo.id}
+                              className="h-7 w-[164px] justify-center rounded-md border-emerald-300 bg-emerald-50 px-2 text-[11px] font-semibold text-emerald-800 hover:bg-emerald-100 hover:text-emerald-900 flex items-center gap-1"
+                              title="Atualizar Placar Ao Vivo e Marcadores da partida via API-Sports"
                             >
-                              <Edit3 className="mr-1 h-3.5 w-3.5" />
-                              {finalizado ? 'Editar Resultado' : 'Preencher Resultado'}
+                              <RefreshCw
+                                className={cn(
+                                  'h-3 w-3 shrink-0 text-emerald-700',
+                                  updatingLiveGameId === jogo.id && 'animate-spin',
+                                )}
+                              />
+                              <span className="truncate">
+                                {updatingLiveGameId === jogo.id
+                                  ? 'Atualizando...'
+                                  : 'Atualizar Placar Ao Vivo'}
+                              </span>
                             </Button>
-                          </Link>
 
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="outline"
+                              onClick={() => handleForcarEscalacao(jogo)}
+                              disabled={forcingEscalacaoId === jogo.id}
+                              className="h-7 w-[164px] justify-center rounded-md border-indigo-200 bg-indigo-50/70 px-2 text-[11px] font-semibold text-indigo-700 hover:bg-indigo-100 hover:text-indigo-900 flex items-center gap-1"
+                              title="Buscar ou forçar atualização de escalação na API-Football"
+                            >
+                              {forcingEscalacaoId === jogo.id ? (
+                                <>
+                                  <Loader2 className="h-3 w-3 shrink-0 animate-spin" />
+                                  <span>Buscando...</span>
+                                </>
+                              ) : (
+                                <>
+                                  <RefreshCw className="h-3 w-3 shrink-0" />
+                                  <span>Forçar Escalação</span>
+                                </>
+                              )}
+                            </Button>
+                          </div>
+
+                          {/* Coluna / Grupo de Edição Manual */}
+                          <div className="flex flex-col gap-1.5 shrink-0">
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="outline"
+                              onClick={() => handleOpenEditJogo(jogo)}
+                              className="h-7 w-[150px] justify-center rounded-md border-amber-200 bg-amber-50/70 px-2 text-[11px] font-semibold text-amber-800 hover:bg-amber-100 hover:text-amber-900 flex items-center gap-1"
+                              title="Editar informações cadastrais do jogo (nomes, data, hora, competição)"
+                            >
+                              <Pencil className="h-3 w-3 shrink-0" />
+                              <span>Editar Jogo</span>
+                            </Button>
+
+                            <Link to={`/bolao/admin/jogos/${jogo.id}/resultado`}>
+                              <Button
+                                size="sm"
+                                className="h-7 w-[150px] justify-center rounded-md bg-[#0F2A43] px-2 text-[11px] font-semibold text-white hover:bg-[#1B3A5C] flex items-center gap-1"
+                              >
+                                <Edit3 className="h-3 w-3 shrink-0" />
+                                <span className="truncate">
+                                  {finalizado ? 'Editar Resultado' : 'Preencher Resultado'}
+                                </span>
+                              </Button>
+                            </Link>
+                          </div>
+
+                          {/* Ícone de Excluir Partida */}
                           <Button
                             variant="ghost"
                             size="icon"
                             onClick={() => setGameToDelete(jogo)}
-                            className="h-8 w-8 text-slate-400 hover:bg-red-50 hover:text-red-600"
+                            className="h-8 w-8 shrink-0 text-slate-400 hover:bg-red-50 hover:text-red-600"
                             title="Excluir partida"
                           >
                             <Trash2 className="h-4 w-4" />
