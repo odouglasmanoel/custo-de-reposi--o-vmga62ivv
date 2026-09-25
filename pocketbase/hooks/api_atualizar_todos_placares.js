@@ -63,12 +63,12 @@ routerAdd(
     const explicitFixtureIds = Array.isArray(body.fixtureIds) ? body.fixtureIds.map(String) : []
 
     // 1. Identificar os jogos alvo
-    let jogosRecords = []
+    let todosJogosCandidatos = []
     if (explicitJogoIds.length > 0) {
       for (let i = 0; i < explicitJogoIds.length; i++) {
         try {
           const jRec = $app.findRecordById('jogos', explicitJogoIds[i])
-          if (jRec) jogosRecords.push(jRec)
+          if (jRec) todosJogosCandidatos.push(jRec)
         } catch (_) {}
       }
     } else {
@@ -89,16 +89,39 @@ routerAdd(
           0,
         )
         if (Array.isArray(found) && found.length > 0) {
-          jogosRecords = found
+          todosJogosCandidatos = found
         }
       } catch (_) {}
     }
 
-    if (jogosRecords.length === 0) {
+    if (todosJogosCandidatos.length === 0) {
       return e.json(200, {
         success: true,
         message: 'Nenhum jogo de hoje encontrado para atualizar.',
         total_jogos: 0,
+        atualizados: 0,
+        jogos: [],
+      })
+    }
+
+    // Otimização de cota API-Sports:
+    // Filtrar e chamar a API APENAS para jogos cujo status no banco seja DIFERENTE de "Encerrado" (apenas pendentes ou ao_vivo).
+    // Jogos já encerrados não devem gastar cota.
+    const isEncerradoCheck = (r) => {
+      if (r.getBool('resultado_finalizado')) return true
+      const st = (r.getString('status') || '').toLowerCase().trim()
+      return ['finalizado', 'encerrado', 'ft'].includes(st)
+    }
+
+    const jogosRecords = todosJogosCandidatos.filter((r) => !isEncerradoCheck(r))
+
+    if (jogosRecords.length === 0) {
+      return e.json(200, {
+        success: true,
+        notice:
+          'Todos os jogos de hoje já estão encerrados. Nenhuma requisição à API externa necessária.',
+        total_jogos: todosJogosCandidatos.length,
+        jogos_encerrados_ignorados: todosJogosCandidatos.length,
         atualizados: 0,
         jogos: [],
       })
@@ -667,14 +690,16 @@ routerAdd(
         if (homeTeamLogo) jRec.set('url_escudo_mandante', homeTeamLogo)
         if (awayTeamLogo) jRec.set('url_escudo_visitante', awayTeamLogo)
 
-        // Regra 1: Se o jogo já tiver sido encerrado na API (FT / AET / PEN),
-        // altera automaticamente o status para Encerrado (status: 'finalizado'),
-        // gravando resultado_finalizado = true no banco de dados.
+        // Regra 1: Partidas só podem mudar para status "Encerrado" quando a API-Sports retornar explicitamente
+        // status final ('FT', 'AET', 'PEN'). Caso contrário permanecem "Ao Vivo" se em andamento.
+        // Se status for de partida em andamento ('1H','2H','HT','ET','BT','P','LIVE','INT'),
+        // gravar status: 'ao_vivo' e resultado_finalizado: false.
         if (isFinished) {
           jRec.set('status', 'finalizado')
           jRec.set('resultado_finalizado', true)
-        } else if (kickoffJaChegou && isLive) {
+        } else if (isLive || (kickoffJaChegou && !isFinished)) {
           jRec.set('status', 'ao_vivo')
+          jRec.set('resultado_finalizado', false)
         }
 
         if (golsA.length > 0) jRec.set('gols_time_a', golsA)

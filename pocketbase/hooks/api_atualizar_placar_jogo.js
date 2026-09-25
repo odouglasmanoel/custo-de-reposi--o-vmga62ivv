@@ -76,6 +76,38 @@ routerAdd(
       })
     }
 
+    // Otimização de cota API-Sports:
+    // Pula chamadas externas se a partida já estiver com status "Encerrado" / resultado_finalizado no banco
+    const isJogoJaEncerrado =
+      jogoRecord.getBool('resultado_finalizado') ||
+      ['finalizado', 'encerrado', 'ft'].includes(
+        (jogoRecord.getString('status') || '').toLowerCase().trim(),
+      )
+
+    if (isJogoJaEncerrado) {
+      return e.json(200, {
+        success: true,
+        tem_placar_oficial: true,
+        message:
+          'A partida já está encerrada. Consulta externa ignorada para economizar cota da API.',
+        skipped: true,
+        jogo: {
+          id: jogoRecord.id,
+          bolao: jogoRecord.get('bolao'),
+          placar_a: jogoRecord.get('placar_a'),
+          placar_b: jogoRecord.get('placar_b'),
+          status: jogoRecord.getString('status'),
+          resultado_finalizado: jogoRecord.getBool('resultado_finalizado'),
+          gols_time_a: jogoRecord.get('gols_time_a'),
+          gols_time_b: jogoRecord.get('gols_time_b'),
+          marcadores: jogoRecord.get('marcadores'),
+          url_escudo_mandante: jogoRecord.get('url_escudo_mandante'),
+          url_escudo_visitante: jogoRecord.get('url_escudo_visitante'),
+          fixture_id: jogoRecord.get('fixture_id'),
+        },
+      })
+    }
+
     // Rate limiter check inline sem require dinâmico (respeita registro com count/max_limit/blocked)
     const dNow = new Date()
     const yyyy = dNow.getUTCFullYear()
@@ -411,14 +443,16 @@ routerAdd(
       }
     } catch (_) {}
 
-    // Regra 1: Se o jogo já tiver sido encerrado na API (FT / AET / PEN),
-    // altera automaticamente o status de "Pendente" para "Encerrado" (status: 'finalizado'),
-    // marcando resultado_finalizado = true no banco de dados.
+    // Regra 1: Partidas só podem mudar para status "Encerrado" quando a API-Sports retornar explicitamente
+    // status final ('FT', 'AET', 'PEN'). Caso contrário permanecem "Ao Vivo" se em andamento.
+    // Se status for de partida em andamento ('1H','2H','HT','ET','BT','P','LIVE','INT'),
+    // gravar status: 'ao_vivo' e resultado_finalizado: false.
     if (isFinished) {
       jogoRecord.set('status', 'finalizado')
       jogoRecord.set('resultado_finalizado', true)
-    } else if (kickoffJaChegou && isLive) {
+    } else if (isLive || (kickoffJaChegou && !isFinished)) {
       jogoRecord.set('status', 'ao_vivo')
+      jogoRecord.set('resultado_finalizado', false)
     }
 
     // Extrair eventos de gols e marcadores no mesmo formato
