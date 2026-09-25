@@ -762,10 +762,23 @@ export default function BolaoDashboard() {
         rate_limited?: boolean
         total_jogos?: number
         atualizados?: number
+        jogos_com_placar_gravado?: number
+        jogos_sem_placar_null?: number
+        jogos_encerrado?: number
+        jogos_encerrados?: number
         fixtures_finalizados?: number
         fixtures_com_gols?: number
         fixture_ids_enviados?: string[]
-        jogos?: Partial<Jogo>[]
+        resumo?: {
+          total_jogos: number
+          com_placar: number
+          sem_placar: number
+          encerrados: number
+        }
+        jogos?: (Partial<Jogo> & {
+          tem_placar?: boolean
+          mudou_para_encerrado?: boolean
+        })[]
         debug_logs?: Array<{
           url: string
           fixture_ids?: string[]
@@ -799,18 +812,28 @@ export default function BolaoDashboard() {
       }
 
       if (res?.success) {
-        if (res.notice) {
-          // Quando a API respondeu sucesso mas sem placar finalizado retornado (ex: jogo ainda não começou ou sem transmissão de resultado)
+        const comPlacar =
+          res.resumo?.com_placar ??
+          res.jogos_com_placar_gravado ??
+          (res.jogos ? res.jogos.filter((j) => j.tem_placar).length : 0)
+        const semPlacar =
+          res.resumo?.sem_placar ??
+          res.jogos_sem_placar_null ??
+          (res.jogos ? res.jogos.filter((j) => !j.tem_placar).length : 0)
+        const encerrados =
+          res.resumo?.encerrados ?? res.jogos_encerrados ?? res.fixtures_finalizados ?? 0
+
+        const resumoTexto = `Resumo: ${comPlacar} com placar gravado, ${semPlacar} sem placar na API, ${encerrados} encerrado(s).`
+
+        if (comPlacar === 0) {
           toast({
-            title: 'Aviso',
-            description: res.notice,
+            title: 'Aviso da API',
+            description: `A API retornou a consulta, mas o placar oficial do jogo ainda não foi disponibilizado na API-Sports. (${resumoTexto})`,
           })
         } else {
           toast({
             title: 'Placares e fichas atualizados',
-            description:
-              res.message ||
-              `Placares e fichas técnicas de ${res.atualizados ?? jogosDeHoje.length} partida(s) sincronizados em 1 chamada!`,
+            description: res.message || `Placares atualizados com sucesso! ${resumoTexto}`,
           })
         }
 
@@ -912,6 +935,8 @@ export default function BolaoDashboard() {
       const res = await pb.send<{
         success: boolean
         message?: string
+        notice?: string
+        tem_placar_oficial?: boolean
         error?: string
         rate_limited?: boolean
         jogo?: Partial<Jogo>
@@ -926,10 +951,28 @@ export default function BolaoDashboard() {
       console.log(`[Atualizar Placar Individual] Resposta para o fixture_id ${fid}:`, res)
 
       if (res?.success) {
-        toast({
-          title: 'Placar sincronizado',
-          description: res.message || 'Placar e marcadores atualizados com sucesso da API-Sports!',
-        })
+        const hasScore =
+          res.tem_placar_oficial !== false &&
+          res.jogo?.placar_a !== null &&
+          res.jogo?.placar_a !== undefined &&
+          res.jogo?.placar_b !== null &&
+          res.jogo?.placar_b !== undefined
+
+        if (hasScore) {
+          toast({
+            title: 'Placar sincronizado',
+            description:
+              res.message ||
+              `Placar atualizado com sucesso: ${res.jogo?.placar_a} x ${res.jogo?.placar_b}`,
+          })
+        } else {
+          toast({
+            title: 'Aviso da API',
+            description:
+              res.message ||
+              'A API retornou a consulta, mas o placar oficial do jogo ainda não foi disponibilizado na API-Sports.',
+          })
+        }
 
         // Invalida o cache do dashboard (memória, localStorage e sessionStorage)
         clearDashboardCache()

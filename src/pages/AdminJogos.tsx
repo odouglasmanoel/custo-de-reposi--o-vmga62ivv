@@ -162,6 +162,8 @@ export default function AdminJogos() {
       const res = await pb.send<{
         success: boolean
         message?: string
+        notice?: string
+        tem_placar_oficial?: boolean
         error?: string
         rate_limited?: boolean
         jogo?: Partial<Jogo>
@@ -174,10 +176,28 @@ export default function AdminJogos() {
       })
 
       if (res?.success) {
-        toast({
-          title: 'Placar sincronizado',
-          description: res.message || 'Placar e marcadores atualizados com sucesso da API-Sports!',
-        })
+        const hasScore =
+          res.tem_placar_oficial !== false &&
+          res.jogo?.placar_a !== null &&
+          res.jogo?.placar_a !== undefined &&
+          res.jogo?.placar_b !== null &&
+          res.jogo?.placar_b !== undefined
+
+        if (hasScore) {
+          toast({
+            title: 'Placar sincronizado',
+            description:
+              res.message ||
+              `Placar atualizado com sucesso: ${res.jogo?.placar_a} x ${res.jogo?.placar_b}`,
+          })
+        } else {
+          toast({
+            title: 'Aviso da API',
+            description:
+              res.message ||
+              'A API retornou a consulta, mas o placar oficial do jogo ainda não foi disponibilizado na API-Sports.',
+          })
+        }
 
         // Atualização instantânea do estado local
         if (res.jogo) {

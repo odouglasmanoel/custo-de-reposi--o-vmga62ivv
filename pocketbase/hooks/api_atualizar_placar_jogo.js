@@ -309,21 +309,43 @@ routerAdd(
     const kickoffJaChegou = kickoffMs > 0 ? Date.now() >= kickoffMs : true
 
     const goals = fixtureData.goals || {}
+    const score = fixtureData.score || {}
     const statusInfo = fixtureData.fixture?.status || {}
     const statusShort = (statusInfo.short || '').toString().toUpperCase().trim()
 
+    // Parser robusto de gols: goals.home/away com fallback para score.fulltime.home/away
+    let rawHome = goals.home !== null && goals.home !== undefined ? goals.home : null
+    let rawAway = goals.away !== null && goals.away !== undefined ? goals.away : null
+    if (
+      rawHome === null &&
+      score.fulltime &&
+      score.fulltime.home !== null &&
+      score.fulltime.home !== undefined
+    ) {
+      rawHome = score.fulltime.home
+    }
+    if (
+      rawAway === null &&
+      score.fulltime &&
+      score.fulltime.away !== null &&
+      score.fulltime.away !== undefined
+    ) {
+      rawAway = score.fulltime.away
+    }
+
     const homeGoals =
-      goals.home !== null && goals.home !== undefined ? parseInt(goals.home, 10) : null
+      rawHome !== null && !isNaN(parseInt(rawHome, 10)) ? parseInt(rawHome, 10) : null
     const awayGoals =
-      goals.away !== null && goals.away !== undefined ? parseInt(goals.away, 10) : null
+      rawAway !== null && !isNaN(parseInt(rawAway, 10)) ? parseInt(rawAway, 10) : null
+    const hasOfficialScore = homeGoals !== null && awayGoals !== null
 
     const isLive = ['1H', '2H', 'HT', 'ET', 'BT', 'P', 'LIVE', 'INT'].includes(statusShort)
     const isFinished = ['FT', 'AET', 'PEN'].includes(statusShort)
 
-    if (homeGoals !== null && !isNaN(homeGoals)) {
+    if (homeGoals !== null) {
       jogoRecord.set('placar_a', homeGoals)
     }
-    if (awayGoals !== null && !isNaN(awayGoals)) {
+    if (awayGoals !== null) {
       jogoRecord.set('placar_b', awayGoals)
     }
 
@@ -389,14 +411,14 @@ routerAdd(
       }
     } catch (_) {}
 
-    // JAMAIS marcar como em andamento/finalizado se o kickoff ainda não chegou
-    if (kickoffJaChegou) {
-      if (isFinished) {
-        jogoRecord.set('status', 'finalizado')
-        jogoRecord.set('resultado_finalizado', true)
-      } else if (isLive) {
-        jogoRecord.set('status', 'ao_vivo')
-      }
+    // Regra 1: Se o jogo já tiver sido encerrado na API (FT / AET / PEN),
+    // altera automaticamente o status de "Pendente" para "Encerrado" (status: 'finalizado'),
+    // marcando resultado_finalizado = true no banco de dados.
+    if (isFinished) {
+      jogoRecord.set('status', 'finalizado')
+      jogoRecord.set('resultado_finalizado', true)
+    } else if (kickoffJaChegou && isLive) {
+      jogoRecord.set('status', 'ao_vivo')
     }
 
     // Extrair eventos de gols e marcadores no mesmo formato
@@ -466,6 +488,21 @@ routerAdd(
         error: 'Erro ao persistir dados do jogo no banco: ' + (err.message || String(err)),
       })
     }
+
+    // Leitura de confirmação pós-gravação diretamente do banco de dados
+    let savedJogoRecord = null
+    try {
+      savedJogoRecord = $app.findRecordById('jogos', jogoRecord.id)
+    } catch (errRead) {
+      return e.json(500, {
+        error: 'Erro ao confirmar persistência no banco: ' + (errRead.message || String(errRead)),
+      })
+    }
+
+    const savedPlacarA = savedJogoRecord.get('placar_a')
+    const savedPlacarB = savedJogoRecord.get('placar_b')
+    const savedStatus = savedJogoRecord.getString('status')
+    const savedFinalizado = savedJogoRecord.getBool('resultado_finalizado')
 
     // Dispara o recálculo de pontuação dos palpites e ranking (reaproveitando rotina inline idêntica a admin_salvar_marcadores)
     let recalculou = false
@@ -890,22 +927,52 @@ routerAdd(
       console.log('[atualizar-jogo] Erro ao recalcular pontuação:', errRecalc)
     }
 
+    // Regra 2: Se o retorno da API trouxer placar null (jogo ainda não iniciado ou sem placar oficial),
+    // NÃO exibir "Placar sincronizado com sucesso", informar mensagem específica
+    if (!hasOfficialScore) {
+      return e.json(200, {
+        success: true,
+        tem_placar_oficial: false,
+        message:
+          'A API retornou a consulta, mas o placar oficial do jogo ainda não foi disponibilizado na API-Sports.',
+        jogo: {
+          id: savedJogoRecord.id,
+          bolao: savedJogoRecord.get('bolao'),
+          placar_a: savedPlacarA,
+          placar_b: savedPlacarB,
+          status: savedStatus,
+          resultado_finalizado: savedFinalizado,
+          gols_time_a: savedJogoRecord.get('gols_time_a'),
+          gols_time_b: savedJogoRecord.get('gols_time_b'),
+          marcadores: savedJogoRecord.get('marcadores'),
+          url_escudo_mandante: savedJogoRecord.get('url_escudo_mandante'),
+          url_escudo_visitante: savedJogoRecord.get('url_escudo_visitante'),
+          fixture_id: savedJogoRecord.get('fixture_id'),
+        },
+        status_fixture: statusShort,
+        elapsed: statusInfo.elapsed || null,
+        recalculou,
+      })
+    }
+
+    const encerrouAgora = isFinished ? ' Jogo marcado como Encerrado.' : ''
     return e.json(200, {
       success: true,
-      message: 'Placar e marcadores atualizados com sucesso da API-Sports!',
+      tem_placar_oficial: true,
+      message: `Placar sincronizado com sucesso: ${savedPlacarA} x ${savedPlacarB}.${encerrouAgora}`,
       jogo: {
-        id: jogoRecord.id,
-        bolao: jogoRecord.get('bolao'),
-        placar_a: jogoRecord.get('placar_a'),
-        placar_b: jogoRecord.get('placar_b'),
-        status: jogoRecord.get('status'),
-        resultado_finalizado: jogoRecord.get('resultado_finalizado'),
-        gols_time_a: jogoRecord.get('gols_time_a'),
-        gols_time_b: jogoRecord.get('gols_time_b'),
-        marcadores: jogoRecord.get('marcadores'),
-        url_escudo_mandante: jogoRecord.get('url_escudo_mandante'),
-        url_escudo_visitante: jogoRecord.get('url_escudo_visitante'),
-        fixture_id: jogoRecord.get('fixture_id'),
+        id: savedJogoRecord.id,
+        bolao: savedJogoRecord.get('bolao'),
+        placar_a: savedPlacarA,
+        placar_b: savedPlacarB,
+        status: savedStatus,
+        resultado_finalizado: savedFinalizado,
+        gols_time_a: savedJogoRecord.get('gols_time_a'),
+        gols_time_b: savedJogoRecord.get('gols_time_b'),
+        marcadores: savedJogoRecord.get('marcadores'),
+        url_escudo_mandante: savedJogoRecord.get('url_escudo_mandante'),
+        url_escudo_visitante: savedJogoRecord.get('url_escudo_visitante'),
+        fixture_id: savedJogoRecord.get('fixture_id'),
       },
       status_fixture: statusShort,
       elapsed: statusInfo.elapsed || null,

@@ -277,17 +277,38 @@ routerAdd(
       })
     }
 
-    // 4. Chamada em lote à API-Sports via /fixtures?ids={id-id-...} (máx 20 ids por chamada segundo docs oficiais)
-    // Se houver mais de 20 IDs, quebra em blocos de 20 (para jogos de hoje normalmente 1 a 10 jogos)
+    // 4. Chamada à API-Sports via /fixtures?ids={id-id-...} (ou fallback ?id= caso o plano rejeite ?ids=)
     const isRapid = apiKey.length > 40
     const fixtureResponses = []
+    const rawApiLogs = []
+
+    const headers = isRapid
+      ? { 'x-rapidapi-key': apiKey, 'x-rapidapi-host': 'api-football-v1.p.rapidapi.com' }
+      : { 'x-apisports-key': apiKey }
+
+    const registrarConsumo = () => {
+      try {
+        usageData.count = (Number(usageData.count) || 0) + 1
+        usageData.last_request_utc = new Date().toISOString()
+        if (recUsage) {
+          recUsage.set('api_key', JSON.stringify(usageData))
+          $app.save(recUsage)
+        } else {
+          const colIntegracoes = $app.findCollectionByNameOrId('config_integracoes')
+          const novo = new Record(colIntegracoes)
+          novo.set('chave', USAGE_RECORD_CHAVE)
+          novo.set('provedor', 'api_football')
+          novo.set('ativo', true)
+          novo.set('api_key', JSON.stringify(usageData))
+          $app.save(novo)
+        }
+      } catch (_) {}
+    }
 
     const chunks = []
     for (let i = 0; i < uniqueFixtureIds.length; i += 20) {
       chunks.push(uniqueFixtureIds.slice(i, i + 20))
     }
-
-    const rawApiLogs = []
 
     for (let cIdx = 0; cIdx < chunks.length; cIdx++) {
       const chunkIds = chunks[cIdx]
@@ -297,7 +318,6 @@ routerAdd(
           ? `https://api-football-v1.p.rapidapi.com/v3/fixtures?id=${encodeURIComponent(chunkIds[0])}`
           : `https://v3.football.api-sports.io/fixtures?id=${encodeURIComponent(chunkIds[0])}`
       } else {
-        // Documentação oficial da API-Sports /fixtures: parâmetro ids tem formato "id-id-id" (máx 20)
         const idsJoined = chunkIds.join('-')
         url = isRapid
           ? `https://api-football-v1.p.rapidapi.com/v3/fixtures?ids=${encodeURIComponent(idsJoined)}`
@@ -308,10 +328,6 @@ routerAdd(
         `[atualizar-todos] [API-Sports Req ${cIdx + 1}/${chunks.length}] URL: ${url} | Fixture IDs: ${chunkIds.join(', ')}`,
       )
 
-      const headers = isRapid
-        ? { 'x-rapidapi-key': apiKey, 'x-rapidapi-host': 'api-football-v1.p.rapidapi.com' }
-        : { 'x-apisports-key': apiKey }
-
       let resHttp = null
       try {
         resHttp = $http.send({
@@ -320,24 +336,7 @@ routerAdd(
           headers,
           timeout: 15,
         })
-
-        // Incrementa contador de uso de cota
-        try {
-          usageData.count = (Number(usageData.count) || 0) + 1
-          usageData.last_request_utc = new Date().toISOString()
-          if (recUsage) {
-            recUsage.set('api_key', JSON.stringify(usageData))
-            $app.save(recUsage)
-          } else {
-            const colIntegracoes = $app.findCollectionByNameOrId('config_integracoes')
-            const novo = new Record(colIntegracoes)
-            novo.set('chave', USAGE_RECORD_CHAVE)
-            novo.set('provedor', 'api_football')
-            novo.set('ativo', true)
-            novo.set('api_key', JSON.stringify(usageData))
-            $app.save(novo)
-          }
-        } catch (_) {}
+        registrarConsumo()
       } catch (errSend) {
         console.log('[atualizar-todos] Erro ao enviar requisição HTTP:', errSend)
         rawApiLogs.push({
@@ -372,7 +371,6 @@ routerAdd(
         json = null
       }
 
-      // Log detalhado e exato retornado pela API-Sports (sem expor apiKey)
       try {
         console.log(
           `[atualizar-todos] [API-Sports Res ${cIdx + 1}/${chunks.length}] JSON exato:`,
@@ -403,6 +401,71 @@ routerAdd(
             rate_limited: true,
             debug_logs: rawApiLogs,
           })
+        }
+
+        // Se o plano gratuito da API-Sports rejeitou o parâmetro ?ids= ("Free plans do not have access to the Ids parameter.")
+        // Executa fallback individual por fixture_id (?id=...) respeitando a cota diária
+        if (errStr.includes('Ids parameter') || errStr.includes('Free plans')) {
+          console.log(
+            '[atualizar-todos] API recusou ?ids= para o plano atual. Executando fallback para ?id=...',
+          )
+          for (let fIdx = 0; fIdx < chunkIds.length; fIdx++) {
+            const singleId = chunkIds[fIdx]
+            const currentC = Number(usageData.count) || 0
+            if (!travaDesativada && currentC >= maxLimit) {
+              console.log('[atualizar-todos] Cota atingida durante fallback por ID individual.')
+              break
+            }
+
+            const singleUrl = isRapid
+              ? `https://api-football-v1.p.rapidapi.com/v3/fixtures?id=${encodeURIComponent(singleId)}`
+              : `https://v3.football.api-sports.io/fixtures?id=${encodeURIComponent(singleId)}`
+
+            try {
+              console.log(
+                `[atualizar-todos] [Fallback ?id=] URL: ${singleUrl} | Fixture ID: ${singleId}`,
+              )
+              const resSingle = $http.send({
+                url: singleUrl,
+                method: 'GET',
+                headers,
+                timeout: 15,
+              })
+              registrarConsumo()
+
+              if (resSingle && resSingle.statusCode === 200) {
+                const jsonSingle = JSON.parse(resSingle.raw)
+                try {
+                  console.log(
+                    `[atualizar-todos] [Fallback ?id=${singleId}] JSON exato:`,
+                    JSON.stringify(jsonSingle),
+                  )
+                } catch (_) {}
+                if (
+                  jsonSingle &&
+                  Array.isArray(jsonSingle.response) &&
+                  jsonSingle.response.length > 0
+                ) {
+                  fixtureResponses.push(jsonSingle.response[0])
+                }
+                rawApiLogs.push({
+                  url: singleUrl,
+                  fixture_ids: [singleId],
+                  statusCode: resSingle.statusCode,
+                  results:
+                    jsonSingle && typeof jsonSingle.results === 'number' ? jsonSingle.results : 0,
+                  response_count:
+                    jsonSingle && Array.isArray(jsonSingle.response)
+                      ? jsonSingle.response.length
+                      : 0,
+                  json_exact: jsonSingle,
+                })
+              }
+            } catch (errFallback) {
+              console.log(`[atualizar-todos] Erro no fallback ?id=${singleId}:`, errFallback)
+            }
+          }
+          continue
         }
       }
 
@@ -438,24 +501,41 @@ routerAdd(
 
       const matchingRecords = fixtureMap[fid]
       const goals = fixData.goals || {}
+      const score = fixData.score || {}
       const statusInfo = fixData.fixture?.status || {}
       const statusShort = (statusInfo.short || '').toString().toUpperCase().trim()
       const statusLong = (statusInfo.long || '').toString().trim()
 
-      const homeGoals =
-        goals.home !== null && goals.home !== undefined ? parseInt(goals.home, 10) : null
-      const awayGoals =
-        goals.away !== null && goals.away !== undefined ? parseInt(goals.away, 10) : null
+      let rawHome = goals.home !== null && goals.home !== undefined ? goals.home : null
+      let rawAway = goals.away !== null && goals.away !== undefined ? goals.away : null
+      if (
+        rawHome === null &&
+        score.fulltime &&
+        score.fulltime.home !== null &&
+        score.fulltime.home !== undefined
+      ) {
+        rawHome = score.fulltime.home
+      }
+      if (
+        rawAway === null &&
+        score.fulltime &&
+        score.fulltime.away !== null &&
+        score.fulltime.away !== undefined
+      ) {
+        rawAway = score.fulltime.away
+      }
 
-      if (homeGoals !== null || awayGoals !== null) {
+      const homeGoals =
+        rawHome !== null && !isNaN(parseInt(rawHome, 10)) ? parseInt(rawHome, 10) : null
+      const awayGoals =
+        rawAway !== null && !isNaN(parseInt(rawAway, 10)) ? parseInt(rawAway, 10) : null
+
+      if (homeGoals !== null && awayGoals !== null) {
         fixturesWithGoalsCount++
       }
 
       const isLive = ['1H', '2H', 'HT', 'ET', 'BT', 'P', 'LIVE', 'INT'].includes(statusShort)
       const isFinished = ['FT', 'AET', 'PEN'].includes(statusShort)
-      if (isFinished) {
-        finishedFixturesCount++
-      }
 
       const homeTeamLogo = (fixData.teams?.home?.logo || '').toString().trim()
       const awayTeamLogo = (fixData.teams?.away?.logo || '').toString().trim()
@@ -584,13 +664,14 @@ routerAdd(
         if (homeTeamLogo) jRec.set('url_escudo_mandante', homeTeamLogo)
         if (awayTeamLogo) jRec.set('url_escudo_visitante', awayTeamLogo)
 
-        if (kickoffJaChegou) {
-          if (isFinished) {
-            jRec.set('status', 'finalizado')
-            jRec.set('resultado_finalizado', true)
-          } else if (isLive) {
-            jRec.set('status', 'ao_vivo')
-          }
+        // Regra 1: Se o jogo já tiver sido encerrado na API (FT / AET / PEN),
+        // altera automaticamente o status para Encerrado (status: 'finalizado'),
+        // gravando resultado_finalizado = true no banco de dados.
+        if (isFinished) {
+          jRec.set('status', 'finalizado')
+          jRec.set('resultado_finalizado', true)
+        } else if (kickoffJaChegou && isLive) {
+          jRec.set('status', 'ao_vivo')
         }
 
         if (golsA.length > 0) jRec.set('gols_time_a', golsA)
@@ -605,19 +686,35 @@ routerAdd(
           const bId = jRec.getString('bolao')
           if (bId) boloesAfetados[bId] = true
 
+          // Leitura de confirmação pós-gravação diretamente do banco de dados
+          let savedRec = null
+          try {
+            savedRec = $app.findRecordById('jogos', jRec.id)
+          } catch (_) {
+            savedRec = jRec
+          }
+
+          const hasScorePersisted =
+            savedRec.get('placar_a') !== null && savedRec.get('placar_b') !== null
+          const isEncerrado =
+            savedRec.getString('status') === 'finalizado' ||
+            savedRec.getBool('resultado_finalizado')
+
           updatedJogosList.push({
-            id: jRec.id,
+            id: savedRec.id,
             bolao: bId,
-            time_a: jRec.getString('time_a'),
-            time_b: jRec.getString('time_b'),
-            placar_a: jRec.get('placar_a'),
-            placar_b: jRec.get('placar_b'),
-            status: jRec.get('status'),
-            resultado_finalizado: jRec.get('resultado_finalizado'),
+            time_a: savedRec.getString('time_a'),
+            time_b: savedRec.getString('time_b'),
+            placar_a: savedRec.get('placar_a'),
+            placar_b: savedRec.get('placar_b'),
+            status: savedRec.getString('status'),
+            resultado_finalizado: savedRec.getBool('resultado_finalizado'),
+            tem_placar: hasScorePersisted,
+            mudou_para_encerrado: isEncerrado,
             fixture_id: fid,
-            gols_time_a: jRec.get('gols_time_a'),
-            gols_time_b: jRec.get('gols_time_b'),
-            marcadores: jRec.get('marcadores'),
+            gols_time_a: savedRec.get('gols_time_a'),
+            gols_time_b: savedRec.get('gols_time_b'),
+            marcadores: savedRec.get('marcadores'),
             ficha_detalhes: fichaDetalhesPayload,
           })
         } catch (errSave) {
@@ -1038,22 +1135,38 @@ routerAdd(
       console.log('[atualizar-todos] Erro no recálculo em lote:', errRecalc)
     }
 
-    const temDadosPlacarOuFinalizados = finishedFixturesCount > 0 || fixturesWithGoalsCount > 0
+    const totalComPlacarGravado = updatedJogosList.filter((j) => j.tem_placar).length
+    const totalSemPlacarGravado = updatedJogosList.filter((j) => !j.tem_placar).length
+    const totalEncerrados = updatedJogosList.filter((j) => j.mudou_para_encerrado).length
 
     let messageNotice = null
-    if (!temDadosPlacarOuFinalizados) {
+    let messageSucesso = ''
+
+    if (totalComPlacarGravado === 0) {
       messageNotice =
-        'Os jogos selecionados ainda não possuem placar finalizado retornado pela API-Sports.'
+        'A API retornou a consulta, mas o placar oficial dos jogos ainda não foi disponibilizado na API-Sports.'
+      messageSucesso = `Consulta concluída: 0 jogos com placar gravado, ${totalSemPlacarGravado} sem placar disponível, ${totalEncerrados} encerrado(s).`
+    } else {
+      messageSucesso = `Placares atualizados com sucesso: ${totalComPlacarGravado} jogo(s) com placar gravado, ${totalSemPlacarGravado} sem placar, ${totalEncerrados} encerrado(s).`
     }
 
     return e.json(200, {
       success: true,
-      message: `Placares e fichas de ${updatedJogosList.length} partida(s) sincronizados com sucesso da API-Sports em 1 única requisição!`,
+      message: messageSucesso,
       notice: messageNotice,
+      resumo: {
+        total_jogos: jogosRecords.length,
+        com_placar: totalComPlacarGravado,
+        sem_placar: totalSemPlacarGravado,
+        encerrados: totalEncerrados,
+      },
       total_jogos: jogosRecords.length,
       atualizados: updatedJogosList.length,
-      fixtures_finalizados: finishedFixturesCount,
-      fixtures_com_gols: fixturesWithGoalsCount,
+      jogos_com_placar_gravado: totalComPlacarGravado,
+      jogos_sem_placar_null: totalSemPlacarGravado,
+      jogos_encerrados: totalEncerrados,
+      fixtures_finalizados: totalEncerrados,
+      fixtures_com_gols: totalComPlacarGravado,
       fixture_ids_enviados: uniqueFixtureIds,
       jogos: updatedJogosList,
       debug_logs: rawApiLogs,
