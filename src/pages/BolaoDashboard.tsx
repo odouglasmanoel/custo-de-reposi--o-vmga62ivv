@@ -2535,27 +2535,6 @@ export default function BolaoDashboard() {
                         )
                       })}
                     </div>
-
-                    {/* Ficha do Jogo (Timeline de eventos ao vivo/concluído) */}
-                    {(jogo.resultado_finalizado ||
-                      isJogoEncerrado ||
-                      isStatusAoVivo ||
-                      Boolean(jogo.api_fixture_id || (jogo as any).fixture_id)) && (
-                      <FichaJogo
-                        fixtureId={
-                          jogo.api_fixture_id || (jogo as any).fixture_id || matchedLive?.fixtureId
-                        }
-                        jogoId={jogo.id}
-                        timeA={jogo.time_a}
-                        timeB={jogo.time_b}
-                        placarA={hasDisplayScore ? Number(scoreA) : null}
-                        placarB={hasDisplayScore ? Number(scoreB) : null}
-                        golsTimeA={(jogo as any).gols_time_a}
-                        golsTimeB={(jogo as any).gols_time_b}
-                        isConcluido={Boolean(jogo.resultado_finalizado || isJogoEncerrado)}
-                        isAoVivo={Boolean(isStatusAoVivo)}
-                      />
-                    )}
                   </div>
                 )
               })}
