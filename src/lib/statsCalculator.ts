@@ -954,6 +954,10 @@ export function calculateStatistics(params: {
   }
 
   // Somar pontos importados dos participantes correspondentes aos bolões selecionados
+  // e mapear cravadas fixas declaradas oficialmente por copa
+  const cravadasFixasMap = new Map<string, number>() // chave: `${memberName}_${bolaoId}` -> cravadas_fixas
+  const cravadasFixasPorMembro = new Map<string, number>() // soma das cravadas fixas no recorte selecionado
+
   for (const part of participantes) {
     if (!bolaoIdsValidos.has(part.bolao)) continue
     const normName = normalizeMemberName(part.nome)
@@ -961,6 +965,12 @@ export function calculateStatistics(params: {
     if (existing) {
       const imp = Number(part.pontos_importados) || 0
       existing.pontosImportados += imp
+
+      if (part.cravadas_fixas !== undefined && part.cravadas_fixas !== null) {
+        const fixas = Number(part.cravadas_fixas)
+        cravadasFixasMap.set(`${normName}_${part.bolao}`, fixas)
+        cravadasFixasPorMembro.set(normName, (cravadasFixasPorMembro.get(normName) || 0) + fixas)
+      }
     }
   }
 
@@ -1079,10 +1089,17 @@ export function calculateStatistics(params: {
       s.jogosPalpitadosEncerrados > 0 ? (s.pontosPalpites / tetoMaximo) * 100 : 0
     const aproveitamento = Math.min(100, Math.round(rawAproveitamento * 10) / 10)
 
+    // Cravadas exatas: se há valor consolidado oficial fixo para o participante no recorte selecionado,
+    // o valor fixo oficial prevalece para a coluna CRAVADAS.
+    // Para participantes sem valor fixo informado, preserva a contagem computada dos palpites.
+    const cravadasFinais = cravadasFixasPorMembro.has(nome)
+      ? cravadasFixasPorMembro.get(nome)!
+      : s.cravadasExatas
+
     return {
       nome,
       totalPontos,
-      cravadasExatas: s.cravadasExatas,
+      cravadasExatas: cravadasFinais,
       resultadosAcertados: s.resultadosAcertados,
       golsAcertados: s.golsAcertados,
       marcadoresDefensores: s.marcadoresDefensores,

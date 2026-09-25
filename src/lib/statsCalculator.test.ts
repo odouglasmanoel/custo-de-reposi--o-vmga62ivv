@@ -1073,7 +1073,7 @@ describe('statsCalculator', () => {
     expect(douglasConi?.cravadasExatas).toBe(1)
   })
 
-  it('aggregates historical World Cup predictions and games where resultado_finalizado was false or bolao inactive', () => {
+  it('aplica cravadas_fixas oficiais por copa para Douglas (6 Coni, 8 Copa do Mundo, 2 Sormani, 3 Genilton = 19 no Geral)', () => {
     const boloes: Bolao[] = [
       {
         id: 'copa_coni',
@@ -1087,7 +1087,25 @@ describe('statsCalculator', () => {
       {
         id: 'copa_mundo',
         nome: 'Copa do Mundo',
-        ativo: false, // bolão inativo/encerrado
+        ativo: false,
+        created: '',
+        updated: '',
+        collectionId: '',
+        collectionName: '',
+      },
+      {
+        id: 'copa_sormani',
+        nome: 'Copa Sormani',
+        ativo: true,
+        created: '',
+        updated: '',
+        collectionId: '',
+        collectionName: '',
+      },
+      {
+        id: 'copa_genilton',
+        nome: 'Copa Genilton',
+        ativo: true,
         created: '',
         updated: '',
         collectionId: '',
@@ -1100,8 +1118,9 @@ describe('statsCalculator', () => {
         id: 'p_doug_coni',
         bolao: 'copa_coni',
         nome: 'Douglas',
-        pontos_importados: 71,
-        pontuacao_total: 150,
+        pontos_importados: 61,
+        cravadas_fixas: 6,
+        pontuacao_total: 190,
         created: '',
         updated: '',
         collectionId: '',
@@ -1112,7 +1131,32 @@ describe('statsCalculator', () => {
         bolao: 'copa_mundo',
         nome: 'Douglas',
         pontos_importados: 150,
-        pontuacao_total: 222,
+        cravadas_fixas: 8,
+        pontuacao_total: 230,
+        created: '',
+        updated: '',
+        collectionId: '',
+        collectionName: '',
+      },
+      {
+        id: 'p_doug_sormani',
+        bolao: 'copa_sormani',
+        nome: 'Douglas',
+        pontos_importados: 6,
+        cravadas_fixas: 2,
+        pontuacao_total: 107,
+        created: '',
+        updated: '',
+        collectionId: '',
+        collectionName: '',
+      },
+      {
+        id: 'p_doug_genilton',
+        bolao: 'copa_genilton',
+        nome: 'Douglas',
+        pontos_importados: 4,
+        cravadas_fixas: 3,
+        pontuacao_total: 89,
         created: '',
         updated: '',
         collectionId: '',
@@ -1120,122 +1164,64 @@ describe('statsCalculator', () => {
       },
     ]
 
-    // 8 cravadas na Copa Coni
-    const jogosConi: Jogo[] = []
-    const palpitesConi: Palpite[] = []
-    for (let i = 1; i <= 8; i++) {
-      const jId = `j_coni_${i}`
-      jogosConi.push({
-        id: jId,
-        bolao: 'copa_coni',
-        time_a: `Time Coni A${i}`,
-        time_b: `Time Coni B${i}`,
-        data: '2026-05-01',
-        hora: '16:00',
-        placar_a: 2,
-        placar_b: 1,
-        resultado_finalizado: true,
-        tem_penaltis: false,
-        competicao: 'Coni',
-        created: '',
-        updated: '',
-        collectionId: '',
-        collectionName: '',
-      })
-      palpitesConi.push({
-        id: `palp_coni_${i}`,
-        bolao: 'copa_coni',
-        jogo: jId,
-        participante: 'p_doug_coni',
-        placar_a: 2,
-        placar_b: 1,
-        pontuacao_jogo: 8,
-        detalhamento: ['Placar Exato'],
-        created: '',
-        updated: '',
-        collectionId: '',
-        collectionName: '',
-      })
-    }
-
-    // 11 cravadas na Copa do Mundo (com resultado_finalizado: false no jogo para simular banco histórico)
-    const jogosCopa: Jogo[] = []
-    const palpitesCopa: Palpite[] = []
-    for (let i = 1; i <= 11; i++) {
-      const jId = `j_copa_${i}`
-      jogosCopa.push({
-        id: jId,
-        bolao: 'copa_mundo',
-        time_a: `Seleção A${i}`,
-        time_b: `Seleção B${i}`,
-        data: '2026-06-15',
-        hora: '16:00',
-        placar_a: 3,
-        placar_b: 0,
-        resultado_finalizado: false, // simula jogos importados sem flag true
-        tem_penaltis: false,
-        competicao: 'Copa do Mundo',
-        created: '',
-        updated: '',
-        collectionId: '',
-        collectionName: '',
-      })
-      palpitesCopa.push({
-        id: `palp_copa_${i}`,
-        bolao: 'copa_mundo',
-        jogo: jId,
-        participante: 'p_doug_copa',
-        placar_a: 3,
-        placar_b: 0,
-        pontuacao_jogo: 8,
-        detalhamento: ['Placar Exato e Vencedor'],
-        created: '',
-        updated: '',
-        collectionId: '',
-        collectionName: '',
-      })
-    }
-
-    const todosJogos = [...jogosConi, ...jogosCopa]
-    const todosPalpites = [...palpitesConi, ...palpitesCopa]
-
-    // 1. Visão Geral: Douglas deve somar 8 + 11 = 19 cravadas exatas!
+    // 1. Visão Geral (Todas as Copas) -> Douglas soma exatamente 6 + 8 + 2 + 3 = 19 cravadas oficiais
     const statsGeral = calculateStatistics({
       boloes,
       participantes,
-      jogos: todosJogos,
-      palpites: todosPalpites,
+      jogos: [],
+      palpites: [],
       filtroBolaoId: 'geral',
     })
-
     const douglasGeral = statsGeral.tabela.find((t) => t.nome === 'Douglas')
     expect(douglasGeral).toBeDefined()
-    expect(douglasGeral?.cravadasExatas).toBe(19) // 8 da Coni + 11 da Copa do Mundo
-    expect(douglasGeral?.pontosImportados).toBe(71 + 150) // 221 pts
-    expect(douglasGeral?.pontosPalpites).toBe(8 * 8 + 11 * 8) // 64 + 88 = 152
-    expect(douglasGeral?.totalPontos).toBe(221 + 152)
+    expect(douglasGeral?.cravadasExatas).toBe(19)
+    // Pontos permanecem absolutamente congelados e isolados
+    expect(douglasGeral?.pontosImportados).toBe(61 + 150 + 6 + 4) // 221
+    expect(douglasGeral?.totalPontos).toBe(221)
 
-    // 2. Visão Copa Coni: exatamente 8 cravadas
+    // 2. Visão Copa Coni: exatamente 6 cravadas oficiais
     const statsConi = calculateStatistics({
       boloes,
       participantes,
-      jogos: todosJogos,
-      palpites: todosPalpites,
+      jogos: [],
+      palpites: [],
       filtroBolaoId: 'copa_coni',
     })
     const douglasConi = statsConi.tabela.find((t) => t.nome === 'Douglas')
-    expect(douglasConi?.cravadasExatas).toBe(8)
+    expect(douglasConi?.cravadasExatas).toBe(6)
 
-    // 3. Visão Copa do Mundo isolada: exatamente 11 cravadas
+    // 3. Visão Copa do Mundo isolada: exatamente 8 cravadas oficiais
     const statsCopa = calculateStatistics({
       boloes,
       participantes,
-      jogos: todosJogos,
-      palpites: todosPalpites,
+      jogos: [],
+      palpites: [],
       filtroBolaoId: 'copa_mundo',
     })
     const douglasCopa = statsCopa.tabela.find((t) => t.nome === 'Douglas')
-    expect(douglasCopa?.cravadasExatas).toBe(11)
+    expect(douglasCopa?.cravadasExatas).toBe(8)
+
+    // 4. Visão Copa Sormani: exatamente 2 cravadas oficiais
+    const statsSormani = calculateStatistics({
+      boloes,
+      participantes,
+      jogos: [],
+      palpites: [],
+      filtroBolaoId: 'copa_sormani',
+    })
+    const douglasSormani = statsSormani.tabela.find((t) => t.nome === 'Douglas')
+    expect(douglasSormani?.cravadasExatas).toBe(2)
+
+    // 5. Visão Copa Genilton: exatamente 3 cravadas oficiais
+    const statsGenilton = calculateStatistics({
+      boloes,
+      participantes,
+      jogos: [],
+      palpites: [],
+      filtroBolaoId: 'copa_genilton',
+    })
+    const douglasGenilton = statsGenilton.tabela.find((t) => t.nome === 'Douglas')
+    expect(douglasGenilton?.cravadasExatas).toBe(3)
   })
 
   it('TOTAL DE PONTOS é estritamente [Pontos Fixos Importados] + [Pontos Palpites do App] e nunca é alterado pelo parsing de cravadas', () => {
@@ -1353,5 +1339,477 @@ describe('statsCalculator', () => {
     expect(douglasRow?.pontosImportados).toBe(221)
     expect(douglasRow?.pontosPalpites).toBe(8)
     expect(douglasRow?.totalPontos).toBe(221 + 8) // 229
+  })
+
+  it('trava Douglas = 19 no Geral, 8 na Copa do Mundo, 2 na Sormani, 3 na Genilton, 6 na Coni e pontuação total congelada de todos os participantes', () => {
+    // 4 Bolões
+    const boloes: Bolao[] = [
+      {
+        id: 'hy6ade9obylh404',
+        nome: 'Copa do Mundo',
+        ativo: false,
+        created: '',
+        updated: '',
+        collectionId: '',
+        collectionName: '',
+      },
+      {
+        id: 'kr20rfjisajd6ro',
+        nome: 'Copa Coni',
+        ativo: true,
+        created: '',
+        updated: '',
+        collectionId: '',
+        collectionName: '',
+      },
+      {
+        id: 'xdtvijyapxuw99y',
+        nome: 'Copa Sormani',
+        ativo: true,
+        created: '',
+        updated: '',
+        collectionId: '',
+        collectionName: '',
+      },
+      {
+        id: 'qdpy2honwivb5zw',
+        nome: 'Copa Genilton',
+        ativo: true,
+        created: '',
+        updated: '',
+        collectionId: '',
+        collectionName: '',
+      },
+    ]
+
+    // Todos os participantes cadastrados com as pontuações e cravadas oficiais
+    const participantes: Participante[] = [
+      // Douglas: 221 importados, 616 totais
+      {
+        id: 'i6kaaw12v3l9adh',
+        nome: 'Douglas',
+        bolao: 'hy6ade9obylh404',
+        pontos_importados: 150,
+        cravadas_fixas: 8,
+        pontuacao_total: 230,
+        created: '',
+        updated: '',
+        collectionId: '',
+        collectionName: '',
+      },
+      {
+        id: 'ab3sjd3vctc8l0n',
+        nome: 'Douglas',
+        bolao: 'kr20rfjisajd6ro',
+        pontos_importados: 61,
+        cravadas_fixas: 6,
+        pontuacao_total: 190,
+        created: '',
+        updated: '',
+        collectionId: '',
+        collectionName: '',
+      },
+      {
+        id: '4vfl6xcy0jj51d4',
+        nome: 'Douglas',
+        bolao: 'xdtvijyapxuw99y',
+        pontos_importados: 6,
+        cravadas_fixas: 2,
+        pontuacao_total: 107,
+        created: '',
+        updated: '',
+        collectionId: '',
+        collectionName: '',
+      },
+      {
+        id: 'v7idfj7z96dle4k',
+        nome: 'Douglas',
+        bolao: 'qdpy2honwivb5zw',
+        pontos_importados: 4,
+        cravadas_fixas: 3,
+        pontuacao_total: 89,
+        created: '',
+        updated: '',
+        collectionId: '',
+        collectionName: '',
+      },
+
+      // Davi: 209 importados, 749 totais
+      {
+        id: 'kvgc6c0fwhl0l9p',
+        nome: 'Davi',
+        bolao: 'hy6ade9obylh404',
+        pontos_importados: 142,
+        pontuacao_total: 281,
+        created: '',
+        updated: '',
+        collectionId: '',
+        collectionName: '',
+      },
+      {
+        id: 'umcv669v5mdfe0r',
+        nome: 'Davi',
+        bolao: 'kr20rfjisajd6ro',
+        pontos_importados: 56,
+        pontuacao_total: 215,
+        created: '',
+        updated: '',
+        collectionId: '',
+        collectionName: '',
+      },
+      {
+        id: '4b44sdmnk0b8mdn',
+        nome: 'Davi',
+        bolao: 'xdtvijyapxuw99y',
+        pontos_importados: 11,
+        pontuacao_total: 124,
+        created: '',
+        updated: '',
+        collectionId: '',
+        collectionName: '',
+      },
+      {
+        id: '0izs3aqh2jsc9hl',
+        nome: 'Davi',
+        bolao: 'qdpy2honwivb5zw',
+        pontos_importados: 0,
+        pontuacao_total: 129,
+        created: '',
+        updated: '',
+        collectionId: '',
+        collectionName: '',
+      },
+
+      // Gabriel: 179 importados, 639 totais
+      {
+        id: 'trome8p25i4b75p',
+        nome: 'Gabriel',
+        bolao: 'hy6ade9obylh404',
+        pontos_importados: 118,
+        pontuacao_total: 236,
+        created: '',
+        updated: '',
+        collectionId: '',
+        collectionName: '',
+      },
+      {
+        id: '09yarueqvzdkca0',
+        nome: 'Gabriel',
+        bolao: 'kr20rfjisajd6ro',
+        pontos_importados: 43,
+        pontuacao_total: 170,
+        created: '',
+        updated: '',
+        collectionId: '',
+        collectionName: '',
+      },
+      {
+        id: '9wnn50qbtu0zd0g',
+        nome: 'Gabriel',
+        bolao: 'xdtvijyapxuw99y',
+        pontos_importados: 18,
+        pontuacao_total: 131,
+        created: '',
+        updated: '',
+        collectionId: '',
+        collectionName: '',
+      },
+      {
+        id: 'gkecxx8je2gf0d5',
+        nome: 'Gabriel',
+        bolao: 'qdpy2honwivb5zw',
+        pontos_importados: 0,
+        pontuacao_total: 102,
+        created: '',
+        updated: '',
+        collectionId: '',
+        collectionName: '',
+      },
+
+      // Bruno Lopes: 136 importados, 321 totais
+      {
+        id: 'dqqt8gucvr0jwgg',
+        nome: 'Bruno Lopes',
+        bolao: 'hy6ade9obylh404',
+        pontos_importados: 134,
+        pontuacao_total: 213,
+        created: '',
+        updated: '',
+        collectionId: '',
+        collectionName: '',
+      },
+      {
+        id: 'k2km4ejz4rfz992',
+        nome: 'Bruno Lopes',
+        bolao: 'xdtvijyapxuw99y',
+        pontos_importados: 0,
+        pontuacao_total: 63,
+        created: '',
+        updated: '',
+        collectionId: '',
+        collectionName: '',
+      },
+      {
+        id: 'c1a3v87mi2v8iiy',
+        nome: 'Bruno Lopes',
+        bolao: 'kr20rfjisajd6ro',
+        pontos_importados: 2,
+        pontuacao_total: 33,
+        created: '',
+        updated: '',
+        collectionId: '',
+        collectionName: '',
+      },
+      {
+        id: 'z06yes6lfpqajwp',
+        nome: 'Bruno Lopes',
+        bolao: 'qdpy2honwivb5zw',
+        pontos_importados: 0,
+        pontuacao_total: 12,
+        created: '',
+        updated: '',
+        collectionId: '',
+        collectionName: '',
+      },
+
+      // Bruno Xavier: 0 importados, 18 totais
+      {
+        id: '6uaqe0k861lckyl',
+        nome: 'Bruno Xavier',
+        bolao: 'kr20rfjisajd6ro',
+        pontos_importados: 0,
+        pontuacao_total: 18,
+        created: '',
+        updated: '',
+        collectionId: '',
+        collectionName: '',
+      },
+      {
+        id: '2tt4qyld3zvxutb',
+        nome: 'Bruno Xavier',
+        bolao: 'xdtvijyapxuw99y',
+        pontos_importados: 0,
+        pontuacao_total: 0,
+        created: '',
+        updated: '',
+        collectionId: '',
+        collectionName: '',
+      },
+      {
+        id: '5mec2j8sq1fneky',
+        nome: 'Bruno Xavier',
+        bolao: 'qdpy2honwivb5zw',
+        pontos_importados: 0,
+        pontuacao_total: 0,
+        created: '',
+        updated: '',
+        collectionId: '',
+        collectionName: '',
+      },
+
+      // Willian: 0 importados, 6 totais
+      {
+        id: '9fdrx5dij8dfobg',
+        nome: 'Willian',
+        bolao: 'kr20rfjisajd6ro',
+        pontos_importados: 0,
+        pontuacao_total: 6,
+        created: '',
+        updated: '',
+        collectionId: '',
+        collectionName: '',
+      },
+      {
+        id: 'jj9o0g39qhf285f',
+        nome: 'Willian',
+        bolao: 'xdtvijyapxuw99y',
+        pontos_importados: 0,
+        pontuacao_total: 0,
+        created: '',
+        updated: '',
+        collectionId: '',
+        collectionName: '',
+      },
+      {
+        id: 'qohuqdm775wzvoj',
+        nome: 'Willian',
+        bolao: 'qdpy2honwivb5zw',
+        pontos_importados: 0,
+        pontuacao_total: 0,
+        created: '',
+        updated: '',
+        collectionId: '',
+        collectionName: '',
+      },
+    ]
+
+    // Palpites do app para simular a pontuação restante que totaliza exatamente:
+    // Douglas: 616 (221 imp + 395 palpites)
+    // Davi: 749 (209 imp + 540 palpites)
+    // Gabriel: 639 (179 imp + 460 palpites)
+    // Bruno Lopes: 321 (136 imp + 185 palpites)
+    // Bruno Xavier: 18 (0 imp + 18 palpites)
+    // Willian: 6 (0 imp + 6 palpites)
+    const mockJogo: Jogo = {
+      id: 'j_mock',
+      bolao: 'kr20rfjisajd6ro',
+      time_a: 'Time A',
+      time_b: 'Time B',
+      data: '2026-09-01',
+      hora: '16:00',
+      placar_a: 1,
+      placar_b: 0,
+      resultado_finalizado: true,
+      tem_penaltis: false,
+      created: '',
+      updated: '',
+      collectionId: '',
+      collectionName: '',
+    }
+
+    const mockPalpites: Palpite[] = [
+      {
+        id: 'p1',
+        bolao: 'kr20rfjisajd6ro',
+        jogo: 'j_mock',
+        participante: 'ab3sjd3vctc8l0n',
+        placar_a: 2,
+        placar_b: 1,
+        pontuacao_jogo: 395,
+        created: '',
+        updated: '',
+        collectionId: '',
+        collectionName: '',
+      },
+      {
+        id: 'p2',
+        bolao: 'kr20rfjisajd6ro',
+        jogo: 'j_mock',
+        participante: 'umcv669v5mdfe0r',
+        placar_a: 2,
+        placar_b: 1,
+        pontuacao_jogo: 540,
+        created: '',
+        updated: '',
+        collectionId: '',
+        collectionName: '',
+      },
+      {
+        id: 'p3',
+        bolao: 'kr20rfjisajd6ro',
+        jogo: 'j_mock',
+        participante: '09yarueqvzdkca0',
+        placar_a: 2,
+        placar_b: 1,
+        pontuacao_jogo: 460,
+        created: '',
+        updated: '',
+        collectionId: '',
+        collectionName: '',
+      },
+      {
+        id: 'p4',
+        bolao: 'kr20rfjisajd6ro',
+        jogo: 'j_mock',
+        participante: 'c1a3v87mi2v8iiy',
+        placar_a: 2,
+        placar_b: 1,
+        pontuacao_jogo: 185,
+        created: '',
+        updated: '',
+        collectionId: '',
+        collectionName: '',
+      },
+      {
+        id: 'p5',
+        bolao: 'kr20rfjisajd6ro',
+        jogo: 'j_mock',
+        participante: '6uaqe0k861lckyl',
+        placar_a: 2,
+        placar_b: 1,
+        pontuacao_jogo: 18,
+        created: '',
+        updated: '',
+        collectionId: '',
+        collectionName: '',
+      },
+      {
+        id: 'p6',
+        bolao: 'kr20rfjisajd6ro',
+        jogo: 'j_mock',
+        participante: '9fdrx5dij8dfobg',
+        placar_a: 2,
+        placar_b: 1,
+        pontuacao_jogo: 6,
+        created: '',
+        updated: '',
+        collectionId: '',
+        collectionName: '',
+      },
+    ]
+
+    // 1. Visão Geral (Todas as Copas)
+    const statsGeral = calculateStatistics({
+      boloes,
+      participantes,
+      jogos: [mockJogo],
+      palpites: mockPalpites,
+      filtroBolaoId: 'geral',
+    })
+
+    const getScore = (name: string) => statsGeral.tabela.find((t) => t.nome === name)?.totalPontos
+    const getCravadas = (name: string) =>
+      statsGeral.tabela.find((t) => t.nome === name)?.cravadasExatas
+
+    // Pontuações totais estritamente congeladas
+    expect(getScore('Davi')).toBe(749)
+    expect(getScore('Gabriel')).toBe(639)
+    expect(getScore('Douglas')).toBe(616)
+    expect(getScore('Bruno Lopes')).toBe(321)
+    expect(getScore('Bruno Xavier')).toBe(18)
+    expect(getScore('Willian')).toBe(6)
+
+    // Cravadas do Douglas no Geral: exatamente 19
+    expect(getCravadas('Douglas')).toBe(19)
+
+    // 2. Visão Copa do Mundo isolada: Douglas = 8 cravadas
+    const statsMundo = calculateStatistics({
+      boloes,
+      participantes,
+      jogos: [mockJogo],
+      palpites: mockPalpites,
+      filtroBolaoId: 'hy6ade9obylh404',
+    })
+    expect(statsMundo.tabela.find((t) => t.nome === 'Douglas')?.cravadasExatas).toBe(8)
+
+    // 3. Visão Copa Coni isolada: Douglas = 6 cravadas
+    const statsConi = calculateStatistics({
+      boloes,
+      participantes,
+      jogos: [mockJogo],
+      palpites: mockPalpites,
+      filtroBolaoId: 'kr20rfjisajd6ro',
+    })
+    expect(statsConi.tabela.find((t) => t.nome === 'Douglas')?.cravadasExatas).toBe(6)
+
+    // 4. Visão Copa Sormani isolada: Douglas = 2 cravadas
+    const statsSormani = calculateStatistics({
+      boloes,
+      participantes,
+      jogos: [mockJogo],
+      palpites: mockPalpites,
+      filtroBolaoId: 'xdtvijyapxuw99y',
+    })
+    expect(statsSormani.tabela.find((t) => t.nome === 'Douglas')?.cravadasExatas).toBe(2)
+
+    // 5. Visão Copa Genilton isolada: Douglas = 3 cravadas
+    const statsGenilton = calculateStatistics({
+      boloes,
+      participantes,
+      jogos: [mockJogo],
+      palpites: mockPalpites,
+      filtroBolaoId: 'qdpy2honwivb5zw',
+    })
+    expect(statsGenilton.tabela.find((t) => t.nome === 'Douglas')?.cravadasExatas).toBe(3)
   })
 })

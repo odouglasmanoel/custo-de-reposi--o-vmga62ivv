@@ -61,6 +61,7 @@ export interface Participante extends RecordModel {
   bolao: string
   nome: string
   pontos_importados?: number
+  cravadas_fixas?: number
   pontuacao_total: number
 }
 
