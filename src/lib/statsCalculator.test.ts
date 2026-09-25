@@ -1341,8 +1341,7 @@ describe('statsCalculator', () => {
     expect(douglasRow?.totalPontos).toBe(221 + 8) // 229
   })
 
-  it('trava Douglas = 19 no Geral, 8 na Copa do Mundo, 2 na Sormani, 3 na Genilton, 6 na Coni e pontuação total congelada de todos os participantes', () => {
-    // 4 Bolões
+  it('aplica cravadas_fixas oficiais auditadas para todos os participantes (Davi 25, Gabriel 21, Douglas 19, Bruno Xavier 8)', () => {
     const boloes: Bolao[] = [
       {
         id: 'hy6ade9obylh404',
@@ -1382,7 +1381,11 @@ describe('statsCalculator', () => {
       },
     ]
 
-    // Todos os participantes cadastrados com as pontuações e cravadas oficiais
+    // Todos os participantes cadastrados com as pontuações e cravadas oficiais apuradas na auditoria:
+    // - Bruno Xavier: Copa do Mundo: 6 | Copa Genilton: 0 | Copa Sormani: 1 | Copa Coni: 1 (Total = 8)
+    // - Davi: Copa do Mundo: 10 | Copa Genilton: 6 | Copa Sormani: 3 | Copa Coni: 6 (Total = 25)
+    // - Douglas: Copa do Mundo: 8 | Copa Genilton: 3 | Copa Sormani: 2 | Copa Coni: 6 (Total = 19)
+    // - Gabriel: Copa do Mundo: 7 | Copa Genilton: 5 | Copa Sormani: 5 | Copa Coni: 4 (Total = 21)
     const participantes: Participante[] = [
       // Douglas: 221 importados, 616 totais
       {
@@ -1440,6 +1443,7 @@ describe('statsCalculator', () => {
         nome: 'Davi',
         bolao: 'hy6ade9obylh404',
         pontos_importados: 142,
+        cravadas_fixas: 10,
         pontuacao_total: 281,
         created: '',
         updated: '',
@@ -1451,6 +1455,7 @@ describe('statsCalculator', () => {
         nome: 'Davi',
         bolao: 'kr20rfjisajd6ro',
         pontos_importados: 56,
+        cravadas_fixas: 6,
         pontuacao_total: 215,
         created: '',
         updated: '',
@@ -1462,6 +1467,7 @@ describe('statsCalculator', () => {
         nome: 'Davi',
         bolao: 'xdtvijyapxuw99y',
         pontos_importados: 11,
+        cravadas_fixas: 3,
         pontuacao_total: 124,
         created: '',
         updated: '',
@@ -1473,6 +1479,7 @@ describe('statsCalculator', () => {
         nome: 'Davi',
         bolao: 'qdpy2honwivb5zw',
         pontos_importados: 0,
+        cravadas_fixas: 6,
         pontuacao_total: 129,
         created: '',
         updated: '',
@@ -1486,6 +1493,7 @@ describe('statsCalculator', () => {
         nome: 'Gabriel',
         bolao: 'hy6ade9obylh404',
         pontos_importados: 118,
+        cravadas_fixas: 7,
         pontuacao_total: 236,
         created: '',
         updated: '',
@@ -1497,6 +1505,7 @@ describe('statsCalculator', () => {
         nome: 'Gabriel',
         bolao: 'kr20rfjisajd6ro',
         pontos_importados: 43,
+        cravadas_fixas: 4,
         pontuacao_total: 170,
         created: '',
         updated: '',
@@ -1508,6 +1517,7 @@ describe('statsCalculator', () => {
         nome: 'Gabriel',
         bolao: 'xdtvijyapxuw99y',
         pontos_importados: 18,
+        cravadas_fixas: 5,
         pontuacao_total: 131,
         created: '',
         updated: '',
@@ -1519,6 +1529,7 @@ describe('statsCalculator', () => {
         nome: 'Gabriel',
         bolao: 'qdpy2honwivb5zw',
         pontos_importados: 0,
+        cravadas_fixas: 5,
         pontuacao_total: 102,
         created: '',
         updated: '',
@@ -1532,6 +1543,7 @@ describe('statsCalculator', () => {
         nome: 'Bruno Lopes',
         bolao: 'hy6ade9obylh404',
         pontos_importados: 134,
+        cravadas_fixas: 0,
         pontuacao_total: 213,
         created: '',
         updated: '',
@@ -1543,6 +1555,7 @@ describe('statsCalculator', () => {
         nome: 'Bruno Lopes',
         bolao: 'xdtvijyapxuw99y',
         pontos_importados: 0,
+        cravadas_fixas: 0,
         pontuacao_total: 63,
         created: '',
         updated: '',
@@ -1554,6 +1567,7 @@ describe('statsCalculator', () => {
         nome: 'Bruno Lopes',
         bolao: 'kr20rfjisajd6ro',
         pontos_importados: 2,
+        cravadas_fixas: 0,
         pontuacao_total: 33,
         created: '',
         updated: '',
@@ -1565,6 +1579,7 @@ describe('statsCalculator', () => {
         nome: 'Bruno Lopes',
         bolao: 'qdpy2honwivb5zw',
         pontos_importados: 0,
+        cravadas_fixas: 0,
         pontuacao_total: 12,
         created: '',
         updated: '',
@@ -1574,10 +1589,23 @@ describe('statsCalculator', () => {
 
       // Bruno Xavier: 0 importados, 18 totais
       {
+        id: 'hkamtknd5weqrm7',
+        nome: 'Bruno Xavier',
+        bolao: 'hy6ade9obylh404',
+        pontos_importados: 0,
+        cravadas_fixas: 6,
+        pontuacao_total: 0,
+        created: '',
+        updated: '',
+        collectionId: '',
+        collectionName: '',
+      },
+      {
         id: '6uaqe0k861lckyl',
         nome: 'Bruno Xavier',
         bolao: 'kr20rfjisajd6ro',
         pontos_importados: 0,
+        cravadas_fixas: 1,
         pontuacao_total: 18,
         created: '',
         updated: '',
@@ -1589,6 +1617,7 @@ describe('statsCalculator', () => {
         nome: 'Bruno Xavier',
         bolao: 'xdtvijyapxuw99y',
         pontos_importados: 0,
+        cravadas_fixas: 1,
         pontuacao_total: 0,
         created: '',
         updated: '',
@@ -1600,6 +1629,7 @@ describe('statsCalculator', () => {
         nome: 'Bruno Xavier',
         bolao: 'qdpy2honwivb5zw',
         pontos_importados: 0,
+        cravadas_fixas: 0,
         pontuacao_total: 0,
         created: '',
         updated: '',
@@ -1613,6 +1643,7 @@ describe('statsCalculator', () => {
         nome: 'Willian',
         bolao: 'kr20rfjisajd6ro',
         pontos_importados: 0,
+        cravadas_fixas: 0,
         pontuacao_total: 6,
         created: '',
         updated: '',
@@ -1624,6 +1655,7 @@ describe('statsCalculator', () => {
         nome: 'Willian',
         bolao: 'xdtvijyapxuw99y',
         pontos_importados: 0,
+        cravadas_fixas: 0,
         pontuacao_total: 0,
         created: '',
         updated: '',
@@ -1635,6 +1667,7 @@ describe('statsCalculator', () => {
         nome: 'Willian',
         bolao: 'qdpy2honwivb5zw',
         pontos_importados: 0,
+        cravadas_fixas: 0,
         pontuacao_total: 0,
         created: '',
         updated: '',
@@ -1769,10 +1802,20 @@ describe('statsCalculator', () => {
     expect(getScore('Bruno Xavier')).toBe(18)
     expect(getScore('Willian')).toBe(6)
 
-    // Cravadas do Douglas no Geral: exatamente 19
+    // Cravadas auditadas no Geral:
+    // Davi: 10 + 6 + 3 + 6 = 25
+    // Gabriel: 7 + 5 + 5 + 4 = 21
+    // Douglas: 8 + 3 + 2 + 6 = 19
+    // Bruno Xavier: 6 + 0 + 1 + 1 = 8
+    expect(getCravadas('Davi')).toBe(25)
+    expect(getCravadas('Gabriel')).toBe(21)
     expect(getCravadas('Douglas')).toBe(19)
+    expect(getCravadas('Bruno Xavier')).toBe(8)
+    expect(getCravadas('Bruno Lopes')).toBe(0)
+    expect(getCravadas('Willian')).toBe(0)
 
-    // 2. Visão Copa do Mundo isolada: Douglas = 8 cravadas
+    // 2. Visão Copa do Mundo isolada:
+    // Davi: 10, Douglas: 8, Gabriel: 7, Bruno Xavier: 6
     const statsMundo = calculateStatistics({
       boloes,
       participantes,
@@ -1780,9 +1823,13 @@ describe('statsCalculator', () => {
       palpites: mockPalpites,
       filtroBolaoId: 'hy6ade9obylh404',
     })
+    expect(statsMundo.tabela.find((t) => t.nome === 'Davi')?.cravadasExatas).toBe(10)
     expect(statsMundo.tabela.find((t) => t.nome === 'Douglas')?.cravadasExatas).toBe(8)
+    expect(statsMundo.tabela.find((t) => t.nome === 'Gabriel')?.cravadasExatas).toBe(7)
+    expect(statsMundo.tabela.find((t) => t.nome === 'Bruno Xavier')?.cravadasExatas).toBe(6)
 
-    // 3. Visão Copa Coni isolada: Douglas = 6 cravadas
+    // 3. Visão Copa Coni isolada:
+    // Davi: 6, Douglas: 6, Gabriel: 4, Bruno Xavier: 1
     const statsConi = calculateStatistics({
       boloes,
       participantes,
@@ -1790,9 +1837,13 @@ describe('statsCalculator', () => {
       palpites: mockPalpites,
       filtroBolaoId: 'kr20rfjisajd6ro',
     })
+    expect(statsConi.tabela.find((t) => t.nome === 'Davi')?.cravadasExatas).toBe(6)
     expect(statsConi.tabela.find((t) => t.nome === 'Douglas')?.cravadasExatas).toBe(6)
+    expect(statsConi.tabela.find((t) => t.nome === 'Gabriel')?.cravadasExatas).toBe(4)
+    expect(statsConi.tabela.find((t) => t.nome === 'Bruno Xavier')?.cravadasExatas).toBe(1)
 
-    // 4. Visão Copa Sormani isolada: Douglas = 2 cravadas
+    // 4. Visão Copa Sormani isolada:
+    // Davi: 3, Douglas: 2, Gabriel: 5, Bruno Xavier: 1
     const statsSormani = calculateStatistics({
       boloes,
       participantes,
@@ -1800,9 +1851,13 @@ describe('statsCalculator', () => {
       palpites: mockPalpites,
       filtroBolaoId: 'xdtvijyapxuw99y',
     })
+    expect(statsSormani.tabela.find((t) => t.nome === 'Davi')?.cravadasExatas).toBe(3)
     expect(statsSormani.tabela.find((t) => t.nome === 'Douglas')?.cravadasExatas).toBe(2)
+    expect(statsSormani.tabela.find((t) => t.nome === 'Gabriel')?.cravadasExatas).toBe(5)
+    expect(statsSormani.tabela.find((t) => t.nome === 'Bruno Xavier')?.cravadasExatas).toBe(1)
 
-    // 5. Visão Copa Genilton isolada: Douglas = 3 cravadas
+    // 5. Visão Copa Genilton isolada:
+    // Davi: 6, Douglas: 3, Gabriel: 5, Bruno Xavier: 0
     const statsGenilton = calculateStatistics({
       boloes,
       participantes,
@@ -1810,7 +1865,10 @@ describe('statsCalculator', () => {
       palpites: mockPalpites,
       filtroBolaoId: 'qdpy2honwivb5zw',
     })
+    expect(statsGenilton.tabela.find((t) => t.nome === 'Davi')?.cravadasExatas).toBe(6)
     expect(statsGenilton.tabela.find((t) => t.nome === 'Douglas')?.cravadasExatas).toBe(3)
+    expect(statsGenilton.tabela.find((t) => t.nome === 'Gabriel')?.cravadasExatas).toBe(5)
+    expect(statsGenilton.tabela.find((t) => t.nome === 'Bruno Xavier')?.cravadasExatas).toBe(0)
   })
 
   it('valida a fórmula oficial de cravadas: [Cravadas Históricas Importadas] + [Cravadas do App] por copa e no geral', () => {
@@ -1865,8 +1923,20 @@ describe('statsCalculator', () => {
         bolao: 'kr20rfjisajd6ro',
         nome: 'Davi',
         pontos_importados: 56,
-        cravadas_fixas: 0,
+        cravadas_fixas: 6,
         pontuacao_total: 215,
+        created: '',
+        updated: '',
+        collectionId: '',
+        collectionName: '',
+      },
+      {
+        id: 'part_davi_copa',
+        bolao: 'hy6ade9obylh404',
+        nome: 'Davi',
+        pontos_importados: 142,
+        cravadas_fixas: 10,
+        pontuacao_total: 281,
         created: '',
         updated: '',
         collectionId: '',
@@ -1893,7 +1963,7 @@ describe('statsCalculator', () => {
     }
 
     // Douglas cravou 2x1 no jogo do App (+1 cravada via App)
-    // Davi cravou 2x1 no jogo do App (+1 cravada via App)
+    // Davi cravou 2x1 no jogo do App (+2 cravadas via App caso 2 jogos)
     const palpites: Palpite[] = [
       {
         id: 'bet_doug_app',
@@ -1927,7 +1997,7 @@ describe('statsCalculator', () => {
 
     // 1. Filtro Copa Coni:
     // Douglas = 6 fixas importadas + 1 cravada app = 7
-    // Davi = 0 fixas importadas + 1 cravada app = 1
+    // Davi = 6 fixas importadas + 1 cravada app = 7
     const statsConi = calculateStatistics({
       boloes,
       participantes,
@@ -1938,11 +2008,11 @@ describe('statsCalculator', () => {
     const dougConiRow = statsConi.tabela.find((t) => t.nome === 'Douglas')
     const daviConiRow = statsConi.tabela.find((t) => t.nome === 'Davi')
     expect(dougConiRow?.cravadasExatas).toBe(6 + 1)
-    expect(daviConiRow?.cravadasExatas).toBe(0 + 1)
+    expect(daviConiRow?.cravadasExatas).toBe(6 + 1)
 
     // 2. Filtro Geral:
     // Douglas = (8 + 6) fixas + 1 app = 15 cravadas
-    // Davi = 0 fixas + 1 app = 1 cravada
+    // Davi = (10 + 6) fixas + 1 app = 17 cravadas (ou se Davi tiver 25 na planilha inteira e cravou 2 no app -> 27)
     const statsGeral = calculateStatistics({
       boloes,
       participantes,
@@ -1953,7 +2023,7 @@ describe('statsCalculator', () => {
     const dougGeralRow = statsGeral.tabela.find((t) => t.nome === 'Douglas')
     const daviGeralRow = statsGeral.tabela.find((t) => t.nome === 'Davi')
     expect(dougGeralRow?.cravadasExatas).toBe(14 + 1)
-    expect(daviGeralRow?.cravadasExatas).toBe(0 + 1)
+    expect(daviGeralRow?.cravadasExatas).toBe(16 + 1)
 
     // Isolamento: total de pontos do Douglas = 150 + 61 + 8 = 219
     expect(dougGeralRow?.totalPontos).toBe(150 + 61 + 8)
