@@ -14,8 +14,9 @@ import pb from '@/lib/pocketbase/client'
 import type { Bolao, Jogo, Palpite, Participante } from '@/types/bolao'
 import { formatDataBR, formatHoraBR } from '@/lib/dateUtils'
 import { getScoreBreakdownBadges, type ScoreRuleBadge } from '@/lib/scoreBadgeUtils'
-import { jogoPontua } from '@/lib/jogoStatus'
+import { jogoPontua, isJogoIniciado } from '@/lib/jogoStatus'
 import { ParticipantScorersView } from '@/components/ParticipantScorersView'
+import { useAuth } from '@/context/AuthContext'
 import {
   Dialog,
   DialogContent,
@@ -46,6 +47,7 @@ export function ParticipantBetsModal({
   activeBolaoId,
   boloes,
 }: ParticipantBetsModalProps) {
+  const { isAdmin, participantName, user } = useAuth()
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [items, setItems] = useState<BetItemWithGame[]>([])
@@ -173,15 +175,35 @@ export function ParticipantBetsModal({
     }
   }, [open, participante, activeBolaoId])
 
+  // Determina se o usuário logado é o próprio dono dos palpites sendo visualizados
+  const isOwner = useMemo(() => {
+    if (!participante) return false
+    const currentName = (participantName || user?.name || user?.username || '').trim().toLowerCase()
+    const targetName = (participante.nome || '').trim().toLowerCase()
+    return Boolean(currentName && currentName === targetName)
+  }, [participante, participantName, user])
+
+  // Regra de privacidade de palpites futuros:
+  // - Administrador vê tudo (para edições, correções e auditoria)
+  // - Próprio participante vê todos os seus palpites
+  // - Adversários (não-admin e não-dono): apenas partidas já iniciadas (ao vivo ou encerradas)
+  const visibleItems = useMemo(() => {
+    if (isAdmin || isOwner) {
+      return items
+    }
+    const now = Date.now()
+    return items.filter((item) => isJogoIniciado(item.jogo, now))
+  }, [items, isAdmin, isOwner])
+
   // Agrupamento por bolão/copa quando no modo Geral
   const isGeral = !activeBolaoId || activeBolaoId === 'geral'
 
   const groupedByBolao = useMemo(() => {
     if (!isGeral) {
-      return [{ bolaoId: activeBolaoId, items }]
+      return [{ bolaoId: activeBolaoId, items: visibleItems }]
     }
     const map = new Map<string, BetItemWithGame[]>()
-    for (const item of items) {
+    for (const item of visibleItems) {
       const bId = item.palpite.bolao || item.jogo.bolao || 'indefinido'
       const list = map.get(bId) || []
       list.push(item)
@@ -191,7 +213,7 @@ export function ParticipantBetsModal({
       bolaoId,
       items: bItems,
     }))
-  }, [isGeral, activeBolaoId, items])
+  }, [isGeral, activeBolaoId, visibleItems])
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -235,9 +257,11 @@ export function ParticipantBetsModal({
               <p>{error}</p>
             </div>
           </div>
-        ) : items.length === 0 ? (
+        ) : visibleItems.length === 0 ? (
           <div className="my-8 rounded-lg bg-slate-50 p-8 text-center text-xs text-slate-500">
-            Nenhum palpite registrado para {participante?.nome} nesta visualização.
+            {items.length > 0 && !isAdmin && !isOwner
+              ? `Os palpites de ${participante?.nome} ficarão visíveis assim que as partidas iniciarem.`
+              : `Nenhum palpite registrado para ${participante?.nome} nesta visualização.`}
           </div>
         ) : (
           <div className="space-y-6 pt-2">

@@ -45,6 +45,46 @@ const STATUS_INICIADOS_OU_FINAIS = new Set([
  * - Retorna true somente se kickoff já passou E status for em_andamento/ao_vivo/finalizado/encerrado
  *   ou resultado_finalizado=true COM kickoff <= agoraMs
  */
+/**
+ * Verifica se uma partida já foi iniciada (ao vivo ou encerrada/finalizada).
+ * Uma partida é considerada iniciada se:
+ * 1. resultado_finalizado for true; OU
+ * 2. status for ao_vivo / finalizado / encerrado / ft / etc.; OU
+ * 3. horário de kickoff já tiver sido atingido no fuso de Brasília (agoraMs >= kickoffMs),
+ *    exceto se o status explicitamente indicar não iniciado (ex: adiado/cancelado).
+ */
+export function isJogoIniciado(
+  jogo: JogoPontuaInput | null | undefined,
+  agoraMs: number = Date.now(),
+): boolean {
+  if (!jogo) return false
+
+  if (jogo.resultado_finalizado) return true
+
+  const rawStatus = (jogo.status || '').toLowerCase().trim()
+  if (rawStatus && STATUS_INICIADOS_OU_FINAIS.has(rawStatus)) {
+    return true
+  }
+
+  if (rawStatus && STATUS_NAO_INICIADOS.has(rawStatus)) {
+    // Se o status for explicitamente cancelado ou adiado, não iniciou mesmo se a hora original passou
+    if (['postponed', 'pst', 'canc', 'cancelled'].includes(rawStatus)) {
+      return false
+    }
+    // Para 'pendente', 'agendado', 'ns', 'not_started', 'aguardando':
+    // Se o horário de kickoff no fuso de Brasília já passou, a partida já iniciou
+    const kickoffMs = getJogoKickoffTimestamp(jogo.data, jogo.hora)
+    return kickoffMs !== null && agoraMs >= kickoffMs
+  }
+
+  const kickoffMs = getJogoKickoffTimestamp(jogo.data, jogo.hora)
+  if (kickoffMs !== null) {
+    return agoraMs >= kickoffMs
+  }
+
+  return false
+}
+
 export function jogoPontua(
   jogo: JogoPontuaInput | null | undefined,
   agoraMs: number = Date.now(),
