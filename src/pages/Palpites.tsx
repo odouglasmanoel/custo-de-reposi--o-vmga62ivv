@@ -17,6 +17,7 @@ import {
   ArrowLeft,
   Users,
   RefreshCcw,
+  RefreshCw,
 } from 'lucide-react'
 import pb from '@/lib/pocketbase/client'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -217,6 +218,7 @@ export default function Palpites() {
   const [filterPendentes, setFilterPendentes] = useState<boolean>(initialPendentes)
   const [selectedCompeticao, setSelectedCompeticao] = useState<string>('todas')
   const [manualSort, setManualSort] = useState<'asc' | 'desc' | null>(null)
+  const [isForcingAllLineups, setIsForcingAllLineups] = useState<boolean>(false)
   const [loadingGroupBets, setLoadingGroupBets] = useState(false)
   const [loadedGroupBets, setLoadedGroupBets] = useState(false)
   const [expandedGroupBets, setExpandedGroupBets] = useState<Record<string, boolean>>({})
@@ -1076,6 +1078,145 @@ export default function Palpites() {
     })
   }, [filteredJogos, sortOrder])
   const hasMore = currentPage < totalPages
+
+  // Ação administrativa: forçar busca sequencial de escalações na API-Football para todos os jogos pendentes/em andamento exibidos
+  const handleForcarTodasEscalacoes = useCallback(async () => {
+    if (!isAdmin || isForcingAllLineups) return
+
+    // Jogos exibidos que estão pendentes ou em andamento (não finalizados)
+    const jogosCandidatos = displayedJogos.filter((j) => {
+      if (j.resultado_finalizado) return false
+      const st = (j.status || '').toLowerCase().trim()
+      if (['finalizado', 'encerrado', 'ft', 'finished'].includes(st)) return false
+      return true
+    })
+
+    if (jogosCandidatos.length === 0) {
+      toast({
+        title: 'Nenhum jogo pendente',
+        description:
+          'Não há jogos pendentes ou em andamento na listagem atual para buscar escalações.',
+      })
+      return
+    }
+
+    setIsForcingAllLineups(true)
+
+    let okCount = 0
+    let semDadosCount = 0
+    let semIdCount = 0
+    let atingiuRateLimit = false
+
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+    }
+    if (pb.authStore.token) {
+      headers['Authorization'] = pb.authStore.token
+    }
+
+    const updatedLineupsMap: Record<string, LineupResponse> = {}
+
+    try {
+      for (const jogo of jogosCandidatos) {
+        const rawFid = ((jogo as any).api_fixture_id || jogo.fixture_id || '').toString().trim()
+        const hasNumericFixture = rawFid && /^\d+$/.test(rawFid)
+
+        if (!hasNumericFixture) {
+          semIdCount++
+          continue
+        }
+
+        try {
+          const res = await fetch(
+            `${import.meta.env.VITE_POCKETBASE_URL}/backend/v1/admin/forcar-escalacao`,
+            {
+              method: 'POST',
+              headers,
+              body: JSON.stringify({ jogo_id: jogo.id }),
+            },
+          )
+
+          const dataRes = await res.json().catch(() => ({}))
+
+          // Se a resposta indicar rate_limited: true, interrompe imediatamente a iteração sem lançar exceção
+          if (res.status === 429 || dataRes.rate_limited) {
+            atingiuRateLimit = true
+            toast({
+              title: 'Cota diária da API atingida',
+              description:
+                dataRes.error ||
+                'Limite diário da API-Football esgotado (80 chamadas/dia). Reset às 21h (Brasília).',
+              variant: 'destructive',
+            })
+            break
+          }
+
+          if (res.ok && dataRes.success) {
+            okCount++
+            if (dataRes.escalacoes) {
+              const freshLineup: LineupResponse = {
+                status: dataRes.escalacoes.status || 'confirmada',
+                provider: dataRes.escalacoes.provider || 'api_football',
+                fixtureId: dataRes.escalacoes.fixtureId,
+                teams: dataRes.escalacoes.teams,
+                updatedAt: dataRes.escalacoes.updatedAt,
+              }
+              updatedLineupsMap[jogo.id] = freshLineup
+            }
+          } else if (dataRes.notice || !dataRes.success) {
+            semDadosCount++
+          } else {
+            semDadosCount++
+          }
+        } catch (callErr) {
+          console.error(`Erro ao buscar escalação do jogo ${jogo.id}:`, callErr)
+          semDadosCount++
+        }
+      }
+
+      // Atualiza estado local de loadedLineups com as escalações obtidas
+      if (Object.keys(updatedLineupsMap).length > 0) {
+        setLoadedLineups((prev) => ({
+          ...prev,
+          ...updatedLineupsMap,
+        }))
+      }
+
+      // Revalida dados das partidas para atualizar fixture_id e escalações gravadas no PocketBase
+      try {
+        await loadData(1, true, false)
+      } catch {
+        /* fallback sem travar */
+      }
+
+      // Toast de resumo final em pt-BR
+      const resumoPartes: string[] = []
+      resumoPartes.push(`${okCount} ok`)
+      if (semDadosCount > 0) resumoPartes.push(`${semDadosCount} sem dados na API`)
+      if (semIdCount > 0) resumoPartes.push(`${semIdCount} sem ID de partida`)
+
+      const resumoMsg = `Escalações atualizadas: ${resumoPartes.join(', ')}.`
+
+      toast({
+        title: atingiuRateLimit
+          ? 'Atualização interrompida (Cota excedida)'
+          : okCount > 0
+            ? 'Escalações atualizadas'
+            : 'Busca de escalações concluída',
+        description: resumoMsg,
+        variant: atingiuRateLimit ? 'destructive' : 'default',
+      })
+    } catch (err: unknown) {
+      console.error('Erro geral ao forçar todas as escalações:', err)
+      toast({
+        title: 'Erro na atualização',
+        description: 'Ocorreu uma falha ao comunicar com o servidor para sincronizar escalações.',
+        variant: 'destructive',
+      })
+    } finally {
+      setIsForcingAllLineups(false)
+    }
+  }, [isAdmin, isForcingAllLineups, displayedJogos, loadData, toast])
 
   function TeamShield({
     escudo,
@@ -2386,6 +2527,31 @@ export default function Palpites() {
               Decrescente ⬇️
             </button>
           </div>
+
+          {/* Botão administrativo para forçar busca de todas as escalações da lista atual */}
+          {isAdmin && (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={handleForcarTodasEscalacoes}
+              disabled={isForcingAllLineups || displayedJogos.length === 0}
+              className="h-8 gap-1.5 text-xs font-semibold border-indigo-200 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 hover:text-indigo-900 transition shadow-2xs"
+              title="Buscar ou forçar atualização das escalações de todos os jogos pendentes exibidos na API-Football"
+            >
+              {isForcingAllLineups ? (
+                <>
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  <span>Atualizando Escalações...</span>
+                </>
+              ) : (
+                <>
+                  <RefreshCw className="h-3.5 w-3.5" />
+                  <span>Forçar Todas as Escalações</span>
+                </>
+              )}
+            </Button>
+          )}
 
           <Badge variant="outline" className="border-slate-300 text-xs text-slate-700 py-1">
             {displayedJogos.length} jogo(s) {filterPendentes ? 'pendente(s)' : 'total'}
