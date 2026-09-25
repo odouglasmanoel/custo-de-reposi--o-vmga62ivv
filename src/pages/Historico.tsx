@@ -15,6 +15,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { formatDataBR, formatHoraBR, formatDateTimeBR, sortJogosDecrescente } from '@/lib/dateUtils'
 import { getPalpiteMarcadoresPorTime, splitMatchScorersByTeam } from '@/lib/scorerUtils'
 import { AdminEditMarcadoresModal } from '@/components/AdminEditMarcadoresModal'
+import { FichaJogo } from '@/components/FichaJogo'
 import { getScoreBreakdownBadges } from '@/lib/scoreBadgeUtils'
 
 interface HistoricoPoolCache {
@@ -993,6 +994,20 @@ export default function Historico() {
                                 </div>
                               )
                             })()}
+
+                          {/* Ficha do Jogo (Timeline de eventos ao vivo/concluído) */}
+                          <FichaJogo
+                            fixtureId={jogo.api_fixture_id || (jogo as any).fixture_id}
+                            jogoId={jogo.id}
+                            timeA={jogo.time_a}
+                            timeB={jogo.time_b}
+                            placarA={jogo.placar_a != null ? Number(jogo.placar_a) : null}
+                            placarB={jogo.placar_b != null ? Number(jogo.placar_b) : null}
+                            golsTimeA={(jogo as any).gols_time_a}
+                            golsTimeB={(jogo as any).gols_time_b}
+                            isConcluido={Boolean(jogo.resultado_finalizado)}
+                            isAoVivo={false}
+                          />
                         </div>
                       )
                     })}

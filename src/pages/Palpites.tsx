@@ -52,6 +52,7 @@ import {
 } from '@/lib/scorerUtils'
 
 import { GameLineupAccordion } from '@/components/GameLineupAccordion'
+import { FichaJogo } from '@/components/FichaJogo'
 import { checkPlayerInLineup, LineupResponse } from '@/services/escalacoes'
 import { readEscudoCache } from '@/services/enquetes'
 import { getFlagCdnUrl, resolveTeamBadgeUrl } from '@/lib/flags'
@@ -2205,6 +2206,24 @@ export default function Palpites() {
                       </Button>
                     )}
                   </div>
+
+                  {/* Ficha do Jogo (Timeline de eventos ao vivo/concluído) */}
+                  {(isExpired ||
+                    Boolean(jogo.resultado_finalizado) ||
+                    Boolean(jogo.api_fixture_id || (jogo as any).fixture_id)) && (
+                    <FichaJogo
+                      fixtureId={jogo.api_fixture_id || (jogo as any).fixture_id}
+                      jogoId={jogo.id}
+                      timeA={jogo.time_a}
+                      timeB={jogo.time_b}
+                      placarA={jogo.placar_a != null ? Number(jogo.placar_a) : null}
+                      placarB={jogo.placar_b != null ? Number(jogo.placar_b) : null}
+                      golsTimeA={(jogo as any).gols_time_a}
+                      golsTimeB={(jogo as any).gols_time_b}
+                      isConcluido={Boolean(jogo.resultado_finalizado)}
+                      isAoVivo={isExpired && !jogo.resultado_finalizado}
+                    />
+                  )}
                 </div>
               )}
             </div>
