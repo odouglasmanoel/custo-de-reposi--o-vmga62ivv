@@ -16,7 +16,6 @@ import AdminConfiguracoes from './pages/AdminConfiguracoes'
 import Palpites from './pages/Palpites'
 import Historico from './pages/Historico'
 import Estatisticas from './pages/Estatisticas'
-import Chat from './pages/Chat'
 import Enquetes from './pages/Enquetes'
 import NotFound from './pages/NotFound'
 
@@ -141,18 +140,10 @@ const App = () => (
             />
             <Route path="/estatisticas" element={<Navigate to="/bolao/estatisticas" replace />} />
 
-            <Route
-              path="/bolao/chat"
-              element={
-                <ProtectedRoute>
-                  <Layout>
-                    <Chat />
-                  </Layout>
-                </ProtectedRoute>
-              }
-            />
-            <Route path="/chat" element={<Navigate to="/bolao/chat" replace />} />
-            <Route path="/assistente" element={<Navigate to="/bolao/chat" replace />} />
+            {/* Redirecionamento da rota/aba removida Assistente/Chat para a Home do Bolão */}
+            <Route path="/bolao/chat" element={<Navigate to="/bolao" replace />} />
+            <Route path="/chat" element={<Navigate to="/bolao" replace />} />
+            <Route path="/assistente" element={<Navigate to="/bolao" replace />} />
 
             {/* Módulo de Enquetes da Copa Coni (Acessível por todos os participantes) */}
             <Route

@@ -7,11 +7,9 @@ import {
   CheckCircle2,
   Clock,
   Copy,
-  MessageSquare,
   History,
   Shield,
   ArrowRight,
-  Sparkles,
   BarChart2,
   Globe,
   Radio,
@@ -3633,19 +3631,6 @@ export default function BolaoDashboard() {
                   </Button>
                 </Link>
               )}
-
-              <Link to="/bolao/chat" className="block">
-                <Button
-                  variant="outline"
-                  className="h-11 w-full justify-between rounded-lg border-emerald-300 bg-emerald-50 text-sm font-semibold text-emerald-800 hover:bg-emerald-100"
-                >
-                  <span className="flex items-center gap-2">
-                    <Sparkles className="h-4 w-4 text-emerald-600" />
-                    Assistente do Bolão (IA)
-                  </span>
-                  <ArrowRight className="h-4 w-4" />
-                </Button>
-              </Link>
             </div>
           </Card>
 

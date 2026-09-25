@@ -4,7 +4,6 @@ import {
   Trophy,
   LogOut,
   ArrowLeft,
-  MessageSquare,
   Shield,
   KeyRound,
   Settings,
@@ -86,13 +85,6 @@ const NAV_ITEMS: NavItem[] = [
     aliases: ['/estatisticas'],
   },
   {
-    id: 'chat',
-    label: 'Assistente',
-    path: '/bolao/chat',
-    icon: MessageSquare,
-    aliases: ['/chat', '/assistente'],
-  },
-  {
     id: 'admin',
     label: 'Admin',
     path: '/bolao/admin/jogos',
@@ -150,14 +142,9 @@ export default function Layout({ children }: LayoutProps) {
     location.pathname === '/meus-palpites' ||
     location.pathname === '/enquetes' ||
     location.pathname === '/historico' ||
-    location.pathname === '/estatisticas' ||
-    location.pathname === '/chat' ||
-    location.pathname === '/assistente'
+    location.pathname === '/estatisticas'
 
   const showBackButton =
-    location.pathname === '/bolao/chat' ||
-    location.pathname === '/chat' ||
-    location.pathname === '/assistente' ||
     location.pathname === '/bolao/enquetes' ||
     location.pathname === '/enquetes' ||
     location.pathname === '/bolao/palpites' ||
@@ -179,9 +166,6 @@ export default function Layout({ children }: LayoutProps) {
       navigate('/bolao/admin/jogos')
     } else if (
       location.pathname === '/bolao/admin/jogos' ||
-      location.pathname === '/bolao/chat' ||
-      location.pathname === '/chat' ||
-      location.pathname === '/assistente' ||
       location.pathname === '/bolao/enquetes' ||
       location.pathname === '/enquetes' ||
       location.pathname === '/bolao/palpites' ||
@@ -305,11 +289,9 @@ export default function Layout({ children }: LayoutProps) {
                           ? 'text-emerald-400'
                           : item.id === 'estatisticas'
                             ? 'text-amber-400'
-                            : item.id === 'chat'
-                              ? 'text-teal-400'
-                              : item.id === 'admin'
-                                ? 'text-amber-300'
-                                : 'text-slate-400'
+                            : item.id === 'admin'
+                              ? 'text-amber-300'
+                              : 'text-slate-400'
                     }`}
                   />
                   {!collapsed && <span className="truncate">{item.label}</span>}
@@ -478,11 +460,9 @@ export default function Layout({ children }: LayoutProps) {
                             ? 'text-emerald-400'
                             : item.id === 'estatisticas'
                               ? 'text-amber-400'
-                              : item.id === 'chat'
-                                ? 'text-teal-400'
-                                : item.id === 'admin'
-                                  ? 'text-amber-300'
-                                  : 'text-slate-400'
+                              : item.id === 'admin'
+                                ? 'text-amber-300'
+                                : 'text-slate-400'
                       }`}
                     />
                     <span className="truncate">{item.label}</span>
