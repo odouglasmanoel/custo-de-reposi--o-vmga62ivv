@@ -1,4 +1,5 @@
 import { BOLAO_MEMBERS } from '@/context/AuthContext'
+import { getJogoKickoffTimestamp } from '@/lib/dateUtils'
 import { extractPureScoreString, parseScoreString } from '@/lib/spreadsheetParser'
 import type { Bolao, Jogo, Palpite, Participante } from '@/types/bolao'
 
@@ -1023,10 +1024,28 @@ export function calculateStatistics(params: {
     const ptsJogo = Number(palpite.pontuacao_jogo) || 0
     stat.pontosPalpites += ptsJogo
 
-    // Verificar cravada exata
+    // Verificar cravada exata com Marcador Temporal de Transição:
+    // - Jogos/palpites com kickoff <= 16/09/2026 16:00 pertencem exclusivamente ao histórico das planilhas:
+    //   qualquer contagem de cravada deles é ignorada, pois a base fixa auditada substitui integralmente.
+    // - Apenas jogos com data/horário de kickoff >= 16/09/2026 19:00 (horário de Brasília) entram na parcela de cravadas do App.
+    // - Jogos com kickoff desconhecido em testes/mocks sem data também são considerados se não forem do período histórico.
     const cravou = isCravadaExata(palpite, jogo)
     if (cravou) {
-      stat.cravadasExatas++
+      const kickoffMs = getJogoKickoffTimestamp(jogo.data, jogo.hora)
+      // 16/09/2026 19:00 BRT = 16/09/2026 22:00:00 UTC
+      const APP_CRAVADAS_KICKOFF_START_MS = Date.UTC(2026, 8, 16, 22, 0, 0, 0)
+      // 16/09/2026 16:00 BRT = 16/09/2026 19:00:00 UTC
+      const PLANILHAS_CUTOFF_END_MS = Date.UTC(2026, 8, 16, 19, 0, 0, 0)
+
+      if (kickoffMs !== null) {
+        if (kickoffMs >= APP_CRAVADAS_KICKOFF_START_MS) {
+          stat.cravadasExatas++
+        }
+        // Se kickoffMs <= PLANILHAS_CUTOFF_END_MS ou entre 16h e 19h: NÃO incrementa stat.cravadasExatas
+      } else {
+        // Fallback para testes/mocks sem campo data/hora: conta apenas se não houver data
+        stat.cravadasExatas++
+      }
     }
 
     // Verificar vencedor/empate acertado
@@ -1089,13 +1108,10 @@ export function calculateStatistics(params: {
       s.jogosPalpitadosEncerrados > 0 ? (s.pontosPalpites / tetoMaximo) * 100 : 0
     const aproveitamento = Math.min(100, Math.round(rawAproveitamento * 10) / 10)
 
-    // Cravadas exatas (Fórmula Oficial):
-    // [Cravadas Históricas Importadas (valor fixo por copa)] + [Cravadas computadas de jogos encerrados via App].
-    // No filtro de copa específica: valor fixo daquela copa + cravadas do app daquela copa.
-    // No "Geral (Todas as Copas)": soma dos fixos de todas as copas + cravadas do app.
-    // Se o participante possui valor fixo cadastrado (ex: Douglas com 19 no Geral, ou 0 para outros), soma s.cravadasExatas.
-    // Para compatibilidade com testes unitários em que os valores oficiais declarados já representam o consolidado total desejado,
-    // se s.cravadasExatas já vier dos palpites do app, soma ambos.
+    // Cravadas exatas (Fórmula Oficial com Marcador Temporal de Transição):
+    // [Cravadas Históricas Importadas (valor fixo por copa / auditoria)] + [Cravadas computadas em jogos do App a partir de 16/09/2026 19:00].
+    // Jogos até 16/09/2026 16:00 pertencem exclusivamente ao histórico importado das planilhas (substituído pela base fixa).
+    // Cravadas feitas dentro do App são contabilizadas estritamente para jogos com kickoff >= 16/09/2026 19:00.
     const fixoImportado = cravadasFixasPorMembro.get(nome) || 0
     const cravadasFinais = fixoImportado + s.cravadasExatas
 

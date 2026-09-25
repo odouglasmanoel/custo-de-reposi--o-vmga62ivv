@@ -1382,7 +1382,8 @@ describe('statsCalculator', () => {
     ]
 
     // Todos os participantes cadastrados com as pontuações e cravadas oficiais apuradas na auditoria:
-    // - Bruno Xavier: Copa do Mundo: 6 | Copa Genilton: 0 | Copa Sormani: 1 | Copa Coni: 1 (Total = 8)
+    // - Bruno Lopes: Copa do Mundo: 6 | Copa Genilton: 0 | Copa Sormani: 1 | Copa Coni: 1 (Total = 8)
+    // - Bruno Xavier: zera a base de planilhas (Total = 0)
     // - Davi: Copa do Mundo: 10 | Copa Genilton: 6 | Copa Sormani: 3 | Copa Coni: 6 (Total = 25)
     // - Douglas: Copa do Mundo: 8 | Copa Genilton: 3 | Copa Sormani: 2 | Copa Coni: 6 (Total = 19)
     // - Gabriel: Copa do Mundo: 7 | Copa Genilton: 5 | Copa Sormani: 5 | Copa Coni: 4 (Total = 21)
@@ -1537,13 +1538,13 @@ describe('statsCalculator', () => {
         collectionName: '',
       },
 
-      // Bruno Lopes: 136 importados, 321 totais
+      // Bruno Lopes: 136 importados, 321 totais - Base histórica de cravadas: 8 (6/0/1/1)
       {
         id: 'dqqt8gucvr0jwgg',
         nome: 'Bruno Lopes',
         bolao: 'hy6ade9obylh404',
         pontos_importados: 134,
-        cravadas_fixas: 0,
+        cravadas_fixas: 6,
         pontuacao_total: 213,
         created: '',
         updated: '',
@@ -1555,7 +1556,7 @@ describe('statsCalculator', () => {
         nome: 'Bruno Lopes',
         bolao: 'xdtvijyapxuw99y',
         pontos_importados: 0,
-        cravadas_fixas: 0,
+        cravadas_fixas: 1,
         pontuacao_total: 63,
         created: '',
         updated: '',
@@ -1567,7 +1568,7 @@ describe('statsCalculator', () => {
         nome: 'Bruno Lopes',
         bolao: 'kr20rfjisajd6ro',
         pontos_importados: 2,
-        cravadas_fixas: 0,
+        cravadas_fixas: 1,
         pontuacao_total: 33,
         created: '',
         updated: '',
@@ -1587,13 +1588,13 @@ describe('statsCalculator', () => {
         collectionName: '',
       },
 
-      // Bruno Xavier: 0 importados, 18 totais
+      // Bruno Xavier: 0 importados, 18 totais - Base histórica zerada (entrou direto no App)
       {
         id: 'hkamtknd5weqrm7',
         nome: 'Bruno Xavier',
         bolao: 'hy6ade9obylh404',
         pontos_importados: 0,
-        cravadas_fixas: 6,
+        cravadas_fixas: 0,
         pontuacao_total: 0,
         created: '',
         updated: '',
@@ -1605,7 +1606,7 @@ describe('statsCalculator', () => {
         nome: 'Bruno Xavier',
         bolao: 'kr20rfjisajd6ro',
         pontos_importados: 0,
-        cravadas_fixas: 1,
+        cravadas_fixas: 0,
         pontuacao_total: 18,
         created: '',
         updated: '',
@@ -1617,7 +1618,7 @@ describe('statsCalculator', () => {
         nome: 'Bruno Xavier',
         bolao: 'xdtvijyapxuw99y',
         pontos_importados: 0,
-        cravadas_fixas: 1,
+        cravadas_fixas: 0,
         pontuacao_total: 0,
         created: '',
         updated: '',
@@ -1806,16 +1807,18 @@ describe('statsCalculator', () => {
     // Davi: 10 + 6 + 3 + 6 = 25
     // Gabriel: 7 + 5 + 5 + 4 = 21
     // Douglas: 8 + 3 + 2 + 6 = 19
-    // Bruno Xavier: 6 + 0 + 1 + 1 = 8
+    // Bruno Lopes: 6 + 0 + 1 + 1 = 8
+    // Bruno Xavier: 0 (entrou direto no app)
+    // Willian: 0 (entrou direto no app)
     expect(getCravadas('Davi')).toBe(25)
     expect(getCravadas('Gabriel')).toBe(21)
     expect(getCravadas('Douglas')).toBe(19)
-    expect(getCravadas('Bruno Xavier')).toBe(8)
-    expect(getCravadas('Bruno Lopes')).toBe(0)
+    expect(getCravadas('Bruno Lopes')).toBe(8)
+    expect(getCravadas('Bruno Xavier')).toBe(0)
     expect(getCravadas('Willian')).toBe(0)
 
     // 2. Visão Copa do Mundo isolada:
-    // Davi: 10, Douglas: 8, Gabriel: 7, Bruno Xavier: 6
+    // Davi: 10, Douglas: 8, Gabriel: 7, Bruno Lopes: 6, Bruno Xavier: 0
     const statsMundo = calculateStatistics({
       boloes,
       participantes,
@@ -1826,10 +1829,11 @@ describe('statsCalculator', () => {
     expect(statsMundo.tabela.find((t) => t.nome === 'Davi')?.cravadasExatas).toBe(10)
     expect(statsMundo.tabela.find((t) => t.nome === 'Douglas')?.cravadasExatas).toBe(8)
     expect(statsMundo.tabela.find((t) => t.nome === 'Gabriel')?.cravadasExatas).toBe(7)
-    expect(statsMundo.tabela.find((t) => t.nome === 'Bruno Xavier')?.cravadasExatas).toBe(6)
+    expect(statsMundo.tabela.find((t) => t.nome === 'Bruno Lopes')?.cravadasExatas).toBe(6)
+    expect(statsMundo.tabela.find((t) => t.nome === 'Bruno Xavier')?.cravadasExatas).toBe(0)
 
     // 3. Visão Copa Coni isolada:
-    // Davi: 6, Douglas: 6, Gabriel: 4, Bruno Xavier: 1
+    // Davi: 6, Douglas: 6, Gabriel: 4, Bruno Lopes: 1, Bruno Xavier: 0
     const statsConi = calculateStatistics({
       boloes,
       participantes,
@@ -1840,10 +1844,11 @@ describe('statsCalculator', () => {
     expect(statsConi.tabela.find((t) => t.nome === 'Davi')?.cravadasExatas).toBe(6)
     expect(statsConi.tabela.find((t) => t.nome === 'Douglas')?.cravadasExatas).toBe(6)
     expect(statsConi.tabela.find((t) => t.nome === 'Gabriel')?.cravadasExatas).toBe(4)
-    expect(statsConi.tabela.find((t) => t.nome === 'Bruno Xavier')?.cravadasExatas).toBe(1)
+    expect(statsConi.tabela.find((t) => t.nome === 'Bruno Lopes')?.cravadasExatas).toBe(1)
+    expect(statsConi.tabela.find((t) => t.nome === 'Bruno Xavier')?.cravadasExatas).toBe(0)
 
     // 4. Visão Copa Sormani isolada:
-    // Davi: 3, Douglas: 2, Gabriel: 5, Bruno Xavier: 1
+    // Davi: 3, Douglas: 2, Gabriel: 5, Bruno Lopes: 1, Bruno Xavier: 0
     const statsSormani = calculateStatistics({
       boloes,
       participantes,
@@ -1854,10 +1859,11 @@ describe('statsCalculator', () => {
     expect(statsSormani.tabela.find((t) => t.nome === 'Davi')?.cravadasExatas).toBe(3)
     expect(statsSormani.tabela.find((t) => t.nome === 'Douglas')?.cravadasExatas).toBe(2)
     expect(statsSormani.tabela.find((t) => t.nome === 'Gabriel')?.cravadasExatas).toBe(5)
-    expect(statsSormani.tabela.find((t) => t.nome === 'Bruno Xavier')?.cravadasExatas).toBe(1)
+    expect(statsSormani.tabela.find((t) => t.nome === 'Bruno Lopes')?.cravadasExatas).toBe(1)
+    expect(statsSormani.tabela.find((t) => t.nome === 'Bruno Xavier')?.cravadasExatas).toBe(0)
 
     // 5. Visão Copa Genilton isolada:
-    // Davi: 6, Douglas: 3, Gabriel: 5, Bruno Xavier: 0
+    // Davi: 6, Douglas: 3, Gabriel: 5, Bruno Lopes: 0, Bruno Xavier: 0
     const statsGenilton = calculateStatistics({
       boloes,
       participantes,
@@ -1868,6 +1874,7 @@ describe('statsCalculator', () => {
     expect(statsGenilton.tabela.find((t) => t.nome === 'Davi')?.cravadasExatas).toBe(6)
     expect(statsGenilton.tabela.find((t) => t.nome === 'Douglas')?.cravadasExatas).toBe(3)
     expect(statsGenilton.tabela.find((t) => t.nome === 'Gabriel')?.cravadasExatas).toBe(5)
+    expect(statsGenilton.tabela.find((t) => t.nome === 'Bruno Lopes')?.cravadasExatas).toBe(0)
     expect(statsGenilton.tabela.find((t) => t.nome === 'Bruno Xavier')?.cravadasExatas).toBe(0)
   })
 
@@ -2027,5 +2034,295 @@ describe('statsCalculator', () => {
 
     // Isolamento: total de pontos do Douglas = 150 + 61 + 8 = 219
     expect(dougGeralRow?.totalPontos).toBe(150 + 61 + 8)
+  })
+
+  describe('Marcador Temporal de Transição de Cravadas (Histórico vs App)', () => {
+    const boloes: Bolao[] = [
+      {
+        id: 'bolao_teste',
+        nome: 'Copa Coni',
+        ativo: true,
+        created: '',
+        updated: '',
+        collectionId: '',
+        collectionName: '',
+      },
+    ]
+
+    const participantes: Participante[] = [
+      {
+        id: 'part_blopes',
+        nome: 'Bruno Lopes',
+        bolao: 'bolao_teste',
+        pontos_importados: 136,
+        cravadas_fixas: 8,
+        pontuacao_total: 136,
+        created: '',
+        updated: '',
+        collectionId: '',
+        collectionName: '',
+      },
+      {
+        id: 'part_bxavier',
+        nome: 'Bruno Xavier',
+        bolao: 'bolao_teste',
+        pontos_importados: 0,
+        cravadas_fixas: 0,
+        pontuacao_total: 0,
+        created: '',
+        updated: '',
+        collectionId: '',
+        collectionName: '',
+      },
+      {
+        id: 'part_davi',
+        nome: 'Davi',
+        bolao: 'bolao_teste',
+        pontos_importados: 209,
+        cravadas_fixas: 25,
+        pontuacao_total: 209,
+        created: '',
+        updated: '',
+        collectionId: '',
+        collectionName: '',
+      },
+    ]
+
+    it('jogo com kickoff anterior ou igual a 16/09/2026 16:00 (histórico importado) NÃO soma na parcela app', () => {
+      // Jogo no dia 16/09/2026 às 15:30 (ou antes das 16:00)
+      const jogoHistorico: Jogo = {
+        id: 'jogo_hist_1',
+        bolao: 'bolao_teste',
+        time_a: 'Real Madrid',
+        time_b: 'Barcelona',
+        data: '2026-09-16',
+        hora: '15:00',
+        placar_a: 2,
+        placar_b: 0,
+        resultado_finalizado: true,
+        tem_penaltis: false,
+        created: '',
+        updated: '',
+        collectionId: '',
+        collectionName: '',
+      }
+
+      // Todos acertaram em cheio o placar 2x0 no jogo histórico
+      const palpitesHistoricos: Palpite[] = [
+        {
+          id: 'p_blopes_hist',
+          bolao: 'bolao_teste',
+          jogo: 'jogo_hist_1',
+          participante: 'part_blopes',
+          placar_a: 2,
+          placar_b: 0,
+          pontuacao_jogo: 8,
+          created: '',
+          updated: '',
+          collectionId: '',
+          collectionName: '',
+        },
+        {
+          id: 'p_bxavier_hist',
+          bolao: 'bolao_teste',
+          jogo: 'jogo_hist_1',
+          participante: 'part_bxavier',
+          placar_a: 2,
+          placar_b: 0,
+          pontuacao_jogo: 8,
+          created: '',
+          updated: '',
+          collectionId: '',
+          collectionName: '',
+        },
+        {
+          id: 'p_davi_hist',
+          bolao: 'bolao_teste',
+          jogo: 'jogo_hist_1',
+          participante: 'part_davi',
+          placar_a: 2,
+          placar_b: 0,
+          pontuacao_jogo: 8,
+          created: '',
+          updated: '',
+          collectionId: '',
+          collectionName: '',
+        },
+      ]
+
+      const stats = calculateStatistics({
+        boloes,
+        participantes,
+        jogos: [jogoHistorico],
+        palpites: palpitesHistoricos,
+        filtroBolaoId: 'geral',
+      })
+
+      // Como o jogo é do histórico (<= 16/09 16:00), cravadas do app = 0
+      // Cravadas totais exibem exclusivamente a base fixa:
+      // Bruno Lopes: 8 + 0 = 8
+      // Bruno Xavier: 0 + 0 = 0
+      // Davi: 25 + 0 = 25
+      expect(stats.tabela.find((t) => t.nome === 'Bruno Lopes')?.cravadasExatas).toBe(8)
+      expect(stats.tabela.find((t) => t.nome === 'Bruno Xavier')?.cravadasExatas).toBe(0)
+      expect(stats.tabela.find((t) => t.nome === 'Davi')?.cravadasExatas).toBe(25)
+    })
+
+    it('jogo com kickoff entre 16:00 e 19:00 em 16/09/2026 NÃO soma na parcela app nem na base histórica', () => {
+      const jogoJanela: Jogo = {
+        id: 'jogo_janela',
+        bolao: 'bolao_teste',
+        time_a: 'Chelsea',
+        time_b: 'Arsenal',
+        data: '2026-09-16',
+        hora: '17:00',
+        placar_a: 1,
+        placar_b: 1,
+        resultado_finalizado: true,
+        tem_penaltis: false,
+        created: '',
+        updated: '',
+        collectionId: '',
+        collectionName: '',
+      }
+
+      const palpites: Palpite[] = [
+        {
+          id: 'p_bxavier_janela',
+          bolao: 'bolao_teste',
+          jogo: 'jogo_janela',
+          participante: 'part_bxavier',
+          placar_a: 1,
+          placar_b: 1,
+          pontuacao_jogo: 8,
+          created: '',
+          updated: '',
+          collectionId: '',
+          collectionName: '',
+        },
+      ]
+
+      const stats = calculateStatistics({
+        boloes,
+        participantes,
+        jogos: [jogoJanela],
+        palpites,
+        filtroBolaoId: 'geral',
+      })
+
+      // Não entra na parcela do app (kickoff < 19:00)
+      expect(stats.tabela.find((t) => t.nome === 'Bruno Xavier')?.cravadasExatas).toBe(0)
+    })
+
+    it('jogo com kickoff a partir de 16/09/2026 19:00 soma perfeitamente na parcela app', () => {
+      // Primeiro jogo do app: 16/09/2026 às 19:00
+      const jogoApp19h: Jogo = {
+        id: 'jogo_app_19h',
+        bolao: 'bolao_teste',
+        time_a: 'Liverpool',
+        time_b: 'Milan',
+        data: '2026-09-16',
+        hora: '19:00',
+        placar_a: 3,
+        placar_b: 1,
+        resultado_finalizado: true,
+        tem_penaltis: false,
+        created: '',
+        updated: '',
+        collectionId: '',
+        collectionName: '',
+      }
+
+      // Jogo futuro do app: 20/09/2026 às 21:00
+      const jogoAppPosterior: Jogo = {
+        id: 'jogo_app_post',
+        bolao: 'bolao_teste',
+        time_a: 'Juventus',
+        time_b: 'Inter',
+        data: '2026-09-20',
+        hora: '21:00',
+        placar_a: 0,
+        placar_b: 0,
+        resultado_finalizado: true,
+        tem_penaltis: false,
+        created: '',
+        updated: '',
+        collectionId: '',
+        collectionName: '',
+      }
+
+      const palpitesApp: Palpite[] = [
+        // Bruno Xavier crava ambos os jogos do App (+2 cravadas reais no app)
+        {
+          id: 'p_bx_1',
+          bolao: 'bolao_teste',
+          jogo: 'jogo_app_19h',
+          participante: 'part_bxavier',
+          placar_a: 3,
+          placar_b: 1,
+          pontuacao_jogo: 8,
+          created: '',
+          updated: '',
+          collectionId: '',
+          collectionName: '',
+        },
+        {
+          id: 'p_bx_2',
+          bolao: 'bolao_teste',
+          jogo: 'jogo_app_post',
+          participante: 'part_bxavier',
+          placar_a: 0,
+          placar_b: 0,
+          pontuacao_jogo: 8,
+          created: '',
+          updated: '',
+          collectionId: '',
+          collectionName: '',
+        },
+        // Bruno Lopes crava o jogo de 19:00 (+1 cravada no app)
+        {
+          id: 'p_bl_1',
+          bolao: 'bolao_teste',
+          jogo: 'jogo_app_19h',
+          participante: 'part_blopes',
+          placar_a: 3,
+          placar_b: 1,
+          pontuacao_jogo: 8,
+          created: '',
+          updated: '',
+          collectionId: '',
+          collectionName: '',
+        },
+        // Davi crava o jogo posterior (+1 cravada no app)
+        {
+          id: 'p_dv_2',
+          bolao: 'bolao_teste',
+          jogo: 'jogo_app_post',
+          participante: 'part_davi',
+          placar_a: 0,
+          placar_b: 0,
+          pontuacao_jogo: 8,
+          created: '',
+          updated: '',
+          collectionId: '',
+          collectionName: '',
+        },
+      ]
+
+      const stats = calculateStatistics({
+        boloes,
+        participantes,
+        jogos: [jogoApp19h, jogoAppPosterior],
+        palpites: palpitesApp,
+        filtroBolaoId: 'geral',
+      })
+
+      // Bruno Lopes: base fixa (8) + app (1) = 9
+      expect(stats.tabela.find((t) => t.nome === 'Bruno Lopes')?.cravadasExatas).toBe(8 + 1)
+      // Bruno Xavier: base fixa (0) + app (2) = 2
+      expect(stats.tabela.find((t) => t.nome === 'Bruno Xavier')?.cravadasExatas).toBe(0 + 2)
+      // Davi: base fixa (25) + app (1) = 26
+      expect(stats.tabela.find((t) => t.nome === 'Davi')?.cravadasExatas).toBe(25 + 1)
+    })
   })
 })
