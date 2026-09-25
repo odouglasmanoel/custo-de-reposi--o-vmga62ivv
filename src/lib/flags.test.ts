@@ -65,37 +65,58 @@ describe('flags.ts - FlagCDN Helper e Seleções Nacionais', () => {
     expect(isNationalTeam('Chelsea')).toBe(false)
   })
 
-  it('resolveTeamBadgeUrl prioriza 1º api-sports, 2º live/cache, 3º flagcdn, 4º null', () => {
-    // 1º oficial salvo
-    const oficial = 'https://media.api-sports.io/football/teams/767.png'
+  it('resolveTeamBadgeUrl prioriza 1º api-sports oficial, 2º flagcdn para seleções, e rejeita escudos de clubes', () => {
+    // Para seleção nacional com ID oficial reconhecido
+    const oficialGales = 'https://media.api-sports.io/football/teams/767.png'
     expect(
       resolveTeamBadgeUrl({
-        teamName: 'Jamaica',
-        savedBadge: oficial,
-        liveOrCacheBadge: 'https://media.api-sports.io/other.png',
+        teamName: 'País de Gales',
+        savedBadge: oficialGales,
       }),
-    ).toBe(oficial)
+    ).toBe(oficialGales)
 
-    // 2º se não tem salvo oficial, mas tem live/cache válido
-    const live = 'https://media.api-sports.io/football/teams/999.png'
+    // Turquia: se vier com logo do Köln (192.png) salvo no banco, descarta e retorna FlagCDN tr
     expect(
       resolveTeamBadgeUrl({
-        teamName: 'Jamaica',
-        savedBadge: '',
-        liveOrCacheBadge: live,
+        teamName: 'Turquia',
+        savedBadge: 'https://media.api-sports.io/football/teams/192.png',
       }),
-    ).toBe(live)
+    ).toBe('https://flagcdn.com/w80/tr.png')
 
-    // 3º se não tem salvo nem live, usa FlagCDN para seleção
+    // Bélgica: se vier com logo do Köln (192.png) ou desconhecido, descarta e retorna FlagCDN be
     expect(
       resolveTeamBadgeUrl({
-        teamName: 'Jamaica',
+        teamName: 'Bélgica',
+        savedBadge: 'https://media.api-sports.io/football/teams/192.png',
+      }),
+    ).toBe('https://flagcdn.com/w80/be.png')
+
+    // França: se vier com escudo de clube verde aleatório ou URL não oficial da França (ex: 50.png), descarta e retorna fr
+    expect(
+      resolveTeamBadgeUrl({
+        teamName: 'França',
+        savedBadge: 'https://media.api-sports.io/football/teams/50.png',
+      }),
+    ).toBe('https://flagcdn.com/w80/fr.png')
+
+    // Geórgia: sem logo oficial salvo ou com TheSportsDB, retorna FlagCDN ge (evita monograma "G")
+    expect(
+      resolveTeamBadgeUrl({
+        teamName: 'Geórgia',
         savedBadge: '',
         liveOrCacheBadge: '',
       }),
-    ).toBe('https://flagcdn.com/w80/jm.png')
+    ).toBe('https://flagcdn.com/w80/ge.png')
 
-    // 3º TheSportsDB é ignorado e cai em FlagCDN
+    // Geórgia com ID oficial 1104
+    expect(
+      resolveTeamBadgeUrl({
+        teamName: 'Geórgia',
+        savedBadge: 'https://media.api-sports.io/football/teams/1104.png',
+      }),
+    ).toBe('https://media.api-sports.io/football/teams/1104.png')
+
+    // TheSportsDB é ignorado e cai em FlagCDN
     expect(
       resolveTeamBadgeUrl({
         teamName: 'Honduras',
@@ -104,7 +125,16 @@ describe('flags.ts - FlagCDN Helper e Seleções Nacionais', () => {
       }),
     ).toBe('https://flagcdn.com/w80/hn.png')
 
-    // 4º Para clube sem imagem, retorna null (cai em monograma)
+    // Clubes reais: mantém escudos oficiais de clube
+    const realMadrid = 'https://media.api-sports.io/football/teams/541.png'
+    expect(
+      resolveTeamBadgeUrl({
+        teamName: 'Real Madrid',
+        savedBadge: realMadrid,
+      }),
+    ).toBe(realMadrid)
+
+    // Clube sem imagem retorna null (para monograma)
     expect(
       resolveTeamBadgeUrl({
         teamName: 'Corinthians',

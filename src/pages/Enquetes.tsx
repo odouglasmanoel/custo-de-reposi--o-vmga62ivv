@@ -3416,31 +3416,41 @@ export default function Enquetes() {
                             <Square className="h-4 w-4 text-slate-300 shrink-0" />
                           )}
                           {/* Escudo Mandante */}
-                          {j.logo_casa ? (
-                            <img
-                              src={j.logo_casa}
-                              alt={j.time_a}
-                              className="h-5 w-5 object-contain shrink-0"
-                              loading="lazy"
-                              decoding="async"
-                              onError={(e) => {
-                                e.currentTarget.style.display = 'none'
-                                const fallback = e.currentTarget
-                                  .nextElementSibling as HTMLElement | null
-                                if (fallback) fallback.style.display = 'flex'
-                              }}
-                            />
-                          ) : null}
-                          <div
-                            className={`h-5 w-5 rounded-full bg-slate-100 border border-slate-200 items-center justify-center shrink-0 ${
-                              j.logo_casa ? 'hidden' : 'flex'
-                            }`}
-                            title={j.time_a}
-                          >
-                            <span className="text-[8px] font-black uppercase text-slate-700">
-                              {j.time_a.slice(0, 2).toUpperCase()}
-                            </span>
-                          </div>
+                          {(() => {
+                            const badgeA = resolveTeamBadgeUrl({
+                              teamName: j.time_a,
+                              savedBadge: j.logo_casa,
+                            })
+                            return (
+                              <>
+                                {badgeA ? (
+                                  <img
+                                    src={badgeA}
+                                    alt={j.time_a}
+                                    className="h-5 w-5 object-contain shrink-0"
+                                    loading="lazy"
+                                    decoding="async"
+                                    onError={(e) => {
+                                      e.currentTarget.style.display = 'none'
+                                      const fallback = e.currentTarget
+                                        .nextElementSibling as HTMLElement | null
+                                      if (fallback) fallback.style.display = 'flex'
+                                    }}
+                                  />
+                                ) : null}
+                                <div
+                                  className={`h-5 w-5 rounded-full bg-slate-100 border border-slate-200 items-center justify-center shrink-0 ${
+                                    badgeA ? 'hidden' : 'flex'
+                                  }`}
+                                  title={j.time_a}
+                                >
+                                  <span className="text-[8px] font-black uppercase text-slate-700">
+                                    {j.time_a.slice(0, 2).toUpperCase()}
+                                  </span>
+                                </div>
+                              </>
+                            )
+                          })()}
                           <span
                             className="font-bold text-slate-800 break-words leading-tight"
                             title={j.time_a}
@@ -3449,31 +3459,41 @@ export default function Enquetes() {
                           </span>
                           <span className="text-slate-400 font-bold text-[10px] shrink-0">x</span>
                           {/* Escudo Visitante */}
-                          {j.logo_visitante ? (
-                            <img
-                              src={j.logo_visitante}
-                              alt={j.time_b}
-                              className="h-5 w-5 object-contain shrink-0"
-                              loading="lazy"
-                              decoding="async"
-                              onError={(e) => {
-                                e.currentTarget.style.display = 'none'
-                                const fallback = e.currentTarget
-                                  .nextElementSibling as HTMLElement | null
-                                if (fallback) fallback.style.display = 'flex'
-                              }}
-                            />
-                          ) : null}
-                          <div
-                            className={`h-5 w-5 rounded-full bg-slate-100 border border-slate-200 items-center justify-center shrink-0 ${
-                              j.logo_visitante ? 'hidden' : 'flex'
-                            }`}
-                            title={j.time_b}
-                          >
-                            <span className="text-[8px] font-black uppercase text-slate-700">
-                              {j.time_b.slice(0, 2).toUpperCase()}
-                            </span>
-                          </div>
+                          {(() => {
+                            const badgeB = resolveTeamBadgeUrl({
+                              teamName: j.time_b,
+                              savedBadge: j.logo_visitante,
+                            })
+                            return (
+                              <>
+                                {badgeB ? (
+                                  <img
+                                    src={badgeB}
+                                    alt={j.time_b}
+                                    className="h-5 w-5 object-contain shrink-0"
+                                    loading="lazy"
+                                    decoding="async"
+                                    onError={(e) => {
+                                      e.currentTarget.style.display = 'none'
+                                      const fallback = e.currentTarget
+                                        .nextElementSibling as HTMLElement | null
+                                      if (fallback) fallback.style.display = 'flex'
+                                    }}
+                                  />
+                                ) : null}
+                                <div
+                                  className={`h-5 w-5 rounded-full bg-slate-100 border border-slate-200 items-center justify-center shrink-0 ${
+                                    badgeB ? 'hidden' : 'flex'
+                                  }`}
+                                  title={j.time_b}
+                                >
+                                  <span className="text-[8px] font-black uppercase text-slate-700">
+                                    {j.time_b.slice(0, 2).toUpperCase()}
+                                  </span>
+                                </div>
+                              </>
+                            )
+                          })()}
                           <span
                             className="font-bold text-slate-800 break-words leading-tight"
                             title={j.time_b}
@@ -3619,67 +3639,83 @@ export default function Enquetes() {
             {jogosAprovadosParaConi.map((j) => (
               <div key={j.id} className="flex items-center justify-between py-1.5 text-xs">
                 <div className="flex items-center gap-1.5">
-                  {j.logo_casa ? (
-                    <img
-                      src={j.logo_casa}
-                      alt={j.time_a}
-                      className="h-4 w-4 object-contain shrink-0"
-                      loading="lazy"
-                      decoding="async"
-                      onError={(e) => {
-                        e.currentTarget.style.display = 'none'
-                        const fallback = e.currentTarget.nextElementSibling as HTMLElement | null
-                        if (fallback) fallback.style.display = 'flex'
-                      }}
-                    />
-                  ) : null}
-                  <div
-                    className={`h-4 w-4 rounded-full bg-slate-100 border border-slate-200 items-center justify-center shrink-0 ${
-                      j.logo_casa ? 'hidden' : 'flex'
-                    }`}
-                    title={j.time_a}
-                  >
-                    <span className="text-[7px] font-black uppercase text-slate-700">
-                      {j.time_a.slice(0, 2).toUpperCase()}
-                    </span>
-                  </div>
-                  <span
-                    className="font-bold text-slate-800 break-words leading-tight"
-                    title={j.time_a}
-                  >
-                    {j.time_a}
-                  </span>
-                  <span className="text-[10px] font-bold text-slate-400 shrink-0">x</span>
-                  {j.logo_visitante ? (
-                    <img
-                      src={j.logo_visitante}
-                      alt={j.time_b}
-                      className="h-4 w-4 object-contain shrink-0"
-                      loading="lazy"
-                      decoding="async"
-                      onError={(e) => {
-                        e.currentTarget.style.display = 'none'
-                        const fallback = e.currentTarget.nextElementSibling as HTMLElement | null
-                        if (fallback) fallback.style.display = 'flex'
-                      }}
-                    />
-                  ) : null}
-                  <div
-                    className={`h-4 w-4 rounded-full bg-slate-100 border border-slate-200 items-center justify-center shrink-0 ${
-                      j.logo_visitante ? 'hidden' : 'flex'
-                    }`}
-                    title={j.time_b}
-                  >
-                    <span className="text-[7px] font-black uppercase text-slate-700">
-                      {j.time_b.slice(0, 2).toUpperCase()}
-                    </span>
-                  </div>
-                  <span
-                    className="font-bold text-slate-800 break-words leading-tight"
-                    title={j.time_b}
-                  >
-                    {j.time_b}
-                  </span>
+                  {(() => {
+                    const badgeA = resolveTeamBadgeUrl({
+                      teamName: j.time_a,
+                      savedBadge: j.logo_casa,
+                    })
+                    const badgeB = resolveTeamBadgeUrl({
+                      teamName: j.time_b,
+                      savedBadge: j.logo_visitante,
+                    })
+                    return (
+                      <>
+                        {badgeA ? (
+                          <img
+                            src={badgeA}
+                            alt={j.time_a}
+                            className="h-4 w-4 object-contain shrink-0"
+                            loading="lazy"
+                            decoding="async"
+                            onError={(e) => {
+                              e.currentTarget.style.display = 'none'
+                              const fallback = e.currentTarget
+                                .nextElementSibling as HTMLElement | null
+                              if (fallback) fallback.style.display = 'flex'
+                            }}
+                          />
+                        ) : null}
+                        <div
+                          className={`h-4 w-4 rounded-full bg-slate-100 border border-slate-200 items-center justify-center shrink-0 ${
+                            badgeA ? 'hidden' : 'flex'
+                          }`}
+                          title={j.time_a}
+                        >
+                          <span className="text-[7px] font-black uppercase text-slate-700">
+                            {j.time_a.slice(0, 2).toUpperCase()}
+                          </span>
+                        </div>
+                        <span
+                          className="font-bold text-slate-800 break-words leading-tight"
+                          title={j.time_a}
+                        >
+                          {j.time_a}
+                        </span>
+                        <span className="text-[10px] font-bold text-slate-400 shrink-0">x</span>
+                        {badgeB ? (
+                          <img
+                            src={badgeB}
+                            alt={j.time_b}
+                            className="h-4 w-4 object-contain shrink-0"
+                            loading="lazy"
+                            decoding="async"
+                            onError={(e) => {
+                              e.currentTarget.style.display = 'none'
+                              const fallback = e.currentTarget
+                                .nextElementSibling as HTMLElement | null
+                              if (fallback) fallback.style.display = 'flex'
+                            }}
+                          />
+                        ) : null}
+                        <div
+                          className={`h-4 w-4 rounded-full bg-slate-100 border border-slate-200 items-center justify-center shrink-0 ${
+                            badgeB ? 'hidden' : 'flex'
+                          }`}
+                          title={j.time_b}
+                        >
+                          <span className="text-[7px] font-black uppercase text-slate-700">
+                            {j.time_b.slice(0, 2).toUpperCase()}
+                          </span>
+                        </div>
+                        <span
+                          className="font-bold text-slate-800 break-words leading-tight"
+                          title={j.time_b}
+                        >
+                          {j.time_b}
+                        </span>
+                      </>
+                    )
+                  })()}
                 </div>
                 <span className="text-slate-500 text-[11px]">
                   ({j.campeonato} — {formatDataBR(j.data)} {formatHoraBR(j.horario || '16:00')})

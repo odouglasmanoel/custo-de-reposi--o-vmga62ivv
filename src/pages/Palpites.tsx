@@ -54,6 +54,7 @@ import {
 import { GameLineupAccordion } from '@/components/GameLineupAccordion'
 import { checkPlayerInLineup, LineupResponse } from '@/services/escalacoes'
 import { readEscudoCache } from '@/services/enquetes'
+import { getFlagCdnUrl, resolveTeamBadgeUrl } from '@/lib/flags'
 
 interface PalpiteFormData {
   placar_a: number | string
@@ -1089,25 +1090,54 @@ export default function Palpites() {
     textClass?: string
   }) {
     const [hasError, setHasError] = useState(false)
+    const [triedFlagCdn, setTriedFlagCdn] = useState(false)
     const [currentSrc, setCurrentSrc] = useState<string | undefined>(escudo)
 
     useEffect(() => {
       setCurrentSrc(escudo)
       setHasError(false)
+      setTriedFlagCdn(false)
     }, [escudo])
 
     const handleError = () => {
       if (nomeTime) {
+        // 1º fallback: Tenta cache oficial em memória/localStorage
         const fallbackBadge = readEscudoCache(nomeTime)
         if (fallbackBadge && fallbackBadge !== currentSrc) {
           setCurrentSrc(fallbackBadge)
           return
+        }
+        // 2º fallback: Se for seleção nacional, recorre a FlagCDN (garante que seleções NUNCA fiquem sem imagem ou com monograma)
+        if (!triedFlagCdn) {
+          setTriedFlagCdn(true)
+          const flagUrl = getFlagCdnUrl(nomeTime)
+          if (flagUrl && flagUrl !== currentSrc) {
+            setCurrentSrc(flagUrl)
+            return
+          }
         }
       }
       setHasError(true)
     }
 
     if (!currentSrc || hasError) {
+      const flagFallback = !triedFlagCdn && nomeTime ? getFlagCdnUrl(nomeTime) : null
+      if (flagFallback && flagFallback !== currentSrc) {
+        return (
+          <img
+            src={flagFallback}
+            alt={nomeTime}
+            className={`${sizeClass} object-contain drop-shadow-xs`}
+            loading="eager"
+            decoding="async"
+            onError={() => {
+              setTriedFlagCdn(true)
+              setHasError(true)
+            }}
+          />
+        )
+      }
+
       return (
         <div
           className={`${sizeClass} rounded-full bg-slate-100 border border-slate-300 flex items-center justify-center ${textClass}`}
@@ -2431,8 +2461,18 @@ export default function Palpites() {
             const pontos = palpite ? palpite.pontuacao_jogo : 0
             const detalhamento = palpite?.detalhamento || []
 
-            const escudoA = jogo.url_escudo_mandante
-            const escudoB = jogo.url_escudo_visitante
+            const escudoA =
+              resolveTeamBadgeUrl({
+                teamName: jogo.time_a,
+                savedBadge: jogo.url_escudo_mandante,
+                liveOrCacheBadge: readEscudoCache(jogo.time_a),
+              }) || undefined
+            const escudoB =
+              resolveTeamBadgeUrl({
+                teamName: jogo.time_b,
+                savedBadge: jogo.url_escudo_visitante,
+                liveOrCacheBadge: readEscudoCache(jogo.time_b),
+              }) || undefined
             const initialsA = (jogo.time_a || '').slice(0, 2).toUpperCase()
             const initialsB = (jogo.time_b || '').slice(0, 2).toUpperCase()
 

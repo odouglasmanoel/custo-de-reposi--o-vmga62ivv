@@ -236,11 +236,102 @@ export function isNationalTeam(teamName?: string | null): boolean {
 }
 
 /**
- * Retorna a melhor URL de escudo com a prioridade exigida pelo usuário:
- * 1º escudo oficial salvo (media.api-sports.io)
- * 2º dados ao vivo / cache existentes (se não corrompidos)
- * 3º FlagCDN se for seleção nacional conhecida
- * 4º string vazia / null (caindo para monograma)
+ * IDs conhecidos e verificados da API-Sports exclusivos de Seleções Nacionais.
+ * URLs com estes IDs específicos podem ser usadas para seleções sem risco de contaminação por clubes.
+ */
+export const OFFICIAL_NATIONAL_TEAM_IDS: Record<string, number> = {
+  franca: 2,
+  france: 2,
+  belgica: 1,
+  belgium: 1,
+  croacia: 3,
+  croatia: 3,
+  brasil: 6,
+  brazil: 6,
+  uruguai: 7,
+  uruguay: 7,
+  espanha: 9,
+  spain: 9,
+  inglaterra: 10,
+  england: 10,
+  dinamarca: 21,
+  denmark: 21,
+  alemanha: 25,
+  germany: 25,
+  argentina: 26,
+  portugal: 27,
+  turquia: 777,
+  turkey: 777,
+  turkiye: 777,
+  italia: 768,
+  italy: 768,
+  paisdegales: 767,
+  gales: 767,
+  wales: 767,
+  irlandadonorte: 771,
+  northernireland: 771,
+  noruega: 1090,
+  norway: 1090,
+  georgia: 1104,
+  holanda: 1118,
+  paisesbaixos: 1118,
+  netherlands: 1118,
+}
+
+/**
+ * Valida se uma URL da API-Sports é comprovadamente o escudo oficial da seleção nacional
+ */
+export function isOfficialNationalTeamBadge(teamName: string, url?: string | null): boolean {
+  if (!url) return false
+  const norm = normalizeCountryName(teamName)
+  const expectedId = OFFICIAL_NATIONAL_TEAM_IDS[norm]
+  if (expectedId && url.includes(`/teams/${expectedId}.`)) {
+    return true
+  }
+  return false
+}
+
+/**
+ * Verifica se uma URL é sabidamente escudo de clube incorreto/contaminado
+ * (ex: Köln 192.png, B.S.C., TheSportsDB, ou outros escudos genéricos de clubes associados a seleções)
+ */
+export function isContaminatedBadge(teamName: string, url?: string | null): boolean {
+  if (!url) return false
+  const lowerUrl = url.toLowerCase()
+
+  // TheSportsDB é estritamente proibido
+  if (lowerUrl.includes('thesportsdb.com')) return true
+
+  // Köln / Cologne (192.png) nunca deve aparecer para seleções como Turquia, Bélgica, PSG etc.
+  if (
+    lowerUrl.includes('/192.') ||
+    lowerUrl.includes('/192_') ||
+    lowerUrl.includes('koln') ||
+    lowerUrl.includes('cologne')
+  ) {
+    return true
+  }
+
+  // B.S.C. corrompido (ex.: z3v04x)
+  if (lowerUrl.includes('z3v04x') || lowerUrl.includes('bsc') || lowerUrl.includes('b.s.c')) {
+    return true
+  }
+
+  return false
+}
+
+/**
+ * Retorna a melhor URL de escudo com a prioridade estrita exigida:
+ * - Se for Seleção Nacional:
+ *     1. Se a URL fornecida (savedBadge ou liveOrCacheBadge) for comprovadamente da seleção na API-Sports
+ *        (sem contaminação de clubes conhecidos) -> pode ser utilizada.
+ *     2. Caso contrário -> SEMPRE retorna FlagCDN (https://flagcdn.com/w80/{iso}.png).
+ *     3. Seleção nacional NUNCA recebe logo de clube, de cache local contaminado ou TheSportsDB.
+ *     4. Se não houver bandeira no mapa -> null (monograma).
+ * - Se for Clube:
+ *     1. Escudo oficial salvo (media.api-sports.io)
+ *     2. Dados ao vivo / cache existentes (se válidos)
+ *     3. null (caindo para monograma)
  */
 export function resolveTeamBadgeUrl(params: {
   teamName: string
@@ -249,21 +340,59 @@ export function resolveTeamBadgeUrl(params: {
   isCorrompido?: (name: string, url?: string | null) => boolean
 }): string | null {
   const { teamName, savedBadge, liveOrCacheBadge, isCorrompido } = params
-  const checkCorrompido = isCorrompido || (() => false)
+  if (!teamName) return null
 
+  const checkCorrompido = isCorrompido || (() => false)
+  const isSelecao = isNationalTeam(teamName)
+  const flagUrl = getFlagCdnUrl(teamName)
+
+  if (isSelecao) {
+    // 1. Se houver savedBadge oficial da seleção sem contaminação
+    if (
+      savedBadge &&
+      !isContaminatedBadge(teamName, savedBadge) &&
+      !checkCorrompido(teamName, savedBadge)
+    ) {
+      if (isOfficialNationalTeamBadge(teamName, savedBadge)) {
+        return savedBadge
+      }
+    }
+
+    // 2. Se houver liveOrCacheBadge oficial da seleção sem contaminação
+    if (
+      liveOrCacheBadge &&
+      !isContaminatedBadge(teamName, liveOrCacheBadge) &&
+      !checkCorrompido(teamName, liveOrCacheBadge)
+    ) {
+      if (isOfficialNationalTeamBadge(teamName, liveOrCacheBadge)) {
+        return liveOrCacheBadge
+      }
+    }
+
+    // 3. Para seleção nacional, se não há logo oficial certificado da API-Sports,
+    // usar SEMPRE a bandeira oficial via FlagCDN
+    if (flagUrl) {
+      return flagUrl
+    }
+
+    return null
+  }
+
+  // --- Caso Clube ---
   // 1º Escudo oficial salvo (media.api-sports.io)
   if (
     savedBadge &&
     savedBadge.includes('media.api-sports.io') &&
+    !isContaminatedBadge(teamName, savedBadge) &&
     !checkCorrompido(teamName, savedBadge)
   ) {
     return savedBadge
   }
 
-  // Se salvou outra URL válida que não seja TheSportsDB e não esteja corrompida
+  // Se salvou outra URL válida de clube
   if (
     savedBadge &&
-    !savedBadge.includes('thesportsdb.com') &&
+    !isContaminatedBadge(teamName, savedBadge) &&
     !checkCorrompido(teamName, savedBadge)
   ) {
     return savedBadge
@@ -272,18 +401,11 @@ export function resolveTeamBadgeUrl(params: {
   // 2º Dados ao vivo ou cache existente
   if (
     liveOrCacheBadge &&
-    !liveOrCacheBadge.includes('thesportsdb.com') &&
+    !isContaminatedBadge(teamName, liveOrCacheBadge) &&
     !checkCorrompido(teamName, liveOrCacheBadge)
   ) {
     return liveOrCacheBadge
   }
 
-  // 3º FlagCDN se for seleção nacional conhecida
-  const flagUrl = getFlagCdnUrl(teamName)
-  if (flagUrl) {
-    return flagUrl
-  }
-
-  // 4º Sem correspondência
   return null
 }

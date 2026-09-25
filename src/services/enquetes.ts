@@ -1,6 +1,12 @@
 import type { RecordModel } from 'pocketbase'
 import pb from '@/lib/pocketbase/client'
 import type { Jogo } from '@/types/bolao'
+import {
+  getFlagCdnUrl,
+  isNationalTeam,
+  isOfficialNationalTeamBadge,
+  isContaminatedBadge,
+} from '@/lib/flags'
 
 export interface EnqueteModel extends RecordModel {
   titulo: string
@@ -847,8 +853,8 @@ export function readEscudoCache(teamName: string): string | null {
   // Invalidação e purga de cache contaminado:
   // Se o time for Paris / PSG mas a URL apontar para 192 (Köln) ou koln/cologne, expurga!
   const isParis = key.includes('paris') || key === 'psg'
-  const isKoln = (url: string) =>
-    url.includes('/192.') || url.includes('koln') || url.includes('cologne')
+  const isSelecao = isNationalTeam(teamName)
+  const flagUrl = getFlagCdnUrl(teamName)
 
   // Escudos oficiais conhecidos para seleções/times recorrentes (fallback instantâneo da API-Sports)
   const KNOWN_OFFICIAL_BADGES: Record<string, string> = {
@@ -872,6 +878,9 @@ export function readEscudoCache(teamName: string): string | null {
     belgica: 'https://media.api-sports.io/football/teams/1.png',
     croacia: 'https://media.api-sports.io/football/teams/3.png',
     uruguai: 'https://media.api-sports.io/football/teams/7.png',
+    turquia: 'https://media.api-sports.io/football/teams/777.png',
+    georgia: 'https://media.api-sports.io/football/teams/1104.png',
+    irlandadonorte: 'https://media.api-sports.io/football/teams/771.png',
   }
 
   // Se for PSG, SEMPRE retorna a URL oficial hardcoded independente de qualquer resíduo
@@ -887,11 +896,7 @@ export function readEscudoCache(teamName: string): string | null {
   }
 
   // Invalidação e purga de contaminação para Dinamarca:
-  // Se for Dinamarca, garantir SEMPRE a URL oficial (teams/21.png) expurgando qualquer badge incorreto (como B.S.C. z3v04x)
   const isDinamarca = key === 'dinamarca' || key === 'denmark'
-  const isBscOrCorruptedDinamarca = (url: string) =>
-    url.includes('z3v04x') || url.includes('bsc') || url.includes('b.s.c')
-
   if (isDinamarca) {
     const dinamarcaOfficial = 'https://media.api-sports.io/football/teams/21.png'
     setWithBoundedCapacity(escudoMemoryCache, key, dinamarcaOfficial, 200)
@@ -903,11 +908,29 @@ export function readEscudoCache(teamName: string): string | null {
     return dinamarcaOfficial
   }
 
+  // Helper de validação do valor do cache
+  const isValidCachedUrl = (url: string) => {
+    if (!url) return false
+    if (isContaminatedBadge(teamName, url)) return false
+    if (isSelecao) {
+      // Se for seleção nacional, só aceita se for a FlagCDN ou escudo oficial da seleção
+      if (url.startsWith('https://flagcdn.com/')) return true
+      if (isOfficialNationalTeamBadge(teamName, url)) return true
+      return false
+    }
+    return true
+  }
+
   // 1. Memória RAM
   const fromMem = escudoMemoryCache.get(key)
   if (fromMem !== undefined) {
-    if (isKoln(fromMem) || isBscOrCorruptedDinamarca(fromMem)) {
+    if (!isValidCachedUrl(fromMem)) {
       escudoMemoryCache.delete(key)
+      try {
+        localStorage.removeItem(`${ESCUDO_CACHE_PREFIX}_${key}`)
+      } catch {
+        /* ignore */
+      }
     } else {
       return fromMem
     }
@@ -917,12 +940,12 @@ export function readEscudoCache(teamName: string): string | null {
   try {
     const raw = localStorage.getItem(`${ESCUDO_CACHE_PREFIX}_${key}`)
     if (raw !== null) {
-      if (isKoln(raw) || isBscOrCorruptedDinamarca(raw)) {
+      if (!isValidCachedUrl(raw)) {
         localStorage.removeItem(`${ESCUDO_CACHE_PREFIX}_${key}`)
-        return null
+      } else {
+        setWithBoundedCapacity(escudoMemoryCache, key, raw, 200)
+        return raw
       }
-      setWithBoundedCapacity(escudoMemoryCache, key, raw, 200)
-      return raw
     }
   } catch {
     // LocalStorage indisponível
@@ -932,6 +955,12 @@ export function readEscudoCache(teamName: string): string | null {
     const badge = KNOWN_OFFICIAL_BADGES[key]
     setWithBoundedCapacity(escudoMemoryCache, key, badge, 200)
     return badge
+  }
+
+  // Se for seleção nacional e não tiver escudo oficial nos conhecidos, retorna FlagCDN
+  if (isSelecao && flagUrl) {
+    setWithBoundedCapacity(escudoMemoryCache, key, flagUrl, 200)
+    return flagUrl
   }
 
   return null
