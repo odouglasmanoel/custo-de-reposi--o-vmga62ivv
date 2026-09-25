@@ -1534,23 +1534,28 @@ export default function BolaoDashboard() {
   }, [])
 
   // Jogos cujos palpites foram liberados:
-  // Jogos cujo horário de início já passou (isPalpiteEncerrado via kickoff)
-  // e que pertençam à rodada/dia atual (de hoje no fuso de Brasília ou com kickoff recente nas últimas 24h).
-  // Jogos de hoje com kickoff passado continuam visíveis aqui exibindo marcadores parciais ou recém-encerrados do dia.
-  // Só exclui jogos realmente antigos (fora da janela do dia / >24h) e NUNCA inclui jogos futuros.
+  // Exibe APENAS partidas PENDENTES ou EM ANDAMENTO cujo horário de início já passou (isPalpiteEncerrado via kickoff).
+  // Partidas marcadas como encerradas/finalizadas (resultado_finalizado = true, status terminal 'encerrado'/'finalizado'/'ft'
+  // ou API confirmando partida finalizada) NÃO são exibidas aqui.
+  // Passada a data/horário e estando o jogo encerrado, ele não aparece no feed inicial.
   const jogosLiberados = useMemo(() => {
     const targetGames = isGeral ? allJogos : jogos
 
     return targetGames
       .filter((j) => {
-        // Trava de jogos futuros (0.0.218/0.0.219): nunca exibir jogos cujo kickoff ainda não chegou
+        // 1. Trava de jogos futuros: nunca exibir jogos cujo kickoff ainda não chegou
         if (!isPalpiteEncerrado(j.data, j.hora, nowMs)) return false
 
+        // 2. Trava de jogos encerrados/concluídos: jogos encerrados NÃO aparecem na seção
+        const jogoDataISO = normalizeDataISO(j.data)
+        const matchedLive = resolveLiveScoreForGame(j, apiFixtures, 0.55, jogoDataISO)
+        if (isJogoConcluido(j, matchedLive)) return false
+
+        // 3. Pertencer ao dia de hoje (Brasília) ou ter kickoff recente nas últimas 24h
         const kickoffMs = getJogoKickoffTimestamp(j.data, j.hora)
         const isHoje = isJogoHojeBrasilia(j.data, nowMs) || isJogoHoje(j.data, nowMs)
         const recentKickoff = kickoffMs !== null && kickoffMs >= nowMs - 24 * 60 * 60 * 1000
 
-        // Permanece visível se for do dia de hoje ou kickoff nas últimas 24h
         return isHoje || recentKickoff
       })
       .sort((a, b) => {
@@ -1559,7 +1564,7 @@ export default function BolaoDashboard() {
         const kickB = getJogoKickoffTimestamp(b.data, b.hora) ?? new Date(b.data).getTime()
         return kickB - kickA
       })
-  }, [isGeral, allJogos, jogos, nowMs])
+  }, [isGeral, allJogos, jogos, apiFixtures, isJogoConcluido, nowMs])
 
   // Jogos de Hoje (fuso America/Sao_Paulo / Brasília)
   // No modo Geral (Todas as Copas) soma TODAS as competições de allJogos
