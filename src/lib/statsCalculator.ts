@@ -116,23 +116,43 @@ export function normalizeMemberName(name: string): string {
  * Verifica se um palpite é uma cravada exata (placar exato)
  */
 export function isCravadaExata(palpite: Palpite, jogo: Jogo): boolean {
-  if (jogo.placar_a === null || jogo.placar_a === undefined) return false
-  if (jogo.placar_b === null || jogo.placar_b === undefined) return false
-
-  // 1. Comparação direta de placar
-  if (
-    Number(palpite.placar_a) === Number(jogo.placar_a) &&
-    Number(palpite.placar_b) === Number(jogo.placar_b)
-  ) {
-    return true
-  }
-
-  // 2. Detalhamento gravado
+  // 1. Detalhamento gravado (funciona mesmo se placar do jogo não estiver preenchido ou for histórico)
   if (Array.isArray(palpite.detalhamento)) {
     const hasExactText = palpite.detalhamento.some(
       (d) => typeof d === 'string' && /placar\s*exato/i.test(d),
     )
     if (hasExactText) return true
+  }
+
+  // 2. Pontuação oficial indicativa de cravada caso não haja placar preenchido
+  if (Number(palpite.pontuacao_jogo) >= 8) {
+    // Se recebeu 8 ou mais pontos e tem placar coincidente
+    if (
+      jogo.placar_a !== null &&
+      jogo.placar_a !== undefined &&
+      jogo.placar_b !== null &&
+      jogo.placar_b !== undefined &&
+      Number(palpite.placar_a) === Number(jogo.placar_a) &&
+      Number(palpite.placar_b) === Number(jogo.placar_b)
+    ) {
+      return true
+    }
+  }
+
+  // 3. Comparação direta de placar
+  if (
+    jogo.placar_a !== null &&
+    jogo.placar_a !== undefined &&
+    jogo.placar_b !== null &&
+    jogo.placar_b !== undefined &&
+    palpite.placar_a !== null &&
+    palpite.placar_a !== undefined &&
+    palpite.placar_b !== null &&
+    palpite.placar_b !== undefined &&
+    Number(palpite.placar_a) === Number(jogo.placar_a) &&
+    Number(palpite.placar_b) === Number(jogo.placar_b)
+  ) {
+    return true
   }
 
   return false
@@ -142,22 +162,44 @@ export function isCravadaExata(palpite: Palpite, jogo: Jogo): boolean {
  * Verifica se o palpite acertou o resultado final (vencedor do jogo ou empate - 3-way)
  */
 export function isResultadoAcertado(palpite: Palpite, jogo: Jogo): boolean {
-  if (jogo.placar_a === null || jogo.placar_a === undefined) return false
-  if (jogo.placar_b === null || jogo.placar_b === undefined) return false
-
-  const getWinner = (a: number, b: number) => (a > b ? 1 : b > a ? -1 : 0)
-  const realWinner = getWinner(Number(jogo.placar_a), Number(jogo.placar_b))
-  const predWinner = getWinner(Number(palpite.placar_a), Number(palpite.placar_b))
-
-  if (realWinner === predWinner) {
-    return true
-  }
-
+  // 1. Detalhamento gravado (retroativo / histórico)
   if (Array.isArray(palpite.detalhamento)) {
     const hasResultText = palpite.detalhamento.some(
       (d) => typeof d === 'string' && (/(?:vencedor|empate)/i.test(d) || /placar\s*exato/i.test(d)),
     )
     if (hasResultText) return true
+  }
+
+  // 2. Pontuação oficial indicando acerto de resultado
+  if (Number(palpite.pontuacao_jogo) >= 2) {
+    if (
+      jogo.placar_a === null ||
+      jogo.placar_a === undefined ||
+      jogo.placar_b === null ||
+      jogo.placar_b === undefined
+    ) {
+      return true
+    }
+  }
+
+  // 3. Comparação direta do vencedor / empate
+  if (
+    jogo.placar_a !== null &&
+    jogo.placar_a !== undefined &&
+    jogo.placar_b !== null &&
+    jogo.placar_b !== undefined &&
+    palpite.placar_a !== null &&
+    palpite.placar_a !== undefined &&
+    palpite.placar_b !== null &&
+    palpite.placar_b !== undefined
+  ) {
+    const getWinner = (a: number, b: number) => (a > b ? 1 : b > a ? -1 : 0)
+    const realWinner = getWinner(Number(jogo.placar_a), Number(jogo.placar_b))
+    const predWinner = getWinner(Number(palpite.placar_a), Number(palpite.placar_b))
+
+    if (realWinner === predWinner) {
+      return true
+    }
   }
 
   return false
@@ -844,22 +886,48 @@ export function calculateStatistics(params: {
       : boloes.filter((b) => b.id === filtroBolaoId).map((b) => b.id),
   )
 
-  // Filtrar jogos finalizados dos bolões selecionados
-  const jogosFinalizados = jogos.filter(
-    (j) => bolaoIdsValidos.has(j.bolao) && j.resultado_finalizado,
-  )
+  // Mapa de bolões para verificação de status ativo/encerrado
+  const bolaoMap = new Map<string, Bolao>()
+  for (const b of boloes) {
+    bolaoMap.set(b.id, b)
+  }
+
+  // Identificar palpites pontuados por jogo para inclusão retroativa
+  const jogosComPalpitesPontuados = new Set<string>()
+  for (const p of palpites) {
+    const pts = Number(p.pontuacao_jogo) || 0
+    const hasDetailPoints =
+      Array.isArray(p.detalhamento) &&
+      p.detalhamento.some(
+        (d) =>
+          typeof d === 'string' &&
+          /(?:placar\s*exato|vencedor|empate|metade do placar|\+\d+\s*pts?)/i.test(d) &&
+          !/aguardando|cancelado/i.test(d),
+      )
+    if (pts > 0 || hasDetailPoints) {
+      jogosComPalpitesPontuados.add(p.jogo)
+    }
+  }
+
+  // Filtrar jogos finalizados dos bolões selecionados:
+  // Aceita jogo/palpite histórico como finalizado se:
+  // - jogo.resultado_finalizado === true
+  // - OU o jogo pertence a um bolão encerrado (bolao.ativo === false)
+  // - OU o jogo já possui palpites com pontuação oficial concedida (pontuacao_jogo > 0 ou detalhamento)
+  const jogosFinalizados = jogos.filter((j) => {
+    if (!bolaoIdsValidos.has(j.bolao)) return false
+    if (j.resultado_finalizado) return true
+    const b = bolaoMap.get(j.bolao)
+    if (b && b.ativo === false) return true
+    if (jogosComPalpitesPontuados.has(j.id)) return true
+    return false
+  })
   const jogoIdsFinalizados = new Set(jogosFinalizados.map((j) => j.id))
 
   // Mapear participantes por id para resolução rápida
   const partMap = new Map<string, Participante>()
   for (const p of participantes) {
     partMap.set(p.id, p)
-  }
-
-  // Filtrar bolão por id para identificação de nome de competição
-  const bolaoMap = new Map<string, Bolao>()
-  for (const b of boloes) {
-    bolaoMap.set(b.id, b)
   }
 
   // Agrupar jogos finalizados por bolão para suporte a fallback ordenado por torneio
@@ -935,8 +1003,22 @@ export function calculateStatistics(params: {
 
   // Iterar palpites de jogos finalizados
   for (const palpite of palpites) {
-    if (!jogoIdsFinalizados.has(palpite.jogo)) continue
+    // Aceita palpite se o jogo está em jogoIdsFinalizados OU se o próprio palpite
+    // já possui pontuação oficial ou detalhamento indicativo de jogo encerrado
     const jogo = jogoMap.get(palpite.jogo)
+    const palpiteTemPontos = Number(palpite.pontuacao_jogo) > 0
+    const palpiteTemDetalhamento =
+      Array.isArray(palpite.detalhamento) &&
+      palpite.detalhamento.some(
+        (d) =>
+          typeof d === 'string' &&
+          /(?:placar\s*exato|vencedor|empate|metade do placar|\+\d+\s*pts?)/i.test(d) &&
+          !/aguardando|cancelado/i.test(d),
+      )
+
+    if (!jogoIdsFinalizados.has(palpite.jogo) && !palpiteTemPontos && !palpiteTemDetalhamento) {
+      continue
+    }
     if (!jogo) continue
 
     const part = partMap.get(palpite.participante)

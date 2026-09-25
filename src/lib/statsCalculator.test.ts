@@ -1008,4 +1008,169 @@ describe('statsCalculator', () => {
     expect(douglasConi?.totalPontos).toBe(28)
     expect(douglasConi?.cravadasExatas).toBe(1)
   })
+
+  it('aggregates historical World Cup predictions and games where resultado_finalizado was false or bolao inactive', () => {
+    const boloes: Bolao[] = [
+      {
+        id: 'copa_coni',
+        nome: 'Copa Coni',
+        ativo: true,
+        created: '',
+        updated: '',
+        collectionId: '',
+        collectionName: '',
+      },
+      {
+        id: 'copa_mundo',
+        nome: 'Copa do Mundo',
+        ativo: false, // bolão inativo/encerrado
+        created: '',
+        updated: '',
+        collectionId: '',
+        collectionName: '',
+      },
+    ]
+
+    const participantes: Participante[] = [
+      {
+        id: 'p_doug_coni',
+        bolao: 'copa_coni',
+        nome: 'Douglas',
+        pontos_importados: 71,
+        pontuacao_total: 150,
+        created: '',
+        updated: '',
+        collectionId: '',
+        collectionName: '',
+      },
+      {
+        id: 'p_doug_copa',
+        bolao: 'copa_mundo',
+        nome: 'Douglas',
+        pontos_importados: 150,
+        pontuacao_total: 222,
+        created: '',
+        updated: '',
+        collectionId: '',
+        collectionName: '',
+      },
+    ]
+
+    // 8 cravadas na Copa Coni
+    const jogosConi: Jogo[] = []
+    const palpitesConi: Palpite[] = []
+    for (let i = 1; i <= 8; i++) {
+      const jId = `j_coni_${i}`
+      jogosConi.push({
+        id: jId,
+        bolao: 'copa_coni',
+        time_a: `Time Coni A${i}`,
+        time_b: `Time Coni B${i}`,
+        data: '2026-05-01',
+        hora: '16:00',
+        placar_a: 2,
+        placar_b: 1,
+        resultado_finalizado: true,
+        tem_penaltis: false,
+        competicao: 'Coni',
+        created: '',
+        updated: '',
+        collectionId: '',
+        collectionName: '',
+      })
+      palpitesConi.push({
+        id: `palp_coni_${i}`,
+        bolao: 'copa_coni',
+        jogo: jId,
+        participante: 'p_doug_coni',
+        placar_a: 2,
+        placar_b: 1,
+        pontuacao_jogo: 8,
+        detalhamento: ['Placar Exato'],
+        created: '',
+        updated: '',
+        collectionId: '',
+        collectionName: '',
+      })
+    }
+
+    // 11 cravadas na Copa do Mundo (com resultado_finalizado: false no jogo para simular banco histórico)
+    const jogosCopa: Jogo[] = []
+    const palpitesCopa: Palpite[] = []
+    for (let i = 1; i <= 11; i++) {
+      const jId = `j_copa_${i}`
+      jogosCopa.push({
+        id: jId,
+        bolao: 'copa_mundo',
+        time_a: `Seleção A${i}`,
+        time_b: `Seleção B${i}`,
+        data: '2026-06-15',
+        hora: '16:00',
+        placar_a: 3,
+        placar_b: 0,
+        resultado_finalizado: false, // simula jogos importados sem flag true
+        tem_penaltis: false,
+        competicao: 'Copa do Mundo',
+        created: '',
+        updated: '',
+        collectionId: '',
+        collectionName: '',
+      })
+      palpitesCopa.push({
+        id: `palp_copa_${i}`,
+        bolao: 'copa_mundo',
+        jogo: jId,
+        participante: 'p_doug_copa',
+        placar_a: 3,
+        placar_b: 0,
+        pontuacao_jogo: 8,
+        detalhamento: ['Placar Exato e Vencedor'],
+        created: '',
+        updated: '',
+        collectionId: '',
+        collectionName: '',
+      })
+    }
+
+    const todosJogos = [...jogosConi, ...jogosCopa]
+    const todosPalpites = [...palpitesConi, ...palpitesCopa]
+
+    // 1. Visão Geral: Douglas deve somar 8 + 11 = 19 cravadas exatas!
+    const statsGeral = calculateStatistics({
+      boloes,
+      participantes,
+      jogos: todosJogos,
+      palpites: todosPalpites,
+      filtroBolaoId: 'geral',
+    })
+
+    const douglasGeral = statsGeral.tabela.find((t) => t.nome === 'Douglas')
+    expect(douglasGeral).toBeDefined()
+    expect(douglasGeral?.cravadasExatas).toBe(19) // 8 da Coni + 11 da Copa do Mundo
+    expect(douglasGeral?.pontosImportados).toBe(71 + 150) // 221 pts
+    expect(douglasGeral?.pontosPalpites).toBe(8 * 8 + 11 * 8) // 64 + 88 = 152
+    expect(douglasGeral?.totalPontos).toBe(221 + 152)
+
+    // 2. Visão Copa Coni: exatamente 8 cravadas
+    const statsConi = calculateStatistics({
+      boloes,
+      participantes,
+      jogos: todosJogos,
+      palpites: todosPalpites,
+      filtroBolaoId: 'copa_coni',
+    })
+    const douglasConi = statsConi.tabela.find((t) => t.nome === 'Douglas')
+    expect(douglasConi?.cravadasExatas).toBe(8)
+
+    // 3. Visão Copa do Mundo isolada: exatamente 11 cravadas
+    const statsCopa = calculateStatistics({
+      boloes,
+      participantes,
+      jogos: todosJogos,
+      palpites: todosPalpites,
+      filtroBolaoId: 'copa_mundo',
+    })
+    const douglasCopa = statsCopa.tabela.find((t) => t.nome === 'Douglas')
+    expect(douglasCopa?.cravadasExatas).toBe(11)
+  })
 })

@@ -125,7 +125,8 @@ export async function fetchStatisticsData(
   const palpiteFields =
     'id,bolao,jogo,participante,placar_a,placar_b,goleadores_a,goleadores_b,vencedor_penaltis,pontuacao_jogo,detalhamento'
 
-  // Reutiliza boloesList se fornecido para evitar uma requisição desnecessária
+  // Reutiliza boloesList se fornecido (e se contiver todos os bolões, inclusive inativos/encerrados)
+  // Caso contrário, busca a lista completa sem qualquer restrição de ativo=true
   const boloesPromise =
     options?.boloesList && options.boloesList.length > 0
       ? Promise.resolve(options.boloesList)
@@ -135,7 +136,9 @@ export async function fetchStatisticsData(
         })
 
   if (isGeralSelection) {
-    // 3 chamadas em lote paralelo com projeção de campos mínimos
+    // Na visão Geral (Todas as Copas):
+    // NENHUM filtro de bolao nas buscas de participantes, jogos e palpites.
+    // Todas as copas históricas e ativas são passadas integralmente para o calculateStatistics.
     const [boloesList, partList, jogosList, palpitesList] = await Promise.all([
       boloesPromise,
       pb.collection('participantes').getFullList<Participante>({
