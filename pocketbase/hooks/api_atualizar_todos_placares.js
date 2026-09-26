@@ -557,8 +557,14 @@ routerAdd(
         fixturesWithGoalsCount++
       }
 
-      const isLive = ['1H', '2H', 'HT', 'ET', 'BT', 'P', 'LIVE', 'INT'].includes(statusShort)
+      // VALIDAÇÃO ESTRITA DE STATUS DA API-SPORTS:
+      // "Apenas atualize o status de um jogo para 'Ao Vivo' (1H, 2H, HT, etc.) se a API-Sports retornar
+      // explicitamente que a partida está em andamento (status '1H', 'HT', '2H', 'ET', 'BT', 'P', 'LIVE')."
+      // "Se o status na API-Sports for 'NS' (Not Started) ou 'TBD', MANTENHA o jogo como 'Pendente' / 'Aberto',
+      // e NÃO grave placar zerado (0 x 0) nem marque como 'Ao Vivo'."
+      const isLive = ['1H', 'HT', '2H', 'ET', 'BT', 'P', 'LIVE', 'INT'].includes(statusShort)
       const isFinished = ['FT', 'AET', 'PEN'].includes(statusShort)
+      const isNotStarted = ['NS', 'TBD', ''].includes(statusShort)
 
       const homeTeamLogo = (fixData.teams?.home?.logo || '').toString().trim()
       const awayTeamLogo = (fixData.teams?.away?.logo || '').toString().trim()
@@ -690,15 +696,39 @@ routerAdd(
         if (homeTeamLogo) jRec.set('url_escudo_mandante', homeTeamLogo)
         if (awayTeamLogo) jRec.set('url_escudo_visitante', awayTeamLogo)
 
-        // Regra 1: Partidas só podem mudar para status "Encerrado" quando a API-Sports retornar explicitamente
-        // status final ('FT', 'AET', 'PEN'). Caso contrário permanecem "Ao Vivo" se em andamento.
-        // Se status for de partida em andamento ('1H','2H','HT','ET','BT','P','LIVE','INT'),
-        // gravar status: 'ao_vivo' e resultado_finalizado: false.
+        // Gravação condicional de placar:
+        // Apenas grava placar se a partida estiver encerrada (FT/AET/PEN) ou em andamento explícito (isLive).
+        // Se for NS/TBD, NÃO grava placar zerado (0x0). Se já havia sido marcado indevidamente como ao_vivo/0x0, restaura para pendente.
+        if (isFinished || isLive) {
+          if (homeGoals !== null && !isNaN(homeGoals)) {
+            jRec.set('placar_a', homeGoals)
+          }
+          if (awayGoals !== null && !isNaN(awayGoals)) {
+            jRec.set('placar_b', awayGoals)
+          }
+        } else if (isNotStarted) {
+          // Partida ainda não começou na API-Sports (NS ou TBD).
+          // Se o jogo estava indevidamente como ao_vivo, reverte para pendente
+          const currentStatusJRec = (jRec.getString('status') || '').toLowerCase().trim()
+          if (currentStatusJRec === 'ao_vivo') {
+            jRec.set('status', 'pendente')
+          }
+        }
+
+        if (homeTeamLogo) jRec.set('url_escudo_mandante', homeTeamLogo)
+        if (awayTeamLogo) jRec.set('url_escudo_visitante', awayTeamLogo)
+
+        // Atualização estrita de status:
+        // Apenas 'finalizado' se FT/AET/PEN
+        // Apenas 'ao_vivo' se explicitamente '1H', 'HT', '2H', 'ET', 'BT', 'P', 'LIVE', 'INT' E kickoff já chegou
+        // Se NS/TBD, NUNCA marca como ao_vivo
         if (isFinished) {
           jRec.set('status', 'finalizado')
           jRec.set('resultado_finalizado', true)
-        } else if (isLive || (kickoffJaChegou && !isFinished)) {
+        } else if (isLive && kickoffJaChegou) {
           jRec.set('status', 'ao_vivo')
+          jRec.set('resultado_finalizado', false)
+        } else if (isNotStarted) {
           jRec.set('resultado_finalizado', false)
         }
 
@@ -707,7 +737,13 @@ routerAdd(
         if (marcadoresGerais.length > 0) jRec.set('marcadores', marcadoresGerais)
 
         // Grava a ficha completa de detalhes (timeline de eventos)
-        jRec.set('ficha_detalhes', fichaDetalhesPayload)
+        // PRESERVAÇÃO: se a API não trouxer eventos nem status ativo/finalizado e o jogo já tiver ficha gravada com eventos, não sobrescreve com vazio
+        const prevFichaRaw = jRec.get('ficha_detalhes')
+        const hasPrevEvents =
+          prevFichaRaw && Array.isArray(prevFichaRaw.events) && prevFichaRaw.events.length > 0
+        if (normalizedEvents.length > 0 || !hasPrevEvents || isLive || isFinished) {
+          jRec.set('ficha_detalhes', fichaDetalhesPayload)
+        }
 
         try {
           $app.save(jRec)

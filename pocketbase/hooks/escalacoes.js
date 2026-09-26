@@ -438,8 +438,19 @@ routerAdd(
           }
           if (matchingJogoRecord) {
             try {
-              matchingJogoRecord.set('escalacoes', result)
-              $app.save(matchingJogoRecord)
+              var hasTeamsData = Array.isArray(result.teams) && result.teams.length > 0
+              var hasRealPlayers =
+                hasTeamsData &&
+                result.teams.some(function (t) {
+                  return (
+                    (t.starters && t.starters.length > 0) ||
+                    (t.substitutes && t.substitutes.length > 0)
+                  )
+                })
+              if (hasRealPlayers) {
+                matchingJogoRecord.set('escalacoes', result)
+                $app.save(matchingJogoRecord)
+              }
               console.log(
                 '[Escalacoes] Escalação salva com sucesso no registro da partida ' +
                   matchingJogoRecord.id,
@@ -908,8 +919,18 @@ cronAdd('cron_escalacoes_pre_jogo_5m', '*/5 * * * *', () => {
           teams: teamsData,
           updatedAt: new Date().toISOString(),
         }
-        jogoAlvo.set('escalacoes', payload)
-        $app.save(jogoAlvo)
+        var hasTeamsPayload = Array.isArray(payload.teams) && payload.teams.length > 0
+        var hasRealPlayersPayload =
+          hasTeamsPayload &&
+          payload.teams.some(function (t) {
+            return (
+              (t.starters && t.starters.length > 0) || (t.substitutes && t.substitutes.length > 0)
+            )
+          })
+        if (hasRealPlayersPayload) {
+          jogoAlvo.set('escalacoes', payload)
+          $app.save(jogoAlvo)
+        }
         console.log(
           '[Cron Escalações 5m] Escalação pré-jogo gravada com sucesso no campo escalacoes do jogo ' +
             jogoAlvo.id,

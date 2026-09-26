@@ -371,14 +371,29 @@ routerAdd(
       rawAway !== null && !isNaN(parseInt(rawAway, 10)) ? parseInt(rawAway, 10) : null
     const hasOfficialScore = homeGoals !== null && awayGoals !== null
 
-    const isLive = ['1H', '2H', 'HT', 'ET', 'BT', 'P', 'LIVE', 'INT'].includes(statusShort)
+    // VALIDAÇÃO ESTRITA DE STATUS DA API-SPORTS:
+    // "Apenas atualize o status de um jogo para 'Ao Vivo' (1H, 2H, HT, etc.) se a API-Sports retornar
+    // explicitamente que a partida está em andamento (status '1H', 'HT', '2H', 'ET', 'BT', 'P', 'LIVE')."
+    // "Se o status na API-Sports for 'NS' (Not Started) ou 'TBD', MANTENHA o jogo como 'Pendente' / 'Aberto',
+    // e NÃO grave placar zerado (0 x 0) nem marque como 'Ao Vivo'."
+    const isLive = ['1H', 'HT', '2H', 'ET', 'BT', 'P', 'LIVE', 'INT'].includes(statusShort)
     const isFinished = ['FT', 'AET', 'PEN'].includes(statusShort)
+    const isNotStarted = ['NS', 'TBD', ''].includes(statusShort)
 
-    if (homeGoals !== null) {
-      jogoRecord.set('placar_a', homeGoals)
-    }
-    if (awayGoals !== null) {
-      jogoRecord.set('placar_b', awayGoals)
+    // Se a partida está finalizada ou em andamento explícito, grava os gols oficiais se existirem
+    if (isFinished || isLive) {
+      if (homeGoals !== null) {
+        jogoRecord.set('placar_a', homeGoals)
+      }
+      if (awayGoals !== null) {
+        jogoRecord.set('placar_b', awayGoals)
+      }
+    } else if (isNotStarted) {
+      // Para NS/TBD: NÃO grava placar zerado (0x0) nem sobrescreve com 0
+      // Mantém placar intocado ou limpa placar falso se for NS/TBD
+      console.log(
+        `[atualizar-jogo] Partida fixture ${fixtureIdParaUso} está NS/TBD. Mantendo Pendente/Aberto sem placar zerado.`,
+      )
     }
 
     // Atualização de logos/escudos dos times via API-Football
@@ -443,15 +458,21 @@ routerAdd(
       }
     } catch (_) {}
 
-    // Regra 1: Partidas só podem mudar para status "Encerrado" quando a API-Sports retornar explicitamente
-    // status final ('FT', 'AET', 'PEN'). Caso contrário permanecem "Ao Vivo" se em andamento.
-    // Se status for de partida em andamento ('1H','2H','HT','ET','BT','P','LIVE','INT'),
-    // gravar status: 'ao_vivo' e resultado_finalizado: false.
+    // Atualização estrita de status:
+    // Apenas finalizado se FT/AET/PEN
+    // Apenas ao_vivo se 1H/HT/2H/ET/BT/P/LIVE/INT E kickoff já passou
+    // Se NS/TBD: mantém como 'pendente' ou 'aberto' (não mexe para ao_vivo)
     if (isFinished) {
       jogoRecord.set('status', 'finalizado')
       jogoRecord.set('resultado_finalizado', true)
-    } else if (isLive || (kickoffJaChegou && !isFinished)) {
+    } else if (isLive && kickoffJaChegou) {
       jogoRecord.set('status', 'ao_vivo')
+      jogoRecord.set('resultado_finalizado', false)
+    } else if (isNotStarted) {
+      const currentSt = (jogoRecord.getString('status') || '').toLowerCase().trim()
+      if (currentSt === 'ao_vivo') {
+        jogoRecord.set('status', 'pendente')
+      }
       jogoRecord.set('resultado_finalizado', false)
     }
 

@@ -688,8 +688,23 @@ routerAdd(
               try {
                 var isAlreadyFinalized = matchingJogoRecord.getBool('resultado_finalizado')
                 if (!isAlreadyFinalized) {
-                  matchingJogoRecord.set('ficha_detalhes', result)
-                  // Se houver lineups confirmadas, também atualiza o campo escalacoes
+                  // PRESERVAÇÃO: Não sobrescrever ficha técnica se a nova vier vazia e a antiga contiver eventos/lineups
+                  var prevFichaPartida = matchingJogoRecord.get('ficha_detalhes')
+                  var prevHasData =
+                    prevFichaPartida &&
+                    ((Array.isArray(prevFichaPartida.events) &&
+                      prevFichaPartida.events.length > 0) ||
+                      (Array.isArray(prevFichaPartida.lineups) &&
+                        prevFichaPartida.lineups.length > 0))
+                  var newHasData =
+                    (Array.isArray(result.events) && result.events.length > 0) ||
+                    (Array.isArray(result.lineups) && result.lineups.length > 0)
+
+                  if (newHasData || !prevHasData) {
+                    matchingJogoRecord.set('ficha_detalhes', result)
+                  }
+
+                  // Se houver lineups confirmadas, também atualiza o campo escalacoes sem sobrescrever com vazio
                   if (Array.isArray(fixData.lineups) && fixData.lineups.length > 0) {
                     var teamsData = []
                     for (var li = 0; li < fixData.lineups.length; li++) {
@@ -730,7 +745,10 @@ routerAdd(
                         substitutes: benchList,
                       })
                     }
-                    if (teamsData.length > 0) {
+                    var hasRealStarters = teamsData.some(function (td) {
+                      return td.starters && td.starters.length > 0
+                    })
+                    if (teamsData.length > 0 && hasRealStarters) {
                       matchingJogoRecord.set('escalacoes', {
                         status: 'confirmada',
                         provider: 'api_football',

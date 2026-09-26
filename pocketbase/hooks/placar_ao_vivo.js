@@ -1680,9 +1680,14 @@ routerAdd('GET', '/backend/v1/placar-ao-vivo', (e) => {
             ? String(fixItem.fixture.status.short).toUpperCase().trim()
             : ''
         var isFinishedStatus = ['FT', 'AET', 'PEN'].indexOf(fixStatusShort) !== -1
+        var isLiveStatus =
+          ['1H', 'HT', '2H', 'ET', 'BT', 'P', 'LIVE', 'INT'].indexOf(fixStatusShort) !== -1
+        var isNotStartedStatus = ['NS', 'TBD', ''].indexOf(fixStatusShort) !== -1
 
-        // Regra antifalha: se a API retornar null ou indefinido, não força 0x0
-        if (homeGoals !== null && awayGoals !== null) {
+        // VALIDAÇÃO ESTRITA:
+        // "Apenas atualize o status de um jogo para 'Ao Vivo' se a API-Sports retornar explicitamente que a partida está em andamento."
+        // "Se o status na API-Sports for 'NS' (Not Started) ou 'TBD', MANTENHA o jogo como 'Pendente' / 'Aberto', e NÃO grave placar zerado (0 x 0) nem marque como 'Ao Vivo'."
+        if ((isFinishedStatus || isLiveStatus) && homeGoals !== null && awayGoals !== null) {
           matchedJogo.set('placar_a', homeGoals)
           matchedJogo.set('placar_b', awayGoals)
         }
@@ -1743,8 +1748,20 @@ routerAdd('GET', '/backend/v1/placar-ao-vivo', (e) => {
           matchedJogo.set('gols_time_b', [])
         } // Se awayGoals > 0 e API trouxe 0 eventos mas banco já tem marcadores: PRESERVA!
 
-        // Salva snapshot completo de ficha técnica no campo ficha_detalhes do jogo
-        matchedJogo.set('ficha_detalhes', fixItem)
+        // Salva snapshot completo de ficha técnica no campo ficha_detalhes do jogo,
+        // mas preserva fichas anteriores caso a nova venha vazia e a anterior tenha eventos/lineups
+        var prevFicha = matchedJogo.get('ficha_detalhes')
+        var hasPrevDetails =
+          prevFicha &&
+          ((Array.isArray(prevFicha.events) && prevFicha.events.length > 0) ||
+            (Array.isArray(prevFicha.lineups) && prevFicha.lineups.length > 0))
+        var newHasDetails =
+          fixItem &&
+          ((Array.isArray(fixItem.events) && fixItem.events.length > 0) ||
+            (Array.isArray(fixItem.lineups) && fixItem.lineups.length > 0))
+        if (newHasDetails || !hasPrevDetails || isLiveStatus || isFinishedStatus) {
+          matchedJogo.set('ficha_detalhes', fixItem)
+        }
 
         var mDtVal = matchedJogo.getString('data')
         var mHrVal = matchedJogo.getString('hora')
@@ -1786,11 +1803,15 @@ routerAdd('GET', '/backend/v1/placar-ao-vivo', (e) => {
         if (isFinishedStatus && homeGoals !== null && awayGoals !== null && mJaIniciou) {
           matchedJogo.set('resultado_finalizado', true)
           matchedJogo.set('status', 'finalizado')
-        } else if (
-          ['1H', 'HT', '2H', 'ET', 'BT', 'P', 'LIVE'].indexOf(fixStatusShort) !== -1 &&
-          mJaIniciou
-        ) {
+        } else if (isLiveStatus && mJaIniciou) {
           matchedJogo.set('status', 'ao_vivo')
+          matchedJogo.set('resultado_finalizado', false)
+        } else if (isNotStartedStatus) {
+          var curSt = (matchedJogo.getString('status') || '').toLowerCase().trim()
+          if (curSt === 'ao_vivo') {
+            matchedJogo.set('status', 'pendente')
+          }
+          matchedJogo.set('resultado_finalizado', false)
         }
 
         try {

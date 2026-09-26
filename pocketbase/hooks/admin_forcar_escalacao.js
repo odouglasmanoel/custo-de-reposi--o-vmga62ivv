@@ -509,7 +509,12 @@ routerAdd(
           })
         }
 
-        if (teamsData.length > 0) {
+        const hasRealLineupPlayers = teamsData.some(
+          (t) =>
+            (t.starters && t.starters.length > 0) || (t.substitutes && t.substitutes.length > 0),
+        )
+
+        if (teamsData.length > 0 && hasRealLineupPlayers) {
           const payload = {
             status: 'confirmada',
             provider: 'api_football',
@@ -531,11 +536,14 @@ routerAdd(
         }
       }
 
+      // Se a API não devolveu lineups completas/confirmadas, NUNCA apaga escalações prévias
+      const existingEscalacao = jogoRec.get('escalacoes')
       return e.json(200, {
         success: false,
         notice:
-          'A API externa não retornou escalações para esta partida ainda (provavelmente ainda não confirmada pelos clubes).',
+          'A API externa não retornou escalações confirmadas para esta partida ainda. Escalações existentes locais preservadas.',
         fixture_id: fixtureId,
+        escalacoes_preservadas: Boolean(existingEscalacao),
       })
     } catch (errFatal) {
       console.log('[Admin Forçar Escalação] Erro fatal:', errFatal)
