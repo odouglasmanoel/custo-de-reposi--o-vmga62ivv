@@ -152,94 +152,19 @@ routerAdd('POST', '/backend/v1/admin/vincular-fixtures', (e) => {
       return ''
     }
 
-    // Gerenciador inline da cota da API-Football
-    const checarCotaApiFootball = () => {
-      const hojeUtc = new Date().toISOString().slice(0, 10)
-      const DAILY_LIMIT = 80
-      let rec = null
+    // Estado centralizado de cota e chaves via api_football_limiter
+    const limiterHelper = (function () {
       try {
-        rec = $app.findFirstRecordByFilter(
-          'config_integracoes',
-          "chave = 'api_football_daily_usage'",
-        )
-      } catch (_) {
-        rec = null
-      }
-
-      let usageData = {
-        date_utc: hojeUtc,
-        count: 0,
-        max_limit: DAILY_LIMIT,
-        trava_desativada: false,
-        blocked: false,
-        last_reset_utc: new Date().toISOString(),
-        last_request_utc: null,
-      }
-
-      if (rec) {
-        try {
-          const rawKey = rec.get('api_key')
-          if (rawKey) {
-            const parsed = JSON.parse(rawKey)
-            if (parsed && typeof parsed === 'object') {
-              usageData = Object.assign(usageData, parsed)
-            }
-          }
-        } catch (_) {}
-
-        if (usageData.date_utc !== hojeUtc) {
-          usageData.date_utc = hojeUtc
-          usageData.count = 0
-          usageData.blocked = false
-          if (!usageData.max_limit || Number(usageData.max_limit) < DAILY_LIMIT) {
-            usageData.max_limit = DAILY_LIMIT
-          }
-          usageData.last_reset_utc = new Date().toISOString()
-          rec.set('api_key', JSON.stringify(usageData))
-          rec.set('ativo', true)
-          rec.set('provedor', 'api_football')
-          $app.save(rec)
+        if (typeof __hooks !== 'undefined') {
+          return require(__hooks + '/api_football_limiter.js')
         }
-      } else {
-        try {
-          const col = $app.findCollectionByNameOrId('config_integracoes')
-          rec = new Record(col)
-          rec.set('chave', 'api_football_daily_usage')
-          rec.set('provedor', 'api_football')
-          rec.set('ativo', true)
-          rec.set('api_key', JSON.stringify(usageData))
-          $app.save(rec)
-        } catch (_) {}
-      }
-
-      const count = Number(usageData.count) || 0
-      const maxLimit = Number(usageData.max_limit) || DAILY_LIMIT
-      const travaDesativada = Boolean(usageData.trava_desativada)
-      const isBlocked = Boolean(usageData.blocked) || (!travaDesativada && count >= maxLimit)
-
-      return {
-        rec: rec,
-        usageData: usageData,
-        count: count,
-        max_limit: maxLimit,
-        trava_desativada: travaDesativada,
-        blocked: isBlocked,
-      }
-    }
-
-    const incrementarCotaApiFootball = (cotaState) => {
+      } catch (_) {}
       try {
-        if (!cotaState || !cotaState.rec) return
-        const usageData = cotaState.usageData || {}
-        usageData.count = (Number(usageData.count) || 0) + 1
-        usageData.last_request_utc = new Date().toISOString()
-        cotaState.rec.set('api_key', JSON.stringify(usageData))
-        $app.save(cotaState.rec)
-      } catch (errInc) {
-        console.log('[admin_vincular_fixtures] Erro ao incrementar uso da API:', errInc)
+        return require('./api_football_limiter.js')
+      } catch (_) {
+        return null
       }
-    }
-
+    })()
     const obterApiKeyApiFootball = () => {
       let apiKey = ''
       try {
@@ -317,6 +242,11 @@ routerAdd('POST', '/backend/v1/admin/vincular-fixtures', (e) => {
 
       try {
         const limiterMod = (function () {
+          try {
+            if (typeof __hooks !== 'undefined') {
+              return require(__hooks + '/api_football_limiter.js')
+            }
+          } catch (_) {}
           try {
             return require('./api_football_limiter.js')
           } catch (_) {

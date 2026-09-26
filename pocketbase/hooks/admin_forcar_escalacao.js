@@ -75,94 +75,19 @@ routerAdd(
         })
       }
 
-      // Helper inline para checar e incrementar cota da API-Football (chave: api_football_daily_usage)
-      const DAILY_LIMIT = 80
-      const checarCotaApiFootball = () => {
-        const hojeUtc = new Date().toISOString().slice(0, 10)
-        let rec = null
+      // Verificação centralizada via api_football_limiter
+      const limiterStatusAdm = (function () {
         try {
-          rec = $app.findFirstRecordByFilter(
-            'config_integracoes',
-            "chave = 'api_football_daily_usage'",
-          )
-        } catch (_) {
-          rec = null
-        }
-
-        let usageData = {
-          date_utc: hojeUtc,
-          count: 0,
-          max_limit: DAILY_LIMIT,
-          trava_desativada: false,
-          blocked: false,
-          last_reset_utc: new Date().toISOString(),
-          last_request_utc: null,
-        }
-
-        if (rec) {
-          try {
-            const rawKey = rec.get('api_key')
-            if (rawKey) {
-              const parsed = JSON.parse(rawKey)
-              if (parsed && typeof parsed === 'object') {
-                usageData = Object.assign(usageData, parsed)
-              }
-            }
-          } catch (_) {}
-
-          if (usageData.date_utc !== hojeUtc) {
-            usageData.date_utc = hojeUtc
-            usageData.count = 0
-            usageData.blocked = false
-            if (!usageData.max_limit || Number(usageData.max_limit) < DAILY_LIMIT) {
-              usageData.max_limit = DAILY_LIMIT
-            }
-            usageData.last_reset_utc = new Date().toISOString()
-            rec.set('api_key', JSON.stringify(usageData))
-            rec.set('ativo', true)
-            rec.set('provedor', 'api_football')
-            $app.save(rec)
+          if (typeof __hooks !== 'undefined') {
+            return require(__hooks + '/api_football_limiter.js')
           }
-        } else {
-          try {
-            const col = $app.findCollectionByNameOrId('config_integracoes')
-            rec = new Record(col)
-            rec.set('chave', 'api_football_daily_usage')
-            rec.set('provedor', 'api_football')
-            rec.set('ativo', true)
-            rec.set('api_key', JSON.stringify(usageData))
-            $app.save(rec)
-          } catch (_) {}
-        }
-
-        const count = Number(usageData.count) || 0
-        const maxLimit = Number(usageData.max_limit) || DAILY_LIMIT
-        const travaDesativada = Boolean(usageData.trava_desativada)
-        // Ação manual do admin não é bloqueada pelo limite interno se a API externa não deu 429
-        const isBlocked = Boolean(usageData.blocked)
-
-        return {
-          rec: rec,
-          usageData: usageData,
-          count: count,
-          max_limit: maxLimit,
-          trava_desativada: travaDesativada,
-          blocked: isBlocked,
-        }
-      }
-
-      const incrementarCotaApiFootball = (cotaState) => {
+        } catch (_) {}
         try {
-          if (!cotaState || !cotaState.rec) return
-          const usageData = cotaState.usageData || {}
-          usageData.count = (Number(usageData.count) || 0) + 1
-          usageData.last_request_utc = new Date().toISOString()
-          cotaState.rec.set('api_key', JSON.stringify(usageData))
-          $app.save(cotaState.rec)
-        } catch (errInc) {
-          console.log('[Admin Forçar Escalação] Erro ao incrementar uso da API:', errInc)
+          return require('./api_football_limiter.js')
+        } catch (_) {
+          return null
         }
-      }
+      })()
 
       // Helpers inline de nomes e similaridade
       const sinonimos = {
@@ -296,72 +221,74 @@ routerAdd(
 
           if (!jaTentouScanHoje) {
             $app.store().set(storeKeyDate, '1')
-            const cotaDate = checarCotaApiFootball()
-            if (
-              !cotaDate.blocked &&
-              (cotaDate.trava_desativada || cotaDate.count < cotaDate.max_limit)
-            ) {
-              try {
-                const isRapid = apiKey.length > 40
-                const urlDate = isRapid
-                  ? 'https://api-football-v1.p.rapidapi.com/v3/fixtures?date=' +
-                    encodeURIComponent(dataIso) +
-                    '&timezone=America%2FSao_Paulo'
-                  : 'https://v3.football.api-sports.io/fixtures?date=' +
-                    encodeURIComponent(dataIso) +
-                    '&timezone=America%2FSao_Paulo'
-                const headersDate = isRapid
-                  ? {
-                      'x-rapidapi-key': apiKey,
-                      'x-rapidapi-host': 'api-football-v1.p.rapidapi.com',
-                    }
-                  : { 'x-apisports-key': apiKey }
+            try {
+              const urlDate =
+                'https://v3.football.api-sports.io/fixtures?date=' +
+                encodeURIComponent(dataIso) +
+                '&timezone=America%2FSao_Paulo'
 
-                const resDate = $http.send({
-                  url: urlDate,
-                  method: 'GET',
-                  headers: headersDate,
-                  timeout: 10,
-                })
-                incrementarCotaApiFootball(cotaDate)
+              const limiterModDate = (function () {
+                try {
+                  if (typeof __hooks !== 'undefined') {
+                    return require(__hooks + '/api_football_limiter.js')
+                  }
+                } catch (_) {}
+                try {
+                  return require('./api_football_limiter.js')
+                } catch (_) {
+                  return null
+                }
+              })()
 
-                if (
-                  resDate.statusCode === 200 &&
-                  resDate.json &&
-                  Array.isArray(resDate.json.response)
-                ) {
-                  const fixturesList = resDate.json.response
-                  for (let fi = 0; fi < fixturesList.length; fi++) {
-                    const fItem = fixturesList[fi]
-                    const fHome = (fItem.teams && fItem.teams.home && fItem.teams.home.name) || ''
-                    const fAway = (fItem.teams && fItem.teams.away && fItem.teams.away.name) || ''
-                    if (
-                      (timesMatch(timeA, fHome) && timesMatch(timeB, fAway)) ||
-                      (timesMatch(timeA, fAway) && timesMatch(timeB, fHome))
-                    ) {
-                      const candFid =
-                        fItem.fixture && fItem.fixture.id ? String(fItem.fixture.id) : ''
-                      if (candFid && /^\d+$/.test(candFid)) {
-                        fixtureId = candFid
-                        jogoRec.set('fixture_id', fixtureId)
-                        $app.save(jogoRec)
-                        console.log(
-                          '[Admin Forçar Escalação] Fixture ' +
-                            fixtureId +
-                            ' resolvida via API-Football por data para jogo ' +
-                            jogoRec.id,
-                        )
-                        break
-                      }
+              let resDate = null
+              if (
+                limiterModDate &&
+                typeof limiterModDate.enviarRequisicaoApiFootball === 'function'
+              ) {
+                resDate = limiterModDate.enviarRequisicaoApiFootball(
+                  urlDate,
+                  { timeout: 10, isAdminManual: true },
+                  2,
+                )
+              }
+
+              if (
+                resDate &&
+                resDate.statusCode === 200 &&
+                resDate.json &&
+                Array.isArray(resDate.json.response)
+              ) {
+                const fixturesList = resDate.json.response
+                for (let fi = 0; fi < fixturesList.length; fi++) {
+                  const fItem = fixturesList[fi]
+                  const fHome = (fItem.teams && fItem.teams.home && fItem.teams.home.name) || ''
+                  const fAway = (fItem.teams && fItem.teams.away && fItem.teams.away.name) || ''
+                  if (
+                    (timesMatch(timeA, fHome) && timesMatch(timeB, fAway)) ||
+                    (timesMatch(timeA, fAway) && timesMatch(timeB, fHome))
+                  ) {
+                    const candFid =
+                      fItem.fixture && fItem.fixture.id ? String(fItem.fixture.id) : ''
+                    if (candFid && /^\d+$/.test(candFid)) {
+                      fixtureId = candFid
+                      jogoRec.set('fixture_id', fixtureId)
+                      $app.save(jogoRec)
+                      console.log(
+                        '[Admin Forçar Escalação] Fixture ' +
+                          fixtureId +
+                          ' resolvida via API-Football por data para jogo ' +
+                          jogoRec.id,
+                      )
+                      break
                     }
                   }
                 }
-              } catch (errApiFid) {
-                console.log(
-                  '[Admin Forçar Escalação] Erro ao buscar fixture por data na API:',
-                  errApiFid,
-                )
               }
+            } catch (errApiFid) {
+              console.log(
+                '[Admin Forçar Escalação] Erro ao buscar fixture por data na API:',
+                errApiFid,
+              )
             }
           }
         }
@@ -379,6 +306,11 @@ routerAdd(
       // 3. Consulta /fixtures/lineups via limiter central com rotação e fallback
       const limiterMod = (function () {
         try {
+          if (typeof __hooks !== 'undefined') {
+            return require(__hooks + '/api_football_limiter.js')
+          }
+        } catch (_) {}
+        try {
           return require('./api_football_limiter.js')
         } catch (_) {
           return null
@@ -388,7 +320,6 @@ routerAdd(
       const urlLineups =
         'https://v3.football.api-sports.io/fixtures/lineups?fixture=' +
         encodeURIComponent(fixtureId)
-
       console.log(
         '[Admin Forçar Escalação] Buscando lineups para fixture ' +
           fixtureId +

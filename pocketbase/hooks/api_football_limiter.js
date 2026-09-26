@@ -36,7 +36,14 @@ function obterChavesConfiguradas() {
       primaryKey = (recPlacar.getString('api_key') || '').trim()
     }
   } catch (_) {}
-
+  if (!primaryKey) {
+    try {
+      const recApiFoot = $app.findFirstRecordByData('config_integracoes', 'chave', 'api_football')
+      if (recApiFoot && recApiFoot.getBool('ativo')) {
+        primaryKey = (recApiFoot.getString('api_key') || '').trim()
+      }
+    } catch (_) {}
+  }
   // 2. Fallbacks de ambiente para chave principal
   if (!primaryKey) {
     try {
@@ -312,6 +319,17 @@ function enviarRequisicaoApiFootball(url, options, prioridade) {
   const { rec, usageData } = obterOuCriarRegistroUso()
   const { primaryKey, backupKey } = obterChavesConfiguradas()
 
+  // Se a chave primária foi marcada como esgotada ou a chave ativa salva é backup,
+  // mas backup ainda não foi esgotado, garantimos o roteamento transparente para o backup
+  let initialKeyType = 'primary'
+  if (
+    backupKey &&
+    (usageData.active_key === 'backup' || usageData.primary_exhausted) &&
+    !usageData.backup_exhausted
+  ) {
+    initialKeyType = 'backup'
+  }
+
   // Se ambas as chaves já foram esgotadas hoje e não é admin manual
   if (
     usageData.primary_exhausted &&
@@ -329,14 +347,6 @@ function enviarRequisicaoApiFootball(url, options, prioridade) {
       statusCode: 429,
       usage: usageData,
     }
-  }
-
-  // Determina qual chave tentar primeiro (baseado no estado persistido)
-  let initialKeyType = 'primary'
-  if (usageData.active_key === 'backup' && !usageData.backup_exhausted && backupKey) {
-    initialKeyType = 'backup'
-  } else if (usageData.primary_exhausted && backupKey) {
-    initialKeyType = 'backup'
   }
 
   const primaryOrBackupKey = initialKeyType === 'backup' ? backupKey : primaryKey || backupKey
@@ -382,7 +392,7 @@ function enviarRequisicaoApiFootball(url, options, prioridade) {
 
     // Se a primeira chave tentada foi a PRINCIPAL e deu cota excedida, faz FALLBACK IMEDIATO para a SECUNDÁRIA!
     if (quotaExceeded && currentKeyType === 'primary' && backupKey && backupKey !== primaryKey) {
-      marcarChaveEsgotada(rec, usageData, 'primary', `HTTP ${res.statusCode}`)
+      marcarChaveEsgotada(rec, usageData, 'primary', `HTTP ${res ? res.statusCode : '429'}`)
 
       console.warn(
         `[API-Football Limiter] Tentando chave SECUNDÁRIA de backup imediatamente para a mesma requisição: ${url}`,
@@ -469,10 +479,17 @@ function enviarRequisicaoApiFootball(url, options, prioridade) {
  */
 function obterStatusLimiter() {
   const { usageData } = obterOuCriarRegistroUso()
+  const { primaryKey, backupKey } = obterChavesConfiguradas()
   const count = Number(usageData.count) || 0
   const maxLimit = Number(usageData.max_limit) || DAILY_LIMIT
   const travaDesativada = Boolean(usageData.trava_desativada)
-  const isBlocked = Boolean(usageData.blocked) || (!travaDesativada && count >= maxLimit)
+  // O sistema só deve bloquear totalmente se AMBAS as chaves estiverem esgotadas,
+  // ou se trava estiver ativa E não houver chave backup disponível
+  const bothExhausted = Boolean(usageData.primary_exhausted && usageData.backup_exhausted)
+  const isBlocked =
+    Boolean(usageData.blocked) ||
+    bothExhausted ||
+    (!travaDesativada && !backupKey && count >= maxLimit)
 
   let apiValidada = null
   try {
@@ -488,8 +505,6 @@ function obterStatusLimiter() {
   } catch (_) {
     apiValidada = null
   }
-
-  const { primaryKey, backupKey } = obterChavesConfiguradas()
 
   return {
     date_utc: usageData.date_utc,

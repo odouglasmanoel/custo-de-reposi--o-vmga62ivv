@@ -253,6 +253,11 @@ routerAdd('GET', '/backend/v1/eventos-jogo', (e) => {
     // 4. Chamada externa à API-Sports com limiter e fallback centralizado (api_football_limiter.js)
     const limiterMod = (function () {
       try {
+        if (typeof __hooks !== 'undefined') {
+          return require(__hooks + '/api_football_limiter.js')
+        }
+      } catch (_) {}
+      try {
         return require('./api_football_limiter.js')
       } catch (_) {
         return null

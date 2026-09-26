@@ -177,6 +177,11 @@ routerAdd(
     // 2. Centralizador de requisições com rotação e fallback automático (api_football_limiter.js)
     const limiterMod = (function () {
       try {
+        if (typeof __hooks !== 'undefined') {
+          return require(__hooks + '/api_football_limiter.js')
+        }
+      } catch (_) {}
+      try {
         return require('./api_football_limiter.js')
       } catch (_) {
         return null
