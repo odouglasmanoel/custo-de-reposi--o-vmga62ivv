@@ -257,33 +257,31 @@ export default function Palpites() {
   // Hidratação instantânea do cache local ao trocar de bolão ou filtro (SWR local)
   useEffect(() => {
     const scopeKey = `${currentScopeKey}_${filterPendentes}`
-    if (scopeKey !== prevScopeRef.current) {
-      prevScopeRef.current = scopeKey
-      setCurrentPage(1)
-      setLoadedGroupBets(false)
-      setExpandedGroupBets({})
-      setSelectedBetByGame({})
-      setAllGroupPalpites([])
+    prevScopeRef.current = scopeKey
+    setCurrentPage(1)
+    setLoadedGroupBets(false)
+    setExpandedGroupBets({})
+    setSelectedBetByGame({})
+    setAllGroupPalpites([])
 
-      const uid = (user?.id as string) || (user?.email as string) || ''
-      const cached = readLocalCache(uid, currentScopeKey, filterPendentes)
-      if (cached && cached.jogos.length > 0) {
-        setJogos(cached.jogos)
-        setPalpites(cached.palpites || {})
-        setFormData(cached.formData || {})
-        setUserParticipantsMap(cached.userParticipantsMap || {})
-        setCurrentPage(cached.currentPage || 1)
-        setTotalPages(cached.totalPages || 1)
-        setTotalItems(cached.totalItems || cached.jogos.length)
+    const uid = (user?.id as string) || (user?.email as string) || ''
+    const cached = readLocalCache(uid, currentScopeKey, filterPendentes)
+    if (cached && cached.jogos.length > 0) {
+      setJogos(cached.jogos)
+      setPalpites(cached.palpites || {})
+      setFormData(cached.formData || {})
+      setUserParticipantsMap(cached.userParticipantsMap || {})
+      setCurrentPage(cached.currentPage || 1)
+      setTotalPages(cached.totalPages || 1)
+      setTotalItems(cached.totalItems || cached.jogos.length)
 
-        setLoading(false)
-        setIsBackgroundRevalidating(true)
-      } else {
-        // Sem cache para a nova copa/filtro: exibe skeleton/loading enquanto busca
-        setJogos([])
-        setLoading(true)
-        setIsBackgroundRevalidating(false)
-      }
+      setLoading(false)
+      setIsBackgroundRevalidating(true)
+    } else {
+      // Sem cache para a nova copa/filtro: exibe skeleton/loading enquanto busca
+      setJogos([])
+      setLoading(true)
+      setIsBackgroundRevalidating(false)
     }
   }, [currentScopeKey, filterPendentes, user?.id, user?.email])
 
@@ -299,15 +297,21 @@ export default function Palpites() {
 
     const fetchTask = async () => {
       try {
+        const noCacheHeaders = { 'Cache-Control': 'no-cache, no-store, must-revalidate' }
+        const requestOptions = { _ts: Date.now(), headers: noCacheHeaders }
         if (isGeralParam) {
           const [allParts, allGroupBets] = await Promise.all([
             pb.collection('participantes').getFullList<Participante>({
               sort: 'nome',
               fields: 'id,nome,bolao',
+              requestKey: null,
+              ...requestOptions,
             }),
             pb.collection('palpites').getFullList<Palpite>({
               fields:
                 'id,bolao,jogo,participante,placar_a,placar_b,goleadores_a,goleadores_b,pontuacao_jogo,vencedor_penaltis,detalhamento',
+              requestKey: null,
+              ...requestOptions,
             }),
           ])
           setParticipantesList(allParts)
@@ -323,11 +327,15 @@ export default function Palpites() {
                 filter: `bolao = '${currentTargetBolaoId}'`,
                 sort: 'nome',
                 fields: 'id,nome,bolao',
+                requestKey: null,
+                ...requestOptions,
               }),
               pb.collection('palpites').getFullList<Palpite>({
                 filter: `bolao = '${currentTargetBolaoId}'`,
                 fields:
                   'id,bolao,jogo,participante,placar_a,placar_b,goleadores_a,goleadores_b,pontuacao_jogo,vencedor_penaltis,detalhamento',
+                requestKey: null,
+                ...requestOptions,
               }),
             ])
             setParticipantesList(parts)
@@ -372,11 +380,6 @@ export default function Palpites() {
     async (pageToLoad: number = 1, isManualRefresh: boolean = false, append: boolean = false) => {
       if (!user) return
 
-      const now = Date.now()
-      if (!isManualRefresh && !append && now - lastLoadTimeRef.current < 2500) {
-        return
-      }
-
       if (activeLoadPromiseRef.current) {
         return activeLoadPromiseRef.current
       }
@@ -412,6 +415,9 @@ export default function Palpites() {
             (user.name as string) ||
             (user.email ? (user.email as string).split('@')[0] : '')
 
+          const noCacheHeaders = { 'Cache-Control': 'no-cache, no-store, must-revalidate' }
+          const requestOptions = { _ts: Date.now(), headers: noCacheHeaders }
+
           // Buscar lista de bolões com campos essenciais para exibir nome e tema
           const loadedBoloes =
             boloes.length > 0
@@ -419,6 +425,8 @@ export default function Palpites() {
               : await pb.collection('boloes').getFullList<Bolao>({
                   sort: 'nome',
                   fields: 'id,nome,foco,ativo',
+                  requestKey: null,
+                  ...requestOptions,
                 })
           setAllBoloes(loadedBoloes)
 
@@ -437,12 +445,16 @@ export default function Palpites() {
               sort: 'data,hora',
               fields:
                 'id,bolao,time_a,time_b,data,hora,competicao,resultado_finalizado,status,placar_a,placar_b,tem_penaltis,vencedor_penaltis,fixture_id,url_escudo_mandante,url_escudo_visitante,escalacoes',
+              requestKey: null,
+              ...requestOptions,
             })
 
             // Buscar registros de participante deste usuário
             const myPartsPromise = pb.collection('participantes').getFullList<Participante>({
               filter: `nome ~ '${searchName.replace(/'/g, "\\'")}'`,
               fields: 'id,nome,bolao',
+              requestKey: null,
+              ...requestOptions,
             })
 
             const [gamesResult, myParts] = await Promise.race([
@@ -468,6 +480,8 @@ export default function Palpites() {
                   filter: filterUserPartIds,
                   fields:
                     'id,bolao,jogo,participante,placar_a,placar_b,goleadores_a,goleadores_b,vencedor_penaltis,pontuacao_jogo,detalhamento',
+                  requestKey: null,
+                  ...requestOptions,
                 }),
                 timeoutPromise,
               ])
@@ -574,6 +588,8 @@ export default function Palpites() {
               sort: 'data,hora',
               fields:
                 'id,bolao,time_a,time_b,data,hora,competicao,resultado_finalizado,status,placar_a,placar_b,tem_penaltis,vencedor_penaltis,fixture_id,url_escudo_mandante,url_escudo_visitante,escalacoes',
+              requestKey: null,
+              ...requestOptions,
             })
 
             const [gamesResult] = await Promise.race([
@@ -590,6 +606,8 @@ export default function Palpites() {
                   filter: `bolao = '${currentTargetBolaoId}' && participante = '${participanteId}'`,
                   fields:
                     'id,bolao,jogo,participante,placar_a,placar_b,goleadores_a,goleadores_b,vencedor_penaltis,pontuacao_jogo,detalhamento',
+                  requestKey: null,
+                  ...requestOptions,
                 }),
                 timeoutPromise,
               ])

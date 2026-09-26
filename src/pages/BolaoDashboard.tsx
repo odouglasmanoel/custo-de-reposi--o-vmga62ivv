@@ -428,7 +428,9 @@ export default function BolaoDashboard() {
     isFetchingLiveScoresRef.current = true
 
     try {
-      const headers: Record<string, string> = {}
+      const headers: Record<string, string> = {
+        'Cache-Control': 'no-cache, no-store, must-revalidate',
+      }
       if (pb.authStore.token) {
         headers['Authorization'] = pb.authStore.token
       }
@@ -459,7 +461,7 @@ export default function BolaoDashboard() {
         }
       }
 
-      let url = `${baseUrl}?date=${encodeURIComponent(hojeSP)}`
+      let url = `${baseUrl}?date=${encodeURIComponent(hojeSP)}&_ts=${Date.now()}`
       if (fixtureIdsFromGames.length > 0) {
         url += `&ids=${encodeURIComponent(fixtureIdsFromGames.join(','))}`
       }
@@ -1123,14 +1125,8 @@ export default function BolaoDashboard() {
     async (isManualRefresh: boolean = false) => {
       if (!activeBolaoId) return
 
-      // Evita refetches redundantes em menos de 1s a não ser que seja refresh manual
-      const now = Date.now()
       const currentHasData =
         gamesRef.current.jogos.length > 0 || gamesRef.current.allJogos.length > 0
-
-      if (!isManualRefresh && currentHasData && now - lastFetchTimeRef.current < 1000) {
-        return
-      }
 
       // Se já houver uma requisição em andamento, retorna a promise existente (deduplicação)
       if (activeFetchPromiseRef.current) {
@@ -1154,11 +1150,25 @@ export default function BolaoDashboard() {
         )
 
         try {
+          const noCacheHeaders = { 'Cache-Control': 'no-cache, no-store, must-revalidate' }
+          const requestOptions = { _ts: Date.now(), headers: noCacheHeaders }
+
           if (activeBolaoId === GERAL_BOLAO_ID) {
             const dataPromise = Promise.all([
-              pb.collection('participantes').getFullList<Participante>({ sort: 'nome' }),
-              pb.collection('jogos').getFullList<Jogo>({ sort: 'data,hora' }),
-              pb.collection('palpites').getFullList<Palpite>(),
+              pb.collection('participantes').getFullList<Participante>({
+                sort: 'nome',
+                requestKey: null,
+                ...requestOptions,
+              }),
+              pb.collection('jogos').getFullList<Jogo>({
+                sort: 'data,hora',
+                requestKey: null,
+                ...requestOptions,
+              }),
+              pb.collection('palpites').getFullList<Palpite>({
+                requestKey: null,
+                ...requestOptions,
+              }),
             ])
 
             const [allParts, allGames, allPredictions] = await Promise.race([
@@ -1214,10 +1224,20 @@ export default function BolaoDashboard() {
             }
           } else {
             const dataPromise = Promise.all([
-              pb.collection('participantes').getFullList<Participante>({ sort: 'nome' }),
-              pb.collection('jogos').getFullList<Jogo>({ sort: 'data,hora' }),
+              pb.collection('participantes').getFullList<Participante>({
+                sort: 'nome',
+                requestKey: null,
+                ...requestOptions,
+              }),
+              pb.collection('jogos').getFullList<Jogo>({
+                sort: 'data,hora',
+                requestKey: null,
+                ...requestOptions,
+              }),
               pb.collection('palpites').getFullList<Palpite>({
                 filter: `bolao = '${activeBolaoId}'`,
+                requestKey: null,
+                ...requestOptions,
               }),
             ])
 
