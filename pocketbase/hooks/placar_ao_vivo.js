@@ -3925,10 +3925,16 @@ routerAdd('POST', '/backend/v1/admin/resetar-contador-api', (e) => {
       }
     } catch (_) {}
 
-    // Executa reset estrito do dia atual
+    // Executa reset estrito do dia atual e restaura chave principal
     usageData.date_utc = hojeUtc
     usageData.count = 0
+    usageData.count_primary = 0
+    usageData.count_backup = 0
     usageData.blocked = false
+    usageData.primary_exhausted = false
+    usageData.backup_exhausted = false
+    usageData.active_key = 'primary'
+    usageData.fallback_active = false
     if (!usageData.max_limit || Number(usageData.max_limit) < 80) {
       usageData.max_limit = 80
     }

@@ -316,28 +316,46 @@ routerAdd('POST', '/backend/v1/admin/vincular-fixtures', (e) => {
       }
 
       try {
-        const isRapid = apiKey.length > 40
-        const url = isRapid
-          ? `https://api-football-v1.p.rapidapi.com/v3/fixtures?date=${encodeURIComponent(isoDate)}&timezone=America%2FSao_Paulo`
-          : `https://v3.football.api-sports.io/fixtures?date=${encodeURIComponent(isoDate)}&timezone=America%2FSao_Paulo`
-        const headers = isRapid
-          ? { 'x-rapidapi-key': apiKey, 'x-rapidapi-host': 'api-football-v1.p.rapidapi.com' }
-          : { 'x-apisports-key': apiKey }
+        const limiterMod = (function () {
+          try {
+            return require('./api_football_limiter.js')
+          } catch (_) {
+            return null
+          }
+        })()
+
+        const url = `https://v3.football.api-sports.io/fixtures?date=${encodeURIComponent(isoDate)}&timezone=America%2FSao_Paulo`
 
         console.log(
           `[admin_vincular_fixtures] Consultando API-Football por data ${isoDate} para ${timeA} x ${timeB}...`,
         )
-        const resApi = $http.send({
-          url: url,
-          method: 'GET',
-          headers: headers,
-          timeout: 12,
-        })
+        let respCall = null
+        if (limiterMod && typeof limiterMod.enviarRequisicaoApiFootball === 'function') {
+          respCall = limiterMod.enviarRequisicaoApiFootball(url, { timeout: 12 }, 3)
+        } else {
+          const sRes = $http.send({ url: url, method: 'GET', timeout: 12 })
+          let j = null
+          try {
+            j =
+              typeof sRes.json === 'object' && sRes.json !== null ? sRes.json : JSON.parse(sRes.raw)
+          } catch (_) {}
+          respCall = {
+            blocked: false,
+            statusCode: sRes ? sRes.statusCode : 500,
+            rawResponse: sRes,
+            json: j,
+          }
+        }
 
-        incrementarCotaApiFootball(cota)
+        if (respCall.blocked) {
+          return { cota_esgotada: true }
+        }
 
-        if (resApi.statusCode === 200 && resApi.json && Array.isArray(resApi.json.response)) {
-          const fixturesList = resApi.json.response
+        const resApi = respCall.rawResponse
+        const jsonApi = respCall.json
+
+        if (respCall.statusCode === 200 && jsonApi && Array.isArray(jsonApi.response)) {
+          const fixturesList = jsonApi.response
           for (let k = 0; k < fixturesList.length; k++) {
             const item = fixturesList[k]
             const hName = (item.teams && item.teams.home && item.teams.home.name) || ''

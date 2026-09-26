@@ -174,159 +174,17 @@ routerAdd(
       })
     }
 
-    // 2. Checagem do limitador de cota diária (API-Football)
-    const dNow = new Date()
-    const hojeUtc = `${dNow.getUTCFullYear()}-${String(dNow.getUTCMonth() + 1).padStart(2, '0')}-${String(dNow.getUTCDate()).padStart(2, '0')}`
-    const USAGE_RECORD_CHAVE = 'api_football_daily_usage'
-    const DAILY_LIMIT = 80
-
-    let recUsage = null
-    let usageData = {
-      date_utc: hojeUtc,
-      count: 0,
-      max_limit: DAILY_LIMIT,
-      trava_desativada: false,
-      blocked: false,
-      last_reset_utc: new Date().toISOString(),
-      last_request_utc: null,
-    }
-
-    try {
-      recUsage = $app.findFirstRecordByFilter(
-        'config_integracoes',
-        `chave = '${USAGE_RECORD_CHAVE}'`,
-      )
-      if (recUsage && recUsage.get('api_key')) {
-        const parsed = JSON.parse(recUsage.get('api_key'))
-        if (parsed && typeof parsed === 'object') {
-          usageData = Object.assign(usageData, parsed)
-        }
-      }
-    } catch (_) {
-      recUsage = null
-    }
-
-    // Reset diário às 00:00 UTC
-    if (usageData.date_utc !== hojeUtc) {
-      usageData.date_utc = hojeUtc
-      usageData.count = 0
-      usageData.blocked = false
-      if (!usageData.max_limit || Number(usageData.max_limit) < DAILY_LIMIT) {
-        usageData.max_limit = DAILY_LIMIT
-      }
-      usageData.last_reset_utc = new Date().toISOString()
-      if (recUsage) {
-        recUsage.set('api_key', JSON.stringify(usageData))
-        $app.save(recUsage)
-      }
-    }
-
-    const currentCount = Number(usageData.count) || 0
-    const maxLimit = Number(usageData.max_limit) || DAILY_LIMIT
-    const travaDesativada = Boolean(usageData.trava_desativada)
-
-    if (!travaDesativada && (usageData.blocked || currentCount >= maxLimit)) {
-      return e.json(429, {
-        error:
-          'Limite diário de requisições da API-Sports atingido (80/dia). A cota é reiniciada às 21h (horário de Brasília). Placares locais preservados.',
-        rate_limited: true,
-        count: currentCount,
-        max_limit: maxLimit,
-      })
-    }
-
-    // 3. Obtenção da API Key da API-Football
-    let apiKey = ''
-    try {
-      const recPlacar = $app.findFirstRecordByFilter(
-        'config_integracoes',
-        "chave = 'placar_ao_vivo' && provedor = 'api_football' && ativo = true",
-      )
-      if (recPlacar) {
-        apiKey = (recPlacar.getString('api_key') || recPlacar.get('api_key') || '')
-          .toString()
-          .trim()
-      }
-    } catch (_) {}
-
-    if (!apiKey) {
+    // 2. Centralizador de requisições com rotação e fallback automático (api_football_limiter.js)
+    const limiterMod = (function () {
       try {
-        const recPlacarDirect = $app.findFirstRecordByData(
-          'config_integracoes',
-          'chave',
-          'placar_ao_vivo',
-        )
-        if (recPlacarDirect && recPlacarDirect.getBool('ativo')) {
-          apiKey = (recPlacarDirect.getString('api_key') || recPlacarDirect.get('api_key') || '')
-            .toString()
-            .trim()
-        }
-      } catch (_) {}
-    }
+        return require('./api_football_limiter.js')
+      } catch (_) {
+        return null
+      }
+    })()
 
-    if (!apiKey) {
-      try {
-        const configs = $app.findRecordsByFilter(
-          'config_integracoes',
-          "provedor = 'api_football' && ativo = true",
-          '-updated',
-          20,
-          0,
-        )
-        for (let ci = 0; ci < configs.length; ci++) {
-          const cfg = configs[ci]
-          const chv = (cfg.getString('chave') || '').trim()
-          if (
-            chv === 'sobrescrita_jogos' ||
-            chv === 'api_validada' ||
-            chv === 'api_football_daily_usage'
-          ) {
-            continue
-          }
-          const candidateKey = (cfg.getString('api_key') || cfg.get('api_key') || '')
-            .toString()
-            .trim()
-          if (candidateKey && !candidateKey.startsWith('{') && !candidateKey.startsWith('[')) {
-            apiKey = candidateKey
-            break
-          }
-        }
-      } catch (_) {}
-    }
-
-    if (!apiKey) {
-      return e.json(400, {
-        error: 'Chave da API-Football não configurada em config_integracoes (placar_ao_vivo).',
-      })
-    }
-
-    // 4. Chamada à API-Sports via /fixtures?ids={id-id-...} (ou fallback ?id= caso o plano rejeite ?ids=)
-    const isRapid = apiKey.length > 40
     const fixtureResponses = []
     const rawApiLogs = []
-
-    const headers = isRapid
-      ? { 'x-rapidapi-key': apiKey, 'x-rapidapi-host': 'api-football-v1.p.rapidapi.com' }
-      : { 'x-apisports-key': apiKey }
-
-    const registrarConsumo = () => {
-      try {
-        usageData.count = (Number(usageData.count) || 0) + 1
-        usageData.last_request_utc = new Date().toISOString()
-        if (recUsage) {
-          recUsage.set('api_key', JSON.stringify(usageData))
-          $app.save(recUsage)
-        } else {
-          const colIntegracoes = $app.findCollectionByNameOrId('config_integracoes')
-          const novo = new Record(colIntegracoes)
-          novo.set('chave', USAGE_RECORD_CHAVE)
-          novo.set('provedor', 'api_football')
-          novo.set('ativo', true)
-          novo.set('api_key', JSON.stringify(usageData))
-          $app.save(novo)
-        }
-      } catch (_) {}
-    }
 
     const chunks = []
     for (let i = 0; i < uniqueFixtureIds.length; i += 20) {
@@ -337,153 +195,99 @@ routerAdd(
       const chunkIds = chunks[cIdx]
       let url = ''
       if (chunkIds.length === 1) {
-        url = isRapid
-          ? `https://api-football-v1.p.rapidapi.com/v3/fixtures?id=${encodeURIComponent(chunkIds[0])}`
-          : `https://v3.football.api-sports.io/fixtures?id=${encodeURIComponent(chunkIds[0])}`
+        url = `https://v3.football.api-sports.io/fixtures?id=${encodeURIComponent(chunkIds[0])}`
       } else {
         const idsJoined = chunkIds.join('-')
-        url = isRapid
-          ? `https://api-football-v1.p.rapidapi.com/v3/fixtures?ids=${encodeURIComponent(idsJoined)}`
-          : `https://v3.football.api-sports.io/fixtures?ids=${encodeURIComponent(idsJoined)}`
+        url = `https://v3.football.api-sports.io/fixtures?ids=${encodeURIComponent(idsJoined)}`
       }
 
       console.log(
         `[atualizar-todos] [API-Sports Req ${cIdx + 1}/${chunks.length}] URL: ${url} | Fixture IDs: ${chunkIds.join(', ')}`,
       )
 
-      let resHttp = null
-      try {
-        resHttp = $http.send({
+      let respCall = null
+      if (limiterMod && typeof limiterMod.enviarRequisicaoApiFootball === 'function') {
+        respCall = limiterMod.enviarRequisicaoApiFootball(
           url,
-          method: 'GET',
-          headers,
-          timeout: 15,
-        })
-        registrarConsumo()
-      } catch (errSend) {
-        console.log('[atualizar-todos] Erro ao enviar requisição HTTP:', errSend)
-        rawApiLogs.push({
-          url,
-          fixture_ids: chunkIds,
-          error: String(errSend),
-        })
-        continue
-      }
-
-      if (!resHttp || resHttp.statusCode !== 200) {
-        console.log(
-          '[atualizar-todos] Resposta com status não-200:',
-          resHttp ? resHttp.statusCode : 'nulo',
+          { timeout: 15, isAdminManual: true },
+          2,
         )
-        rawApiLogs.push({
-          url,
-          fixture_ids: chunkIds,
-          statusCode: resHttp ? resHttp.statusCode : null,
-          raw: resHttp ? (resHttp.raw || '').slice(0, 500) : null,
+      } else {
+        const sendRes = $http.send({ url, method: 'GET', timeout: 15 })
+        let j = null
+        try {
+          j =
+            typeof sendRes.json === 'object' && sendRes.json !== null
+              ? sendRes.json
+              : JSON.parse(sendRes.raw)
+        } catch (_) {}
+        respCall = {
+          blocked: false,
+          statusCode: sendRes ? sendRes.statusCode : 500,
+          rawResponse: sendRes,
+          json: j,
+        }
+      }
+
+      if (respCall.blocked && respCall.rate_limited) {
+        return e.json(429, {
+          error: 'Limite de requisições da API-Sports atingido nas chaves configuradas.',
+          rate_limited: true,
+          debug_logs: rawApiLogs,
         })
-        continue
       }
 
-      let json = null
-      try {
-        json =
-          typeof resHttp.json === 'object' && resHttp.json !== null
-            ? resHttp.json
-            : JSON.parse(resHttp.raw)
-      } catch (_) {
-        json = null
-      }
-
-      try {
-        console.log(
-          `[atualizar-todos] [API-Sports Res ${cIdx + 1}/${chunks.length}] JSON exato:`,
-          JSON.stringify(json),
-        )
-      } catch (_) {}
+      const resHttp = respCall.rawResponse
+      const json = respCall.json
 
       rawApiLogs.push({
         url,
         fixture_ids: chunkIds,
-        statusCode: resHttp.statusCode,
+        statusCode: respCall.statusCode,
         results: json && typeof json.results === 'number' ? json.results : 0,
         response_count: json && Array.isArray(json.response) ? json.response.length : 0,
         json_exact: json,
+        keyUsed: respCall.keyUsed,
       })
 
       if (json && json.errors && Object.keys(json.errors).length > 0) {
         const errStr = JSON.stringify(json.errors)
-        if (errStr.includes('rate') || errStr.includes('Requests')) {
-          usageData.blocked = true
-          if (recUsage) {
-            recUsage.set('api_key', JSON.stringify(usageData))
-            $app.save(recUsage)
-          }
-          return e.json(429, {
-            error:
-              'Limite de requisições da API-Sports atingido. A cota reinicia às 21h (Brasília).',
-            rate_limited: true,
-            debug_logs: rawApiLogs,
-          })
-        }
-
-        // Se o plano gratuito da API-Sports rejeitou o parâmetro ?ids= ("Free plans do not have access to the Ids parameter.")
-        // Executa fallback individual por fixture_id (?id=...) respeitando a cota diária
         if (errStr.includes('Ids parameter') || errStr.includes('Free plans')) {
           console.log(
             '[atualizar-todos] API recusou ?ids= para o plano atual. Executando fallback para ?id=...',
           )
           for (let fIdx = 0; fIdx < chunkIds.length; fIdx++) {
             const singleId = chunkIds[fIdx]
-            const currentC = Number(usageData.count) || 0
-            if (!travaDesativada && currentC >= maxLimit) {
-              console.log('[atualizar-todos] Cota atingida durante fallback por ID individual.')
-              break
-            }
-
-            const singleUrl = isRapid
-              ? `https://api-football-v1.p.rapidapi.com/v3/fixtures?id=${encodeURIComponent(singleId)}`
-              : `https://v3.football.api-sports.io/fixtures?id=${encodeURIComponent(singleId)}`
-
+            const singleUrl = `https://v3.football.api-sports.io/fixtures?id=${encodeURIComponent(singleId)}`
             try {
               console.log(
                 `[atualizar-todos] [Fallback ?id=] URL: ${singleUrl} | Fixture ID: ${singleId}`,
               )
-              const resSingle = $http.send({
-                url: singleUrl,
-                method: 'GET',
-                headers,
-                timeout: 15,
-              })
-              registrarConsumo()
+              const singleCall =
+                limiterMod && typeof limiterMod.enviarRequisicaoApiFootball === 'function'
+                  ? limiterMod.enviarRequisicaoApiFootball(
+                      singleUrl,
+                      { timeout: 15, isAdminManual: true },
+                      2,
+                    )
+                  : { statusCode: 500 }
 
-              if (resSingle && resSingle.statusCode === 200) {
-                const jsonSingle = JSON.parse(resSingle.raw)
-                try {
-                  console.log(
-                    `[atualizar-todos] [Fallback ?id=${singleId}] JSON exato:`,
-                    JSON.stringify(jsonSingle),
-                  )
-                } catch (_) {}
-                if (
-                  jsonSingle &&
-                  Array.isArray(jsonSingle.response) &&
-                  jsonSingle.response.length > 0
-                ) {
-                  fixtureResponses.push(jsonSingle.response[0])
-                }
-                rawApiLogs.push({
-                  url: singleUrl,
-                  fixture_ids: [singleId],
-                  statusCode: resSingle.statusCode,
-                  results:
-                    jsonSingle && typeof jsonSingle.results === 'number' ? jsonSingle.results : 0,
-                  response_count:
-                    jsonSingle && Array.isArray(jsonSingle.response)
-                      ? jsonSingle.response.length
-                      : 0,
-                  json_exact: jsonSingle,
-                })
+              if (
+                singleCall &&
+                singleCall.statusCode === 200 &&
+                singleCall.json &&
+                Array.isArray(singleCall.json.response) &&
+                singleCall.json.response.length > 0
+              ) {
+                fixtureResponses.push(singleCall.json.response[0])
               }
+              rawApiLogs.push({
+                url: singleUrl,
+                fixture_ids: [singleId],
+                statusCode: singleCall ? singleCall.statusCode : null,
+                json_exact: singleCall ? singleCall.json : null,
+                keyUsed: singleCall ? singleCall.keyUsed : null,
+              })
             } catch (errFallback) {
               console.log(`[atualizar-todos] Erro no fallback ?id=${singleId}:`, errFallback)
             }

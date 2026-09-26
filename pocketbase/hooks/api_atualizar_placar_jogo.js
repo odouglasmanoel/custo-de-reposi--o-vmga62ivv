@@ -203,109 +203,63 @@ routerAdd(
       } catch (_) {}
     }
 
-    // Fallback: qualquer registro provedor = "api_football" && ativo = true com api_key preenchido,
-    // ignorando registros com JSON de metadados (como sobrescrita_jogos, api_validada, api_football_daily_usage)
-    if (!apiKey) {
+    // Consulta fixture por ID via limiter central com rotação e fallback
+    const limiterMod = (function () {
       try {
-        const configs = $app.findRecordsByFilter(
-          'config_integracoes',
-          "provedor = 'api_football' && ativo = true",
-          '-updated',
-          20,
-          0,
-        )
-        for (let ci = 0; ci < configs.length; ci++) {
-          const cfg = configs[ci]
-          const chv = (cfg.getString('chave') || '').trim()
-          if (
-            chv === 'sobrescrita_jogos' ||
-            chv === 'api_validada' ||
-            chv === 'api_football_daily_usage'
-          ) {
-            continue
-          }
-          const candidateKey = (cfg.getString('api_key') || cfg.get('api_key') || '')
-            .toString()
-            .trim()
-          // Chave válida não começa com { nem [ (não é JSON)
-          if (candidateKey && !candidateKey.startsWith('{') && !candidateKey.startsWith('[')) {
-            apiKey = candidateKey
-            break
-          }
-        }
-      } catch (_) {}
-    }
+        return require('./api_football_limiter.js')
+      } catch (_) {
+        return null
+      }
+    })()
 
-    if (!apiKey) {
-      return e.json(400, {
-        error: 'Chave da API-Football não configurada em config_integracoes (placar_ao_vivo).',
-      })
-    }
-    // Consulta fixture por ID
     let fixtureData = null
     try {
-      const isRapid = apiKey.length > 40
-      const url = isRapid
-        ? `https://api-football-v1.p.rapidapi.com/v3/fixtures?id=${encodeURIComponent(fixtureIdParaUso)}`
-        : `https://v3.football.api-sports.io/fixtures?id=${encodeURIComponent(fixtureIdParaUso)}`
-      const headers = isRapid
-        ? { 'x-rapidapi-key': apiKey, 'x-rapidapi-host': 'api-football-v1.p.rapidapi.com' }
-        : { 'x-apisports-key': apiKey }
-
+      const url = `https://v3.football.api-sports.io/fixtures?id=${encodeURIComponent(fixtureIdParaUso)}`
       console.log(`[atualizar-jogo] [API-Sports] URL: ${url} | Fixture ID: ${fixtureIdParaUso}`)
 
-      const res = $http.send({
-        url,
-        method: 'GET',
-        headers,
-        timeout: 15,
-      })
-
-      // Registra consumo da cota
-      try {
-        usageData.count = currentCount + 1
-        usageData.last_request_utc = new Date().toISOString()
-        if (recUsage) {
-          recUsage.set('api_key', JSON.stringify(usageData))
-          $app.save(recUsage)
-        } else {
-          const colIntegracoes = $app.findCollectionByNameOrId('config_integracoes')
-          const novo = new Record(colIntegracoes)
-          novo.set('chave', USAGE_RECORD_CHAVE)
-          novo.set('provedor', 'api_football')
-          novo.set('ativo', true)
-          novo.set('api_key', JSON.stringify(usageData))
-          $app.save(novo)
+      let respCall = null
+      if (limiterMod && typeof limiterMod.enviarRequisicaoApiFootball === 'function') {
+        respCall = limiterMod.enviarRequisicaoApiFootball(
+          url,
+          { timeout: 15, isAdminManual: true },
+          2,
+        )
+      } else {
+        const sendRes = $http.send({ url, method: 'GET', timeout: 15 })
+        let j = null
+        try {
+          j =
+            typeof sendRes.json === 'object' && sendRes.json !== null
+              ? sendRes.json
+              : JSON.parse(sendRes.raw)
+        } catch (_) {}
+        respCall = {
+          blocked: false,
+          statusCode: sendRes ? sendRes.statusCode : 500,
+          rawResponse: sendRes,
+          json: j,
         }
-      } catch (_) {}
+      }
 
-      if (res.statusCode !== 200) {
-        return e.json(502, {
-          error: `A API-Sports retornou status ${res.statusCode}. Tente novamente mais tarde.`,
+      if (respCall.blocked && respCall.rate_limited) {
+        return e.json(429, {
+          error: 'Limite de requisições da API-Sports atingido nas chaves configuradas.',
         })
       }
 
-      const json = JSON.parse(res.raw)
-      try {
-        console.log(`[atualizar-jogo] [API-Sports] JSON exato:`, JSON.stringify(json))
-      } catch (_) {}
-      if (json.errors && Object.keys(json.errors).length > 0) {
+      if (respCall.statusCode !== 200) {
+        return e.json(502, {
+          error: `A API-Sports retornou status ${respCall.statusCode}. Tente novamente mais tarde.`,
+        })
+      }
+
+      const json = respCall.json
+      if (json && json.errors && Object.keys(json.errors).length > 0) {
         const errStr = JSON.stringify(json.errors)
-        if (errStr.includes('rate') || errStr.includes('Requests')) {
-          usageData.blocked = true
-          if (recUsage) {
-            recUsage.set('api_key', JSON.stringify(usageData))
-            $app.save(recUsage)
-          }
-          return e.json(429, {
-            error:
-              'Limite de requisições da API-Sports atingido. A cota reinicia às 21h (Brasília).',
-          })
-        }
         return e.json(502, { error: `Erro da API-Sports: ${errStr}` })
       }
 
-      if (!Array.isArray(json.response) || json.response.length === 0) {
+      if (!json || !Array.isArray(json.response) || json.response.length === 0) {
         return e.json(404, {
           error: `Nenhuma partida encontrada na API-Sports para o fixture_id ${fixtureIdParaUso}.`,
         })

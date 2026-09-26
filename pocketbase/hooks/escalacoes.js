@@ -320,47 +320,39 @@ routerAdd(
         return e.json(200, fallbackRateLimited)
       }
 
-      const isRapid = apiKey.length > 40
-      const url = isRapid
-        ? 'https://api-football-v1.p.rapidapi.com/v3/fixtures/lineups?fixture=' +
-          encodeURIComponent(fixtureIdParam)
-        : 'https://v3.football.api-sports.io/fixtures/lineups?fixture=' +
-          encodeURIComponent(fixtureIdParam)
-      const headers = isRapid
-        ? { 'x-rapidapi-key': apiKey, 'x-rapidapi-host': 'api-football-v1.p.rapidapi.com' }
-        : { 'x-apisports-key': apiKey }
+      const limiterMod = (function () {
+        try {
+          return require('./api_football_limiter.js')
+        } catch (_) {
+          return null
+        }
+      })()
 
-      let resHttp = null
-      try {
-        resHttp = $http.send({
-          url: url,
-          method: 'GET',
-          headers: headers,
-          timeout: 15,
-        })
-        incrementarCotaApiFootball(cotaState)
-      } catch (errCall) {
-        console.log('[Escalacoes] Erro na chamada HTTP lineups:', errCall)
+      const url =
+        'https://v3.football.api-sports.io/fixtures/lineups?fixture=' +
+        encodeURIComponent(fixtureIdParam)
+
+      let respCall = null
+      if (limiterMod && typeof limiterMod.enviarRequisicaoApiFootball === 'function') {
+        respCall = limiterMod.enviarRequisicaoApiFootball(url, { timeout: 15 }, 2)
+      } else {
+        const sendRes = $http.send({ url: url, method: 'GET', timeout: 15 })
+        let j = null
+        try {
+          j =
+            typeof sendRes.json === 'object' && sendRes.json !== null
+              ? sendRes.json
+              : JSON.parse(sendRes.raw)
+        } catch (_) {}
+        respCall = {
+          blocked: false,
+          statusCode: sendRes ? sendRes.statusCode : 500,
+          rawResponse: sendRes,
+          json: j,
+        }
       }
 
-      const statusCode = resHttp ? resHttp.statusCode : 500
-      const resJson = resHttp ? resHttp.json : null
-      const apiErrors = resJson && resJson.errors ? resJson.errors : {}
-      const hasRateLimitError =
-        statusCode === 429 ||
-        Boolean(apiErrors.rateLimit) ||
-        Boolean(apiErrors.requests) ||
-        Boolean(apiErrors.token)
-
-      if (hasRateLimitError) {
-        try {
-          cotaState.usageData.blocked = true
-          if (cotaState.rec) {
-            cotaState.rec.set('api_key', JSON.stringify(cotaState.usageData))
-            $app.save(cotaState.rec)
-          }
-        } catch (_) {}
-
+      if (respCall.blocked && respCall.rate_limited) {
         const fallbackRL = {
           status: 'indisponivel',
           provider: 'api_football',
@@ -377,6 +369,9 @@ routerAdd(
         }
         return e.json(200, fallbackRL)
       }
+
+      const resHttp = respCall.rawResponse
+      const resJson = respCall.json
 
       let result = null
       if (resJson && Array.isArray(resJson.response) && resJson.response.length > 0) {
@@ -806,11 +801,8 @@ cronAdd('cron_escalacoes_pre_jogo_5m', '*/5 * * * *', () => {
     if (!jogoAlvo) return
 
     const fixtureId = jogoAlvo.getString('fixture_id').trim()
-    const urlLineups = isRapid
-      ? 'https://api-football-v1.p.rapidapi.com/v3/fixtures/lineups?fixture=' +
-        encodeURIComponent(fixtureId)
-      : 'https://v3.football.api-sports.io/fixtures/lineups?fixture=' +
-        encodeURIComponent(fixtureId)
+    const urlLineups =
+      'https://v3.football.api-sports.io/fixtures/lineups?fixture=' + encodeURIComponent(fixtureId)
 
     console.log(
       '[Cron Escalações 5m] Buscando escalação na janela 30-20m / pós-kickoff para fixture ' +
@@ -820,45 +812,40 @@ cronAdd('cron_escalacoes_pre_jogo_5m', '*/5 * * * *', () => {
         ')...',
     )
 
-    const cotaLineupCron = checarCotaCron()
-    if (cotaLineupCron.blocked || cotaLineupCron.count >= cotaLineupCron.max_limit) {
-      console.log('[Cron Escalações 5m] Cota esgotada. Pulando silenciosamente.')
-      return
-    }
-
-    let resHttp = null
-    try {
-      resHttp = $http.send({
-        url: urlLineups,
-        method: 'GET',
-        headers: headers,
-        timeout: 15,
-      })
-      incrementarCotaCron(cotaLineupCron)
-    } catch (errHttp) {
-      console.log('[Cron Escalações 5m] Exceção na requisição HTTP:', errHttp)
-      return
-    }
-
-    const statusCode = resHttp ? resHttp.statusCode : 500
-    const resJson = resHttp ? resHttp.json : null
-    const apiErrors = resJson && resJson.errors ? resJson.errors : {}
-    const hasRateLimit =
-      statusCode === 429 ||
-      Boolean(apiErrors.rateLimit) ||
-      Boolean(apiErrors.requests) ||
-      Boolean(apiErrors.token)
-
-    if (hasRateLimit) {
+    const limiterMod = (function () {
       try {
-        cotaLineupCron.usageData.blocked = true
-        if (cotaLineupCron.rec) {
-          cotaLineupCron.rec.set('api_key', JSON.stringify(cotaLineupCron.usageData))
-          $app.save(cotaLineupCron.rec)
-        }
+        return require('./api_football_limiter.js')
+      } catch (_) {
+        return null
+      }
+    })()
+
+    let respCall = null
+    if (limiterMod && typeof limiterMod.enviarRequisicaoApiFootball === 'function') {
+      respCall = limiterMod.enviarRequisicaoApiFootball(urlLineups, { timeout: 15 }, 2)
+    } else {
+      const sRes = $http.send({ url: urlLineups, method: 'GET', timeout: 15 })
+      let j = null
+      try {
+        j = typeof sRes.json === 'object' && sRes.json !== null ? sRes.json : JSON.parse(sRes.raw)
       } catch (_) {}
+      respCall = {
+        blocked: false,
+        statusCode: sRes ? sRes.statusCode : 500,
+        rawResponse: sRes,
+        json: j,
+      }
+    }
+
+    if (respCall.blocked) {
+      console.log(
+        '[Cron Escalações 5m] Requisição bloqueada ou cota esgotada. Pulando silenciosamente.',
+      )
       return
     }
+
+    const resHttp = respCall.rawResponse
+    const resJson = respCall.json
 
     if (resJson && Array.isArray(resJson.response) && resJson.response.length > 0) {
       const rawLineups = resJson.response

@@ -250,121 +250,60 @@ routerAdd('GET', '/backend/v1/eventos-jogo', (e) => {
       })
     }
 
-    // 4. Obtenção da API Key de config_integracoes
-    let apiKey = ''
-    try {
-      const recPlacar = $app.findFirstRecordByFilter(
-        'config_integracoes',
-        "chave = 'placar_ao_vivo' && provedor = 'api_football' && ativo = true",
-      )
-      if (recPlacar) {
-        apiKey = (recPlacar.getString('api_key') || recPlacar.get('api_key') || '')
-          .toString()
-          .trim()
+    // 4. Chamada externa à API-Sports com limiter e fallback centralizado (api_football_limiter.js)
+    const limiterMod = (function () {
+      try {
+        return require('./api_football_limiter.js')
+      } catch (_) {
+        return null
       }
-    } catch (_) {}
+    })()
 
-    if (!apiKey) {
+    const url = `https://v3.football.api-sports.io/fixtures?id=${encodeURIComponent(fixtureIdParam)}`
+    let respCall = null
+    if (limiterMod && typeof limiterMod.enviarRequisicaoApiFootball === 'function') {
+      respCall = limiterMod.enviarRequisicaoApiFootball(url, { timeout: 12 }, 2)
+    } else {
+      const sendRes = $http.send({ url, method: 'GET', timeout: 12 })
+      let j = null
       try {
-        const recDirect = $app.findFirstRecordByData(
-          'config_integracoes',
-          'chave',
-          'placar_ao_vivo',
-        )
-        if (recDirect && recDirect.getBool('ativo')) {
-          apiKey = (recDirect.getString('api_key') || recDirect.get('api_key') || '')
-            .toString()
-            .trim()
-        }
+        j =
+          typeof sendRes.json === 'object' && sendRes.json !== null
+            ? sendRes.json
+            : JSON.parse(sendRes.raw)
       } catch (_) {}
+      respCall = {
+        blocked: false,
+        statusCode: sendRes ? sendRes.statusCode : 500,
+        rawResponse: sendRes,
+        json: j,
+      }
     }
 
-    if (!apiKey) {
-      try {
-        if ($secrets && $secrets.has && $secrets.has('API_FOOTBALL_KEY')) {
-          apiKey = ($secrets.get('API_FOOTBALL_KEY') || '').trim()
-        } else if ($secrets && $secrets.has && $secrets.has('RAPIDAPI_KEY')) {
-          apiKey = ($secrets.get('RAPIDAPI_KEY') || '').trim()
-        } else if ($os && $os.getenv) {
-          apiKey = ($os.getenv('API_FOOTBALL_KEY') || $os.getenv('RAPIDAPI_KEY') || '').trim()
-        }
-      } catch (_) {}
-    }
-
-    if (!apiKey) {
+    if (respCall.blocked && respCall.rate_limited) {
       return e.json(200, {
         success: true,
         cached: true,
-        notice: 'Chave da API-Football não configurada em config_integracoes.',
+        rate_limited: true,
+        waiting_reset: true,
+        notice:
+          'Cota diária da API-Sports atingida nas chaves configuradas. Reset às 21h (horário de Brasília). Exibindo dados locais.',
         fixture_id: fixtureIdParam,
         events: [],
       })
     }
 
-    // 5. Chamada externa à API-Sports (/fixtures?id={fixture_id})
-    // Esse endpoint traz fixture, teams, goals e events consolidados em 1 única chamada
-    const isRapid = apiKey.length > 40
-    const url = isRapid
-      ? `https://api-football-v1.p.rapidapi.com/v3/fixtures?id=${encodeURIComponent(fixtureIdParam)}`
-      : `https://v3.football.api-sports.io/fixtures?id=${encodeURIComponent(fixtureIdParam)}`
-    const headers = isRapid
-      ? { 'x-rapidapi-key': apiKey, 'x-rapidapi-host': 'api-football-v1.p.rapidapi.com' }
-      : { 'x-apisports-key': apiKey }
+    const resHttp = respCall.rawResponse
+    const resJson = respCall.json
 
-    let resHttp = null
-    try {
-      resHttp = $http.send({
-        url,
-        method: 'GET',
-        headers,
-        timeout: 12,
-      })
-
-      // Incrementa uso de cota
-      usageData.count = currentCount + 1
-      usageData.last_request_utc = new Date().toISOString()
-      if (recUsage) {
-        recUsage.set('api_key', JSON.stringify(usageData))
-        $app.save(recUsage)
-      } else {
-        try {
-          const col = $app.findCollectionByNameOrId('config_integracoes')
-          const novo = new Record(col)
-          novo.set('chave', USAGE_RECORD_CHAVE)
-          novo.set('provedor', 'api_football')
-          novo.set('ativo', true)
-          novo.set('api_key', JSON.stringify(usageData))
-          $app.save(novo)
-        } catch (_) {}
-      }
-    } catch (errHttp) {
-      console.log('[EventosJogo] Erro HTTP ao consultar API-Football:', errHttp)
+    if (!resHttp || respCall.statusCode !== 200) {
       return e.json(200, {
         success: false,
         cached: true,
-        error: 'Falha de conexão com a API-Sports.',
+        statusCode: respCall.statusCode || 500,
+        error: 'API externa retornou status ' + (respCall.statusCode || 'erro'),
         events: [],
       })
-    }
-
-    if (!resHttp || resHttp.statusCode !== 200) {
-      return e.json(200, {
-        success: false,
-        cached: true,
-        statusCode: resHttp ? resHttp.statusCode : 500,
-        error: 'API externa retornou status ' + (resHttp ? resHttp.statusCode : 'erro'),
-        events: [],
-      })
-    }
-
-    let resJson = null
-    try {
-      resJson =
-        typeof resHttp.json === 'object' && resHttp.json !== null
-          ? resHttp.json
-          : JSON.parse(resHttp.raw)
-    } catch (_) {
-      resJson = null
     }
 
     if (!resJson || !Array.isArray(resJson.response) || resJson.response.length === 0) {

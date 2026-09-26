@@ -376,34 +376,18 @@ routerAdd(
         })
       }
 
-      // 3. Consulta /fixtures/lineups com checagem inline da cota diária
-      // Por ser uma ação manual expressa do Administrador ("Forçar Escalação"),
-      // só bloqueamos se a API externa tiver retornado rate-limit real (cotaDate.blocked === true)
-      // ou se a trava estiver ativa E o contador tiver excedido o teto configurado
-      const cotaLineups = checarCotaApiFootball()
-      if (
-        cotaLineups.blocked ||
-        (!cotaLineups.trava_desativada && cotaLineups.count >= cotaLineups.max_limit)
-      ) {
-        return e.json(429, {
-          success: false,
-          rate_limited: true,
-          waiting_reset: true,
-          error:
-            'Limite diário da API atingido. Aguardando reset às 21h (Brasília) ou reset manual.',
-          reason: 'daily_limit_reached',
-        })
-      }
+      // 3. Consulta /fixtures/lineups via limiter central com rotação e fallback
+      const limiterMod = (function () {
+        try {
+          return require('./api_football_limiter.js')
+        } catch (_) {
+          return null
+        }
+      })()
 
-      const isRapid = apiKey.length > 40
-      const urlLineups = isRapid
-        ? 'https://api-football-v1.p.rapidapi.com/v3/fixtures/lineups?fixture=' +
-          encodeURIComponent(fixtureId)
-        : 'https://v3.football.api-sports.io/fixtures/lineups?fixture=' +
-          encodeURIComponent(fixtureId)
-      const headers = isRapid
-        ? { 'x-rapidapi-key': apiKey, 'x-rapidapi-host': 'api-football-v1.p.rapidapi.com' }
-        : { 'x-apisports-key': apiKey }
+      const urlLineups =
+        'https://v3.football.api-sports.io/fixtures/lineups?fixture=' +
+        encodeURIComponent(fixtureId)
 
       console.log(
         '[Admin Forçar Escalação] Buscando lineups para fixture ' +
@@ -413,52 +397,40 @@ routerAdd(
           ')...',
       )
 
-      let resHttp = null
-      try {
-        resHttp = $http.send({
-          url: urlLineups,
-          method: 'GET',
-          headers: headers,
-          timeout: 15,
-        })
-        incrementarCotaApiFootball(cotaLineups)
-      } catch (errHttp) {
-        console.log('[Admin Forçar Escalação] Exceção na requisição HTTP de lineups:', errHttp)
-        return e.json(500, {
-          success: false,
-          error:
-            'Falha na conexão com a API externa: ' + (errHttp ? errHttp.message : 'indisponível'),
-        })
+      let respCall = null
+      if (limiterMod && typeof limiterMod.enviarRequisicaoApiFootball === 'function') {
+        respCall = limiterMod.enviarRequisicaoApiFootball(
+          urlLineups,
+          { timeout: 15, isAdminManual: true },
+          2,
+        )
+      } else {
+        const sRes = $http.send({ url: urlLineups, method: 'GET', timeout: 15 })
+        let j = null
+        try {
+          j = typeof sRes.json === 'object' && sRes.json !== null ? sRes.json : JSON.parse(sRes.raw)
+        } catch (_) {}
+        respCall = {
+          blocked: false,
+          statusCode: sRes ? sRes.statusCode : 500,
+          rawResponse: sRes,
+          json: j,
+        }
       }
 
-      const statusCode = resHttp ? resHttp.statusCode : 500
-      const resJson = resHttp ? resHttp.json : null
-      const apiErrors = resJson && resJson.errors ? resJson.errors : {}
-      const isRateLimited =
-        statusCode === 429 ||
-        Boolean(apiErrors.rateLimit) ||
-        Boolean(apiErrors.requests) ||
-        Boolean(apiErrors.token)
-
-      if (isRateLimited) {
-        // Marca contador como esgotado para proteger a cota externa
-        try {
-          cotaLineups.usageData.blocked = true
-          if (cotaLineups.rec) {
-            cotaLineups.rec.set('api_key', JSON.stringify(cotaLineups.usageData))
-            $app.save(cotaLineups.rec)
-          }
-        } catch (_) {}
-
+      if (respCall.blocked && respCall.rate_limited) {
         return e.json(429, {
           success: false,
           rate_limited: true,
           waiting_reset: true,
           error:
-            'A API externa retornou cota excedida (Rate Limit). Aguardando reset às 21h (Brasília).',
+            'A API externa retornou cota excedida em todas as chaves. Aguardando reset às 21h (Brasília).',
           reason: 'api_returned_rate_limit',
         })
       }
+
+      const resHttp = respCall.rawResponse
+      const resJson = respCall.json
 
       if (resJson && Array.isArray(resJson.response) && resJson.response.length > 0) {
         const rawLineups = resJson.response
