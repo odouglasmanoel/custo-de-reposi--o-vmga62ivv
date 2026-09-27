@@ -245,7 +245,7 @@ function isQuotaExceededError(statusCode, jsonBody, rawBody) {
   // Verificação nos erros estruturados retornados pela API-Sports
   const apiErrors = jsonBody && jsonBody.errors ? jsonBody.errors : null
   if (apiErrors) {
-    if (apiErrors.rateLimit || apiErrors.requests || apiErrors.token) return true
+    if (apiErrors.rateLimit || apiErrors.requests) return true
     const errStr = JSON.stringify(apiErrors).toLowerCase()
     if (
       errStr.includes('requests limit reached') ||
@@ -268,8 +268,47 @@ function isQuotaExceededError(statusCode, jsonBody, rawBody) {
       lower.includes('request limit reached') ||
       lower.includes('quota exceeded') ||
       lower.includes('exceeded the maximum') ||
-      lower.includes('rate limit') ||
       lower.includes('too many requests')
+    ) {
+      return true
+    }
+  }
+
+  return false
+}
+
+/**
+ * Avalia se o status HTTP ou o corpo JSON indica erro de autenticação (401/403, chave inválida ou suspensa)
+ */
+function isAuthInvalidError(statusCode, jsonBody, rawBody) {
+  if (statusCode === 401 || statusCode === 403) return true
+
+  const apiErrors = jsonBody && jsonBody.errors ? jsonBody.errors : null
+  if (apiErrors) {
+    if (apiErrors.token || apiErrors.access) return true
+    const errStr = JSON.stringify(apiErrors).toLowerCase()
+    if (
+      errStr.includes('token') ||
+      errStr.includes('invalid key') ||
+      errStr.includes('unauthenticated') ||
+      errStr.includes('unauthorized') ||
+      errStr.includes('suspended') ||
+      errStr.includes('not have access') ||
+      errStr.includes('forbidden')
+    ) {
+      return true
+    }
+  }
+
+  if (rawBody && typeof rawBody === 'string') {
+    const lower = rawBody.toLowerCase()
+    if (
+      lower.includes('invalid api key') ||
+      lower.includes('invalid token') ||
+      lower.includes('account suspended') ||
+      lower.includes('unauthenticated') ||
+      lower.includes('unauthorized') ||
+      lower.includes('forbidden')
     ) {
       return true
     }
@@ -389,13 +428,21 @@ function enviarRequisicaoApiFootball(url, options, prioridade) {
       jsonBody,
       res ? res.raw : '',
     )
+    let authError = isAuthInvalidError(res ? res.statusCode : 500, jsonBody, res ? res.raw : '')
 
-    // Se a primeira chave tentada foi a PRINCIPAL e deu cota excedida, faz FALLBACK IMEDIATO para a SECUNDÁRIA!
-    if (quotaExceeded && currentKeyType === 'primary' && backupKey && backupKey !== primaryKey) {
-      marcarChaveEsgotada(rec, usageData, 'primary', `HTTP ${res ? res.statusCode : '429'}`)
+    // Se a primeira chave tentada foi a PRINCIPAL e deu cota excedida OU erro de auth, tenta FALLBACK para a SECUNDÁRIA!
+    if (
+      (quotaExceeded || authError) &&
+      currentKeyType === 'primary' &&
+      backupKey &&
+      backupKey !== primaryKey
+    ) {
+      if (quotaExceeded) {
+        marcarChaveEsgotada(rec, usageData, 'primary', `HTTP ${res ? res.statusCode : '429'}`)
+      }
 
       console.warn(
-        `[API-Football Limiter] Tentando chave SECUNDÁRIA de backup imediatamente para a mesma requisição: ${url}`,
+        `[API-Football Limiter] Falha na chave PRINCIPAL (${authError ? 'Erro de autenticação/chave' : 'Cota excedida'}). Tentando chave SECUNDÁRIA de backup: ${url}`,
       )
       currentKeyType = 'backup'
       activeKey = backupKey
@@ -405,14 +452,16 @@ function enviarRequisicaoApiFootball(url, options, prioridade) {
       res = retryResult.res
       jsonBody = retryResult.jsonBody
       quotaExceeded = isQuotaExceededError(res ? res.statusCode : 500, jsonBody, res ? res.raw : '')
+      authError = isAuthInvalidError(res ? res.statusCode : 500, jsonBody, res ? res.raw : '')
     }
 
-    // Se a chave secundária (ou ambas) também esgotou:
+    // Se a chave secundária (ou ambas) também esgotou cota:
     if (quotaExceeded) {
       marcarChaveEsgotada(rec, usageData, currentKeyType, `HTTP ${res ? res.statusCode : 429}`)
       return {
         blocked: true,
         rate_limited: true,
+        auth_error: false,
         waiting_reset: true,
         notice: 'Exibindo dados armazenados localmente (Aguardando reset da API às 21h)',
         statusCode: 429,
@@ -423,13 +472,34 @@ function enviarRequisicaoApiFootball(url, options, prioridade) {
       }
     }
 
-    // Requisição bem-sucedida (não deu erro de rate-limit)
+    // Se retornou 401/403 ou chave inválida/suspensa mesmo após fallback (ou em ambas):
+    if (authError) {
+      console.error(
+        `[API-Football Limiter] Erro de autenticação 401/403 ou chave inválida/suspensa na chave ${currentKeyType}.`,
+      )
+      return {
+        blocked: true,
+        auth_error: true,
+        rate_limited: false,
+        waiting_reset: false,
+        statusCode:
+          res && (res.statusCode === 401 || res.statusCode === 403) ? res.statusCode : 401,
+        notice: 'Erro de autenticação na API. Verifique se a API Key está ativa no painel.',
+        rawResponse: res,
+        json: jsonBody,
+        usage: usageData,
+        keyUsed: currentKeyType,
+      }
+    }
+
+    // Requisição bem-sucedida (não deu erro de rate-limit nem auth)
     if (!isTestOrStatus) {
       incrementarUso(rec, usageData, currentKeyType)
     }
 
     return {
       blocked: false,
+      auth_error: false,
       statusCode: res ? res.statusCode : 200,
       rawResponse: res,
       json: jsonBody,
@@ -545,6 +615,8 @@ function checarApiValidadaECota() {
 
 module.exports = {
   enviarRequisicaoApiFootball,
+  isQuotaExceededError,
+  isAuthInvalidError,
   obterStatusLimiter,
   checarApiValidadaECota,
   obterOuCriarRegistroUso,

@@ -954,14 +954,33 @@ export default function BolaoDashboard() {
       }
     } catch (err: any) {
       const status = err?.status || err?.statusCode
-      const isAuthError =
-        status === 401 ||
-        status === 403 ||
-        err?.data?.error?.toLowerCase?.().includes('não autorizado') ||
-        err?.data?.error?.toLowerCase?.().includes('sessão expirou') ||
-        err?.message?.toLowerCase?.().includes('não autorizado')
+      const errData = err?.data || {}
+      const errMsgRaw = String(errData?.error || errData?.message || err?.message || '')
+      const isApiAuthError =
+        errData?.auth_error === true ||
+        errMsgRaw.toLowerCase().includes('erro de autenticação na api') ||
+        errMsgRaw.toLowerCase().includes('api key') ||
+        errMsgRaw.toLowerCase().includes('chave inválida') ||
+        errMsgRaw.toLowerCase().includes('chave suspensa')
 
-      if (isAuthError) {
+      if (isApiAuthError) {
+        toast({
+          title: 'Erro de Autenticação na API',
+          description:
+            errData?.error ||
+            'Erro de autenticação na API. Verifique se a API Key está ativa no painel.',
+          variant: 'destructive',
+        })
+        return
+      }
+
+      const isUserSessionAuthError =
+        (status === 401 || status === 403) &&
+        (errMsgRaw.toLowerCase().includes('não autorizado') ||
+          errMsgRaw.toLowerCase().includes('sessão expirou') ||
+          errMsgRaw.toLowerCase().includes('restrito ao administrador'))
+
+      if (isUserSessionAuthError) {
         toast({
           title: 'Sessão expirada',
           description: 'Sua sessão expirou. Faça login novamente.',
@@ -975,7 +994,7 @@ export default function BolaoDashboard() {
       }
 
       const errMsg =
-        err?.data?.error ||
+        errData?.error ||
         err?.message ||
         'Falha ao atualizar placares em lote. A cota diária pode estar esgotada ou verifique a conexão.'
       toast({
@@ -1078,14 +1097,33 @@ export default function BolaoDashboard() {
       }
     } catch (err: any) {
       const status = err?.status || err?.statusCode
-      const isAuthError =
-        status === 401 ||
-        status === 403 ||
-        err?.data?.error?.toLowerCase?.().includes('não autorizado') ||
-        err?.data?.error?.toLowerCase?.().includes('sessão expirou') ||
-        err?.message?.toLowerCase?.().includes('não autorizado')
+      const errData = err?.data || {}
+      const errMsgRaw = String(errData?.error || errData?.message || err?.message || '')
+      const isApiAuthError =
+        errData?.auth_error === true ||
+        errMsgRaw.toLowerCase().includes('erro de autenticação na api') ||
+        errMsgRaw.toLowerCase().includes('api key') ||
+        errMsgRaw.toLowerCase().includes('chave inválida') ||
+        errMsgRaw.toLowerCase().includes('chave suspensa')
 
-      if (isAuthError) {
+      if (isApiAuthError) {
+        toast({
+          title: 'Erro de Autenticação na API',
+          description:
+            errData?.error ||
+            'Erro de autenticação na API. Verifique se a API Key está ativa no painel.',
+          variant: 'destructive',
+        })
+        return
+      }
+
+      const isUserSessionAuthError =
+        (status === 401 || status === 403) &&
+        (errMsgRaw.toLowerCase().includes('não autorizado') ||
+          errMsgRaw.toLowerCase().includes('sessão expirou') ||
+          errMsgRaw.toLowerCase().includes('restrito ao administrador'))
+
+      if (isUserSessionAuthError) {
         toast({
           title: 'Sessão expirada',
           description: 'Sua sessão expirou. Faça login novamente.',
@@ -1099,9 +1137,7 @@ export default function BolaoDashboard() {
       }
 
       const errMsg =
-        err?.data?.error ||
-        err?.message ||
-        'Falha ao atualizar placar ao vivo. Verifique a conexão.'
+        errData?.error || err?.message || 'Falha ao atualizar placar ao vivo. Verifique a conexão.'
       toast({
         title: 'Erro na atualização',
         description: errMsg,

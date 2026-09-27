@@ -48,6 +48,8 @@ interface ConfigState {
   hasDbKey: boolean
   hasSecretFallback: boolean
   maskedKey: string
+  hasBackupKey?: boolean
+  maskedBackupKey?: string
   ativo: boolean
   api_validada?: ApiValidadaInfo | null
 }
@@ -74,7 +76,9 @@ export default function AdminConfiguracoes() {
   })
 
   const [apiKeyInput, setApiKeyInput] = useState('')
+  const [backupKeyInput, setBackupKeyInput] = useState('')
   const [showKeyText, setShowKeyText] = useState(false)
+  const [showBackupKeyText, setShowBackupKeyText] = useState(false)
   const [ativoInput, setAtivoInput] = useState(true)
   const [maxLimitInput, setMaxLimitInput] = useState('80')
   const [travaDesativadaInput, setTravaDesativadaInput] = useState(false)
@@ -151,6 +155,8 @@ export default function AdminConfiguracoes() {
         hasDbKey: Boolean(data.hasDbKey),
         hasSecretFallback: Boolean(data.hasSecretFallback),
         maskedKey: data.maskedKey || '',
+        hasBackupKey: Boolean(data.hasBackupKey || data.hasFallbackKey),
+        maskedBackupKey: data.maskedBackupKey || data.maskedFallbackKey || '',
         ativo: data.ativo !== false,
         api_validada: data.api_validada || null,
       })
@@ -185,6 +191,7 @@ export default function AdminConfiguracoes() {
       const payload: {
         provedor: 'api_football'
         api_key?: string
+        backup_api_key?: string
         ativo: boolean
         max_limit?: number
         trava_desativada?: boolean
@@ -197,6 +204,9 @@ export default function AdminConfiguracoes() {
 
       if (apiKeyInput.trim()) {
         payload.api_key = apiKeyInput.trim()
+      }
+      if (backupKeyInput.trim()) {
+        payload.backup_api_key = backupKeyInput.trim()
       }
 
       const data: any = await pb.send('/backend/v1/placar-ao-vivo/config', {
@@ -217,6 +227,7 @@ export default function AdminConfiguracoes() {
         ativo: data.ativo,
       })
       setApiKeyInput('') // Limpa campo de edição
+      setBackupKeyInput('')
       await loadConfig()
     } catch (err: unknown) {
       handleAuthOrApiError(
@@ -575,11 +586,20 @@ export default function AdminConfiguracoes() {
                     </div>
                   </div>
 
-                  {/* Campo de texto da Chave de API */}
+                  {/* Campo de texto da Chave de API Principal */}
                   <div className="space-y-1.5">
                     <div className="flex items-center justify-between">
-                      <Label htmlFor="api-key-input" className="text-xs font-bold text-[#0F172A]">
-                        Chave API-Football (x-apisports-key)
+                      <Label
+                        htmlFor="api-key-input"
+                        className="text-xs font-bold text-[#0F172A] flex items-center gap-1.5"
+                      >
+                        <span>Chave API-Football Principal (x-apisports-key)</span>
+                        <Badge
+                          variant="outline"
+                          className="text-[10px] text-emerald-700 border-emerald-300 bg-emerald-50"
+                        >
+                          Chave Primária
+                        </Badge>
                       </Label>
                     </div>
 
@@ -589,8 +609,8 @@ export default function AdminConfiguracoes() {
                         type={showKeyText ? 'text' : 'password'}
                         placeholder={
                           config.hasDbKey
-                            ? `Chave salva (${config.maskedKey}). Deixe em branco para manter.`
-                            : 'Cole sua API Key do API-Sports / API-Football aqui...'
+                            ? `Chave salva (${config.maskedKey}). Digite nova chave para substituir.`
+                            : 'Cole a Chave Principal da API-Sports aqui...'
                         }
                         value={apiKeyInput}
                         onChange={(e) => setApiKeyInput(e.target.value)}
@@ -605,6 +625,56 @@ export default function AdminConfiguracoes() {
                         {showKeyText ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                       </button>
                     </div>
+                  </div>
+
+                  {/* Campo de texto da Chave de API Secundária (Backup/Fallback) */}
+                  <div className="space-y-1.5 pt-1">
+                    <div className="flex items-center justify-between">
+                      <Label
+                        htmlFor="backup-key-input"
+                        className="text-xs font-bold text-[#0F172A] flex items-center gap-1.5"
+                      >
+                        <span>Chave API-Football Secundária (Fallback/Backup)</span>
+                        <Badge
+                          variant="outline"
+                          className="text-[10px] text-blue-700 border-blue-300 bg-blue-50"
+                        >
+                          Fallback
+                        </Badge>
+                      </Label>
+                      {config.hasBackupKey && (
+                        <span className="font-mono text-[11px] text-slate-500">
+                          Salva: {config.maskedBackupKey}
+                        </span>
+                      )}
+                    </div>
+
+                    <div className="relative">
+                      <Input
+                        id="backup-key-input"
+                        type={showBackupKeyText ? 'text' : 'password'}
+                        placeholder={
+                          config.hasBackupKey
+                            ? `Chave secundária salva (${config.maskedBackupKey}). Digite para alterar.`
+                            : 'Cole a Chave Secundária de Fallback aqui (opcional)...'
+                        }
+                        value={backupKeyInput}
+                        onChange={(e) => setBackupKeyInput(e.target.value)}
+                        className="h-10 pr-10 font-mono text-xs border-[#CBD5E1] focus-visible:border-[#3B82F6] focus-visible:ring-[#3B82F6]"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowBackupKeyText(!showBackupKeyText)}
+                        className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                        title={showBackupKeyText ? 'Ocultar' : 'Exibir'}
+                      >
+                        {showBackupKeyText ? (
+                          <EyeOff className="h-4 w-4" />
+                        ) : (
+                          <Eye className="h-4 w-4" />
+                        )}
+                      </button>
+                    </div>
 
                     {/* Botão de Teste da Chave */}
                     <div className="flex items-center justify-between pt-1">
@@ -616,15 +686,6 @@ export default function AdminConfiguracoes() {
                         variant="outline"
                         size="sm"
                         onClick={() => {
-                          if (dailyUsageInfo && dailyUsageInfo.count >= 15) {
-                            toast({
-                              title: 'Limite Diário Atingido (15/15)',
-                              description:
-                                'A cota diária de segurança foi atingida hoje. O teste está bloqueado até o reset às 21h (00:00 UTC).',
-                              variant: 'destructive',
-                            })
-                            return
-                          }
                           setConfirmTestOpen(true)
                         }}
                         disabled={testing || saving}
@@ -661,7 +722,6 @@ export default function AdminConfiguracoes() {
                       </div>
                     )}
                   </div>
-
                   {/* Configurações de Limite Diário e Trava de Segurança */}
                   <div className="rounded-lg border border-slate-200 bg-slate-50/50 p-3.5 space-y-3">
                     <div className="text-xs font-bold text-slate-800">

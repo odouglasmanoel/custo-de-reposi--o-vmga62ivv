@@ -234,8 +234,19 @@ routerAdd(
         }
       }
 
+      if (respCall.blocked && respCall.auth_error) {
+        return e.json(401, {
+          success: false,
+          auth_error: true,
+          error: 'Erro de autenticação na API. Verifique se a API Key está ativa no painel.',
+          notice: 'Erro de autenticação na API. Verifique se a API Key está ativa no painel.',
+          debug_logs: rawApiLogs,
+        })
+      }
+
       if (respCall.blocked && respCall.rate_limited) {
         return e.json(429, {
+          success: false,
           error: 'Limite de requisições da API-Sports atingido nas chaves configuradas.',
           rate_limited: true,
           debug_logs: rawApiLogs,
@@ -309,6 +320,30 @@ routerAdd(
     }
 
     if (fixtureResponses.length === 0) {
+      // Verifica se houve erro de autenticação nos logs
+      const hadAuthLog = rawApiLogs.some(
+        (l) =>
+          l.statusCode === 401 ||
+          l.statusCode === 403 ||
+          (l.json_exact &&
+            l.json_exact.errors &&
+            (l.json_exact.errors.token || l.json_exact.errors.access)),
+      )
+
+      if (hadAuthLog) {
+        return e.json(401, {
+          success: false,
+          auth_error: true,
+          error: 'Erro de autenticação na API. Verifique se a API Key está ativa no painel.',
+          notice: 'Erro de autenticação na API. Verifique se a API Key está ativa no painel.',
+          total_jogos: jogosRecords.length,
+          fixture_ids_enviados: uniqueFixtureIds,
+          atualizados: 0,
+          jogos: [],
+          debug_logs: rawApiLogs,
+        })
+      }
+
       return e.json(200, {
         success: false,
         notice: 'A API-Sports não retornou dados para as partidas consultadas.',

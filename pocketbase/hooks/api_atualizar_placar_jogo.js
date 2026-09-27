@@ -246,9 +246,26 @@ routerAdd(
         }
       }
 
+      if (respCall.blocked && respCall.auth_error) {
+        return e.json(401, {
+          success: false,
+          auth_error: true,
+          error: 'Erro de autenticação na API. Verifique se a API Key está ativa no painel.',
+        })
+      }
+
       if (respCall.blocked && respCall.rate_limited) {
         return e.json(429, {
+          success: false,
           error: 'Limite de requisições da API-Sports atingido nas chaves configuradas.',
+        })
+      }
+
+      if (respCall.statusCode === 401 || respCall.statusCode === 403) {
+        return e.json(401, {
+          success: false,
+          auth_error: true,
+          error: 'Erro de autenticação na API. Verifique se a API Key está ativa no painel.',
         })
       }
 
@@ -261,6 +278,13 @@ routerAdd(
       const json = respCall.json
       if (json && json.errors && Object.keys(json.errors).length > 0) {
         const errStr = JSON.stringify(json.errors)
+        if (json.errors.token || json.errors.access || errStr.toLowerCase().includes('token')) {
+          return e.json(401, {
+            success: false,
+            auth_error: true,
+            error: 'Erro de autenticação na API. Verifique se a API Key está ativa no painel.',
+          })
+        }
         return e.json(502, { error: `Erro da API-Sports: ${errStr}` })
       }
 

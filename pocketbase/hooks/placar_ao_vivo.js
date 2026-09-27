@@ -3381,6 +3381,23 @@ routerAdd('GET', '/backend/v1/placar-ao-vivo/config', (e) => {
       }
     } catch (_) {}
 
+    let hasBackupKey = false
+    let maskedBackupKey = ''
+    try {
+      const backupRec = $app.findFirstRecordByData(
+        'config_integracoes',
+        'chave',
+        'placar_ao_vivo_backup',
+      )
+      if (backupRec) {
+        const bk = (backupRec.getString('api_key') || '').trim()
+        if (bk) {
+          hasBackupKey = true
+          maskedBackupKey = bk.length > 8 ? '••••••••' + bk.slice(-4) : '••••' + bk.slice(-2)
+        }
+      }
+    } catch (_) {}
+
     let hasSecretFallback = false
     try {
       if (
@@ -3439,9 +3456,11 @@ routerAdd('GET', '/backend/v1/placar-ao-vivo/config', (e) => {
       hasDbKey: hasDbKey,
       hasSecretFallback: hasSecretFallback,
       maskedKey: maskedKey,
-      hasFallbackKey: false,
-      hasFallbackDbKey: false,
-      maskedFallbackKey: '',
+      hasBackupKey: hasBackupKey,
+      maskedBackupKey: maskedBackupKey,
+      hasFallbackKey: hasBackupKey,
+      hasFallbackDbKey: hasBackupKey,
+      maskedFallbackKey: maskedBackupKey,
       hasTsdbKey: false,
       hasTsdbDbKey: false,
       maskedTsdbKey: '',
@@ -3481,6 +3500,8 @@ routerAdd('POST', '/backend/v1/placar-ao-vivo/config', (e) => {
 
     const body = e.requestInfo().body || {}
     const apiKey = typeof body.api_key === 'string' ? body.api_key.trim() : undefined
+    const backupApiKey =
+      typeof body.backup_api_key === 'string' ? body.backup_api_key.trim() : undefined
     const ativo = body.ativo !== false
 
     const col = $app.findCollectionByNameOrId('config_integracoes')
@@ -3499,6 +3520,24 @@ routerAdd('POST', '/backend/v1/placar-ao-vivo/config', (e) => {
     }
 
     $app.save(record)
+
+    if (backupApiKey !== undefined && backupApiKey !== '') {
+      let recBackup
+      try {
+        recBackup = $app.findFirstRecordByData(
+          'config_integracoes',
+          'chave',
+          'placar_ao_vivo_backup',
+        )
+      } catch (_) {
+        recBackup = new Record(col)
+        recBackup.set('chave', 'placar_ao_vivo_backup')
+      }
+      recBackup.set('provedor', 'api_football')
+      recBackup.set('ativo', true)
+      recBackup.set('api_key', backupApiKey)
+      $app.save(recBackup)
+    }
 
     // Atualiza opções de max_limit ou trava_desativada se fornecidas no body
     if (body.max_limit !== undefined || body.trava_desativada !== undefined) {
