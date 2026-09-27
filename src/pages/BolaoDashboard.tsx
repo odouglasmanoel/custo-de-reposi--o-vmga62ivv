@@ -64,18 +64,24 @@ import { Users, ChevronRight, RefreshCw } from 'lucide-react'
 import { useToast } from '@/hooks/use-toast'
 import { clearFichaJogoCache } from '@/services/eventosJogo'
 import { buscarEscudoTime, readEscudoCache } from '@/services/enquetes'
-import { getFlagCdnUrl, resolveTeamBadgeUrl } from '@/lib/flags'
+import { getFlagCdnUrl, resolveTeamBadgeUrl, fixtureLogosMemoryCache } from '@/lib/flags'
 
 function TeamShield({
   escudo,
   nomeTime,
   sigla,
+  fixtureId,
+  fichaDetalhes,
+  isSide,
   sizeClass = 'h-9 w-9 sm:h-10 sm:w-10',
   textClass = 'text-xs font-bold text-slate-700',
 }: {
   escudo: string | undefined
   nomeTime: string
   sigla: string
+  fixtureId?: string | number | null
+  fichaDetalhes?: any
+  isSide?: 'home' | 'away'
   sizeClass?: string
   textClass?: string
 }) {
@@ -90,23 +96,54 @@ function TeamShield({
   }, [escudo])
 
   const handleError = () => {
-    // 1º fallback: Tenta cache oficial em memória/localStorage
-    if (nomeTime) {
-      const fallbackBadge = readEscudoCache(nomeTime)
-      if (fallbackBadge && fallbackBadge !== currentSrc) {
-        setCurrentSrc(fallbackBadge)
+    if (!nomeTime) {
+      setHasError(true)
+      return
+    }
+
+    // Nível 1: tenta extrair de fichaDetalhes se fornecido e ainda não usado
+    if (fichaDetalhes) {
+      const extracted = resolveTeamBadgeUrl({
+        teamName: nomeTime,
+        fichaDetalhes,
+        isSide,
+      })
+      if (extracted && extracted !== currentSrc) {
+        setCurrentSrc(extracted)
         return
       }
-      // 2º fallback: Se for seleção nacional, recorre a FlagCDN (garante que seleções NUNCA fiquem sem imagem)
-      if (!triedFlagCdn) {
-        setTriedFlagCdn(true)
-        const flagUrl = getFlagCdnUrl(nomeTime, { cacheBust: true })
-        if (flagUrl && flagUrl !== currentSrc) {
-          setCurrentSrc(flagUrl)
+    }
+
+    // Nível 2: tenta extrair via fixtureId em cache memoizado
+    if (fixtureId) {
+      const cleanId = String(fixtureId).replace(/\D/g, '').trim()
+      if (cleanId && fixtureLogosMemoryCache.has(cleanId)) {
+        const c = fixtureLogosMemoryCache.get(cleanId)!
+        const cached = isSide === 'home' ? c.home : isSide === 'away' ? c.away : c.home || c.away
+        if (cached && cached !== currentSrc) {
+          setCurrentSrc(cached)
           return
         }
       }
     }
+
+    // Nível 3: tenta cache oficial em memória/localStorage
+    const fallbackBadge = readEscudoCache(nomeTime)
+    if (fallbackBadge && fallbackBadge !== currentSrc) {
+      setCurrentSrc(fallbackBadge)
+      return
+    }
+
+    // Nível 4: Bandeira FlagCDN para seleções
+    if (!triedFlagCdn) {
+      setTriedFlagCdn(true)
+      const flagUrl = getFlagCdnUrl(nomeTime, { cacheBust: true })
+      if (flagUrl && flagUrl !== currentSrc) {
+        setCurrentSrc(flagUrl)
+        return
+      }
+    }
+
     setHasError(true)
   }
 
@@ -2708,12 +2745,17 @@ export default function BolaoDashboard() {
                 const liveOrCacheB =
                   matchedLive?.awayTeamLogo || readEscudoCache(timeBNome) || escudoMapValidoB || ''
 
-                // Prioridade: 1º oficial salvo (media.api-sports.io), 2º live/cache, 3º FlagCDN seleções, 4º monograma
+                // Fallback em 4 níveis: 1. ficha_detalhes/banco -> 2. fixture_id memoizada -> 3. cache local -> 4. bandeira/sigla
+                const jogoFixtureId =
+                  (jogo as any).fixture_id || (jogo as any).api_fixture_id || matchedLive?.fixtureId
                 const logoCasa =
                   resolveTeamBadgeUrl({
                     teamName: timeANome,
                     savedBadge: jogo.url_escudo_mandante,
                     liveOrCacheBadge: liveOrCacheA,
+                    fixtureId: jogoFixtureId,
+                    fichaDetalhes: (jogo as any).ficha_detalhes,
+                    isSide: 'home',
                     isCorrompido,
                   }) || ''
                 const logoVisitante =
@@ -2721,6 +2763,9 @@ export default function BolaoDashboard() {
                     teamName: timeBNome,
                     savedBadge: jogo.url_escudo_visitante,
                     liveOrCacheBadge: liveOrCacheB,
+                    fixtureId: jogoFixtureId,
+                    fichaDetalhes: (jogo as any).ficha_detalhes,
+                    isSide: 'away',
                     isCorrompido,
                   }) || ''
                 const initialsA = (jogo.time_a || '').slice(0, 2).toUpperCase()
@@ -2784,6 +2829,9 @@ export default function BolaoDashboard() {
                           escudo={logoCasa}
                           nomeTime={jogo.time_a}
                           sigla={initialsA}
+                          fixtureId={jogoFixtureId}
+                          fichaDetalhes={(jogo as any).ficha_detalhes}
+                          isSide="home"
                           sizeClass="h-9 w-9 sm:h-10 sm:w-10"
                           textClass="text-xs font-bold text-slate-700"
                         />
@@ -2822,6 +2870,9 @@ export default function BolaoDashboard() {
                           escudo={logoVisitante}
                           nomeTime={jogo.time_b}
                           sigla={initialsB}
+                          fixtureId={jogoFixtureId}
+                          fichaDetalhes={(jogo as any).ficha_detalhes}
+                          isSide="away"
                           sizeClass="h-9 w-9 sm:h-10 sm:w-10"
                           textClass="text-xs font-bold text-slate-700"
                         />
@@ -3068,12 +3119,19 @@ export default function BolaoDashboard() {
                               escudoMapValidoB ||
                               ''
 
-                            // Prioridade: 1º oficial salvo, 2º live/cache, 3º FlagCDN, 4º monograma
+                            // Fallback em 4 níveis: 1. ficha_detalhes/banco -> 2. fixture_id memoizada -> 3. cache local -> 4. bandeira/sigla
+                            const jogoFixtureId =
+                              (jogo as any).fixture_id ||
+                              (jogo as any).api_fixture_id ||
+                              matchedLive?.fixtureId
                             const logoCasa =
                               resolveTeamBadgeUrl({
                                 teamName: timeANome,
                                 savedBadge: jogo.url_escudo_mandante,
                                 liveOrCacheBadge: liveOrCacheA,
+                                fixtureId: jogoFixtureId,
+                                fichaDetalhes: (jogo as any).ficha_detalhes,
+                                isSide: 'home',
                                 isCorrompido,
                               }) || ''
                             const logoVisitante =
@@ -3081,6 +3139,9 @@ export default function BolaoDashboard() {
                                 teamName: timeBNome,
                                 savedBadge: jogo.url_escudo_visitante,
                                 liveOrCacheBadge: liveOrCacheB,
+                                fixtureId: jogoFixtureId,
+                                fichaDetalhes: (jogo as any).ficha_detalhes,
+                                isSide: 'away',
                                 isCorrompido,
                               }) || ''
                             const initialsA = (jogo.time_a || '').slice(0, 2).toUpperCase()
@@ -3092,6 +3153,9 @@ export default function BolaoDashboard() {
                                   escudo={logoCasa}
                                   nomeTime={jogo.time_a}
                                   sigla={initialsA}
+                                  fixtureId={jogoFixtureId}
+                                  fichaDetalhes={(jogo as any).ficha_detalhes}
+                                  isSide="home"
                                   sizeClass="h-7 w-7 sm:h-8 sm:w-8"
                                   textClass="text-[10px] font-bold text-slate-700"
                                 />
@@ -3102,6 +3166,9 @@ export default function BolaoDashboard() {
                                   escudo={logoVisitante}
                                   nomeTime={jogo.time_b}
                                   sigla={initialsB}
+                                  fixtureId={jogoFixtureId}
+                                  fichaDetalhes={(jogo as any).ficha_detalhes}
+                                  isSide="away"
                                   sizeClass="h-7 w-7 sm:h-8 sm:w-8"
                                   textClass="text-[10px] font-bold text-slate-700"
                                 />
@@ -3570,6 +3637,7 @@ export default function BolaoDashboard() {
                           isAoVivo={isStatusAoVivo}
                           url_escudo_mandante={(jogo as any).url_escudo_mandante}
                           url_escudo_visitante={(jogo as any).url_escudo_visitante}
+                          ficha_detalhes={(jogo as any).ficha_detalhes}
                         />
                       </div>
                     )}

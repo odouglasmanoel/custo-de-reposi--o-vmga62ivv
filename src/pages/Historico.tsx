@@ -1048,6 +1048,7 @@ export default function Historico() {
                             isAoVivo={isAoVivo}
                             url_escudo_mandante={(jogo as any).url_escudo_mandante}
                             url_escudo_visitante={(jogo as any).url_escudo_visitante}
+                            ficha_detalhes={(jogo as any).ficha_detalhes}
                           />
                         </div>
                       )

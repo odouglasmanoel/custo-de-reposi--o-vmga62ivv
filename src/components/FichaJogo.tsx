@@ -13,6 +13,9 @@ import { fetchEventosJogo, MatchEvent, FichaJogoResponse } from '@/services/even
 import { useAuth } from '@/context/AuthContext'
 import { isJogoConcluido } from '@/lib/jogoStatus'
 
+import { getFlagCdnUrl, fetchAndCacheFixtureLogos } from '@/lib/flags'
+import { readEscudoCache } from '@/services/enquetes'
+
 export interface FichaJogoProps {
   fixtureId?: string | number | null
   jogoId?: string | null
@@ -32,6 +35,7 @@ export interface FichaJogoProps {
   defaultOpen?: boolean
   url_escudo_mandante?: string | null
   url_escudo_visitante?: string | null
+  ficha_detalhes?: any
 }
 
 export const FichaJogo: React.FC<FichaJogoProps> = ({
@@ -51,6 +55,7 @@ export const FichaJogo: React.FC<FichaJogoProps> = ({
   defaultOpen = false,
   url_escudo_mandante,
   url_escudo_visitante,
+  ficha_detalhes,
 }) => {
   const { isAdmin } = useAuth()
   const [isOpen, setIsOpen] = useState(defaultOpen)
@@ -80,9 +85,99 @@ export const FichaJogo: React.FC<FichaJogoProps> = ({
     return clean ? clean : null
   }, [fixtureId])
 
-  // Resolução dos escudos usando o helper oficial do projeto
-  const badgeA = useMemo(() => resolveTeamBadgeUrl({ teamName: timeA }), [timeA])
-  const badgeB = useMemo(() => resolveTeamBadgeUrl({ teamName: timeB }), [timeB])
+  // Estados de escudos com fallback em 4 níveis dinâmico
+  const [resolvedBadgeA, setResolvedBadgeA] = useState<string | null>(() => {
+    return resolveTeamBadgeUrl({
+      teamName: timeA,
+      savedBadge: url_escudo_mandante,
+      fixtureId: numFixtureId,
+      fichaDetalhes: ficha_detalhes,
+      isSide: 'home',
+      liveOrCacheBadge: readEscudoCache(timeA),
+    })
+  })
+
+  const [resolvedBadgeB, setResolvedBadgeB] = useState<string | null>(() => {
+    return resolveTeamBadgeUrl({
+      teamName: timeB,
+      savedBadge: url_escudo_visitante,
+      fixtureId: numFixtureId,
+      fichaDetalhes: ficha_detalhes,
+      isSide: 'away',
+      liveOrCacheBadge: readEscudoCache(timeB),
+    })
+  })
+
+  // Sincroniza escudos quando props mudarem
+  useEffect(() => {
+    const bA = resolveTeamBadgeUrl({
+      teamName: timeA,
+      savedBadge: url_escudo_mandante,
+      fixtureId: numFixtureId,
+      fichaDetalhes: ficha_detalhes,
+      isSide: 'home',
+      liveOrCacheBadge: readEscudoCache(timeA),
+    })
+    const bB = resolveTeamBadgeUrl({
+      teamName: timeB,
+      savedBadge: url_escudo_visitante,
+      fixtureId: numFixtureId,
+      fichaDetalhes: ficha_detalhes,
+      isSide: 'away',
+      liveOrCacheBadge: readEscudoCache(timeB),
+    })
+    setResolvedBadgeA(bA)
+    setResolvedBadgeB(bB)
+  }, [timeA, timeB, url_escudo_mandante, url_escudo_visitante, numFixtureId, ficha_detalhes])
+
+  // Se algum dos escudos não pôde ser resolvido e temos fixture_id, busca sob demanda
+  useEffect(() => {
+    if (numFixtureId && (!resolvedBadgeA || !resolvedBadgeB)) {
+      fetchAndCacheFixtureLogos(numFixtureId).then((res) => {
+        if (res) {
+          if (!resolvedBadgeA && res.home) {
+            setResolvedBadgeA(res.home)
+          }
+          if (!resolvedBadgeB && res.away) {
+            setResolvedBadgeB(res.away)
+          }
+        }
+      })
+    }
+  }, [numFixtureId, resolvedBadgeA, resolvedBadgeB])
+
+  const handleBadgeErrorA = () => {
+    // Nível 3: tenta cache local
+    const fromCache = readEscudoCache(timeA)
+    if (fromCache && fromCache !== resolvedBadgeA) {
+      setResolvedBadgeA(fromCache)
+      return
+    }
+    // Nível 4: Bandeira FlagCDN ou sigla (null)
+    const flag = getFlagCdnUrl(timeA, { cacheBust: true })
+    if (flag && flag !== resolvedBadgeA) {
+      setResolvedBadgeA(flag)
+      return
+    }
+    setResolvedBadgeA(null)
+  }
+
+  const handleBadgeErrorB = () => {
+    const fromCache = readEscudoCache(timeB)
+    if (fromCache && fromCache !== resolvedBadgeB) {
+      setResolvedBadgeB(fromCache)
+      return
+    }
+    const flag = getFlagCdnUrl(timeB, { cacheBust: true })
+    if (flag && flag !== resolvedBadgeB) {
+      setResolvedBadgeB(flag)
+      return
+    }
+    setResolvedBadgeB(null)
+  }
+
+  const badgeA = resolvedBadgeA
+  const badgeB = resolvedBadgeB
 
   const carregarEventos = useCallback(
     async (forceRefresh = false) => {
@@ -372,9 +467,7 @@ export const FichaJogo: React.FC<FichaJogoProps> = ({
                   alt={timeA}
                   className="w-5 h-5 object-contain rounded-full bg-white shadow-xs"
                   loading="lazy"
-                  onError={(e) => {
-                    ;(e.target as HTMLElement).style.display = 'none'
-                  }}
+                  onError={handleBadgeErrorA}
                 />
               ) : (
                 <div className="w-5 h-5 rounded-full bg-slate-200 dark:bg-slate-700 flex items-center justify-center text-[10px] font-bold">
@@ -402,9 +495,7 @@ export const FichaJogo: React.FC<FichaJogoProps> = ({
                   alt={timeB}
                   className="w-5 h-5 object-contain rounded-full bg-white shadow-xs"
                   loading="lazy"
-                  onError={(e) => {
-                    ;(e.target as HTMLElement).style.display = 'none'
-                  }}
+                  onError={handleBadgeErrorB}
                 />
               ) : (
                 <div className="w-5 h-5 rounded-full bg-slate-200 dark:bg-slate-700 flex items-center justify-center text-[10px] font-bold">

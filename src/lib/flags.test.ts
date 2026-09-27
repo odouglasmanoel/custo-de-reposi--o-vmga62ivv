@@ -5,6 +5,7 @@ import {
   getFlagCdnUrl,
   isNationalTeam,
   resolveTeamBadgeUrl,
+  fixtureLogosMemoryCache,
   SELECAO_FLAG_MAP,
 } from './flags'
 
@@ -325,5 +326,68 @@ describe('flags.ts - FlagCDN Helper e Seleções Nacionais', () => {
         savedBadge: '',
       }),
     ).toBe('https://flagcdn.com/w80/bf.png')
+  })
+
+  it('suporta plano de fallback de escudos em 4 níveis (ficha_detalhes -> fixture_id -> cache -> bandeira/sigla)', () => {
+    // 1. Extração de ficha_detalhes (Nível 1)
+    const fichaDetalhes = {
+      teams: {
+        home: {
+          id: 50,
+          name: 'Manchester City',
+          logo: 'https://media.api-sports.io/football/teams/50.png',
+        },
+        away: {
+          id: 40,
+          name: 'Liverpool',
+          logo: 'https://media.api-sports.io/football/teams/40.png',
+        },
+      },
+    }
+
+    const badgeCity = resolveTeamBadgeUrl({
+      teamName: 'Manchester City',
+      fichaDetalhes,
+      isSide: 'home',
+    })
+    expect(badgeCity).toBe('https://media.api-sports.io/football/teams/50.png')
+
+    const badgeLiv = resolveTeamBadgeUrl({
+      teamName: 'Liverpool',
+      fichaDetalhes,
+      isSide: 'away',
+    })
+    expect(badgeLiv).toBe('https://media.api-sports.io/football/teams/40.png')
+
+    // 2. Extração via fixtureLogosMemoryCache (Nível 2)
+    fixtureLogosMemoryCache.set('99999', {
+      home: 'https://media.api-sports.io/football/teams/123.png',
+      away: 'https://media.api-sports.io/football/teams/456.png',
+    })
+
+    const badgeFixtureHome = resolveTeamBadgeUrl({
+      teamName: 'Time Teste A',
+      fixtureId: '99999',
+      isSide: 'home',
+    })
+    expect(badgeFixtureHome).toBe('https://media.api-sports.io/football/teams/123.png')
+
+    // 3. Cache local (Nível 3)
+    const badgeCache = resolveTeamBadgeUrl({
+      teamName: 'Time Teste B',
+      liveOrCacheBadge: 'https://media.api-sports.io/football/teams/789.png',
+    })
+    expect(badgeCache).toBe('https://media.api-sports.io/football/teams/789.png')
+
+    // 4. Último recurso (Nível 4): Bandeira para seleção ou null (monograma) para clube
+    const badgeSelecao = resolveTeamBadgeUrl({
+      teamName: 'Brasil',
+    })
+    expect(badgeSelecao).toBe('https://flagcdn.com/w80/br.png')
+
+    const badgeClubeDesconhecido = resolveTeamBadgeUrl({
+      teamName: 'Clube Sem Escudo FC',
+    })
+    expect(badgeClubeDesconhecido).toBeNull()
   })
 })

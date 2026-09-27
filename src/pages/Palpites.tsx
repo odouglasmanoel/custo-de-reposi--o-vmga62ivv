@@ -56,7 +56,7 @@ import { GameLineupAccordion } from '@/components/GameLineupAccordion'
 import { FichaJogo } from '@/components/FichaJogo'
 import { checkPlayerInLineup, LineupResponse } from '@/services/escalacoes'
 import { readEscudoCache } from '@/services/enquetes'
-import { getFlagCdnUrl, resolveTeamBadgeUrl } from '@/lib/flags'
+import { getFlagCdnUrl, resolveTeamBadgeUrl, fixtureLogosMemoryCache } from '@/lib/flags'
 
 interface PalpiteFormData {
   placar_a: number | string
@@ -1243,12 +1243,18 @@ export default function Palpites() {
     escudo,
     nomeTime,
     sigla,
+    fixtureId,
+    fichaDetalhes,
+    isSide,
     sizeClass = 'h-10 w-10 sm:h-12 sm:w-12',
     textClass = 'text-xs font-bold text-slate-700',
   }: {
     escudo: string | undefined
     nomeTime: string
     sigla: string
+    fixtureId?: string | number | null
+    fichaDetalhes?: any
+    isSide?: 'home' | 'away'
     sizeClass?: string
     textClass?: string
   }) {
@@ -1263,23 +1269,54 @@ export default function Palpites() {
     }, [escudo])
 
     const handleError = () => {
-      if (nomeTime) {
-        // 1º fallback: Tenta cache oficial em memória/localStorage
-        const fallbackBadge = readEscudoCache(nomeTime)
-        if (fallbackBadge && fallbackBadge !== currentSrc) {
-          setCurrentSrc(fallbackBadge)
+      if (!nomeTime) {
+        setHasError(true)
+        return
+      }
+
+      // Nível 1: tenta extrair de fichaDetalhes se fornecido e ainda não usado
+      if (fichaDetalhes) {
+        const extracted = resolveTeamBadgeUrl({
+          teamName: nomeTime,
+          fichaDetalhes,
+          isSide,
+        })
+        if (extracted && extracted !== currentSrc) {
+          setCurrentSrc(extracted)
           return
         }
-        // 2º fallback: Se for seleção nacional, recorre a FlagCDN (garante que seleções NUNCA fiquem sem imagem ou com monograma)
-        if (!triedFlagCdn) {
-          setTriedFlagCdn(true)
-          const flagUrl = getFlagCdnUrl(nomeTime, { cacheBust: true })
-          if (flagUrl && flagUrl !== currentSrc) {
-            setCurrentSrc(flagUrl)
+      }
+
+      // Nível 2: tenta extrair via fixtureId em cache memoizado
+      if (fixtureId) {
+        const cleanId = String(fixtureId).replace(/\D/g, '').trim()
+        if (cleanId && fixtureLogosMemoryCache.has(cleanId)) {
+          const c = fixtureLogosMemoryCache.get(cleanId)!
+          const cached = isSide === 'home' ? c.home : isSide === 'away' ? c.away : c.home || c.away
+          if (cached && cached !== currentSrc) {
+            setCurrentSrc(cached)
             return
           }
         }
       }
+
+      // Nível 3: tenta cache oficial em memória/localStorage
+      const fallbackBadge = readEscudoCache(nomeTime)
+      if (fallbackBadge && fallbackBadge !== currentSrc) {
+        setCurrentSrc(fallbackBadge)
+        return
+      }
+
+      // Nível 4: Bandeira FlagCDN para seleções
+      if (!triedFlagCdn) {
+        setTriedFlagCdn(true)
+        const flagUrl = getFlagCdnUrl(nomeTime, { cacheBust: true })
+        if (flagUrl && flagUrl !== currentSrc) {
+          setCurrentSrc(flagUrl)
+          return
+        }
+      }
+
       setHasError(true)
     }
 
@@ -1560,6 +1597,9 @@ export default function Palpites() {
                       escudo={escudoA}
                       nomeTime={jogo.time_a}
                       sigla={initialsA}
+                      fixtureId={(jogo as any).fixture_id || (jogo as any).api_fixture_id}
+                      fichaDetalhes={(jogo as any).ficha_detalhes}
+                      isSide="home"
                       sizeClass="h-9 w-9 sm:h-10 sm:w-10"
                       textClass="text-xs font-bold text-slate-700"
                     />
@@ -1626,6 +1666,9 @@ export default function Palpites() {
                       escudo={escudoB}
                       nomeTime={jogo.time_b}
                       sigla={initialsB}
+                      fixtureId={(jogo as any).fixture_id || (jogo as any).api_fixture_id}
+                      fichaDetalhes={(jogo as any).ficha_detalhes}
+                      isSide="away"
                       sizeClass="h-9 w-9 sm:h-10 sm:w-10"
                       textClass="text-xs font-bold text-slate-700"
                     />
@@ -2426,6 +2469,7 @@ export default function Palpites() {
                       isAoVivo={isAoVivo}
                       url_escudo_mandante={(jogo as any).url_escudo_mandante}
                       url_escudo_visitante={(jogo as any).url_escudo_visitante}
+                      ficha_detalhes={(jogo as any).ficha_detalhes}
                     />
                   )}
                 </div>
@@ -2712,17 +2756,24 @@ export default function Palpites() {
             const pontos = palpite ? palpite.pontuacao_jogo : 0
             const detalhamento = palpite?.detalhamento || []
 
+            const jogoFixtureId = (jogo as any).fixture_id || (jogo as any).api_fixture_id
             const escudoA =
               resolveTeamBadgeUrl({
                 teamName: jogo.time_a,
                 savedBadge: jogo.url_escudo_mandante,
                 liveOrCacheBadge: readEscudoCache(jogo.time_a),
+                fixtureId: jogoFixtureId,
+                fichaDetalhes: (jogo as any).ficha_detalhes,
+                isSide: 'home',
               }) || undefined
             const escudoB =
               resolveTeamBadgeUrl({
                 teamName: jogo.time_b,
                 savedBadge: jogo.url_escudo_visitante,
                 liveOrCacheBadge: readEscudoCache(jogo.time_b),
+                fixtureId: jogoFixtureId,
+                fichaDetalhes: (jogo as any).ficha_detalhes,
+                isSide: 'away',
               }) || undefined
             const initialsA = (jogo.time_a || '').slice(0, 2).toUpperCase()
             const initialsB = (jogo.time_b || '').slice(0, 2).toUpperCase()

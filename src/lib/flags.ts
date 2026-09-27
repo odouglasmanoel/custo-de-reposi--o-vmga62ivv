@@ -448,22 +448,179 @@ export function isContaminatedBadge(teamName: string, url?: string | null): bool
  *     2. Dados ao vivo / cache existentes (se válidos)
  *     3. null (caindo para monograma)
  */
+// Cache em memória compartilhado para logos buscados por fixtureId / fichaDetalhes
+export const fixtureLogosMemoryCache = new Map<string, { home: string; away: string }>()
+
+// In-flight promises para deduplicar requisições para a mesma fixture
+const inFlightFixtureRequests = new Map<string, Promise<{ home: string; away: string } | null>>()
+
+/**
+ * Extrai logo de mandante/visitante do campo ficha_detalhes (JSON da API-Sports).
+ */
+export function extractLogosFromFichaDetalhes(
+  fichaDetalhes?: any,
+): { home?: string; away?: string } | null {
+  if (!fichaDetalhes) return null
+  let data = fichaDetalhes
+  if (typeof data === 'string') {
+    try {
+      data = JSON.parse(data)
+    } catch {
+      return null
+    }
+  }
+
+  // Se o objeto envolver uma resposta padrão { teams: { home: { logo }, away: { logo } } }
+  // ou { fixture: ..., teams: ... }
+  const teams =
+    data.teams || (data.fixture && data.fixture.teams) || (data.response && data.response[0]?.teams)
+  if (teams) {
+    const home = teams.home?.logo || teams.home?.badge || undefined
+    const away = teams.away?.logo || teams.away?.badge || undefined
+    if (home || away) {
+      return { home, away }
+    }
+  }
+  return null
+}
+
+/**
+ * Busca e memoiza escudos de um jogo por fixture_id de forma assíncrona.
+ * Consulta fixtureLogosMemoryCache primeiro, depois o endpoint autenticado /backend/v1/enquetes/fixture-detalhes.
+ */
+export async function fetchAndCacheFixtureLogos(
+  fixtureId: string | number,
+): Promise<{ home: string; away: string } | null> {
+  const cleanId = String(fixtureId || '')
+    .replace(/\D/g, '')
+    .trim()
+  if (!cleanId) return null
+
+  if (fixtureLogosMemoryCache.has(cleanId)) {
+    return fixtureLogosMemoryCache.get(cleanId)!
+  }
+
+  if (inFlightFixtureRequests.has(cleanId)) {
+    return inFlightFixtureRequests.get(cleanId)!
+  }
+
+  const p = (async () => {
+    try {
+      // Importa dinamicamente ou faz fetch direto ao endpoint oficial memoizado
+      const token =
+        typeof window !== 'undefined' ? (window as any).pocketbase?.authStore?.token : ''
+      const baseUrl = import.meta.env.VITE_POCKETBASE_URL || ''
+      const res = await fetch(
+        `${baseUrl}/backend/v1/enquetes/fixture-detalhes?id=${encodeURIComponent(cleanId)}`,
+        {
+          headers: token ? { Authorization: `Bearer ${token}` } : {},
+        },
+      )
+      if (!res.ok) return null
+      const json = await res.json().catch(() => null)
+      if (json?.success && json?.fixture) {
+        const home = json.fixture.homeTeamLogo || ''
+        const away = json.fixture.awayTeamLogo || ''
+        const result = { home, away }
+        fixtureLogosMemoryCache.set(cleanId, result)
+        return result
+      }
+      return null
+    } catch {
+      return null
+    } finally {
+      inFlightFixtureRequests.delete(cleanId)
+    }
+  })()
+
+  inFlightFixtureRequests.set(cleanId, p)
+  return p
+}
+
+/**
+ * Retorna a melhor URL de escudo com a prioridade estrita em 4 níveis:
+ * 1. Logo salvo em ficha_detalhes do registro do jogo ou url_escudo salva no banco (grátis, sem API)
+ * 2. Logo em cache de fixture_id (fixtureLogosMemoryCache) ou busca sob demanda associada à fixture
+ * 3. Cache local (readEscudoCache / liveOrCacheBadge)
+ * 4. Bandeira oficial da seleção (FlagCDN) ou sigla/monograma (null)
+ */
 export function resolveTeamBadgeUrl(params: {
   teamName: string
   savedBadge?: string | null
   liveOrCacheBadge?: string | null
+  fixtureId?: string | number | null
+  fichaDetalhes?: any
+  isSide?: 'home' | 'away'
   isCorrompido?: (name: string, url?: string | null) => boolean
   cacheBust?: boolean | string
 }): string | null {
-  const { teamName, savedBadge, liveOrCacheBadge, isCorrompido, cacheBust } = params
+  const {
+    teamName,
+    savedBadge,
+    liveOrCacheBadge,
+    fixtureId,
+    fichaDetalhes,
+    isSide,
+    isCorrompido,
+    cacheBust,
+  } = params
   if (!teamName) return null
 
   const checkCorrompido = isCorrompido || (() => false)
   const isSelecao = isNationalTeam(teamName)
   const flagUrl = getFlagCdnUrl(teamName, { cacheBust })
 
+  // 1. Extrai logos de ficha_detalhes se fornecido (custo zero de cota)
+  let fichaBadge: string | null = null
+  if (fichaDetalhes) {
+    const extracted = extractLogosFromFichaDetalhes(fichaDetalhes)
+    if (extracted) {
+      if (isSide === 'home' && extracted.home) {
+        fichaBadge = extracted.home
+      } else if (isSide === 'away' && extracted.away) {
+        fichaBadge = extracted.away
+      } else if (!isSide) {
+        // Se isSide não foi passado explicitamente, tenta deduzir ou usa home se compatível
+        fichaBadge = extracted.home || extracted.away || null
+      }
+    }
+  }
+
+  // 2. Extrai de fixtureLogosMemoryCache se fixtureId fornecido
+  let fixtureCachedBadge: string | null = null
+  if (fixtureId) {
+    const cleanId = String(fixtureId).replace(/\D/g, '').trim()
+    if (cleanId && fixtureLogosMemoryCache.has(cleanId)) {
+      const c = fixtureLogosMemoryCache.get(cleanId)!
+      if (isSide === 'home' && c.home) {
+        fixtureCachedBadge = c.home
+      } else if (isSide === 'away' && c.away) {
+        fixtureCachedBadge = c.away
+      } else if (!isSide) {
+        fixtureCachedBadge = c.home || c.away || null
+      }
+    }
+  }
+
+  // Se tiver fichaBadge ou fixtureCachedBadge que não seja corrompido, podemos usar como candidato de alta prioridade
+  const badgeLevel1 =
+    fichaBadge &&
+    !checkCorrompido(teamName, fichaBadge) &&
+    !isContaminatedBadge(teamName, fichaBadge)
+      ? fichaBadge
+      : null
+  const badgeLevel2 =
+    fixtureCachedBadge &&
+    !checkCorrompido(teamName, fixtureCachedBadge) &&
+    !isContaminatedBadge(teamName, fixtureCachedBadge)
+      ? fixtureCachedBadge
+      : null
+
   if (isSelecao) {
-    // 1. Se houver savedBadge oficial da seleção sem contaminação
+    // 1. Nível 1: ficha_detalhes ou savedBadge oficial da seleção
+    if (badgeLevel1 && isOfficialNationalTeamBadge(teamName, badgeLevel1)) {
+      return badgeLevel1
+    }
     if (
       savedBadge &&
       !isContaminatedBadge(teamName, savedBadge) &&
@@ -474,7 +631,12 @@ export function resolveTeamBadgeUrl(params: {
       }
     }
 
-    // 2. Se houver liveOrCacheBadge oficial da seleção sem contaminação
+    // Nível 2: fixture memoizada com logo oficial da seleção
+    if (badgeLevel2 && isOfficialNationalTeamBadge(teamName, badgeLevel2)) {
+      return badgeLevel2
+    }
+
+    // Nível 3: liveOrCacheBadge oficial da seleção sem contaminação
     if (
       liveOrCacheBadge &&
       !isContaminatedBadge(teamName, liveOrCacheBadge) &&
@@ -485,8 +647,7 @@ export function resolveTeamBadgeUrl(params: {
       }
     }
 
-    // 3. Para seleção nacional, se não há logo oficial certificado da API-Sports,
-    // usar SEMPRE a bandeira oficial via FlagCDN
+    // Nível 4: Bandeira FlagCDN da seleção nacional
     if (flagUrl) {
       return flagUrl
     }
@@ -495,7 +656,10 @@ export function resolveTeamBadgeUrl(params: {
   }
 
   // --- Caso Clube ---
-  // 1º Escudo oficial salvo (media.api-sports.io)
+  // Nível 1: ficha_detalhes do banco ou url salva oficial (media.api-sports.io)
+  if (badgeLevel1 && badgeLevel1.includes('media.api-sports.io')) {
+    return badgeLevel1
+  }
   if (
     savedBadge &&
     savedBadge.includes('media.api-sports.io') &&
@@ -504,8 +668,9 @@ export function resolveTeamBadgeUrl(params: {
   ) {
     return savedBadge
   }
-
-  // Se salvou outra URL válida de clube
+  if (badgeLevel1) {
+    return badgeLevel1
+  }
   if (
     savedBadge &&
     !isContaminatedBadge(teamName, savedBadge) &&
@@ -514,7 +679,12 @@ export function resolveTeamBadgeUrl(params: {
     return savedBadge
   }
 
-  // 2º Dados ao vivo ou cache existente
+  // Nível 2: Busca por fixtureId em cache memoizado
+  if (badgeLevel2) {
+    return badgeLevel2
+  }
+
+  // Nível 3: Dados ao vivo ou cache local existente
   if (
     liveOrCacheBadge &&
     !isContaminatedBadge(teamName, liveOrCacheBadge) &&
@@ -523,5 +693,6 @@ export function resolveTeamBadgeUrl(params: {
     return liveOrCacheBadge
   }
 
+  // Nível 4: Fallback final (null => monograma / sigla)
   return null
 }
