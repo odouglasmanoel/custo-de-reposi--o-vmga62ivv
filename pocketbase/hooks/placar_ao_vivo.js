@@ -3539,52 +3539,67 @@ routerAdd('POST', '/backend/v1/placar-ao-vivo/config', (e) => {
       $app.save(recBackup)
     }
 
-    // Atualiza opções de max_limit ou trava_desativada se fornecidas no body
-    if (body.max_limit !== undefined || body.trava_desativada !== undefined) {
+    // Ao gravar nova chave, SEMPRE resetar explicitamente api_football_daily_usage
+    // para active_key: 'primary', primary_exhausted: false, fallback_active: false
+    try {
+      const colUsage = $app.findCollectionByNameOrId('config_integracoes')
+      let usageRec = null
       try {
-        const colUsage = $app.findCollectionByNameOrId('config_integracoes')
-        let usageRec = null
-        try {
-          usageRec = $app.findFirstRecordByData(
-            'config_integracoes',
-            'chave',
-            'api_football_daily_usage',
-          )
-        } catch (_) {
-          usageRec = new Record(colUsage)
-          usageRec.set('chave', 'api_football_daily_usage')
-          usageRec.set('provedor', 'api_football')
-          usageRec.set('ativo', true)
-        }
-        let uData = {
-          date_utc: new Date().toISOString().slice(0, 10),
-          count: 0,
-          max_limit: 80,
-          trava_desativada: false,
-          blocked: false,
-        }
-        try {
-          const rawU = usageRec.getString('api_key')
-          if (rawU) uData = Object.assign(uData, JSON.parse(rawU))
-        } catch (_) {}
-
-        if (body.max_limit !== undefined) {
-          const newMax = parseInt(body.max_limit, 10)
-          if (!isNaN(newMax) && newMax > 0) {
-            uData.max_limit = newMax
-          }
-        }
-        if (body.trava_desativada !== undefined) {
-          uData.trava_desativada = Boolean(body.trava_desativada)
-        }
-        usageRec.set('api_key', JSON.stringify(uData))
-        $app.save(usageRec)
-      } catch (errUsageSave) {
-        console.log(
-          '[placar-ao-vivo/config] Erro ao salvar max_limit/trava_desativada:',
-          errUsageSave,
+        usageRec = $app.findFirstRecordByData(
+          'config_integracoes',
+          'chave',
+          'api_football_daily_usage',
         )
+      } catch (_) {
+        usageRec = new Record(colUsage)
+        usageRec.set('chave', 'api_football_daily_usage')
+        usageRec.set('provedor', 'api_football')
+        usageRec.set('ativo', true)
       }
+      let uData = {
+        date_utc: new Date().toISOString().slice(0, 10),
+        count: 0,
+        count_primary: 0,
+        count_backup: 0,
+        max_limit: 80,
+        trava_desativada: false,
+        blocked: false,
+        active_key: 'primary',
+        fallback_active: false,
+        primary_exhausted: false,
+        backup_exhausted: false,
+        last_reset_utc: new Date().toISOString(),
+        last_request_utc: null,
+      }
+      try {
+        const rawU = usageRec.getString('api_key')
+        if (rawU) uData = Object.assign(uData, JSON.parse(rawU))
+      } catch (_) {}
+
+      // Reset obrigatório de chave ativa e status de exaustão
+      uData.primary_exhausted = false
+      uData.active_key = 'primary'
+      uData.fallback_active = false
+      uData.blocked = false
+
+      if (body.max_limit !== undefined) {
+        const newMax = parseInt(body.max_limit, 10)
+        if (!isNaN(newMax) && newMax > 0) {
+          uData.max_limit = newMax
+        }
+      }
+      if (body.trava_desativada !== undefined) {
+        uData.trava_desativada = Boolean(body.trava_desativada)
+      }
+      usageRec.set('api_key', JSON.stringify(uData))
+      usageRec.set('provedor', 'api_football')
+      usageRec.set('ativo', true)
+      $app.save(usageRec)
+    } catch (errUsageSave) {
+      console.log(
+        '[placar-ao-vivo/config] Erro ao sincronizar api_football_daily_usage:',
+        errUsageSave,
+      )
     }
 
     // Invalida caches ao salvar nova chave para que o admin possa testar imediatamente

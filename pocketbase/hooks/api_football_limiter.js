@@ -88,11 +88,6 @@ function obterChavesConfiguradas() {
     } catch (_) {}
   }
 
-  // Chave secundária padrão de segurança informada pelo usuário caso não encontrada
-  if (!backupKey) {
-    backupKey = '8664f83267c4de6554592d63de4120ab'
-  }
-
   return { primaryKey, backupKey }
 }
 
@@ -375,16 +370,13 @@ function isAuthInvalidError(statusCode, jsonBody, rawBody) {
  * Prepara cabeçalhos HTTP adequados para a chave fornecida
  */
 function buildHeadersForKey(apiKey, customHeaders) {
-  const isRapid = apiKey.length > 40
   const headers = Object.assign({}, customHeaders || {})
   delete headers['x-apisports-key']
   delete headers['x-rapidapi-key']
   delete headers['x-rapidapi-host']
 
-  if (isRapid) {
-    headers['x-rapidapi-key'] = apiKey
-    headers['x-rapidapi-host'] = 'api-football-v1.p.rapidapi.com'
-  } else {
+  // Injetar estritamente apenas a chave ativa em x-apisports-key
+  if (apiKey) {
     headers['x-apisports-key'] = apiKey
   }
   return headers
@@ -412,19 +404,19 @@ function enviarRequisicaoApiFootball(url, options, prioridade) {
   const { rec, usageData } = obterOuCriarRegistroUso()
   const { primaryKey, backupKey } = obterChavesConfiguradas()
 
-  // Se a chave primária foi marcada como esgotada ou a chave ativa salva é backup,
-  // mas backup ainda não foi esgotado, garantimos o roteamento transparente para o backup
+  // REGRA INVIOLÁVEL: A Chave Primária ativa do banco/configuração DEVE SER SEMPRE
+  // a primeira tentativa em TODAS as requisições (/fixtures, /fixtures/events, /fixtures/lineups, /status).
+  // NUNCA iniciar em 'backup' por estado legado quando a primária está configurada e ativa.
+  // Somente inicia em 'backup' se a primária NÃO existir no banco/env e houver backup configurado.
   let initialKeyType = 'primary'
-  if (
-    backupKey &&
-    (usageData.active_key === 'backup' || usageData.primary_exhausted) &&
-    !usageData.backup_exhausted
-  ) {
+  if (!primaryKey && backupKey) {
     initialKeyType = 'backup'
   }
 
-  // Se ambas as chaves já foram esgotadas hoje e não é admin manual
+  // Se ambas as chaves já foram esgotadas hoje e não é admin manual nem teste/status
   if (
+    primaryKey &&
+    backupKey &&
     usageData.primary_exhausted &&
     usageData.backup_exhausted &&
     !isManualAdmin &&
@@ -484,20 +476,21 @@ function enviarRequisicaoApiFootball(url, options, prioridade) {
     )
     let authError = isAuthInvalidError(res ? res.statusCode : 500, jsonBody, res ? res.raw : '')
 
-    // Se a primeira chave tentada foi a PRINCIPAL e deu cota excedida OU erro de auth, tenta FALLBACK para a SECUNDÁRIA!
+    // Se a primeira chave tentada foi a PRINCIPAL e deu cota excedida (429) OU erro REAL de autenticação (401/403 de chave inválida), tenta FALLBACK para a SECUNDÁRIA!
     if (
       (quotaExceeded || authError) &&
       currentKeyType === 'primary' &&
       backupKey &&
       backupKey !== primaryKey
     ) {
+      console.warn(
+        `[API-Football Limiter] Falha na chave PRINCIPAL (${authError ? 'Erro de autenticação/chave' : 'Cota excedida'}). Tentando chave SECUNDÁRIA de backup: ${url}`,
+      )
+
       if (quotaExceeded) {
         marcarChaveEsgotada(rec, usageData, 'primary', `HTTP ${res ? res.statusCode : '429'}`)
       }
 
-      console.warn(
-        `[API-Football Limiter] Falha na chave PRINCIPAL (${authError ? 'Erro de autenticação/chave' : 'Cota excedida'}). Tentando chave SECUNDÁRIA de backup: ${url}`,
-      )
       currentKeyType = 'backup'
       activeKey = backupKey
 
@@ -549,6 +542,19 @@ function enviarRequisicaoApiFootball(url, options, prioridade) {
     // Requisição bem-sucedida (não deu erro de rate-limit nem auth)
     if (!isTestOrStatus) {
       incrementarUso(rec, usageData, currentKeyType)
+    }
+
+    // Se teve sucesso com a primária, garante que o estado ativo persista como 'primary'
+    if (currentKeyType === 'primary' && usageData.active_key !== 'primary') {
+      try {
+        usageData.active_key = 'primary'
+        usageData.fallback_active = false
+        usageData.primary_exhausted = false
+        if (rec) {
+          rec.set('api_key', JSON.stringify(usageData))
+          $app.save(rec)
+        }
+      } catch (_) {}
     }
 
     return {
