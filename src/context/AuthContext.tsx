@@ -136,11 +136,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setUser(refreshed.record)
         setToken(refreshed.token)
       } catch (err: any) {
-        // Só executa logout quando o erro for de autenticação REAL (401/403 do PocketBase, token inválido/expirado).
-        // Para qualquer outro erro (timeout, falha de conexão/rede, status 0), mantém o usuário logado com o authStore atual.
+        // Só deslogar em rejeição definitiva de credencial (401 do PocketBase em authRefresh).
+        // Em falha de rede/timeout/status 0/5xx ou erro transitório, JAMAIS limpa o authStore.
         const status = err?.status ?? err?.statusCode
-        const isAuthError = status === 401 || status === 403
-        if (isAuthError) {
+        const isDefinitiveAuthError = status === 401
+        if (isDefinitiveAuthError) {
           logout()
         }
       }

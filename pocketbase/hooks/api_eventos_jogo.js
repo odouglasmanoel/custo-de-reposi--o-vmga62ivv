@@ -139,52 +139,86 @@ routerAdd('GET', '/backend/v1/eventos-jogo', (e) => {
       } catch (_) {}
     }
 
-    // Se não temos fixture_id numérico válido para a API externa:
-    if (!isNumericFixtureId) {
-      // Tenta sintetizar eventos com base nos gols já salvos em gols_time_a e gols_time_b
+    // Helper para sintetizar eventos de gol a partir dos dados locais do jogo
+    const sintetizarEventosLocais = (jogoRec) => {
       const fallbackEvents = []
-      if (matchingJogo) {
-        const parseScorers = (fieldName, teamName, teamSide) => {
-          try {
-            const raw = matchingJogo.get(fieldName)
-            let list = []
-            if (Array.isArray(raw)) list = raw
-            else if (typeof raw === 'string') list = JSON.parse(raw)
-            if (Array.isArray(list)) {
-              for (let i = 0; i < list.length; i++) {
-                const it = list[i]
-                if (it && it.nome) {
-                  const minMatch = String(it.minuto || it.nome).match(/(\d+)/)
-                  const min = minMatch ? parseInt(minMatch[1], 10) : null
-                  const cleanName = String(it.nome)
-                    .replace(/\s*\d+\s*['’]/g, '')
-                    .trim()
-                  fallbackEvents.push({
-                    time: { elapsed: min, extra: null },
-                    team: { name: teamName, side: teamSide },
-                    player: { name: cleanName },
-                    assist: { name: null },
-                    type: 'Goal',
-                    detail: it.posicao === 'Gol Contra' ? 'Own Goal' : 'Normal Goal',
-                    comments: null,
-                  })
-                }
+      if (!jogoRec) return fallbackEvents
+
+      const parseScorers = (fieldName, teamName, teamSide) => {
+        try {
+          const raw = jogoRec.get(fieldName)
+          let list = []
+          if (Array.isArray(raw)) list = raw
+          else if (typeof raw === 'string') list = JSON.parse(raw)
+          if (Array.isArray(list)) {
+            for (let i = 0; i < list.length; i++) {
+              const it = list[i]
+              if (!it) continue
+              const nomeStr = typeof it === 'string' ? it : it.nome || ''
+              const detailLower = String(it.posicao || it.detail || '').toLowerCase()
+
+              // Preservação: pênalti perdido nunca vira evento de gol
+              if (detailLower.includes('missed') || detailLower.includes('perdido')) {
+                continue
+              }
+
+              if (nomeStr) {
+                const minMatch = String(it.minuto || nomeStr).match(/(\d+)/)
+                const min = minMatch ? parseInt(minMatch[1], 10) : null
+                const cleanName = String(nomeStr)
+                  .replace(/\s*\d+\s*['’]/g, '')
+                  .trim()
+
+                const isContra =
+                  it.posicao === 'Gol Contra' ||
+                  detailLower.includes('own') ||
+                  detailLower.includes('contra')
+                const isPenalty = detailLower.includes('penalty') || detailLower.includes('pênalti')
+
+                fallbackEvents.push({
+                  time: { elapsed: min !== null && !isNaN(min) ? min : null, extra: null },
+                  team: { name: teamName, side: teamSide },
+                  player: { name: cleanName },
+                  assist: { name: null },
+                  type: 'Goal',
+                  detail: isContra ? 'Own Goal' : isPenalty ? 'Penalty' : 'Normal Goal',
+                  category: 'goal',
+                  comments: null,
+                })
               }
             }
-          } catch (_) {}
-        }
-        parseScorers('gols_time_a', matchingJogo.getString('time_a'), 'home')
-        parseScorers('gols_time_b', matchingJogo.getString('time_b'), 'away')
+          }
+        } catch (_) {}
       }
+
+      parseScorers('gols_time_a', jogoRec.getString('time_a'), 'home')
+      parseScorers('gols_time_b', jogoRec.getString('time_b'), 'away')
+
+      return fallbackEvents
+    }
+
+    // Se não temos fixture_id numérico válido para a API externa:
+    if (!isNumericFixtureId) {
+      const fallbackEvents = sintetizarEventosLocais(matchingJogo)
 
       return e.json(200, {
         success: true,
         cached: true,
-        source: 'local_synthesized',
+        source: 'local_database',
         fixture_id: fixtureIdParam,
         events: fallbackEvents,
-        notice:
-          'Partida sem fixture_id numérico oficial da API-Sports. Exibindo marcadores registrados localmente.',
+        teams: matchingJogo
+          ? {
+              home: { name: matchingJogo.getString('time_a') },
+              away: { name: matchingJogo.getString('time_b') },
+            }
+          : {},
+        goals: matchingJogo
+          ? {
+              home: matchingJogo.getInt('placar_a'),
+              away: matchingJogo.getInt('placar_b'),
+            }
+          : {},
       })
     }
 
@@ -302,11 +336,34 @@ routerAdd('GET', '/backend/v1/eventos-jogo', (e) => {
     const resJson = respCall.json
 
     if (!resHttp || respCall.statusCode !== 200) {
+      // Fallback silencioso para dados locais quando a API externa não responder 200 (ex: 403 plano/permissão, 429, etc)
+      if (matchingJogo) {
+        const localEvents = sintetizarEventosLocais(matchingJogo)
+        const isFinalizado = Boolean(isMatchingJogoFinalizado)
+        return e.json(200, {
+          success: true,
+          cached: true,
+          source: 'local_database',
+          is_finalizado: isFinalizado,
+          fixture_id: fixtureIdParam,
+          events: localEvents,
+          teams: {
+            home: { name: matchingJogo.getString('time_a') },
+            away: { name: matchingJogo.getString('time_b') },
+          },
+          goals: {
+            home: matchingJogo.getInt('placar_a'),
+            away: matchingJogo.getInt('placar_b'),
+          },
+        })
+      }
+
+      // Só retorna erro se não houver jogo ou dados locais nenhum
       return e.json(200, {
         success: false,
         cached: true,
         statusCode: respCall.statusCode || 500,
-        error: 'API externa retornou status ' + (respCall.statusCode || 'erro'),
+        error: 'Partida não localizada no banco de dados local.',
         events: [],
       })
     }
@@ -333,10 +390,22 @@ routerAdd('GET', '/backend/v1/eventos-jogo', (e) => {
       else if (typeStr === 'card') category = 'card'
       else if (typeStr.includes('subst')) category = 'subst'
 
+      let elapsedInt = null
+      if (ev.time && ev.time.elapsed != null) {
+        const parsedM = parseInt(ev.time.elapsed, 10)
+        if (!isNaN(parsedM)) elapsedInt = parsedM
+      }
+
+      let extraInt = null
+      if (ev.time && ev.time.extra != null) {
+        const parsedE = parseInt(ev.time.extra, 10)
+        if (!isNaN(parsedE)) extraInt = parsedE
+      }
+
       return {
         time: {
-          elapsed: ev.time?.elapsed ?? null,
-          extra: ev.time?.extra ?? null,
+          elapsed: elapsedInt,
+          extra: extraInt,
         },
         team: {
           id: ev.team?.id ?? null,
@@ -390,10 +459,17 @@ routerAdd('GET', '/backend/v1/eventos-jogo', (e) => {
           existingFicha = existingFichaRaw
         }
 
+        // Preservação de escalações e dados pré-existentes: nunca sobrescrever escalações com lista vazia
+        const mergedLineups =
+          Array.isArray(fixData.lineups) && fixData.lineups.length > 0
+            ? fixData.lineups
+            : existingFicha.lineups || matchingJogo.get('escalacoes') || null
+
         const mergedFicha = Object.assign({}, existingFicha, {
-          events: normalizedEvents,
+          events: normalizedEvents.length > 0 ? normalizedEvents : existingFicha.events || [],
           teams: fixData.teams || existingFicha.teams,
           goals: fixData.goals || existingFicha.goals,
+          lineups: mergedLineups,
           fixture: fixData.fixture || existingFicha.fixture,
           updatedAt: new Date().toISOString(),
         })

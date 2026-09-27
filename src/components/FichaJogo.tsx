@@ -60,6 +60,16 @@ export const FichaJogo: React.FC<FichaJogoProps> = ({
     return isJogoConcluido({ status, resultado_finalizado })
   }, [isConcluido, status, resultado_finalizado])
 
+  // Verifica se o jogo possui dados/marcadores locais ou placar registrado
+  const temDadosLocais = useMemo(() => {
+    const temGolsA = Array.isArray(golsTimeA) && golsTimeA.length > 0
+    const temGolsB = Array.isArray(golsTimeB) && golsTimeB.length > 0
+    const temPlacar =
+      (typeof placarA === 'number' && !isNaN(placarA)) ||
+      (typeof placarB === 'number' && !isNaN(placarB))
+    return temGolsA || temGolsB || temPlacar
+  }, [golsTimeA, golsTimeB, placarA, placarB])
+
   const numFixtureId = useMemo(() => {
     if (!fixtureId) return null
     const clean = String(fixtureId).trim()
@@ -396,19 +406,22 @@ export const FichaJogo: React.FC<FichaJogoProps> = ({
           )}
 
           {/* Mensagem de Aviso ou Erro Amigável */}
-          {!loading && (error || data?.notice) && (
-            <div className="mb-2 p-2 rounded bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800/50 flex items-start gap-1.5 text-xs text-amber-700 dark:text-amber-400">
-              <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
-              <div className="flex-1">
-                {data?.notice || error}
-                {data?.rate_limited && (
-                  <p className="mt-1 text-[11px] text-amber-600 dark:text-amber-500">
-                    A cota da API foi preservada com sucesso. Os dados locais continuam visíveis.
-                  </p>
-                )}
+          {!loading &&
+            // Quando a partida estiver encerrada ou possuir dados locais gravados, a busca externa é apenas complementar: não exibe a faixa amarela de erro de API externa
+            !(jogoFinalizado || temDadosLocais) &&
+            (error || data?.notice) && (
+              <div className="mb-2 p-2 rounded bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800/50 flex items-start gap-1.5 text-xs text-amber-700 dark:text-amber-400">
+                <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+                <div className="flex-1">
+                  {data?.notice || error}
+                  {data?.rate_limited && (
+                    <p className="mt-1 text-[11px] text-amber-600 dark:text-amber-500">
+                      A cota da API foi preservada com sucesso. Os dados locais continuam visíveis.
+                    </p>
+                  )}
+                </div>
               </div>
-            </div>
-          )}
+            )}
 
           {/* Lista de Eventos (Timeline Centralizada) */}
           {!loading && displayEvents.length > 0 && (

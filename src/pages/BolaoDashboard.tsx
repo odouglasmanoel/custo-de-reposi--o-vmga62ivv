@@ -652,15 +652,11 @@ export default function BolaoDashboard() {
         const status = errSend?.status || errSend?.statusCode
         if (status === 401 || status === 403) {
           toast({
-            title: 'Sessão expirada',
-            description: 'Sua sessão expirou. Faça login novamente.',
+            title: 'Aviso da API',
+            description:
+              'Não foi possível autenticar a operação no backend. Operando via gravação direta.',
             variant: 'destructive',
           })
-          navigate('/login', {
-            state: { from: location.pathname, sessionExpired: true },
-            replace: true,
-          })
-          return
         }
         resBackend = null
       }
@@ -760,30 +756,11 @@ export default function BolaoDashboard() {
       setAdminSobrescritaJogo(null)
     } catch (err: any) {
       console.error('Erro ao salvar sobrescrita manual:', err)
-      const isAuthError =
-        err?.status === 401 ||
-        err?.status === 403 ||
-        err?.message?.includes('401') ||
-        err?.message?.includes('Não autorizado') ||
-        err?.message?.includes('Sua sessão expirou')
-
-      if (isAuthError) {
-        toast({
-          title: 'Sessão expirada',
-          description: 'Sua sessão expirou. Faça login novamente.',
-          variant: 'destructive',
-        })
-        navigate('/login', {
-          state: { from: location.pathname, sessionExpired: true },
-          replace: true,
-        })
-      } else {
-        toast({
-          title: 'Erro ao salvar sobrescrita',
-          description: err?.message || 'Erro ao salvar sobrescrita manual. Verifique sua conexão.',
-          variant: 'destructive',
-        })
-      }
+      toast({
+        title: 'Erro ao salvar sobrescrita',
+        description: err?.message || 'Erro ao salvar sobrescrita manual. Verifique sua conexão.',
+        variant: 'destructive',
+      })
       setAdminSobrescritaJogo((prev) => (prev ? { ...prev, isSaving: false } : null))
     }
   }
@@ -992,13 +969,9 @@ export default function BolaoDashboard() {
 
       if (isUserSessionAuthError) {
         toast({
-          title: 'Sessão expirada',
-          description: 'Sua sessão expirou. Faça login novamente.',
+          title: 'Aviso de Permissão',
+          description: 'Ação restrita ao administrador. Verifique as credenciais no painel.',
           variant: 'destructive',
-        })
-        navigate('/login', {
-          state: { from: location.pathname, sessionExpired: true },
-          replace: true,
         })
         return
       }
@@ -1135,13 +1108,9 @@ export default function BolaoDashboard() {
 
       if (isUserSessionAuthError) {
         toast({
-          title: 'Sessão expirada',
-          description: 'Sua sessão expirou. Faça login novamente.',
+          title: 'Aviso de Permissão',
+          description: 'Ação restrita ao administrador. Verifique as credenciais no painel.',
           variant: 'destructive',
-        })
-        navigate('/login', {
-          state: { from: location.pathname, sessionExpired: true },
-          replace: true,
         })
         return
       }
@@ -1194,15 +1163,11 @@ export default function BolaoDashboard() {
         const status = errSend?.status || errSend?.statusCode
         if (status === 401 || status === 403) {
           toast({
-            title: 'Sessão expirada',
-            description: 'Sua sessão expirou. Faça login novamente.',
+            title: 'Aviso da API',
+            description:
+              'Não foi possível autenticar a operação no backend. Operando via gravação direta.',
             variant: 'destructive',
           })
-          navigate('/login', {
-            state: { from: location.pathname, sessionExpired: true },
-            replace: true,
-          })
-          return
         }
         resBackend = null
       }

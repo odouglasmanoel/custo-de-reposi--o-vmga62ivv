@@ -114,7 +114,7 @@ describe('Componente FichaJogo', () => {
     })
   })
 
-  it('mostra mensagem amigável caso ocorra erro ou limite de cota sem quebrar', async () => {
+  it('mostra mensagem amigável caso ocorra erro ou limite de cota sem quebrar em jogo sem dados locais', async () => {
     vi.mocked(eventosService.fetchEventosJogo).mockResolvedValueOnce({
       success: true,
       rate_limited: true,
@@ -128,6 +128,32 @@ describe('Componente FichaJogo', () => {
     await waitFor(() => {
       expect(screen.getByText(/Cota diária da API-Sports atingida/i)).toBeDefined()
     })
+  })
+
+  it('NÃO exibe faixa amarela de erro de API externa quando jogo possui placar ou marcadores locais', async () => {
+    vi.mocked(eventosService.fetchEventosJogo).mockResolvedValueOnce({
+      success: false,
+      error: 'API externa retornou status 403',
+      events: [],
+    })
+
+    render(
+      <FichaJogo
+        fixtureId="1628997"
+        timeA="Estados Unidos"
+        timeB="Peru"
+        placarA={4}
+        placarB={1}
+        golsTimeA={[{ nome: 'Balogun', minuto: "15'" }]}
+        golsTimeB={[]}
+        defaultOpen={true}
+      />,
+    )
+
+    await waitFor(() => {
+      expect(screen.getByText('Balogun')).toBeDefined()
+    })
+    expect(screen.queryByText(/API externa retornou status 403/i)).toBeNull()
   })
 
   describe('Regras de Exibição e Trava do Botão Atualizar Eventos', () => {

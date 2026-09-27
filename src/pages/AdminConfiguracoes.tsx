@@ -111,28 +111,29 @@ export default function AdminConfiguracoes() {
     const status = errorObj?.status || errorObj?.statusCode
     const msg = errorObj?.data?.message || errorObj?.data?.error || errorObj?.message || ''
 
-    if (
-      status === 401 ||
+    const msgLower = msg.toLowerCase()
+    const isApiExternalError =
       status === 403 ||
+      status === 401 ||
       msg.includes('401') ||
       msg.includes('403') ||
-      msg.toLowerCase().includes('token') ||
-      msg.toLowerCase().includes('não autenticado')
-    ) {
+      msgLower.includes('api key') ||
+      msgLower.includes('chave') ||
+      msgLower.includes('cota') ||
+      msgLower.includes('rate limit') ||
+      msgLower.includes('request limit')
+
+    if (isApiExternalError) {
       toast({
-        title: 'Sessão Expirada',
-        description: 'Sua sessão expirou. Por favor, faça login novamente para continuar.',
+        title: 'Verificação da API-Football',
+        description:
+          msg || 'Chave da API-Football necessita verificação no painel ou cota da API atingida.',
         variant: 'destructive',
-      })
-      navigate('/login', {
-        state: { from: location, sessionExpired: true },
-        replace: true,
       })
       return true
     }
 
-    const cleanDesc =
-      !msg || msg.toLowerCase().includes('failed to fetch') ? fallbackDescription : msg
+    const cleanDesc = !msg || msgLower.includes('failed to fetch') ? fallbackDescription : msg
 
     toast({
       title: fallbackTitle,
