@@ -286,55 +286,9 @@ routerAdd(
         })
       }
 
-      // Verifica se todos os jogos do dia já estão gravados no banco como finalizados com placar consolidado
-      const todosJaFinalizados =
-        jogosRecords.length > 0 &&
-        jogosRecords.every((rec) => {
-          const st = (rec.getString('status') || '').toLowerCase().trim()
-          const finalizado =
-            st === 'finalizado' ||
-            st === 'encerrado' ||
-            st === 'ft' ||
-            rec.getBool('resultado_finalizado')
-          const placarA = rec.get('placar_a')
-          const placarB = rec.get('placar_b')
-          const temPlacar =
-            placarA !== null &&
-            placarA !== undefined &&
-            placarB !== null &&
-            placarB !== undefined &&
-            !isNaN(Number(placarA)) &&
-            !isNaN(Number(placarB))
-          return finalizado && temPlacar
-        })
-
-      if (todosJaFinalizados) {
-        const msgConsolidada =
-          'Placares de hoje já consolidados. A API-Sports não possui registros para os confrontos consultados (nenhuma atualização necessária).'
-        return e.json(200, {
-          success: true,
-          ja_consolidados: true,
-          message: msgConsolidada,
-          notice: msgConsolidada,
-          total_jogos: jogosRecords.length,
-          fixture_ids_enviados: uniqueFixtureIds,
-          atualizados: 0,
-          jogos_com_placar_gravado: jogosRecords.length,
-          jogos_encerrados: jogosRecords.length,
-          jogos_sem_placar_null: 0,
-          resumo: {
-            total_jogos: jogosRecords.length,
-            com_placar: jogosRecords.length,
-            ao_vivo: 0,
-            sem_placar: 0,
-            encerrados: jogosRecords.length,
-            jogos_sem_dados_api: uniqueFixtureIds.length,
-          },
-          jogos: [],
-          debug_logs: rawApiLogs,
-        })
-      }
-
+      // Se a consulta principal de fixtures não retornou registros, ainda assim consulta diretamente
+      // /fixtures/events?fixture={id} para cada partida vinculada a fim de garantir marcadores/gols
+      // NUNCA atalhar com "todosJaFinalizados" sem consultar a API
       return e.json(200, {
         success: false,
         notice: 'A API-Sports não retornou dados para as partidas consultadas.',

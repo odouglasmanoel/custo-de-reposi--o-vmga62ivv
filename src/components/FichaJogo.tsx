@@ -84,9 +84,8 @@ export const FichaJogo: React.FC<FichaJogoProps> = ({
     async (forceRefresh = false) => {
       if (!numFixtureId && !jogoId) return
 
-      // TRAVA EM JOGOS ENCERRADOS:
-      // Se a partida estiver concluída/encerrada, nunca forçar refresh na API-Football para poupar cota diária
-      const efetivoForceRefresh = forceRefresh && !jogoFinalizado
+      // Respeita o forceRefresh mesmo em jogo finalizado para permitir busca e sincronização de marcadores
+      const efetivoForceRefresh = forceRefresh
 
       setLoading(true)
       setError(null)
@@ -320,23 +319,11 @@ export const FichaJogo: React.FC<FichaJogoProps> = ({
         {isOpen && isAdmin && (
           <button
             type="button"
-            onClick={() => !jogoFinalizado && carregarEventos(true)}
-            disabled={loading || jogoFinalizado}
-            title={
-              jogoFinalizado
-                ? 'Partida encerrada: dados consolidados no banco de dados'
-                : 'Atualizar eventos'
-            }
-            aria-label={
-              jogoFinalizado
-                ? 'Partida encerrada: dados consolidados no banco de dados'
-                : 'Atualizar eventos'
-            }
-            className={`text-xs p-1 rounded transition-colors ${
-              jogoFinalizado
-                ? 'text-slate-300 dark:text-slate-600 cursor-not-allowed'
-                : 'text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-50'
-            }`}
+            onClick={() => carregarEventos(true)}
+            disabled={loading}
+            title="Atualizar eventos"
+            aria-label="Atualizar eventos"
+            className="text-xs p-1 rounded transition-colors text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-50"
           >
             <RotateCw className={`w-3 h-3 ${loading ? 'animate-spin text-emerald-600' : ''}`} />
           </button>
@@ -498,7 +485,9 @@ export const FichaJogo: React.FC<FichaJogoProps> = ({
               <Clock className="w-5 h-5 mx-auto mb-1.5 opacity-40" />
               <p>Nenhum evento registrado até o momento.</p>
               <p className="text-[11px] text-slate-400/80 mt-0.5">
-                {jogoFinalizado
+                {jogoFinalizado &&
+                data?.success &&
+                (data?.source === 'api_football' || Array.isArray(data?.events))
                   ? 'A partida foi finalizada sem registro de eventos na súmula da API.'
                   : 'Os eventos aparecerão em tempo real conforme a partida avançar.'}
               </p>

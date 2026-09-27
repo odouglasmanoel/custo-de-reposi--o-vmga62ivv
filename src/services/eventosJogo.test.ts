@@ -69,6 +69,29 @@ describe('serviço fetchEventosJogo', () => {
     expect(pb.send).toHaveBeenCalledTimes(1) // Continua 1 -> cache funcionou!
   })
 
+  it('chama backend com refresh=1 quando forceRefresh=true mesmo para fixture já existente', async () => {
+    vi.mocked(pb.send).mockResolvedValueOnce({
+      success: true,
+      fixture_id: '54321',
+      events: [
+        {
+          time: { elapsed: 10 },
+          team: { name: 'Brasil' },
+          player: { name: 'Neymar' },
+          type: 'Goal',
+          detail: 'Normal Goal',
+        },
+      ],
+    })
+
+    const res = await fetchEventosJogo({ fixtureId: '54321', forceRefresh: true })
+    expect(res.success).toBe(true)
+    expect(pb.send).toHaveBeenCalledWith(
+      expect.stringContaining('/backend/v1/eventos-jogo?fixture_id=54321&refresh=1'),
+      expect.anything(),
+    )
+  })
+
   it('trata falha do backend amigavelmente sem estourar exceção', async () => {
     vi.mocked(pb.send).mockRejectedValueOnce(new Error('Falha de rede'))
 

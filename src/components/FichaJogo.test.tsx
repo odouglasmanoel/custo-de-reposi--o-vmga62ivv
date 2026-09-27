@@ -199,8 +199,13 @@ describe('Componente FichaJogo', () => {
       })
     })
 
-    it('DESABILITA o botão Atualizar Eventos para Administrador quando a partida estiver encerrada (isConcluido=true)', () => {
+    it('MANTÉM o botão Atualizar Eventos HABILITADO para Administrador mesmo quando a partida estiver encerrada (isConcluido=true)', async () => {
       mockAuth.isAdmin = true
+
+      vi.mocked(eventosService.fetchEventosJogo).mockResolvedValueOnce({
+        success: true,
+        events: [],
+      })
 
       render(
         <FichaJogo
@@ -213,19 +218,18 @@ describe('Componente FichaJogo', () => {
       )
 
       const refreshBtn = screen.getByRole('button', {
-        name: /Partida encerrada: dados consolidados no banco de dados/i,
+        name: 'Atualizar eventos',
       })
       expect(refreshBtn).toBeDefined()
-      expect((refreshBtn as HTMLButtonElement).disabled).toBe(true)
+      expect((refreshBtn as HTMLButtonElement).disabled).toBe(false)
 
-      // Clicar no botão desabilitado não dispara nova requisição
       fireEvent.click(refreshBtn)
-      expect(eventosService.fetchEventosJogo).not.toHaveBeenCalledWith(
-        expect.objectContaining({ forceRefresh: true }),
+      expect(eventosService.fetchEventosJogo).toHaveBeenCalledWith(
+        expect.objectContaining({ fixtureId: '1006', forceRefresh: true }),
       )
     })
 
-    it('DESABILITA o botão para Administrador quando resultado_finalizado=true ou status="finalizado"', () => {
+    it('MANTÉM o botão HABILITADO para Administrador quando resultado_finalizado=true ou status="finalizado"', () => {
       mockAuth.isAdmin = true
 
       render(
@@ -239,10 +243,118 @@ describe('Componente FichaJogo', () => {
       )
 
       const refreshBtn = screen.getByRole('button', {
-        name: /Partida encerrada: dados consolidados no banco de dados/i,
+        name: 'Atualizar eventos',
       })
       expect(refreshBtn).toBeDefined()
-      expect((refreshBtn as HTMLButtonElement).disabled).toBe(true)
+      expect((refreshBtn as HTMLButtonElement).disabled).toBe(false)
+    })
+  })
+
+  describe('Validação da Mensagem de Súmula e Gols', () => {
+    it('jogo encerrado sem eventos locais: resposta com gols faz com que a mensagem "Nenhum evento registrado" NÃO apareça e os marcadores sejam exibidos', async () => {
+      const mockGoalEvents: eventosService.MatchEvent[] = [
+        {
+          time: { elapsed: 14 },
+          team: { name: 'Brasil', side: 'home' },
+          player: { name: 'Rodrygo' },
+          type: 'Goal',
+          detail: 'Normal Goal',
+          category: 'goal',
+        },
+        {
+          time: { elapsed: 78 },
+          team: { name: 'Brasil', side: 'home' },
+          player: { name: 'Vinicius Jr' },
+          type: 'Goal',
+          detail: 'Normal Goal',
+          category: 'goal',
+        },
+      ]
+
+      vi.mocked(eventosService.fetchEventosJogo).mockResolvedValueOnce({
+        success: true,
+        source: 'api_football',
+        events: mockGoalEvents,
+      })
+
+      render(
+        <FichaJogo
+          fixtureId="2001"
+          timeA="Brasil"
+          timeB="Colômbia"
+          isConcluido={true}
+          golsTimeA={[]}
+          golsTimeB={[]}
+          defaultOpen={true}
+        />,
+      )
+
+      await waitFor(() => {
+        expect(screen.queryByText(/Nenhum evento registrado até o momento/i)).toBeNull()
+        expect(
+          screen.queryByText(/A partida foi finalizada sem registro de eventos na súmula da API/i),
+        ).toBeNull()
+        expect(screen.getByText('Rodrygo')).toBeDefined()
+        expect(screen.getByText('Vinicius Jr')).toBeDefined()
+        expect(screen.getByText("14'")).toBeDefined()
+        expect(screen.getByText("78'")).toBeDefined()
+      })
+    })
+
+    it('jogo encerrado: mensagem "A partida foi finalizada sem registro de eventos" aparece APENAS se a API retornar HTTP 200 confirmada com lista vazia', async () => {
+      vi.mocked(eventosService.fetchEventosJogo).mockResolvedValueOnce({
+        success: true,
+        source: 'api_football',
+        events: [],
+      })
+
+      render(
+        <FichaJogo
+          fixtureId="2002"
+          timeA="Uruguai"
+          timeB="Chile"
+          isConcluido={true}
+          golsTimeA={[]}
+          golsTimeB={[]}
+          defaultOpen={true}
+        />,
+      )
+
+      await waitFor(() => {
+        expect(screen.getByText(/Nenhum evento registrado até o momento/i)).toBeDefined()
+        expect(
+          screen.getByText(/A partida foi finalizada sem registro de eventos na súmula da API/i),
+        ).toBeDefined()
+      })
+    })
+
+    it('jogo em andamento ou antes de confirmação da API: exibe mensagem de tempo real e nunca a de partida finalizada sem súmula', async () => {
+      vi.mocked(eventosService.fetchEventosJogo).mockResolvedValueOnce({
+        success: true,
+        events: [],
+      })
+
+      render(
+        <FichaJogo
+          fixtureId="2003"
+          timeA="França"
+          timeB="Itália"
+          isConcluido={false}
+          golsTimeA={[]}
+          golsTimeB={[]}
+          defaultOpen={true}
+        />,
+      )
+
+      await waitFor(() => {
+        expect(screen.getByText(/Nenhum evento registrado até o momento/i)).toBeDefined()
+        expect(
+          screen.getByText(/Os eventos aparecerão em tempo real conforme a partida avançar/i),
+        ).toBeDefined()
+        expect(
+          screen.queryByText(/A partida foi finalizada sem registro de eventos na súmula da API/i),
+        ).toBeNull()
+      })
     })
   })
 })
