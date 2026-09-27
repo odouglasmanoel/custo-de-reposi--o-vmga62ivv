@@ -316,6 +316,12 @@ export interface SplitMatchScorersOptions {
   teamBName: string
   placarA?: number | string | null
   placarB?: number | string | null
+  // Identificadores numéricos dos times da partida (ou extraídos de URLs de escudo)
+  teamAId?: number | string | null
+  teamBId?: number | string | null
+  urlEscudoA?: string | null
+  urlEscudoB?: string | null
+  fichaDetalhes?: any
   // Fonte 1: Sobrescrita manual do Admin
   // Suporta marcadores separados por time (prioritário) ou lista única legada
   sobrescritaMarcadoresA?: string[] | string | null
@@ -331,6 +337,27 @@ export interface SplitMatchScorersOptions {
 }
 
 /**
+ * Extrai o ID numérico do time a partir de URL de escudo (/teams/(\d+))
+ */
+export function extractTeamIdFromUrl(url?: string | null): string | null {
+  if (!url || typeof url !== 'string') return null
+  const m = url.match(/teams\/(\d+)(?:\.png|\.svg|\.jpg|\b)/i)
+  return m ? String(m[1]) : null
+}
+
+/**
+ * Normaliza string para comparação de similaridade de nomes de times.
+ */
+function normalizeTeamComparisonName(raw: string): string {
+  return String(raw || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, '')
+    .trim()
+}
+
+/**
  * Divide os gols reais da partida (cabeçalho geral) entre Time A (mandante) e Time B (visitante).
  * Preserva minuto e "(contra)" quando disponíveis.
  * Se o time tiver 0 gols ou nenhum marcador registrado: exibe "-".
@@ -341,6 +368,11 @@ export function splitMatchScorersByTeam(options: SplitMatchScorersOptions): Matc
     teamBName,
     placarA: rawPlacarA,
     placarB: rawPlacarB,
+    teamAId: rawTeamAId,
+    teamBId: rawTeamBId,
+    urlEscudoA,
+    urlEscudoB,
+    fichaDetalhes,
     sobrescritaMarcadoresA,
     sobrescritaMarcadoresB,
     sobrescritaMarcadores,
@@ -354,6 +386,39 @@ export function splitMatchScorersByTeam(options: SplitMatchScorersOptions): Matc
     rawPlacarA !== undefined && rawPlacarA !== null && rawPlacarA !== '' ? Number(rawPlacarA) : null
   const parsedPlacarB =
     rawPlacarB !== undefined && rawPlacarB !== null && rawPlacarB !== '' ? Number(rawPlacarB) : null
+
+  // Extrai IDs numéricos dos times A e B a partir de parâmetros explícitos, URLs de escudos ou ficha_detalhes
+  let parsedFichaDetalhes: any = fichaDetalhes
+  if (typeof parsedFichaDetalhes === 'string') {
+    try {
+      parsedFichaDetalhes = JSON.parse(parsedFichaDetalhes)
+    } catch {
+      parsedFichaDetalhes = null
+    }
+  }
+
+  const fichaHomeId =
+    parsedFichaDetalhes?.teams?.home?.id != null
+      ? String(parsedFichaDetalhes.teams.home.id)
+      : parsedFichaDetalhes?.fixture?.teams?.home?.id != null
+        ? String(parsedFichaDetalhes.fixture.teams.home.id)
+        : null
+  const fichaAwayId =
+    parsedFichaDetalhes?.teams?.away?.id != null
+      ? String(parsedFichaDetalhes.teams.away.id)
+      : parsedFichaDetalhes?.fixture?.teams?.away?.id != null
+        ? String(parsedFichaDetalhes.fixture.teams.away.id)
+        : null
+
+  const cleanTeamAId =
+    rawTeamAId != null && String(rawTeamAId).trim() !== ''
+      ? String(rawTeamAId).trim()
+      : extractTeamIdFromUrl(urlEscudoA) || fichaHomeId || null
+
+  const cleanTeamBId =
+    rawTeamBId != null && String(rawTeamBId).trim() !== ''
+      ? String(rawTeamBId).trim()
+      : extractTeamIdFromUrl(urlEscudoB) || fichaAwayId || null
 
   const scorersA: string[] = []
   const scorersB: string[] = []
@@ -390,37 +455,68 @@ export function splitMatchScorersByTeam(options: SplitMatchScorersOptions): Matc
       scorersA.push(...cleanList)
     }
   } else if (Array.isArray(liveScorers) && liveScorers.length > 0) {
-    // Prioridade 2: Marcadores ao vivo retornados pela API (com teamSide: 'home' | 'away' ou teamName)
+    // Prioridade 2: Marcadores ao vivo retornados pela API (com teamSide: 'home' | 'away', teamId numérico ou teamName)
     for (const item of liveScorers) {
       if (!item || !item.name) continue
       const token = item.minute ? `${item.name.trim()} ${item.minute}'` : item.name.trim()
 
+      // 1º critério de lado: teamSide explícito vindo da API
       if (item.teamSide === 'home') {
         scorersA.push(token)
-      } else if (item.teamSide === 'away') {
+        continue
+      }
+      if (item.teamSide === 'away') {
         scorersB.push(token)
-      } else if (item.teamName) {
-        // Tenta inferir se bate mais com time A ou time B
-        const nameClean = item.teamName.toLowerCase()
-        const tAClean = teamAName.toLowerCase()
-        const tBClean = teamBName.toLowerCase()
+        continue
+      }
 
-        if (nameClean.includes(tAClean) || tAClean.includes(nameClean)) {
+      // 2º critério: comparador do identificador numérico do time do marcador com os IDs da partida
+      const itemTeamIdStr =
+        item.teamId !== null && item.teamId !== undefined && String(item.teamId).trim() !== ''
+          ? String(item.teamId).trim()
+          : null
+
+      if (itemTeamIdStr) {
+        if (cleanTeamAId && itemTeamIdStr === cleanTeamAId) {
           scorersA.push(token)
-        } else if (nameClean.includes(tBClean) || tBClean.includes(nameClean)) {
-          scorersB.push(token)
-        } else {
-          // Fallback de lado não identificado: atribui de acordo com contagem ou time A
-          scorersA.push(token)
+          continue
         }
+        if (cleanTeamBId && itemTeamIdStr === cleanTeamBId) {
+          scorersB.push(token)
+          continue
+        }
+      }
+
+      // 3º critério: inferência por similaridade de nome de time
+      if (item.teamName) {
+        const itemTeamClean = normalizeTeamComparisonName(item.teamName)
+        const tAClean = normalizeTeamComparisonName(teamAName)
+        const tBClean = normalizeTeamComparisonName(teamBName)
+
+        if (
+          itemTeamClean &&
+          tAClean &&
+          (itemTeamClean.includes(tAClean) || tAClean.includes(itemTeamClean))
+        ) {
+          scorersA.push(token)
+          continue
+        }
+        if (
+          itemTeamClean &&
+          tBClean &&
+          (itemTeamClean.includes(tBClean) || tBClean.includes(itemTeamClean))
+        ) {
+          scorersB.push(token)
+          continue
+        }
+      }
+
+      // 4º critério (último recurso): se não houver IDs ou nomes que casem, distribui de acordo com o placar
+      const pA = parsedPlacarA ?? 0
+      if (scorersA.length < pA) {
+        scorersA.push(token)
       } else {
-        // Se teamSide é null, distribui de acordo com o placar
-        const pA = parsedPlacarA ?? 0
-        if (scorersA.length < pA) {
-          scorersA.push(token)
-        } else {
-          scorersB.push(token)
-        }
+        scorersB.push(token)
       }
     }
   } else {

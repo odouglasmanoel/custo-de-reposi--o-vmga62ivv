@@ -462,18 +462,30 @@ export function extractLogosFromFichaDetalhes(
 ): { home?: string; away?: string } | null {
   if (!fichaDetalhes) return null
   let data = fichaDetalhes
-  if (typeof data === 'string') {
+  // Desembrulha recursivamente caso chegue serializado como string JSON dupla ou simples
+  while (typeof data === 'string') {
+    const trimmed = data.trim()
+    if (!trimmed) return null
     try {
-      data = JSON.parse(data)
+      data = JSON.parse(trimmed)
     } catch {
       return null
     }
   }
 
+  if (!data || typeof data !== 'object') return null
+
   // Se o objeto envolver uma resposta padrão { teams: { home: { logo }, away: { logo } } }
-  // ou { fixture: ..., teams: ... }
+  // ou { fixture: ..., teams: ... } ou resposta direta de array
+  const item = Array.isArray(data) ? data[0] : data
+  if (!item || typeof item !== 'object') return null
+
   const teams =
-    data.teams || (data.fixture && data.fixture.teams) || (data.response && data.response[0]?.teams)
+    item.teams ||
+    (item.fixture && item.fixture.teams) ||
+    (item.response && Array.isArray(item.response) && item.response[0]?.teams) ||
+    (item.response && !Array.isArray(item.response) && item.response?.teams)
+
   if (teams) {
     const home = teams.home?.logo || teams.home?.badge || undefined
     const away = teams.away?.logo || teams.away?.badge || undefined

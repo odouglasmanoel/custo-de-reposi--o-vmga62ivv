@@ -343,6 +343,70 @@ describe('scorerUtils', () => {
       expect(res.labelB).toBe('-')
       expect(res.hasAnyScorers).toBe(false)
     })
+
+    it('(a) marcador com team_id do Azerbaijão NUNCA entra na lista de gols da Lituânia mesmo com placar 1x1 e teamSide ausente', () => {
+      // Caso real diagnosticado:
+      // Confronto: Lituânia (Mandante, teamId 1098 ou via url) x Azerbaijão (Visitante, teamId 1097)
+      // Placar 1x1: 1 gol para Lituânia (Armandas Kucys) e 1 gol para Azerbaijão (Mahir Emreli)
+      // teamSide ausente (null) na API, mas com teamId nos marcadores
+      const res = splitMatchScorersByTeam({
+        teamAName: 'Lituânia',
+        teamBName: 'Azerbaijão',
+        teamAId: 1098,
+        teamBId: 1097,
+        urlEscudoA: 'https://media.api-sports.io/football/teams/1098.png',
+        urlEscudoB: 'https://media.api-sports.io/football/teams/1097.png',
+        placarA: 1,
+        placarB: 1,
+        liveScorers: [
+          {
+            name: 'Mahir Emreli',
+            minute: 45,
+            teamId: 1097, // Azerbaijão
+            teamSide: null,
+          },
+          {
+            name: 'Armandas Kucys',
+            minute: 60,
+            teamId: 1098, // Lituânia
+            teamSide: null,
+          },
+        ],
+      })
+
+      // Mahir Emreli DEVE ir para o Azerbaijão (time B), NUNCA para a Lituânia (time A)
+      expect(res.scorersA).toContain("Armandas Kucys 60'")
+      expect(res.scorersA).not.toContain("Mahir Emreli 45'")
+      expect(res.scorersB).toContain("Mahir Emreli 45'")
+      expect(res.scorersB).not.toContain("Armandas Kucys 60'")
+
+      expect(res.labelA).toBe("Armandas Kucys 60'")
+      expect(res.labelB).toBe("Mahir Emreli 45'")
+    })
+
+    it('(a2) extrai teamId das URLs dos escudos se teamAId e teamBId não forem passados diretamente', () => {
+      const res = splitMatchScorersByTeam({
+        teamAName: 'Lituânia',
+        teamBName: 'Azerbaijão',
+        urlEscudoA: 'https://media.api-sports.io/football/teams/1098.png',
+        urlEscudoB: 'https://media.api-sports.io/football/teams/1097.png',
+        placarA: 1,
+        placarB: 1,
+        liveScorers: [
+          {
+            name: 'Mahir Emreli',
+            minute: 45,
+            teamId: '1097',
+            teamSide: null,
+          },
+        ],
+      })
+
+      expect(res.scorersA).toHaveLength(0)
+      expect(res.scorersB).toEqual(["Mahir Emreli 45'"])
+      expect(res.labelA).toBe('-')
+      expect(res.labelB).toBe("Mahir Emreli 45'")
+    })
   })
 
   describe('formatScorersGroupedByPlayer', () => {

@@ -6,6 +6,7 @@ import {
   isNationalTeam,
   resolveTeamBadgeUrl,
   fixtureLogosMemoryCache,
+  extractLogosFromFichaDetalhes,
   SELECAO_FLAG_MAP,
 } from './flags'
 
@@ -389,5 +390,39 @@ describe('flags.ts - FlagCDN Helper e Seleções Nacionais', () => {
       teamName: 'Clube Sem Escudo FC',
     })
     expect(badgeClubeDesconhecido).toBeNull()
+  })
+
+  it('(b) extractLogosFromFichaDetalhes resolve logo de string JSON parseada', () => {
+    // String JSON vinda do PocketBase
+    const jsonString = JSON.stringify({
+      teams: {
+        home: {
+          id: 1098,
+          name: 'Lithuania',
+          logo: 'https://media.api-sports.io/football/teams/1098.png',
+        },
+        away: {
+          id: 1097,
+          name: 'Azerbaijan',
+          logo: 'https://media.api-sports.io/football/teams/1097.png',
+        },
+      },
+    })
+
+    const logos = extractLogosFromFichaDetalhes(jsonString)
+    expect(logos).not.toBeNull()
+    expect(logos?.home).toBe('https://media.api-sports.io/football/teams/1098.png')
+    expect(logos?.away).toBe('https://media.api-sports.io/football/teams/1097.png')
+
+    // Suporta também string duplamente serializada
+    const doubleEncoded = JSON.stringify(jsonString)
+    const logosDouble = extractLogosFromFichaDetalhes(doubleEncoded)
+    expect(logosDouble).not.toBeNull()
+    expect(logosDouble?.home).toBe('https://media.api-sports.io/football/teams/1098.png')
+
+    // String inválida retorna null sem lançar erro
+    expect(extractLogosFromFichaDetalhes('{ invalid json')).toBeNull()
+    expect(extractLogosFromFichaDetalhes('')).toBeNull()
+    expect(extractLogosFromFichaDetalhes(null)).toBeNull()
   })
 })

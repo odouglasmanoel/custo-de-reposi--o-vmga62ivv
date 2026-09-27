@@ -64,9 +64,15 @@ import { Users, ChevronRight, RefreshCw } from 'lucide-react'
 import { useToast } from '@/hooks/use-toast'
 import { clearFichaJogoCache } from '@/services/eventosJogo'
 import { buscarEscudoTime, readEscudoCache } from '@/services/enquetes'
-import { getFlagCdnUrl, resolveTeamBadgeUrl, fixtureLogosMemoryCache } from '@/lib/flags'
+import {
+  getFlagCdnUrl,
+  resolveTeamBadgeUrl,
+  fixtureLogosMemoryCache,
+  extractLogosFromFichaDetalhes,
+  fetchAndCacheFixtureLogos,
+} from '@/lib/flags'
 
-function TeamShield({
+export function TeamShield({
   escudo,
   nomeTime,
   sigla,
@@ -87,13 +93,106 @@ function TeamShield({
 }) {
   const [hasError, setHasError] = useState(false)
   const [triedFlagCdn, setTriedFlagCdn] = useState(false)
-  const [currentSrc, setCurrentSrc] = useState<string | undefined>(escudo)
+  const [resolvedSrc, setResolvedSrc] = useState<string | undefined>(escudo || undefined)
+  const [resolvingAsync, setResolvingAsync] = useState(false)
 
+  // Função síncrona para resolver o melhor logo disponível nos 4 níveis
+  const resolveSyncLogo = useCallback((): string | undefined => {
+    if (escudo && escudo.trim() !== '') return escudo.trim()
+
+    // Nível 1: extrair de fichaDetalhes (suporta string JSON e objeto)
+    if (fichaDetalhes) {
+      const extracted = extractLogosFromFichaDetalhes(fichaDetalhes)
+      if (extracted) {
+        const sideLogo =
+          isSide === 'home'
+            ? extracted.home
+            : isSide === 'away'
+              ? extracted.away
+              : extracted.home || extracted.away
+        if (sideLogo && sideLogo.trim() !== '') {
+          return sideLogo.trim()
+        }
+      }
+    }
+
+    // Nível 2 síncrono: tentar memória de fixtureLogosMemoryCache se fixtureId fornecido
+    if (fixtureId) {
+      const cleanId = String(fixtureId).replace(/\D/g, '').trim()
+      if (cleanId && fixtureLogosMemoryCache.has(cleanId)) {
+        const c = fixtureLogosMemoryCache.get(cleanId)!
+        const cached = isSide === 'home' ? c.home : isSide === 'away' ? c.away : c.home || c.away
+        if (cached && cached.trim() !== '') {
+          return cached.trim()
+        }
+      }
+    }
+
+    // Nível 3: readEscudoCache
+    if (nomeTime) {
+      const fallbackBadge = readEscudoCache(nomeTime)
+      if (fallbackBadge && fallbackBadge.trim() !== '') {
+        return fallbackBadge.trim()
+      }
+    }
+
+    // Nível 4: Bandeira FlagCDN se for seleção nacional
+    if (nomeTime) {
+      const flagUrl = getFlagCdnUrl(nomeTime, { cacheBust: true })
+      if (flagUrl && flagUrl.trim() !== '') {
+        return flagUrl.trim()
+      }
+    }
+
+    return undefined
+  }, [escudo, fichaDetalhes, isSide, fixtureId, nomeTime])
+
+  // Efeito principal: se escudo/fichaDetalhes/fixtureId mudar, resolve imediatamente
   useEffect(() => {
-    setCurrentSrc(escudo)
     setHasError(false)
     setTriedFlagCdn(false)
-  }, [escudo])
+
+    const initialCandidate = resolveSyncLogo()
+    if (initialCandidate) {
+      setResolvedSrc(initialCandidate)
+      return
+    }
+
+    // Se síncrono não resolveu e temos fixtureId, dispara Nível 2 assíncrono (fetchAndCacheFixtureLogos)
+    if (fixtureId && !resolvingAsync) {
+      const cleanId = String(fixtureId).replace(/\D/g, '').trim()
+      if (cleanId) {
+        setResolvingAsync(true)
+        fetchAndCacheFixtureLogos(cleanId)
+          .then((res) => {
+            if (res) {
+              const fetched =
+                isSide === 'home' ? res.home : isSide === 'away' ? res.away : res.home || res.away
+              if (fetched && fetched.trim() !== '') {
+                setResolvedSrc(fetched.trim())
+                return
+              }
+            }
+            // Se falhar o fetch e for seleção, tenta FlagCDN
+            if (nomeTime) {
+              const flagUrl = getFlagCdnUrl(nomeTime, { cacheBust: true })
+              if (flagUrl) {
+                setResolvedSrc(flagUrl)
+                return
+              }
+            }
+          })
+          .catch(() => {
+            /* ignore */
+          })
+          .finally(() => {
+            setResolvingAsync(false)
+          })
+      }
+    } else {
+      setResolvedSrc(undefined)
+    }
+  }, [escudo, fichaDetalhes, fixtureId, isSide, nomeTime, resolveSyncLogo])
 
   const handleError = () => {
     if (!nomeTime) {
@@ -108,29 +207,45 @@ function TeamShield({
         fichaDetalhes,
         isSide,
       })
-      if (extracted && extracted !== currentSrc) {
-        setCurrentSrc(extracted)
+      if (extracted && extracted !== resolvedSrc) {
+        setResolvedSrc(extracted)
         return
       }
     }
 
-    // Nível 2: tenta extrair via fixtureId em cache memoizado
+    // Nível 2: tenta extrair via fixtureId em cache memoizado ou assíncrono
     if (fixtureId) {
       const cleanId = String(fixtureId).replace(/\D/g, '').trim()
       if (cleanId && fixtureLogosMemoryCache.has(cleanId)) {
         const c = fixtureLogosMemoryCache.get(cleanId)!
         const cached = isSide === 'home' ? c.home : isSide === 'away' ? c.away : c.home || c.away
-        if (cached && cached !== currentSrc) {
-          setCurrentSrc(cached)
+        if (cached && cached !== resolvedSrc) {
+          setResolvedSrc(cached)
           return
         }
+      }
+      if (cleanId && !resolvingAsync) {
+        setResolvingAsync(true)
+        fetchAndCacheFixtureLogos(cleanId)
+          .then((res) => {
+            if (res) {
+              const fetched =
+                isSide === 'home' ? res.home : isSide === 'away' ? res.away : res.home || res.away
+              if (fetched && fetched !== resolvedSrc) {
+                setResolvedSrc(fetched)
+                return
+              }
+            }
+          })
+          .catch(() => {})
+          .finally(() => setResolvingAsync(false))
       }
     }
 
     // Nível 3: tenta cache oficial em memória/localStorage
     const fallbackBadge = readEscudoCache(nomeTime)
-    if (fallbackBadge && fallbackBadge !== currentSrc) {
-      setCurrentSrc(fallbackBadge)
+    if (fallbackBadge && fallbackBadge !== resolvedSrc) {
+      setResolvedSrc(fallbackBadge)
       return
     }
 
@@ -138,8 +253,8 @@ function TeamShield({
     if (!triedFlagCdn) {
       setTriedFlagCdn(true)
       const flagUrl = getFlagCdnUrl(nomeTime, { cacheBust: true })
-      if (flagUrl && flagUrl !== currentSrc) {
-        setCurrentSrc(flagUrl)
+      if (flagUrl && flagUrl !== resolvedSrc) {
+        setResolvedSrc(flagUrl)
         return
       }
     }
@@ -147,11 +262,11 @@ function TeamShield({
     setHasError(true)
   }
 
-  if (!currentSrc || hasError) {
+  if (!resolvedSrc || hasError) {
     // Se a imagem falhou mas for seleção conhecida e ainda não tentamos a FlagCDN diretamente:
     const flagFallback =
       !triedFlagCdn && nomeTime ? getFlagCdnUrl(nomeTime, { cacheBust: true }) : null
-    if (flagFallback && flagFallback !== currentSrc) {
+    if (flagFallback && flagFallback !== resolvedSrc) {
       return (
         <div className={`${sizeClass} shrink-0 flex items-center justify-center`}>
           <img
@@ -179,15 +294,16 @@ function TeamShield({
       </div>
     )
   }
+
   return (
     <div className={`${sizeClass} shrink-0 flex items-center justify-center`}>
       <img
-        src={currentSrc}
+        src={resolvedSrc}
         alt={nomeTime}
         className="w-full h-full object-contain drop-shadow-xs"
         loading="eager"
         decoding="async"
-        crossOrigin={currentSrc.includes('flagcdn.com') ? 'anonymous' : undefined}
+        crossOrigin={resolvedSrc.includes('flagcdn.com') ? 'anonymous' : undefined}
         onError={handleError}
       />
     </div>
@@ -1586,6 +1702,9 @@ export default function BolaoDashboard() {
         teamBName: jogo.time_b,
         placarA,
         placarB,
+        urlEscudoA: (jogo as any).url_escudo_mandante,
+        urlEscudoB: (jogo as any).url_escudo_visitante,
+        fichaDetalhes: (jogo as any).ficha_detalhes,
         sobrescritaMarcadoresA: sobrescrita?.marcadores_a ?? null,
         sobrescritaMarcadoresB: sobrescrita?.marcadores_b ?? null,
         sobrescritaMarcadores: sobrescrita?.marcadores ?? null,
@@ -3404,6 +3523,9 @@ export default function BolaoDashboard() {
                               : matchedLive
                                 ? matchedLive.placarB
                                 : jogo.placar_b,
+                          urlEscudoA: (jogo as any).url_escudo_mandante,
+                          urlEscudoB: (jogo as any).url_escudo_visitante,
+                          fichaDetalhes: (jogo as any).ficha_detalhes,
                           sobrescritaMarcadoresA: sobrescritaJogo?.marcadores_a ?? null,
                           sobrescritaMarcadoresB: sobrescritaJogo?.marcadores_b ?? null,
                           sobrescritaMarcadores: sobrescritaJogo?.marcadores ?? null,
