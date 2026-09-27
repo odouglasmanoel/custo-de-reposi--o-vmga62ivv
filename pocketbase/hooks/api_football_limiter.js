@@ -29,7 +29,8 @@ function obterChavesConfiguradas() {
   let primaryKey = ''
   let backupKey = ''
 
-  // 1. Chave principal via config_integracoes (placar_ao_vivo)
+  // 1. Chave principal lida dinamicamente da tabela config_integracoes do banco de dados antes de cada chamada.
+  // Prioridade absoluta para as configurações persistidas no banco.
   try {
     const recPlacar = $app.findFirstRecordByData('config_integracoes', 'chave', 'placar_ao_vivo')
     if (recPlacar && recPlacar.getBool('ativo')) {
@@ -44,8 +45,21 @@ function obterChavesConfiguradas() {
       }
     } catch (_) {}
   }
-  // 2. Fallbacks de ambiente para chave principal
-  if (!primaryKey) {
+
+  // 2. Chave secundária via config_integracoes (placar_ao_vivo_backup)
+  try {
+    const recBackup = $app.findFirstRecordByData(
+      'config_integracoes',
+      'chave',
+      'placar_ao_vivo_backup',
+    )
+    if (recBackup && recBackup.getBool('ativo')) {
+      backupKey = (recBackup.getString('api_key') || '').trim()
+    }
+  } catch (_) {}
+
+  // 3. Fallbacks de ambiente apenas se NENHUMA chave ativa estiver cadastrada no banco de dados
+  if (!primaryKey && !backupKey) {
     try {
       if (
         typeof $secrets !== 'undefined' &&
@@ -58,22 +72,7 @@ function obterChavesConfiguradas() {
         primaryKey = ($os.getenv('API_FOOTBALL_KEY') || $os.getenv('RAPIDAPI_KEY') || '').trim()
       }
     } catch (_) {}
-  }
 
-  // 3. Chave secundária via config_integracoes (placar_ao_vivo_backup)
-  try {
-    const recBackup = $app.findFirstRecordByData(
-      'config_integracoes',
-      'chave',
-      'placar_ao_vivo_backup',
-    )
-    if (recBackup && recBackup.getBool('ativo')) {
-      backupKey = (recBackup.getString('api_key') || '').trim()
-    }
-  } catch (_) {}
-
-  // 4. Chave secundária via segredo / env var (API_FOOTBALL_KEY_BACKUP)
-  if (!backupKey) {
     try {
       if (
         typeof $secrets !== 'undefined' &&
@@ -375,9 +374,11 @@ function buildHeadersForKey(apiKey, customHeaders) {
   delete headers['x-rapidapi-key']
   delete headers['x-rapidapi-host']
 
-  // Injetar estritamente apenas a chave ativa em x-apisports-key
-  if (apiKey) {
-    headers['x-apisports-key'] = apiKey
+  // Injetar estritamente apenas a chave ativa do banco em x-apisports-key
+  // Se customHeaders trouxer uma chave ativa válida, respeita-a com prioridade
+  const keyToInject = (customHeaders && customHeaders['x-apisports-key']) || apiKey
+  if (keyToInject) {
+    headers['x-apisports-key'] = keyToInject
   }
   return headers
 }

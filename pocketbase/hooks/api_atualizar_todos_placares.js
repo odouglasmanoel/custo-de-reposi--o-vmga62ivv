@@ -369,14 +369,53 @@ routerAdd(
         console.log(
           `[atualizar-todos] Buscando eventos dedicados (/fixtures/events) para fixture ${fid}...`,
         )
-        const callEvents =
-          limiterMod && typeof limiterMod.enviarRequisicaoApiFootball === 'function'
-            ? limiterMod.enviarRequisicaoApiFootball(
-                urlEvents,
-                { timeout: 15, isAdminManual: true },
-                2,
+        let callEvents = null
+        if (limiterMod && typeof limiterMod.enviarRequisicaoApiFootball === 'function') {
+          callEvents = limiterMod.enviarRequisicaoApiFootball(
+            urlEvents,
+            { timeout: 15, isAdminManual: true },
+            2,
+          )
+        } else {
+          // Fallback com leitura dinâmica da chave ativa do banco
+          let chvAtiva = ''
+          try {
+            const rPlac = $app.findFirstRecordByData(
+              'config_integracoes',
+              'chave',
+              'placar_ao_vivo',
+            )
+            if (rPlac && rPlac.getBool('ativo'))
+              chvAtiva = (rPlac.getString('api_key') || '').trim()
+          } catch (_) {}
+          if (!chvAtiva) {
+            try {
+              const rFoot = $app.findFirstRecordByData(
+                'config_integracoes',
+                'chave',
+                'api_football',
               )
-            : null
+              if (rFoot && rFoot.getBool('ativo'))
+                chvAtiva = (rFoot.getString('api_key') || '').trim()
+            } catch (_) {}
+          }
+          const sRes = $http.send({
+            url: urlEvents,
+            method: 'GET',
+            headers: { 'x-apisports-key': chvAtiva },
+            timeout: 15,
+          })
+          let jData = null
+          try {
+            jData =
+              typeof sRes.json === 'object' && sRes.json !== null ? sRes.json : JSON.parse(sRes.raw)
+          } catch (_) {}
+          callEvents = {
+            statusCode: sRes ? sRes.statusCode : 500,
+            rawResponse: sRes,
+            json: jData,
+          }
+        }
 
         if (
           callEvents &&

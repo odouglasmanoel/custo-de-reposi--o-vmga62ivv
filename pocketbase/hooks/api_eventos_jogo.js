@@ -284,7 +284,45 @@ routerAdd('GET', '/backend/v1/eventos-jogo', (e) => {
       })
     }
 
-    // 4. Chamada externa à API-Sports com limiter e fallback centralizado (api_football_limiter.js)
+    // 4. Obtenção dinâmica da chave ativa diretamente do banco de dados (config_integracoes)
+    // NUNCA de variáveis de ambiente estáticas (.env). Leitura dinâmica antes de cada chamada.
+    let chaveAtivaDoBanco = ''
+    try {
+      const recPlacar = $app.findFirstRecordByData('config_integracoes', 'chave', 'placar_ao_vivo')
+      if (recPlacar && recPlacar.getBool('ativo')) {
+        chaveAtivaDoBanco = (recPlacar.getString('api_key') || '').trim()
+      }
+    } catch (_) {}
+
+    if (!chaveAtivaDoBanco) {
+      try {
+        const recApiFoot = $app.findFirstRecordByData('config_integracoes', 'chave', 'api_football')
+        if (recApiFoot && recApiFoot.getBool('ativo')) {
+          chaveAtivaDoBanco = (recApiFoot.getString('api_key') || '').trim()
+        }
+      } catch (_) {}
+    }
+
+    // Se a chave principal do banco não estiver preenchida, verifica chave backup do banco
+    if (!chaveAtivaDoBanco) {
+      try {
+        const recBackup = $app.findFirstRecordByData(
+          'config_integracoes',
+          'chave',
+          'placar_ao_vivo_backup',
+        )
+        if (recBackup && recBackup.getBool('ativo')) {
+          chaveAtivaDoBanco = (recBackup.getString('api_key') || '').trim()
+        }
+      } catch (_) {}
+    }
+
+    // Monta o cabeçalho estrito com x-apisports-key contendo a chave ativa lida do banco
+    const headersRequisicao = {
+      'x-apisports-key': chaveAtivaDoBanco,
+    }
+
+    // Chamada externa à API-Sports com limiter centralizado (api_football_limiter.js)
     const limiterMod = (function () {
       try {
         if (typeof __hooks !== 'undefined') {
@@ -298,15 +336,25 @@ routerAdd('GET', '/backend/v1/eventos-jogo', (e) => {
       }
     })()
 
-    // CORREÇÃO CRÍTICA: Trocar https://v3.football.api-sports.io/fixtures?id=${...}
-    // pelo endpoint dedicado https://v3.football.api-sports.io/fixtures/events?fixture=${encodeURIComponent(fixtureIdParam)}
-    // A API-Sports omite eventos no endpoint genérico.
+    // Endpoint dedicado para eventos de partidas
     const url = `https://v3.football.api-sports.io/fixtures/events?fixture=${encodeURIComponent(fixtureIdParam)}`
     let respCall = null
     if (limiterMod && typeof limiterMod.enviarRequisicaoApiFootball === 'function') {
-      respCall = limiterMod.enviarRequisicaoApiFootball(url, { timeout: 12 }, 2)
+      respCall = limiterMod.enviarRequisicaoApiFootball(
+        url,
+        {
+          headers: headersRequisicao,
+          timeout: 15,
+        },
+        2,
+      )
     } else {
-      const sendRes = $http.send({ url, method: 'GET', timeout: 12 })
+      const sendRes = $http.send({
+        url,
+        method: 'GET',
+        headers: headersRequisicao,
+        timeout: 15,
+      })
       let j = null
       try {
         j =
