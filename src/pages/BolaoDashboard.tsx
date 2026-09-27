@@ -560,36 +560,47 @@ export default function BolaoDashboard() {
 
   const isGeral = activeBolaoId === GERAL_BOLAO_ID
 
+  const sanitizeMinuto = (minVal: unknown): string => {
+    if (minVal == null) return ''
+    const digits = String(minVal).replace(/\D/g, '')
+    if (!digits) return ''
+    const parsed = parseInt(digits, 10)
+    return isNaN(parsed) ? '' : String(parsed)
+  }
+
   const handleSalvarSobrescritaAdmin = async () => {
     if (!adminSobrescritaJogo) return
     const { jogo, placarA, placarB, golsA, golsB } = adminSobrescritaJogo
     setAdminSobrescritaJogo((prev) => (prev ? { ...prev, isSaving: true } : null))
 
     try {
-      const parsedA = placarA === '' ? 0 : Number(placarA)
-      const parsedB = placarB === '' ? 0 : Number(placarB)
+      const parsedA = placarA === '' ? 0 : Math.max(0, parseInt(String(placarA), 10) || 0)
+      const parsedB = placarB === '' ? 0 : Math.max(0, parseInt(String(placarB), 10) || 0)
 
-      const marcListA = (golsA || [])
-        .map((item) => {
-          const nome = (item.nome || '').trim()
-          const min = (item.minuto || '').trim()
-          if (!nome) return ''
-          return min ? `${nome} ${min}` : nome
-        })
-        .filter(Boolean)
+      // Sanitiza lista de marcadores: filtra sem nome e mapeia com minuto numérico limpo
+      const sanitizedGolsA = (golsA || [])
+        .filter((g) => Boolean(g && (g.nome || '').trim()))
+        .map((g) => ({
+          nome: g.nome.trim(),
+          minuto: sanitizeMinuto(g.minuto),
+          posicao: 'Atacante',
+          quantidade: 1,
+        }))
 
-      const marcListB = (golsB || [])
-        .map((item) => {
-          const nome = (item.nome || '').trim()
-          const min = (item.minuto || '').trim()
-          if (!nome) return ''
-          return min ? `${nome} ${min}` : nome
-        })
-        .filter(Boolean)
+      const sanitizedGolsB = (golsB || [])
+        .filter((g) => Boolean(g && (g.nome || '').trim()))
+        .map((g) => ({
+          nome: g.nome.trim(),
+          minuto: sanitizeMinuto(g.minuto),
+          posicao: 'Atacante',
+          quantidade: 1,
+        }))
 
+      const marcListA = sanitizedGolsA.map((g) => (g.minuto ? `${g.nome} ${g.minuto}'` : g.nome))
+      const marcListB = sanitizedGolsB.map((g) => (g.minuto ? `${g.nome} ${g.minuto}'` : g.nome))
       const combinedMarcadores = [...marcListA, ...marcListB]
 
-      // Atualiza estado local de imediato
+      // Atualiza estado local de imediato (admin pode sobrescrever QUALQUER partida em QUALQUER status)
       const novaSobrescrita = {
         jogo_id: jogo.id,
         placar_a: parsedA,
@@ -597,6 +608,8 @@ export default function BolaoDashboard() {
         marcadores: combinedMarcadores,
         marcadores_a: marcListA,
         marcadores_b: marcListB,
+        gols_time_a: sanitizedGolsA,
+        gols_time_b: sanitizedGolsB,
         status: 'Ao Vivo (Manual)',
         updated_at: new Date().toISOString(),
       }
@@ -630,6 +643,8 @@ export default function BolaoDashboard() {
             marcadores: combinedMarcadores,
             marcadores_a: marcListA,
             marcadores_b: marcListB,
+            gols_time_a: sanitizedGolsA,
+            gols_time_b: sanitizedGolsB,
             status: 'Ao Vivo (Manual)',
           },
         })
@@ -650,38 +665,62 @@ export default function BolaoDashboard() {
         resBackend = null
       }
 
+      // Se o endpoint backend não respondeu com sucesso, segue de forma resiliente
+      // Fallback 1: salvar sobrescrita no config_integracoes (sobrescrita_jogos)
+      // Fallback 2: gravar diretamente no registro do jogo (placar e gols_time_a/b)
       if (!resBackend?.success) {
-        // Fallback direto via SDK do PocketBase
-        let rec
         try {
-          rec = await pb
-            .collection('config_integracoes')
-            .getFirstListItem("chave = 'sobrescrita_jogos'")
-        } catch {
-          rec = null
-        }
-
-        let map: Record<string, unknown> = {}
-        if (rec && rec.api_key) {
+          let rec
           try {
-            map = JSON.parse(rec.api_key)
+            rec = await pb
+              .collection('config_integracoes')
+              .getFirstListItem("chave = 'sobrescrita_jogos'")
           } catch {
-            map = {}
+            rec = null
           }
-        }
-        map[jogo.id] = novaSobrescrita
 
-        if (rec) {
-          await pb.collection('config_integracoes').update(rec.id, {
-            api_key: JSON.stringify(map),
+          let map: Record<string, unknown> = {}
+          if (rec && rec.api_key) {
+            try {
+              map = JSON.parse(rec.api_key)
+            } catch {
+              map = {}
+            }
+          }
+          map[jogo.id] = novaSobrescrita
+
+          if (rec) {
+            await pb.collection('config_integracoes').update(rec.id, {
+              api_key: JSON.stringify(map),
+            })
+          } else {
+            await pb.collection('config_integracoes').create({
+              chave: 'sobrescrita_jogos',
+              provedor: 'api_football',
+              ativo: true,
+              api_key: JSON.stringify(map),
+            })
+          }
+        } catch (errConfig) {
+          console.warn(
+            'Fallback em config_integracoes falhou, tentando gravação direta no jogo:',
+            errConfig,
+          )
+        }
+
+        // Gravação direta resiliente no jogo
+        try {
+          await pb.collection('jogos').update(jogo.id, {
+            placar_a: parsedA,
+            placar_b: parsedB,
+            gols_time_a: sanitizedGolsA,
+            gols_time_b: sanitizedGolsB,
           })
-        } else {
-          await pb.collection('config_integracoes').create({
-            chave: 'sobrescrita_jogos',
-            provedor: 'api_football',
-            ativo: true,
-            api_key: JSON.stringify(map),
-          })
+        } catch (errJogoDirect) {
+          console.warn(
+            'Gravação direta no jogo falhou (pode exigir superuser/endpoint):',
+            errJogoDirect,
+          )
         }
       }
 
@@ -689,6 +728,34 @@ export default function BolaoDashboard() {
         title: 'Sobrescrita salva',
         description: 'Placar e marcadores manuais salvos com sucesso.',
       })
+
+      // Atualiza também os estados dos jogos na tela de forma reativa
+      setJogos((prev) =>
+        prev.map((j) =>
+          j.id === jogo.id
+            ? {
+                ...j,
+                placar_a: parsedA,
+                placar_b: parsedB,
+                gols_time_a: sanitizedGolsA,
+                gols_time_b: sanitizedGolsB,
+              }
+            : j,
+        ),
+      )
+      setAllJogos((prev) =>
+        prev.map((j) =>
+          j.id === jogo.id
+            ? {
+                ...j,
+                placar_a: parsedA,
+                placar_b: parsedB,
+                gols_time_a: sanitizedGolsA,
+                gols_time_b: sanitizedGolsB,
+              }
+            : j,
+        ),
+      )
 
       setAdminSobrescritaJogo(null)
     } catch (err: any) {
@@ -3116,13 +3183,13 @@ export default function BolaoDashboard() {
                                     token: string,
                                   ): { nome: string; minuto: string } => {
                                     const raw = String(token || '').trim()
-                                    const minMatch = raw.match(/(\d+(?:\+\d+)?)\s*['’]?$/)
+                                    const minMatch = raw.match(/(\d+(?:\+\d+)?)\s*(?:'|’|min)?$/i)
                                     if (minMatch) {
-                                      const minVal = minMatch[1]
+                                      const minVal = minMatch[1].replace(/\D/g, '')
                                       const nameVal = raw
-                                        .replace(/\s*\d+(?:\+\d+)?\s*['’]?$/, '')
+                                        .replace(/\s*\d+(?:\+\d+)?\s*(?:'|’|min)?$/i, '')
                                         .trim()
-                                      return { nome: nameVal, minuto: `${minVal}'` }
+                                      return { nome: nameVal, minuto: minVal }
                                     }
                                     return { nome: raw, minuto: '' }
                                   }
@@ -3833,19 +3900,17 @@ export default function BolaoDashboard() {
                             }}
                             onBlur={(e) => {
                               const raw = e.target.value.trim()
-                              if (!raw) return
                               const cleanDigits = raw.replace(/\D/g, '')
-                              const formatted = cleanDigits ? `${cleanDigits}'` : raw
                               setAdminSobrescritaJogo((prev) => {
                                 if (!prev) return null
                                 const nextList = [...prev.golsA]
-                                nextList[idx] = { ...nextList[idx], minuto: formatted }
+                                nextList[idx] = { ...nextList[idx], minuto: cleanDigits }
                                 return { ...prev, golsA: nextList }
                               })
                             }}
                             placeholder="Min (ex: 69)"
                             className="w-20 h-8 rounded-md border border-slate-300 bg-white px-2 text-center text-xs text-slate-800 focus:border-amber-500 focus:outline-none"
-                            title="Minutagem do gol (ex: 69 ou 69')"
+                            title="Minutagem do gol (ex: 69)"
                           />
                         </div>
                       ))}
@@ -3905,19 +3970,17 @@ export default function BolaoDashboard() {
                             }}
                             onBlur={(e) => {
                               const raw = e.target.value.trim()
-                              if (!raw) return
                               const cleanDigits = raw.replace(/\D/g, '')
-                              const formatted = cleanDigits ? `${cleanDigits}'` : raw
                               setAdminSobrescritaJogo((prev) => {
                                 if (!prev) return null
                                 const nextList = [...prev.golsB]
-                                nextList[idx] = { ...nextList[idx], minuto: formatted }
+                                nextList[idx] = { ...nextList[idx], minuto: cleanDigits }
                                 return { ...prev, golsB: nextList }
                               })
                             }}
                             placeholder="Min (ex: 19)"
                             className="w-20 h-8 rounded-md border border-slate-300 bg-white px-2 text-center text-xs text-slate-800 focus:border-amber-500 focus:outline-none"
-                            title="Minutagem do gol (ex: 19 ou 19')"
+                            title="Minutagem do gol (ex: 19)"
                           />
                         </div>
                       ))}

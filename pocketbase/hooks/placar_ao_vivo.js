@@ -4034,56 +4034,144 @@ routerAdd('POST', '/backend/v1/placar-ao-vivo/sobrescrever', (e) => {
       }
     } catch (_) {}
 
+    var parseMinutoInt = function (minVal) {
+      if (minVal == null) return null
+      var digits = String(minVal).replace(/\D/g, '')
+      if (!digits) return null
+      var parsed = parseInt(digits, 10)
+      return isNaN(parsed) ? null : parsed
+    }
+
+    var sanitizeGolsArray = function (input) {
+      if (!input) return []
+      if (typeof input === 'string') {
+        try {
+          input = JSON.parse(input)
+        } catch (_) {
+          return []
+        }
+      }
+      if (!Array.isArray(input)) return []
+      var result = []
+      for (var i = 0; i < input.length; i++) {
+        var it = input[i]
+        if (!it) continue
+        var nome = ''
+        var minuto = null
+        var posicao = 'Atacante'
+        var quantidade = 1
+
+        if (typeof it === 'string') {
+          var trimmedStr = it.trim()
+          var match = trimmedStr.match(/^(.*?)(?:\s+(\d+)(?:'|’|min)?)?$/i)
+          if (match) {
+            nome = (match[1] || '').trim()
+            if (match[2]) {
+              minuto = parseMinutoInt(match[2])
+            }
+          } else {
+            nome = trimmedStr
+          }
+        } else if (typeof it === 'object') {
+          nome = String(it.nome || it.name || '').trim()
+          minuto = parseMinutoInt(it.minuto != null ? it.minuto : it.minute)
+          if (it.posicao) posicao = String(it.posicao).trim()
+          if (it.quantidade != null) {
+            var q = parseInt(it.quantidade, 10)
+            if (!isNaN(q) && q > 0) quantidade = q
+          }
+        }
+
+        if (nome) {
+          result.push({
+            nome: nome,
+            minuto: minuto,
+            posicao: posicao,
+            quantidade: quantidade,
+          })
+        }
+      }
+      return result
+    }
+
+    var cleanPlacarA =
+      typeof body.placar_a === 'number'
+        ? Math.max(0, body.placar_a)
+        : Math.max(0, parseInt(body.placar_a, 10) || 0)
+    var cleanPlacarB =
+      typeof body.placar_b === 'number'
+        ? Math.max(0, body.placar_b)
+        : Math.max(0, parseInt(body.placar_b, 10) || 0)
+
+    var sanitizedGolsA = sanitizeGolsArray(body.gols_time_a || body.marcadores_a)
+    var sanitizedGolsB = sanitizeGolsArray(body.gols_time_b || body.marcadores_b)
+
+    var formatDisplayScorers = function (golsArr) {
+      var arr = []
+      for (var gi = 0; gi < golsArr.length; gi++) {
+        var g = golsArr[gi]
+        if (g.minuto != null && g.minuto !== '') {
+          arr.push(g.nome + ' ' + g.minuto + "'")
+        } else {
+          arr.push(g.nome)
+        }
+      }
+      return arr
+    }
+
+    var marcListA = formatDisplayScorers(sanitizedGolsA)
+    var marcListB = formatDisplayScorers(sanitizedGolsB)
+    var combinedMarcadores = marcListA.concat(marcListB)
+
     if (body.remover === true) {
       delete map[jogoId]
     } else {
-      var parseNamesList = function (input) {
-        if (!input) return []
-        if (Array.isArray(input)) {
-          return input
-            .map(function (m) {
-              return String(m || '').trim()
-            })
-            .filter(Boolean)
-        }
-        if (typeof input === 'string') {
-          return input
-            .split(',')
-            .map(function (m) {
-              return m.trim()
-            })
-            .filter(Boolean)
-        }
-        return []
-      }
-
-      var marcadoresListA = parseNamesList(body.marcadores_a)
-      var marcadoresListB = parseNamesList(body.marcadores_b)
-      var marcadoresList = parseNamesList(body.marcadores)
-
-      if (
-        marcadoresList.length === 0 &&
-        (marcadoresListA.length > 0 || marcadoresListB.length > 0)
-      ) {
-        marcadoresList = marcadoresListA.concat(marcadoresListB)
-      }
-
       map[jogoId] = {
         jogo_id: jogoId,
-        placar_a:
-          typeof body.placar_a === 'number' ? body.placar_a : parseInt(body.placar_a, 10) || 0,
-        placar_b:
-          typeof body.placar_b === 'number' ? body.placar_b : parseInt(body.placar_b, 10) || 0,
-        marcadores: marcadoresList,
-        marcadores_a: marcadoresListA,
-        marcadores_b: marcadoresListB,
-        status: (body.status || 'Ao Vivo').trim(),
+        placar_a: cleanPlacarA,
+        placar_b: cleanPlacarB,
+        marcadores: combinedMarcadores,
+        marcadores_a: marcListA,
+        marcadores_b: marcListB,
+        gols_time_a: sanitizedGolsA,
+        gols_time_b: sanitizedGolsB,
+        status: (body.status || 'Ao Vivo (Manual)').trim(),
         updated_at: new Date().toISOString(),
       }
     }
 
     record.set('api_key', JSON.stringify(map))
     $app.save(record)
+
+    // Tenta atualizar também diretamente o registro da coleção 'jogos' de forma segura
+    // (com minuto inteiro sanitizado e JSON válido em gols_time_a e gols_time_b)
+    try {
+      var jogoRecord = $app.findRecordById('jogos', jogoId)
+      if (jogoRecord) {
+        if (body.remover === true) {
+          // Mantém o jogo como está ou limpa a sobrescrita manual
+        } else {
+          jogoRecord.set('placar_a', cleanPlacarA)
+          jogoRecord.set('placar_b', cleanPlacarB)
+          jogoRecord.set('gols_time_a', sanitizedGolsA)
+          jogoRecord.set('gols_time_b', sanitizedGolsB)
+          $app.save(jogoRecord)
+        }
+      }
+    } catch (errJogoUpdate) {
+      // Registra aviso mas não aborta a requisição, pois o map de sobrescrita já foi gravado
+      console.warn(
+        'Aviso: atualização direta em jogos:',
+        errJogoUpdate ? errJogoUpdate.message : errJogoUpdate,
+      )
+    }
+
+    // Invalidação imediata do cache interno de placar ao vivo para refletir no mesmo segundo
+    try {
+      if (typeof globalThis !== 'undefined' && globalThis.__placarAoVivoCacheStore) {
+        globalThis.__placarAoVivoCacheStore = {}
+      }
+    } catch (_) {}
 
     return e.json(200, {
       success: true,
