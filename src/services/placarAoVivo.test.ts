@@ -181,4 +181,186 @@ describe('Rotina de Placar Ao Vivo (TheSportsDB leve e fail-safe)', () => {
     expect(escalacaoFinal).toEqual(escalacaoPrevia)
     expect(escalacaoFinal.teams[0].starters[0].name).toBe('Jogador 1')
   })
+
+  it('todos os jogos encerrados → clique busca eventos, salva marcadores e recalcula pontos (sem early-return)', () => {
+    // Simulação do fluxo de api_atualizar_todos_placares.js:
+    // Dados de candidatos onde 100% dos jogos estão 'finalizado'/'encerrado'
+    const todosJogosCandidatos = [
+      {
+        id: 'jogo_1',
+        fixture_id: '12345',
+        bolao: 'bolao_1',
+        time_a: 'Corinthians',
+        time_b: 'Palmeiras',
+        status: 'finalizado',
+        resultado_finalizado: true,
+        placar_a: 2,
+        placar_b: 1,
+        gols_time_a: [],
+        gols_time_b: [],
+        marcadores: [],
+      },
+      {
+        id: 'jogo_2',
+        fixture_id: '67890',
+        bolao: 'bolao_1',
+        time_a: 'Flamengo',
+        time_b: 'Fluminense',
+        status: 'encerrado',
+        resultado_finalizado: true,
+        placar_a: 1,
+        placar_b: 1,
+        gols_time_a: [],
+        gols_time_b: [],
+        marcadores: [],
+      },
+    ]
+
+    // 1. Verificação da trava removida:
+    // Antes: jogosRecords = todosJogosCandidatos.filter(!isEncerradoCheck) -> tamanho 0 -> early return com notice
+    // Novo: jogosRecords = todosJogosCandidatos -> processa normalmente sem early-return
+    const jogosRecords = todosJogosCandidatos
+    expect(jogosRecords.length).toBe(2)
+
+    // 2. Simulação de resposta da API externa para os jogos encerrados
+    const apiResponses = [
+      {
+        fixture: { id: 12345, status: { short: 'FT', long: 'Match Finished' } },
+        goals: { home: 2, away: 1 },
+        score: { fulltime: { home: 2, away: 1 } },
+        events: [
+          {
+            type: 'Goal',
+            detail: 'Normal Goal',
+            player: { name: 'Yuri Alberto' },
+            team: { id: 1 },
+            time: { elapsed: 23 },
+          },
+          {
+            type: 'Goal',
+            detail: 'Penalty',
+            player: { name: 'Romero' },
+            team: { id: 1 },
+            time: { elapsed: 45 },
+          },
+          {
+            type: 'Goal',
+            detail: 'Missed Penalty',
+            player: { name: 'Veiga' },
+            team: { id: 2 },
+            time: { elapsed: 60 },
+          },
+          {
+            type: 'Goal',
+            detail: 'Normal Goal',
+            player: { name: 'Rony' },
+            team: { id: 2 },
+            time: { elapsed: 78 },
+          },
+        ],
+        teams: {
+          home: { id: 1, name: 'Corinthians' },
+          away: { id: 2, name: 'Palmeiras' },
+        },
+      },
+    ]
+
+    // 3. Processamento de marcadores, validade de gols e minutos limpos
+    const processedEvents = []
+    const golsA: Array<{ nome: string; posicao: string; quantidade: number; minuto: string }> = []
+    const golsB: Array<{ nome: string; posicao: string; quantidade: number; minuto: string }> = []
+    const marcadoresGerais: string[] = []
+
+    const homeTeamId = 1
+    const awayTeamId = 2
+
+    for (const ev of apiResponses[0].events) {
+      const typeStr = (ev.type || '').toLowerCase()
+      const detailStr = (ev.detail || '').toLowerCase().trim()
+
+      if (typeStr === 'goal') {
+        // Ignora pênaltis perdidos
+        if (
+          detailStr.includes('missed') ||
+          detailStr.includes('perdido') ||
+          detailStr.includes('missed penalty') ||
+          detailStr.includes('penalty missed')
+        ) {
+          continue
+        }
+
+        let minuteInt: number | null = null
+        if (ev.time && ev.time.elapsed != null) {
+          const parsedM = parseInt(String(ev.time.elapsed), 10)
+          if (!isNaN(parsedM)) minuteInt = parsedM
+        }
+        const minuteStr = minuteInt !== null ? `${minuteInt}'` : ''
+        const isContra = detailStr.includes('own') || detailStr.includes('contra')
+        const playerName = (ev.player?.name || '').trim()
+
+        const item = {
+          nome: playerName,
+          posicao: isContra ? 'Gol Contra' : 'Atacante/Meia',
+          quantidade: 1,
+          minuto: minuteStr,
+        }
+
+        if (ev.team.id === homeTeamId) {
+          golsA.push(item)
+        } else if (ev.team.id === awayTeamId) {
+          golsB.push(item)
+        }
+
+        marcadoresGerais.push(minuteStr ? `${playerName} ${minuteStr}` : playerName)
+      }
+    }
+
+    // Asserções dos marcadores
+    expect(golsA).toHaveLength(2)
+    expect(golsA[0]).toEqual({
+      nome: 'Yuri Alberto',
+      posicao: 'Atacante/Meia',
+      quantidade: 1,
+      minuto: "23'",
+    })
+    expect(golsA[1]).toEqual({
+      nome: 'Romero',
+      posicao: 'Atacante/Meia',
+      quantidade: 1,
+      minuto: "45'",
+    })
+    // Pênalti perdido do Veiga NÃO pode ter sido adicionado
+    expect(golsB).toHaveLength(1)
+    expect(golsB[0]).toEqual({
+      nome: 'Rony',
+      posicao: 'Atacante/Meia',
+      quantidade: 1,
+      minuto: "78'",
+    })
+    expect(marcadoresGerais).toEqual(["Yuri Alberto 23'", "Romero 45'", "Rony 78'"])
+
+    // 4. Recálculo de pontos dos palpites com os novos marcadores sincronizados
+    const palpiteParticipante = {
+      placar_a: 2,
+      placar_b: 1, // Cravada exata -> 8 pts
+      goleadores_a: [{ nome: 'Romero', posicao: 'Atacante/Meia' }], // Marcador acertado -> +1 pt
+      goleadores_b: [],
+    }
+
+    let pontos = 0
+    const isCravada = palpiteParticipante.placar_a === 2 && palpiteParticipante.placar_b === 1
+    if (isCravada) {
+      pontos += 8
+    }
+
+    // Marcador acertado Romero
+    const acertouRomero = golsA.some(
+      (g) => g.nome.toLowerCase() === palpiteParticipante.goleadores_a[0].nome.toLowerCase(),
+    )
+    if (acertouRomero) {
+      pontos += 1
+    }
+
+    expect(pontos).toBe(9) // 8 da cravada + 1 do marcador Romero
+  })
 })

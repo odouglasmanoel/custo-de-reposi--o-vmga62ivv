@@ -104,28 +104,9 @@ routerAdd(
       })
     }
 
-    // Otimização de cota API-Sports:
-    // Filtrar e chamar a API APENAS para jogos cujo status no banco seja DIFERENTE de "Encerrado" (apenas pendentes ou ao_vivo).
-    // Jogos já encerrados não devem gastar cota.
-    const isEncerradoCheck = (r) => {
-      if (r.getBool('resultado_finalizado')) return true
-      const st = (r.getString('status') || '').toLowerCase().trim()
-      return ['finalizado', 'encerrado', 'ft'].includes(st)
-    }
-
-    const jogosRecords = todosJogosCandidatos.filter((r) => !isEncerradoCheck(r))
-
-    if (jogosRecords.length === 0) {
-      return e.json(200, {
-        success: true,
-        notice:
-          'Todos os jogos de hoje já estão encerrados. Nenhuma requisição à API externa necessária.',
-        total_jogos: todosJogosCandidatos.length,
-        jogos_encerrados_ignorados: todosJogosCandidatos.length,
-        atualizados: 0,
-        jogos: [],
-      })
-    }
+    // Administrador forçando sincronização de todos os jogos do dia (Pendente, Ao Vivo e Encerrado).
+    // Não descartar jogos encerrados para permitir re-sincronizar marcadores, eventos, escalações e ficha técnica a qualquer momento.
+    const jogosRecords = todosJogosCandidatos
 
     // Mapear fixture_ids dos jogos
     // Chave: fixture_id -> array de records (pode haver mais de um bolão com o mesmo jogo)
@@ -461,13 +442,28 @@ routerAdd(
       for (let i = 0; i < rawEvents.length; i++) {
         const ev = rawEvents[i]
         if ((ev.type || '').toString().toLowerCase() === 'goal') {
-          const detail = (ev.detail || '').toString().toLowerCase()
-          if (detail.includes('missed') || detail.includes('perdido')) {
+          const detail = (ev.detail || '').toString().toLowerCase().trim()
+          // Validez de gol: APENAS 'Normal Goal', 'Penalty' (convertido) e 'Own Goal'.
+          // IGNORAR expressamente 'Missed Penalty'/'Penalty Missed' (pênalti perdido nunca vira marcador).
+          if (
+            detail.includes('missed') ||
+            detail.includes('perdido') ||
+            detail.includes('missed penalty') ||
+            detail.includes('penalty missed')
+          ) {
             continue
           }
+
+          // Minuto como inteiro limpo
+          let minuteInt = null
+          if (ev.time && ev.time.elapsed != null) {
+            const parsedM = parseInt(ev.time.elapsed, 10)
+            if (!isNaN(parsedM)) minuteInt = parsedM
+          }
+          const minuteStr = minuteInt !== null ? `${minuteInt}'` : ''
+
           const isContra = detail.includes('own') || detail.includes('contra')
           const playerName = (ev.player?.name || '').toString().trim()
-          const minute = ev.time?.elapsed ? String(ev.time.elapsed) : ''
           const teamId = ev.team?.id
 
           if (playerName) {
@@ -480,7 +476,7 @@ routerAdd(
               nome: playerName,
               posicao: posicao,
               quantidade: 1,
-              minuto: minute ? `${minute}'` : '',
+              minuto: minuteStr,
             }
 
             if (teamId === homeTeamId) {
@@ -489,7 +485,7 @@ routerAdd(
               golsB.push(item)
             }
 
-            marcadoresGerais.push(minute ? `${playerName} ${minute}'` : playerName)
+            marcadoresGerais.push(minuteStr ? `${playerName} ${minuteStr}` : playerName)
           }
         }
       }
@@ -1174,22 +1170,21 @@ routerAdd(
     let messageSucesso = ''
 
     if (totalComPlacarGravado === 0 && totalAoVivo === 0 && totalEncerrados === 0) {
-      messageNotice =
-        'Os jogos selecionados ainda não possuem placar finalizado ou em andamento retornado pela API-Sports.'
-      messageSucesso = `Consulta concluída: 0 jogos com placar gravado, ${totalSemPlacarGravado} sem dados de placar disponível.`
+      messageNotice = 'Os jogos selecionados ainda não possuem placar retornado pela API-Sports.'
+      messageSucesso = `Consulta concluída: 0 jogos com placar/eventos sincronizados, ${totalSemPlacarGravado} sem dados de placar disponível na API.`
     } else {
       const partsMsg = []
+      if (totalEncerrados > 0) {
+        partsMsg.push(`${totalEncerrados} encerrado(s) sincronizado(s)`)
+      }
       if (totalAoVivo > 0) {
         partsMsg.push(`${totalAoVivo} ao vivo / parcial(is)`)
-      }
-      if (totalEncerrados > 0) {
-        partsMsg.push(`${totalEncerrados} encerrado(s)`)
       }
       if (totalComPlacarGravado > 0 && totalAoVivo === 0 && totalEncerrados === 0) {
         partsMsg.push(`${totalComPlacarGravado} com placar gravado`)
       }
       if (totalSemPlacarGravado > 0) {
-        partsMsg.push(`${totalSemPlacarGravado} sem dados`)
+        partsMsg.push(`${totalSemPlacarGravado} sem dados na API`)
       }
       messageSucesso = `Sincronização concluída com sucesso: ${partsMsg.join(', ')}.`
     }

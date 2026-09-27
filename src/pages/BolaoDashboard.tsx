@@ -925,8 +925,8 @@ export default function BolaoDashboard() {
           })
         } else {
           const resumoPartes = []
-          if (aoVivo > 0) resumoPartes.push(`${aoVivo} ao vivo / parcial(is)`)
           if (encerrados > 0) resumoPartes.push(`${encerrados} encerrado(s)`)
+          if (aoVivo > 0) resumoPartes.push(`${aoVivo} ao vivo / parcial(is)`)
           if (comPlacar > 0 && aoVivo === 0 && encerrados === 0)
             resumoPartes.push(`${comPlacar} com placar gravado`)
           if (semPlacar > 0) resumoPartes.push(`${semPlacar} sem dados`)
@@ -934,7 +934,7 @@ export default function BolaoDashboard() {
           const detalheResumo = `Resumo: ${resumoPartes.join(', ')}.`
 
           toast({
-            title: 'Placares e fichas sincronizados',
+            title: 'Placares, fichas e marcadores sincronizados',
             description: res.message || `Atualização concluída com sucesso! ${detalheResumo}`,
           })
         }
