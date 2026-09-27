@@ -454,6 +454,90 @@ export function splitMatchScorersByTeam(options: SplitMatchScorersOptions): Matc
       // Placar 0x0 ou indefinido: atribui à lista de A por padrão gracioso
       scorersA.push(...cleanList)
     }
+  } else if (
+    parsedFichaDetalhes &&
+    Array.isArray(parsedFichaDetalhes.events) &&
+    parsedFichaDetalhes.events.some((ev: any) => {
+      const typeLower = (ev?.type || '').toString().toLowerCase()
+      const category = (ev?.category || '').toString().toLowerCase()
+      const detail = (ev?.detail || '').toString().toLowerCase()
+      const isGoal = category === 'goal' || typeLower.includes('goal')
+      const isMissed =
+        detail.includes('missed') || detail.includes('perdido') || detail.includes('missed penalty')
+      return isGoal && !isMissed
+    })
+  ) {
+    // Prioridade 1.5: Eventos de gols estruturados da timeline / ficha_detalhes (estritamente por team_id / side)
+    const goalEvents = parsedFichaDetalhes.events.filter((ev: any) => {
+      const typeLower = (ev?.type || '').toString().toLowerCase()
+      const category = (ev?.category || '').toString().toLowerCase()
+      const detail = (ev?.detail || '').toString().toLowerCase()
+      const isGoal = category === 'goal' || typeLower.includes('goal')
+      const isMissed =
+        detail.includes('missed') || detail.includes('perdido') || detail.includes('missed penalty')
+      return isGoal && !isMissed
+    })
+
+    for (const ev of goalEvents) {
+      const pName = (ev?.player?.name || '').toString().trim()
+      if (!pName) continue
+      const detail = (ev?.detail || '').toString().toLowerCase()
+      const isContra = detail.includes('own') || detail.includes('contra')
+      const evTeamId = ev?.team?.id != null ? String(ev.team.id).trim() : null
+      const evMinute = ev?.time?.elapsed != null ? `${ev.time.elapsed}'` : ''
+      const token = evMinute ? `${pName} ${evMinute}` : pName
+
+      let evIsA = false
+      let evIsB = false
+
+      if (evTeamId && cleanTeamAId && evTeamId === cleanTeamAId) {
+        evIsA = true
+      } else if (evTeamId && cleanTeamBId && evTeamId === cleanTeamBId) {
+        evIsB = true
+      } else if (ev?.team?.side === 'home') {
+        evIsA = true
+      } else if (ev?.team?.side === 'away') {
+        evIsB = true
+      } else if (ev?.team?.name) {
+        const evTeamClean = normalizeTeamComparisonName(ev.team.name)
+        const tAClean = normalizeTeamComparisonName(teamAName)
+        const tBClean = normalizeTeamComparisonName(teamBName)
+        if (
+          evTeamClean &&
+          tAClean &&
+          (evTeamClean.includes(tAClean) || tAClean.includes(evTeamClean))
+        ) {
+          evIsA = true
+        } else if (
+          evTeamClean &&
+          tBClean &&
+          (evTeamClean.includes(tBClean) || tBClean.includes(evTeamClean))
+        ) {
+          evIsB = true
+        }
+      }
+
+      // Gol contra credita ao placar adversário
+      let destIsA = false
+      let destIsB = false
+      if (isContra) {
+        if (evIsA) destIsB = true
+        else if (evIsB) destIsA = true
+        else destIsA = true
+      } else {
+        if (evIsA) destIsA = true
+        else if (evIsB) destIsB = true
+        else destIsA = true
+      }
+
+      if (destIsA) {
+        scorersA.push(token)
+      } else if (destIsB) {
+        scorersB.push(token)
+      } else {
+        scorersA.push(token)
+      }
+    }
   } else if (Array.isArray(liveScorers) && liveScorers.length > 0) {
     // Prioridade 2: Marcadores ao vivo retornados pela API (com teamSide: 'home' | 'away', teamId numérico ou teamName)
     for (const item of liveScorers) {

@@ -610,7 +610,24 @@ routerAdd(
             if (homeTeamId && awayTeamId && evTeamId) {
               pertenceA = evTeamId === homeTeamId
               pertenceB = evTeamId === awayTeamId
-            } else if (evTeamName) {
+            } else if (evTeamId && matchingRecords.length > 0) {
+              const primeJ = matchingRecords[0]
+              const cleanAId = (primeJ.getString('url_escudo_mandante') || '').match(
+                /\/teams\/(\d+)\./,
+              )
+              const cleanBId = (primeJ.getString('url_escudo_visitante') || '').match(
+                /\/teams\/(\d+)\./,
+              )
+              const idMandante = cleanAId ? cleanAId[1] : null
+              const idVisitante = cleanBId ? cleanBId[1] : null
+              if (idMandante && evTeamId === idMandante) {
+                pertenceA = true
+              } else if (idVisitante && evTeamId === idVisitante) {
+                pertenceB = true
+              }
+            }
+
+            if (!pertenceA && !pertenceB && evTeamName) {
               if (
                 homeTeamName &&
                 (homeTeamName.includes(evTeamName) || evTeamName.includes(homeTeamName))

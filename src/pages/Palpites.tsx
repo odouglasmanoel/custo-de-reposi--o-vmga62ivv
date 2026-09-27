@@ -1261,12 +1261,93 @@ export default function Palpites() {
     const [hasError, setHasError] = useState(false)
     const [triedFlagCdn, setTriedFlagCdn] = useState(false)
     const [currentSrc, setCurrentSrc] = useState<string | undefined>(escudo)
+    const [resolvingAsync, setResolvingAsync] = useState(false)
+
+    const resolveSyncLogo = useCallback((): string | undefined => {
+      if (escudo && escudo.trim() !== '') return escudo.trim()
+
+      if (fichaDetalhes) {
+        const extracted = extractLogosFromFichaDetalhes(fichaDetalhes)
+        if (extracted) {
+          const sideLogo =
+            isSide === 'home'
+              ? extracted.home
+              : isSide === 'away'
+                ? extracted.away
+                : extracted.home || extracted.away
+          if (sideLogo && sideLogo.trim() !== '') {
+            return sideLogo.trim()
+          }
+        }
+      }
+
+      if (fixtureId) {
+        const cleanId = String(fixtureId).replace(/\D/g, '').trim()
+        if (cleanId && fixtureLogosMemoryCache.has(cleanId)) {
+          const c = fixtureLogosMemoryCache.get(cleanId)!
+          const cached = isSide === 'home' ? c.home : isSide === 'away' ? c.away : c.home || c.away
+          if (cached && cached.trim() !== '') {
+            return cached.trim()
+          }
+        }
+      }
+
+      if (nomeTime) {
+        const fallbackBadge = readEscudoCache(nomeTime)
+        if (fallbackBadge && fallbackBadge.trim() !== '') {
+          return fallbackBadge.trim()
+        }
+      }
+
+      if (nomeTime) {
+        const flagUrl = getFlagCdnUrl(nomeTime, { cacheBust: true })
+        if (flagUrl && flagUrl.trim() !== '') {
+          return flagUrl.trim()
+        }
+      }
+
+      return undefined
+    }, [escudo, fichaDetalhes, isSide, fixtureId, nomeTime])
 
     useEffect(() => {
-      setCurrentSrc(escudo)
       setHasError(false)
       setTriedFlagCdn(false)
-    }, [escudo])
+
+      const initialCandidate = resolveSyncLogo()
+      if (initialCandidate) {
+        setCurrentSrc(initialCandidate)
+        return
+      }
+
+      if (fixtureId && !resolvingAsync) {
+        const cleanId = String(fixtureId).replace(/\D/g, '').trim()
+        if (cleanId) {
+          setResolvingAsync(true)
+          fetchAndCacheFixtureLogos(cleanId)
+            .then((res) => {
+              if (res) {
+                const fetched =
+                  isSide === 'home' ? res.home : isSide === 'away' ? res.away : res.home || res.away
+                if (fetched && fetched.trim() !== '') {
+                  setCurrentSrc(fetched.trim())
+                  return
+                }
+              }
+              if (nomeTime) {
+                const flagUrl = getFlagCdnUrl(nomeTime, { cacheBust: true })
+                if (flagUrl) {
+                  setCurrentSrc(flagUrl)
+                  return
+                }
+              }
+            })
+            .catch(() => {})
+            .finally(() => setResolvingAsync(false))
+        }
+      } else {
+        setCurrentSrc(undefined)
+      }
+    }, [escudo, fichaDetalhes, fixtureId, isSide, nomeTime, resolveSyncLogo])
 
     const handleError = () => {
       if (!nomeTime) {
@@ -1297,6 +1378,22 @@ export default function Palpites() {
             setCurrentSrc(cached)
             return
           }
+        }
+        if (cleanId && !resolvingAsync) {
+          setResolvingAsync(true)
+          fetchAndCacheFixtureLogos(cleanId)
+            .then((res) => {
+              if (res) {
+                const fetched =
+                  isSide === 'home' ? res.home : isSide === 'away' ? res.away : res.home || res.away
+                if (fetched && fetched !== currentSrc) {
+                  setCurrentSrc(fetched)
+                  return
+                }
+              }
+            })
+            .catch(() => {})
+            .finally(() => setResolvingAsync(false))
         }
       }
 

@@ -272,6 +272,16 @@ export const SELECAO_FLAG_MAP: Record<string, string> = {
   // Burkina Faso -> bf
   burkinafaso: 'bf',
   burkina: 'bf',
+
+  // Lituânia / Lithuania -> lt
+  lituania: 'lt',
+  lithuania: 'lt',
+  lietuva: 'lt',
+
+  // Azerbaijão / Azerbaijan -> az
+  azerbaijao: 'az',
+  azerbaijan: 'az',
+  azerbaycan: 'az',
 }
 
 /**
@@ -391,6 +401,10 @@ export const OFFICIAL_NATIONAL_TEAM_IDS: Record<string, number> = {
   holanda: 1118,
   paisesbaixos: 1118,
   netherlands: 1118,
+  lituania: 1097,
+  lithuania: 1097,
+  azerbaijao: 1096,
+  azerbaijan: 1096,
 }
 
 /**
@@ -629,9 +643,14 @@ export function resolveTeamBadgeUrl(params: {
       : null
 
   if (isSelecao) {
-    // 1. Nível 1: ficha_detalhes ou savedBadge oficial da seleção
-    if (badgeLevel1 && isOfficialNationalTeamBadge(teamName, badgeLevel1)) {
-      return badgeLevel1
+    // 1. Nível 1: ficha_detalhes ou savedBadge oficial da seleção (ou URL válida media.api-sports.io que não seja contaminada)
+    if (badgeLevel1) {
+      if (isOfficialNationalTeamBadge(teamName, badgeLevel1)) {
+        return badgeLevel1
+      }
+      if (badgeLevel1.includes('media.api-sports.io')) {
+        return badgeLevel1
+      }
     }
     if (
       savedBadge &&
@@ -641,11 +660,19 @@ export function resolveTeamBadgeUrl(params: {
       if (isOfficialNationalTeamBadge(teamName, savedBadge)) {
         return savedBadge
       }
+      if (savedBadge.includes('media.api-sports.io')) {
+        return savedBadge
+      }
     }
 
     // Nível 2: fixture memoizada com logo oficial da seleção
-    if (badgeLevel2 && isOfficialNationalTeamBadge(teamName, badgeLevel2)) {
-      return badgeLevel2
+    if (badgeLevel2) {
+      if (isOfficialNationalTeamBadge(teamName, badgeLevel2)) {
+        return badgeLevel2
+      }
+      if (badgeLevel2.includes('media.api-sports.io')) {
+        return badgeLevel2
+      }
     }
 
     // Nível 3: liveOrCacheBadge oficial da seleção sem contaminação
@@ -657,12 +684,30 @@ export function resolveTeamBadgeUrl(params: {
       if (isOfficialNationalTeamBadge(teamName, liveOrCacheBadge)) {
         return liveOrCacheBadge
       }
+      if (liveOrCacheBadge.includes('media.api-sports.io')) {
+        return liveOrCacheBadge
+      }
     }
 
     // Nível 4: Bandeira FlagCDN da seleção nacional
     if (flagUrl) {
       return flagUrl
     }
+
+    if (badgeLevel1) return badgeLevel1
+    if (
+      savedBadge &&
+      !isContaminatedBadge(teamName, savedBadge) &&
+      !checkCorrompido(teamName, savedBadge)
+    )
+      return savedBadge
+    if (badgeLevel2) return badgeLevel2
+    if (
+      liveOrCacheBadge &&
+      !isContaminatedBadge(teamName, liveOrCacheBadge) &&
+      !checkCorrompido(teamName, liveOrCacheBadge)
+    )
+      return liveOrCacheBadge
 
     return null
   }
