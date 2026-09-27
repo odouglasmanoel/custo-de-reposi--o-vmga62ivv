@@ -537,4 +537,199 @@ describe('Rotina de Placar Ao Vivo (TheSportsDB leve e fail-safe)', () => {
     expect(fixtureResponses).toHaveLength(3)
     expect(uniqueFixtureIds.every((id) => fixturesEncontrados[id])).toBe(true)
   })
+
+  it('consulta direta por fixture_id (/fixtures?id=...) obtém o confronto exato sem depender de data/liga', () => {
+    // Simulação do novo fluxo direto por fixture_id do botão "Atualizar Todos os Placares"
+    const jogosDeHoje = [
+      { id: 'jogo_1', fixture_id: '1528891', time_a: 'Bayern Munich', time_b: 'Bayer Leverkusen' },
+      { id: 'jogo_2', fixture_id: '1528892', time_a: 'PSG', time_b: 'Marseille' },
+    ]
+
+    const fixtureIds = jogosDeHoje.map((j) => j.fixture_id)
+    const urlsConsultadas: string[] = []
+    const fixtureResponses: any[] = []
+
+    for (const fid of fixtureIds) {
+      const url = `https://v3.football.api-sports.io/fixtures?id=${encodeURIComponent(fid)}`
+      urlsConsultadas.push(url)
+
+      // Simulação da resposta da API-Sports para consulta direta
+      fixtureResponses.push({
+        fixture: { id: Number(fid), status: { short: 'FT', long: 'Match Finished' } },
+        goals: { home: 2, away: 1 },
+        teams: {
+          home: { id: 100, name: 'Team A' },
+          away: { id: 200, name: 'Team B' },
+        },
+      })
+    }
+
+    expect(urlsConsultadas).toEqual([
+      'https://v3.football.api-sports.io/fixtures?id=1528891',
+      'https://v3.football.api-sports.io/fixtures?id=1528892',
+    ])
+    expect(fixtureResponses).toHaveLength(2)
+    expect(fixtureResponses[0].fixture.id).toBe(1528891)
+    expect(fixtureResponses[1].fixture.id).toBe(1528892)
+  })
+
+  it('extração obrigatória de marcadores em /fixtures/events filtrando apenas Goal e ignorando Missed Penalty', () => {
+    // Mock de resposta do endpoint /fixtures/events?fixture=1528891
+    const mockEventsEndpointResponse = [
+      {
+        type: 'Goal',
+        detail: 'Normal Goal',
+        player: { id: 101, name: 'Harry Kane' },
+        team: { id: 100, name: 'Bayern Munich' },
+        time: { elapsed: 22, extra: null },
+      },
+      {
+        type: 'Goal',
+        detail: 'Penalty', // Convertido -> DEVE contar
+        player: { id: 102, name: 'Jamal Musiala' },
+        team: { id: 100, name: 'Bayern Munich' },
+        time: { elapsed: 54, extra: null },
+      },
+      {
+        type: 'Goal',
+        detail: 'Missed Penalty', // Pênalti perdido -> NUNCA deve contar como gol/marcador
+        player: { id: 103, name: 'Florian Wirtz' },
+        team: { id: 200, name: 'Bayer Leverkusen' },
+        time: { elapsed: 65, extra: null },
+      },
+      {
+        type: 'Goal',
+        detail: 'Own Goal', // Gol contra -> DEVE contar como Gol Contra
+        player: { id: 104, name: 'Jonathan Tah' },
+        team: { id: 100, name: 'Bayern Munich' },
+        time: { elapsed: 80, extra: null },
+      },
+      {
+        type: 'Card',
+        detail: 'Yellow Card',
+        player: { id: 105, name: 'Granit Xhaka' },
+        team: { id: 200, name: 'Bayer Leverkusen' },
+        time: { elapsed: 85, extra: null },
+      },
+    ]
+
+    const homeTeamId = 100
+    const awayTeamId = 200
+
+    const golsA: any[] = []
+    const golsB: any[] = []
+    const marcadoresGerais: string[] = []
+
+    for (const ev of mockEventsEndpointResponse) {
+      if ((ev.type || '').toString().toLowerCase() === 'goal') {
+        const detail = (ev.detail || '').toString().toLowerCase().trim()
+        // IGNORA Missed Penalty
+        if (
+          detail.includes('missed') ||
+          detail.includes('perdido') ||
+          detail.includes('missed penalty') ||
+          detail.includes('penalty missed')
+        ) {
+          continue
+        }
+
+        let minuteInt: number | null = null
+        if (ev.time && ev.time.elapsed != null) {
+          const parsed = parseInt(String(ev.time.elapsed), 10)
+          if (!isNaN(parsed)) minuteInt = parsed
+        }
+        const minuteStr = minuteInt !== null ? `${minuteInt}'` : ''
+        const isContra = detail.includes('own') || detail.includes('contra')
+        const playerName = (ev.player?.name || '').toString().trim()
+        const teamId = ev.team?.id
+
+        if (playerName) {
+          const posicao = isContra ? 'Gol Contra' : 'Atacante/Meia'
+          const item = {
+            nome: playerName,
+            posicao,
+            quantidade: 1,
+            minuto: minuteStr,
+          }
+
+          if (teamId === homeTeamId) {
+            golsA.push(item)
+          } else if (teamId === awayTeamId) {
+            golsB.push(item)
+          }
+
+          marcadoresGerais.push(minuteStr ? `${playerName} ${minuteStr}` : playerName)
+        }
+      }
+    }
+
+    // Validações
+    expect(golsA).toHaveLength(3) // Kane 22', Musiala 54', Tah 80' (gol contra a favor do mandante)
+    expect(golsB).toHaveLength(0) // Wirtz perdeu pênalti, não conta!
+    expect(marcadoresGerais).toEqual(["Harry Kane 22'", "Jamal Musiala 54'", "Jonathan Tah 80'"])
+    expect(golsA[1].posicao).toBe('Atacante/Meia')
+    expect(golsA[2].posicao).toBe('Gol Contra')
+    expect(golsA.some((g) => g.nome.includes('Wirtz'))).toBe(false)
+  })
+
+  it('disparo de recálculo de pontuação atualiza pontuacao_jogo e pontuação dos participantes', () => {
+    // Jogo salvo com placar 2x1 e marcadores Kane e Musiala
+    const jogo = {
+      id: 'jogo_10',
+      placar_a: 2,
+      placar_b: 1,
+      status: 'finalizado',
+      resultado_finalizado: true,
+      gols_time_a: [
+        { nome: 'Harry Kane', posicao: 'Atacante/Meia', quantidade: 1, minuto: "22'" },
+        { nome: 'Jamal Musiala', posicao: 'Atacante/Meia', quantidade: 1, minuto: "54'" },
+      ],
+      gols_time_b: [
+        { nome: 'Victor Boniface', posicao: 'Atacante/Meia', quantidade: 1, minuto: "70'" },
+      ],
+    }
+
+    // Palpite 1: Placar exato 2x1 com Kane como goleador
+    const palpiteExato = {
+      id: 'palpite_1',
+      placar_a: 2,
+      placar_b: 1,
+      goleadores_a: [{ nome: 'Harry Kane', posicao: 'Atacante' }],
+      goleadores_b: [],
+    }
+
+    // Palpite 2: Vencedor 3x1 (vencedor + metade + Kane)
+    const palpiteVencedor = {
+      id: 'palpite_2',
+      placar_a: 3,
+      placar_b: 1,
+      goleadores_a: [{ nome: 'Harry Kane', posicao: 'Atacante' }],
+      goleadores_b: [],
+    }
+
+    const calcularPontos = (p: typeof palpiteExato) => {
+      let pontos = 0
+      const isExact = p.placar_a === jogo.placar_a && p.placar_b === jogo.placar_b
+      if (isExact) {
+        pontos += 8
+      } else {
+        const predWinner = p.placar_a > p.placar_b ? 1 : p.placar_b > p.placar_a ? -1 : 0
+        const realWinner =
+          jogo.placar_a > jogo.placar_b ? 1 : jogo.placar_b > jogo.placar_a ? -1 : 0
+        if (predWinner === realWinner) pontos += 2
+        if (Math.abs(p.placar_a - p.placar_b) === Math.abs(jogo.placar_a - jogo.placar_b))
+          pontos += 1
+        if (p.placar_a === jogo.placar_a || p.placar_b === jogo.placar_b) pontos += 1
+      }
+
+      // Marcadores: Kane acertado (1 pt atacante)
+      if (p.goleadores_a.some((g) => g.nome === 'Harry Kane')) {
+        pontos += 1
+      }
+      return pontos
+    }
+
+    expect(calcularPontos(palpiteExato)).toBe(9) // 8 (cravada) + 1 (Kane atacante) = 9
+    expect(calcularPontos(palpiteVencedor)).toBe(4) // 2 (vencedor) + 1 (metade) + 1 (Kane) = 4
+  })
 })

@@ -172,65 +172,57 @@ routerAdd(
     const fixtureResponses = []
     const rawApiLogs = []
 
-    // Estratégia de busca otimizada e 100% compatível com todos os planos da API-Sports:
-    // 1. Tentar busca em lote por data (?date=YYYY-MM-DD), que é suportada no plano Free/Developer em 1 única requisição.
-    // 2. Extrair as partidas que batem com os uniqueFixtureIds necessários.
-    // 3. Para quaisquer fixtures faltantes (ou caso a busca por data não retorne as partidas), realizar chamadas individuais seguras (?id=X).
-    // OBSERVAÇÃO: O parâmetro ?ids= consolidado NÃO é usado como chamada primária bloqueante porque a API-Sports o recusa no plano gratuito.
-    const agoraSP = new Date(Date.now() - 3 * 3600 * 1000)
-    const yyyy = agoraSP.getUTCFullYear()
-    const mm = String(agoraSP.getUTCMonth() + 1).padStart(2, '0')
-    const dd = String(agoraSP.getUTCDate()).padStart(2, '0')
-    const hojeIso = `${yyyy}-${mm}-${dd}`
-
+    // REQUISIÇÃO DIRETA POR FIXTURE_ID:
+    // Pega a lista de fixture_ids existentes na tabela de jogos e faz as chamadas à API-Sports
+    // utilizando diretamente o parâmetro do ID da partida (/fixtures?id=...), garantindo a leitura
+    // exata do confronto sem depender do filtro por data/liga ou divergência de fuso horário.
     const fixturesEncontrados = {}
 
-    // Tentativa 1: Buscar por data de hoje na API-Sports (?date=YYYY-MM-DD)
-    const urlDate = `https://v3.football.api-sports.io/fixtures?date=${encodeURIComponent(hojeIso)}&timezone=America%2FSao_Paulo`
-    console.log(`[atualizar-todos] Tentando busca em lote por data: ${urlDate}`)
+    for (let fIdx = 0; fIdx < uniqueFixtureIds.length; fIdx++) {
+      const singleId = uniqueFixtureIds[fIdx]
+      const singleUrl = `https://v3.football.api-sports.io/fixtures?id=${encodeURIComponent(singleId)}`
 
-    let respDateCall = null
-    if (limiterMod && typeof limiterMod.enviarRequisicaoApiFootball === 'function') {
-      respDateCall = limiterMod.enviarRequisicaoApiFootball(
-        urlDate,
-        { timeout: 15, isAdminManual: true },
-        2,
-      )
-    } else {
-      const sendRes = $http.send({ url: urlDate, method: 'GET', timeout: 15 })
-      let j = null
-      try {
-        j =
-          typeof sendRes.json === 'object' && sendRes.json !== null
-            ? sendRes.json
-            : JSON.parse(sendRes.raw)
-      } catch (_) {}
-      respDateCall = {
-        blocked: false,
-        statusCode: sendRes ? sendRes.statusCode : 500,
-        rawResponse: sendRes,
-        json: j,
+      let singleCall = null
+      if (limiterMod && typeof limiterMod.enviarRequisicaoApiFootball === 'function') {
+        singleCall = limiterMod.enviarRequisicaoApiFootball(
+          singleUrl,
+          { timeout: 15, isAdminManual: true },
+          2,
+        )
+      } else {
+        const sendRes = $http.send({ url: singleUrl, method: 'GET', timeout: 15 })
+        let j = null
+        try {
+          j =
+            typeof sendRes.json === 'object' && sendRes.json !== null
+              ? sendRes.json
+              : JSON.parse(sendRes.raw)
+        } catch (_) {}
+        singleCall = {
+          blocked: false,
+          statusCode: sendRes ? sendRes.statusCode : 500,
+          rawResponse: sendRes,
+          json: j,
+        }
       }
-    }
 
-    if (respDateCall) {
       rawApiLogs.push({
-        url: urlDate,
-        fixture_ids: uniqueFixtureIds,
-        statusCode: respDateCall.statusCode,
+        url: singleUrl,
+        fixture_ids: [singleId],
+        statusCode: singleCall ? singleCall.statusCode : null,
         results:
-          respDateCall.json && typeof respDateCall.json.results === 'number'
-            ? respDateCall.json.results
+          singleCall && singleCall.json && typeof singleCall.json.results === 'number'
+            ? singleCall.json.results
             : 0,
         response_count:
-          respDateCall.json && Array.isArray(respDateCall.json.response)
-            ? respDateCall.json.response.length
+          singleCall && singleCall.json && Array.isArray(singleCall.json.response)
+            ? singleCall.json.response.length
             : 0,
-        json_exact: respDateCall.json,
-        keyUsed: respDateCall.keyUsed,
+        json_exact: singleCall ? singleCall.json : null,
+        keyUsed: singleCall ? singleCall.keyUsed : null,
       })
 
-      if (respDateCall.blocked && respDateCall.auth_error) {
+      if (singleCall && singleCall.blocked && singleCall.auth_error) {
         return e.json(401, {
           success: false,
           auth_error: true,
@@ -240,7 +232,7 @@ routerAdd(
         })
       }
 
-      if (respDateCall.blocked && respDateCall.rate_limited) {
+      if (singleCall && singleCall.blocked && singleCall.rate_limited) {
         return e.json(429, {
           success: false,
           error: 'Limite de requisições da API-Sports atingido nas chaves configuradas.',
@@ -250,102 +242,14 @@ routerAdd(
       }
 
       if (
-        respDateCall.statusCode === 200 &&
-        respDateCall.json &&
-        Array.isArray(respDateCall.json.response)
+        singleCall &&
+        singleCall.statusCode === 200 &&
+        singleCall.json &&
+        Array.isArray(singleCall.json.response) &&
+        singleCall.json.response.length > 0
       ) {
-        for (let r = 0; r < respDateCall.json.response.length; r++) {
-          const item = respDateCall.json.response[r]
-          const fid = item.fixture?.id ? String(item.fixture.id) : null
-          if (fid && fixtureMap[fid]) {
-            fixtureResponses.push(item)
-            fixturesEncontrados[fid] = true
-          }
-        }
-      }
-    }
-
-    // Identifica quais fixture_ids ainda não foram obtidos pela consulta por data
-    const missingFixtureIds = uniqueFixtureIds.filter((id) => !fixturesEncontrados[id])
-
-    if (missingFixtureIds.length > 0) {
-      console.log(
-        `[atualizar-todos] ${missingFixtureIds.length} partida(s) não constavam na busca por data (${hojeIso}). Consultando individualmente por ?id=...`,
-      )
-
-      for (let mIdx = 0; mIdx < missingFixtureIds.length; mIdx++) {
-        const singleId = missingFixtureIds[mIdx]
-        const singleUrl = `https://v3.football.api-sports.io/fixtures?id=${encodeURIComponent(singleId)}`
-
-        let singleCall = null
-        if (limiterMod && typeof limiterMod.enviarRequisicaoApiFootball === 'function') {
-          singleCall = limiterMod.enviarRequisicaoApiFootball(
-            singleUrl,
-            { timeout: 15, isAdminManual: true },
-            2,
-          )
-        } else {
-          const sendRes = $http.send({ url: singleUrl, method: 'GET', timeout: 15 })
-          let j = null
-          try {
-            j =
-              typeof sendRes.json === 'object' && sendRes.json !== null
-                ? sendRes.json
-                : JSON.parse(sendRes.raw)
-          } catch (_) {}
-          singleCall = {
-            blocked: false,
-            statusCode: sendRes ? sendRes.statusCode : 500,
-            rawResponse: sendRes,
-            json: j,
-          }
-        }
-
-        rawApiLogs.push({
-          url: singleUrl,
-          fixture_ids: [singleId],
-          statusCode: singleCall ? singleCall.statusCode : null,
-          results:
-            singleCall && singleCall.json && typeof singleCall.json.results === 'number'
-              ? singleCall.json.results
-              : 0,
-          response_count:
-            singleCall && singleCall.json && Array.isArray(singleCall.json.response)
-              ? singleCall.json.response.length
-              : 0,
-          json_exact: singleCall ? singleCall.json : null,
-          keyUsed: singleCall ? singleCall.keyUsed : null,
-        })
-
-        if (singleCall && singleCall.blocked && singleCall.auth_error) {
-          return e.json(401, {
-            success: false,
-            auth_error: true,
-            error: 'Erro de autenticação na API. Verifique se a API Key está ativa no painel.',
-            notice: 'Erro de autenticação na API. Verifique se a API Key está ativa no painel.',
-            debug_logs: rawApiLogs,
-          })
-        }
-
-        if (singleCall && singleCall.blocked && singleCall.rate_limited) {
-          return e.json(429, {
-            success: false,
-            error: 'Limite de requisições da API-Sports atingido nas chaves configuradas.',
-            rate_limited: true,
-            debug_logs: rawApiLogs,
-          })
-        }
-
-        if (
-          singleCall &&
-          singleCall.statusCode === 200 &&
-          singleCall.json &&
-          Array.isArray(singleCall.json.response) &&
-          singleCall.json.response.length > 0
-        ) {
-          fixtureResponses.push(singleCall.json.response[0])
-          fixturesEncontrados[singleId] = true
-        }
+        fixtureResponses.push(singleCall.json.response[0])
+        fixturesEncontrados[singleId] = true
       }
     }
 
@@ -501,8 +405,50 @@ routerAdd(
       const homeTeamLogo = (fixData.teams?.home?.logo || '').toString().trim()
       const awayTeamLogo = (fixData.teams?.away?.logo || '').toString().trim()
 
-      // Eventos detalhados (Gols, Cartões, Substituições)
-      const rawEvents = Array.isArray(fixData.events) ? fixData.events : []
+      // BUSCA OBRIGATÓRIA DE EVENTOS E MARCADORES (/fixtures/events?fixture={fixture_id}):
+      // Para cada fixture_id retornado, busca no endpoint /fixtures/events?fixture={fid}.
+      // Se fixData já possuía events válidos, mas a busca dedicada for acionada ou se events vier vazio,
+      // garantimos a leitura exata chamando o endpoint dedicado com fallback seguro.
+      let dedicatedEventsRaw = []
+      try {
+        const urlEvents = `https://v3.football.api-sports.io/fixtures/events?fixture=${encodeURIComponent(fid)}`
+        console.log(
+          `[atualizar-todos] Buscando eventos dedicados (/fixtures/events) para fixture ${fid}...`,
+        )
+        const callEvents =
+          limiterMod && typeof limiterMod.enviarRequisicaoApiFootball === 'function'
+            ? limiterMod.enviarRequisicaoApiFootball(
+                urlEvents,
+                { timeout: 15, isAdminManual: true },
+                2,
+              )
+            : null
+
+        if (
+          callEvents &&
+          callEvents.statusCode === 200 &&
+          callEvents.json &&
+          Array.isArray(callEvents.json.response)
+        ) {
+          dedicatedEventsRaw = callEvents.json.response
+          console.log(
+            `[atualizar-todos] ${dedicatedEventsRaw.length} evento(s) retornados de /fixtures/events para fixture ${fid}`,
+          )
+        }
+      } catch (errEvents) {
+        console.log(
+          `[atualizar-todos] Erro ao consultar /fixtures/events para fixture ${fid}:`,
+          errEvents,
+        )
+      }
+
+      // Eventos detalhados (Gols, Cartões, Substituições) - preferência para /fixtures/events dedicado quando retornado
+      const rawEvents =
+        Array.isArray(dedicatedEventsRaw) && dedicatedEventsRaw.length > 0
+          ? dedicatedEventsRaw
+          : Array.isArray(fixData.events)
+            ? fixData.events
+            : []
       const homeTeamId = fixData.teams?.home?.id
       const awayTeamId = fixData.teams?.away?.id
 
@@ -786,9 +732,25 @@ routerAdd(
           jRec.set('resultado_finalizado', false)
         }
 
-        if (golsA.length > 0) jRec.set('gols_time_a', golsA)
-        if (golsB.length > 0) jRec.set('gols_time_b', golsB)
-        if (marcadoresGerais.length > 0) jRec.set('marcadores', marcadoresGerais)
+        // Salva e exibe marcadores/gols nos campos da partida
+        // Preenche gols_time_a, gols_time_b e marcadores (formato compatível com splitMatchScorersByTeam)
+        if (golsA.length > 0) {
+          jRec.set('gols_time_a', golsA)
+        } else if (homeGoals === 0 && (isFinished || isLive)) {
+          jRec.set('gols_time_a', [])
+        }
+
+        if (golsB.length > 0) {
+          jRec.set('gols_time_b', golsB)
+        } else if (awayGoals === 0 && (isFinished || isLive)) {
+          jRec.set('gols_time_b', [])
+        }
+
+        if (marcadoresGerais.length > 0) {
+          jRec.set('marcadores', marcadoresGerais)
+        } else if (homeGoals === 0 && awayGoals === 0 && (isFinished || isLive)) {
+          jRec.set('marcadores', [])
+        }
 
         // Gravação de Escalações com preservação:
         // Se a API retornou escalações válidas com jogadores reais, persiste no jogo.

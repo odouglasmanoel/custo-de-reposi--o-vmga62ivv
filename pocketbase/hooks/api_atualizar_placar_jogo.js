@@ -472,8 +472,48 @@ routerAdd(
       jogoRecord.set('resultado_finalizado', false)
     }
 
-    // Extrair eventos de gols, cartões e substituições no mesmo formato
-    const events = Array.isArray(fixtureData.events) ? fixtureData.events : []
+    // BUSCA OBRIGATÓRIA DE EVENTOS E MARCADORES (/fixtures/events?fixture={fixture_id}):
+    // Para garantir a extração fiel de eventos mesmo em planos/endpoints que omitem events do objeto fixture
+    let dedicatedEventsRaw = []
+    try {
+      const urlEvents = `https://v3.football.api-sports.io/fixtures/events?fixture=${encodeURIComponent(fixtureIdParaUso)}`
+      console.log(
+        `[atualizar-jogo] Buscando eventos dedicados (/fixtures/events) para fixture ${fixtureIdParaUso}...`,
+      )
+      const callEvents =
+        limiterMod && typeof limiterMod.enviarRequisicaoApiFootball === 'function'
+          ? limiterMod.enviarRequisicaoApiFootball(
+              urlEvents,
+              { timeout: 15, isAdminManual: true },
+              2,
+            )
+          : null
+
+      if (
+        callEvents &&
+        callEvents.statusCode === 200 &&
+        callEvents.json &&
+        Array.isArray(callEvents.json.response)
+      ) {
+        dedicatedEventsRaw = callEvents.json.response
+        console.log(
+          `[atualizar-jogo] ${dedicatedEventsRaw.length} evento(s) retornados de /fixtures/events para fixture ${fixtureIdParaUso}`,
+        )
+      }
+    } catch (errEvents) {
+      console.log(
+        `[atualizar-jogo] Erro ao consultar /fixtures/events para fixture ${fixtureIdParaUso}:`,
+        errEvents,
+      )
+    }
+
+    // Extrair eventos de gols, cartões e substituições no mesmo formato (prioriza /fixtures/events se retornado)
+    const events =
+      Array.isArray(dedicatedEventsRaw) && dedicatedEventsRaw.length > 0
+        ? dedicatedEventsRaw
+        : Array.isArray(fixtureData.events)
+          ? fixtureData.events
+          : []
     const homeTeamId = fixtureData.teams?.home?.id
     const awayTeamId = fixtureData.teams?.away?.id
 
@@ -551,12 +591,20 @@ routerAdd(
 
     if (golsA.length > 0) {
       jogoRecord.set('gols_time_a', golsA)
+    } else if (homeGoals === 0 && (isFinished || isLive)) {
+      jogoRecord.set('gols_time_a', [])
     }
+
     if (golsB.length > 0) {
       jogoRecord.set('gols_time_b', golsB)
+    } else if (awayGoals === 0 && (isFinished || isLive)) {
+      jogoRecord.set('gols_time_b', [])
     }
+
     if (marcadoresGerais.length > 0) {
       jogoRecord.set('marcadores', marcadoresGerais)
+    } else if (homeGoals === 0 && awayGoals === 0 && (isFinished || isLive)) {
+      jogoRecord.set('marcadores', [])
     }
 
     if (
