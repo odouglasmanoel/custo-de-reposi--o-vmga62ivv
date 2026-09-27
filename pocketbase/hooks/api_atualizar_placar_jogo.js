@@ -517,10 +517,30 @@ routerAdd(
       }
     })
 
-    const homeTeamIdStr = homeTeamId ? String(homeTeamId) : null
-    const awayTeamIdStr = awayTeamId ? String(awayTeamId) : null
-    const homeTeamName = (fixtureData.teams?.home?.name || '').toString().toLowerCase().trim()
-    const awayTeamName = (fixtureData.teams?.away?.name || '').toString().toLowerCase().trim()
+    function extractTeamIdFromUrl(url) {
+      if (!url || typeof url !== 'string') return null
+      const m = url.match(/teams\/(\d+)(?:\.png|\.svg|\.jpg|\b)/i)
+      return m ? String(m[1]) : null
+    }
+
+    const idMandante =
+      extractTeamIdFromUrl(jogoRecord.getString('url_escudo_mandante')) ||
+      (homeTeamId ? String(homeTeamId) : null)
+    const idVisitante =
+      extractTeamIdFromUrl(jogoRecord.getString('url_escudo_visitante')) ||
+      (awayTeamId ? String(awayTeamId) : null)
+    const timeANome = (
+      jogoRecord.getString('time_a') ||
+      fixtureData.teams?.home?.name ||
+      ''
+    ).toString()
+    const timeBNome = (
+      jogoRecord.getString('time_b') ||
+      fixtureData.teams?.away?.name ||
+      ''
+    ).toString()
+    const timeANorm = stripAccents(timeANome.toLowerCase())
+    const timeBNorm = stripAccents(timeBNome.toLowerCase())
 
     const golsA = []
     const golsB = []
@@ -552,7 +572,8 @@ routerAdd(
         const isContra = detail.includes('own') || detail.includes('contra')
         const playerName = (ev.player?.name || '').toString().trim()
         const evTeamId = ev.team?.id ? String(ev.team.id) : null
-        const evTeamName = (ev.team?.name || '').toString().toLowerCase().trim()
+        const evTeamName = (ev.team?.name || '').toString().trim()
+        const teamNorm = stripAccents(evTeamName.toLowerCase())
 
         if (playerName) {
           let posicao = 'Atacante/Meia'
@@ -564,40 +585,43 @@ routerAdd(
             nome: playerName,
             posicao: posicao,
             quantidade: 1,
-            minuto: minuteStr,
+            minuto: minuteInt !== null ? minuteInt : minuteStr,
           }
 
-          let pertenceA = false
-          let pertenceB = false
+          // Identificar time do evento PRIMEIRO por ID; só usa nome se IDs ausentes
+          let evIsA = false
+          let evIsB = false
 
-          if (homeTeamIdStr && awayTeamIdStr && evTeamId) {
-            pertenceA = evTeamId === homeTeamIdStr
-            pertenceB = evTeamId === awayTeamIdStr
-          } else if (evTeamName) {
-            if (
-              homeTeamName &&
-              (homeTeamName.includes(evTeamName) || evTeamName.includes(homeTeamName))
-            ) {
-              pertenceA = true
+          if (idMandante && idVisitante && evTeamId) {
+            evIsA = evTeamId === idMandante
+            evIsB = evTeamId === idVisitante
+          } else if (teamNorm) {
+            if (timeANorm && (timeANorm.includes(teamNorm) || teamNorm.includes(timeANorm))) {
+              evIsA = true
             } else if (
-              awayTeamName &&
-              (awayTeamName.includes(evTeamName) || evTeamName.includes(awayTeamName))
+              timeBNorm &&
+              (timeBNorm.includes(teamNorm) || teamNorm.includes(timeBNorm))
             ) {
-              pertenceB = true
-            } else {
-              const tA = (jogoRecord.getString('time_a') || '').toLowerCase()
-              const tB = (jogoRecord.getString('time_b') || '').toLowerCase()
-              if (tA && (tA.includes(evTeamName) || evTeamName.includes(tA))) {
-                pertenceA = true
-              } else if (tB && (tB.includes(evTeamName) || evTeamName.includes(tB))) {
-                pertenceB = true
-              }
+              evIsB = true
             }
           }
 
-          if (pertenceA) {
+          // Own Goal credita ao ADVERSÁRIO
+          let destIsA = false
+          let destIsB = false
+          if (isContra) {
+            if (evIsA) destIsB = true
+            else if (evIsB) destIsA = true
+            else destIsA = true
+          } else {
+            if (evIsA) destIsA = true
+            else if (evIsB) destIsB = true
+            else destIsA = true
+          }
+
+          if (destIsA) {
             golsA.push(item)
-          } else if (pertenceB) {
+          } else if (destIsB) {
             golsB.push(item)
           } else {
             golsA.push(item)
@@ -608,22 +632,20 @@ routerAdd(
       }
     }
 
-    if (golsA.length > 0) {
+    if (golsA.length > 0 || golsB.length > 0) {
+      jogoRecord.set('placar_a', golsA.length)
+      jogoRecord.set('placar_b', golsB.length)
       jogoRecord.set('gols_time_a', golsA)
-    } else if (homeGoals === 0 && (isFinished || isLive)) {
-      jogoRecord.set('gols_time_a', [])
-    }
-
-    if (golsB.length > 0) {
       jogoRecord.set('gols_time_b', golsB)
-    } else if (awayGoals === 0 && (isFinished || isLive)) {
-      jogoRecord.set('gols_time_b', [])
-    }
-
-    if (marcadoresGerais.length > 0) {
       jogoRecord.set('marcadores', marcadoresGerais)
-    } else if (homeGoals === 0 && awayGoals === 0 && (isFinished || isLive)) {
-      jogoRecord.set('marcadores', [])
+    } else if (isFinished || isLive) {
+      if (homeGoals === 0 && awayGoals === 0) {
+        jogoRecord.set('placar_a', 0)
+        jogoRecord.set('placar_b', 0)
+        jogoRecord.set('gols_time_a', [])
+        jogoRecord.set('gols_time_b', [])
+        jogoRecord.set('marcadores', [])
+      }
     }
 
     if (

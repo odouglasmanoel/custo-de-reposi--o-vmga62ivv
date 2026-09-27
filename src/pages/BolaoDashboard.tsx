@@ -3568,6 +3568,8 @@ export default function BolaoDashboard() {
                           golsTimeB={(jogo as any).gols_time_b}
                           isConcluido={isStatusEncerrado}
                           isAoVivo={isStatusAoVivo}
+                          url_escudo_mandante={(jogo as any).url_escudo_mandante}
+                          url_escudo_visitante={(jogo as any).url_escudo_visitante}
                         />
                       </div>
                     )}

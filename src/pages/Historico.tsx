@@ -1046,6 +1046,8 @@ export default function Historico() {
                             golsTimeB={(jogo as any).gols_time_b}
                             isConcluido={Boolean(jogo.resultado_finalizado)}
                             isAoVivo={isAoVivo}
+                            url_escudo_mandante={(jogo as any).url_escudo_mandante}
+                            url_escudo_visitante={(jogo as any).url_escudo_visitante}
                           />
                         </div>
                       )

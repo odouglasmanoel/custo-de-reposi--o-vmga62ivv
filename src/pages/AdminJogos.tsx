@@ -731,6 +731,7 @@ export default function AdminJogos() {
           variant: 'destructive',
         })
       } else {
+        setEditJogoError(null)
         if (data.fixture_vinculado || data.escudos_atualizados) {
           const escudosTxt = data.escudos_atualizados ? ' e escudos sincronizados' : ''
           const fixtureTxt = data.fixture_vinculado
@@ -798,6 +799,8 @@ export default function AdminJogos() {
           variant: data.rate_limited ? 'destructive' : 'default',
         })
       } else {
+        setFormError(null)
+        setEditJogoError(null)
         toast({
           title: 'Escalação sincronizada!',
           description: `Escalações do confronto ${jogoTarget.time_a} x ${jogoTarget.time_b} foram atualizadas com sucesso.`,
@@ -849,6 +852,8 @@ export default function AdminJogos() {
           variant: 'destructive',
         })
       } else {
+        setFormError(null)
+        setEditJogoError(null)
         toast({
           title: 'Vínculo de fixtures concluído!',
           description:

@@ -506,6 +506,19 @@ routerAdd('GET', '/backend/v1/eventos-jogo', (e) => {
     const timeANorm = stripAccents(timeANome)
     const timeBNorm = stripAccents(timeBNome)
 
+    function extractTeamIdFromUrl(url) {
+      if (!url || typeof url !== 'string') return null
+      const m = url.match(/teams\/(\d+)(?:\.png|\.svg|\.jpg|\b)/i)
+      return m ? String(m[1]) : null
+    }
+
+    const idMandante = matchingJogo
+      ? extractTeamIdFromUrl(matchingJogo.getString('url_escudo_mandante'))
+      : null
+    const idVisitante = matchingJogo
+      ? extractTeamIdFromUrl(matchingJogo.getString('url_escudo_visitante'))
+      : null
+
     for (let i = 0; i < rawEvents.length; i++) {
       const ev = rawEvents[i]
       const evType = (ev.type || '').toString().toLowerCase()
@@ -533,6 +546,7 @@ routerAdd('GET', '/backend/v1/eventos-jogo', (e) => {
         const playerName = (ev.player?.name || '').toString().trim()
         const teamName = (ev.team?.name || '').toString().trim()
         const teamNorm = stripAccents(teamName.toLowerCase())
+        const evTeamId = ev.team?.id ? String(ev.team.id) : null
 
         if (playerName) {
           let posicao = 'Atacante/Meia'
@@ -544,36 +558,56 @@ routerAdd('GET', '/backend/v1/eventos-jogo', (e) => {
             nome: playerName,
             posicao: posicao,
             quantidade: 1,
-            minuto: minuteStr,
+            minuto: minuteInt !== null ? minuteInt : minuteStr,
           }
 
-          // Identificar se é time A ou time B
-          let isTimeA = false
-          let isTimeB = false
+          // Identificar time do evento PRIMEIRO por ID; só usa nome se IDs ausentes
+          let evIsA = false
+          let evIsB = false
 
-          if (teamNorm) {
+          if (idMandante && idVisitante && evTeamId) {
+            evIsA = evTeamId === idMandante
+            evIsB = evTeamId === idVisitante
+          } else if (teamNorm) {
             if (timeANorm && (timeANorm.includes(teamNorm) || teamNorm.includes(timeANorm))) {
-              isTimeA = true
+              evIsA = true
             } else if (
               timeBNorm &&
               (timeBNorm.includes(teamNorm) || teamNorm.includes(timeBNorm))
             ) {
-              isTimeB = true
+              evIsB = true
             }
           }
 
-          if (isTimeA) {
+          // Own Goal credita ao ADVERSÁRIO
+          let destIsA = false
+          let destIsB = false
+          if (isContra) {
+            if (evIsA) destIsB = true
+            else if (evIsB) destIsA = true
+            else destIsA = true
+          } else {
+            if (evIsA) destIsA = true
+            else if (evIsB) destIsB = true
+            else destIsA = true
+          }
+
+          if (destIsA) {
             golsA.push(item)
-          } else if (isTimeB) {
+          } else if (destIsB) {
             golsB.push(item)
           } else {
-            // Se não bater por nome, adiciona ao time A se golsA estiver menor ou padrão
             golsA.push(item)
           }
 
           marcadoresGerais.push(minuteStr ? `${playerName} ${minuteStr}` : playerName)
         }
       }
+    }
+
+    if (matchingJogo && (golsA.length > 0 || golsB.length > 0)) {
+      matchingJogo.set('placar_a', golsA.length)
+      matchingJogo.set('placar_b', golsB.length)
     }
 
     const payload = {

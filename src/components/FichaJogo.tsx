@@ -30,6 +30,8 @@ export interface FichaJogoProps {
   isAoVivo?: boolean
   className?: string
   defaultOpen?: boolean
+  url_escudo_mandante?: string | null
+  url_escudo_visitante?: string | null
 }
 
 export const FichaJogo: React.FC<FichaJogoProps> = ({
@@ -47,6 +49,8 @@ export const FichaJogo: React.FC<FichaJogoProps> = ({
   isAoVivo = false,
   className = '',
   defaultOpen = false,
+  url_escudo_mandante,
+  url_escudo_visitante,
 }) => {
   const { isAdmin } = useAuth()
   const [isOpen, setIsOpen] = useState(defaultOpen)
@@ -163,9 +167,39 @@ export const FichaJogo: React.FC<FichaJogoProps> = ({
     return fallback.sort((a, b) => (a.time?.elapsed ?? 0) - (b.time?.elapsed ?? 0))
   }, [data, golsTimeA, golsTimeB, timeA, timeB])
 
-  // Normalização do lado (mandante/visitante)
+  function extractTeamIdFromUrl(url?: string | null): string | null {
+    if (!url || typeof url !== 'string') return null
+    const m = url.match(/teams\/(\d+)(?:\.png|\.svg|\.jpg|\b)/i)
+    return m ? String(m[1]) : null
+  }
+
+  const idMandante = useMemo(() => {
+    return (
+      extractTeamIdFromUrl(url_escudo_mandante) ||
+      extractTeamIdFromUrl(badgeA) ||
+      (data?.teams?.home?.id ? String(data.teams.home.id) : null)
+    )
+  }, [url_escudo_mandante, badgeA, data])
+
+  const idVisitante = useMemo(() => {
+    return (
+      extractTeamIdFromUrl(url_escudo_visitante) ||
+      extractTeamIdFromUrl(badgeB) ||
+      (data?.teams?.away?.id ? String(data.teams.away.id) : null)
+    )
+  }, [url_escudo_visitante, badgeB, data])
+
+  // Normalização do lado: lado esquerdo só mandante, direito só visitante
   const getSide = (ev: MatchEvent): 'home' | 'away' => {
+    const evTeamId = ev.team?.id ? String(ev.team.id) : null
+
+    // Decidido PRIMEIRO por ID
+    if (evTeamId && idMandante && evTeamId === idMandante) return 'home'
+    if (evTeamId && idVisitante && evTeamId === idVisitante) return 'away'
+
     if (ev.team?.side) return ev.team.side
+
+    // Fallback por nome se ID ausente
     const teamNameLower = (ev.team?.name || '').toLowerCase()
     const homeNameLower = timeA.toLowerCase()
     const awayNameLower = timeB.toLowerCase()
@@ -174,10 +208,6 @@ export const FichaJogo: React.FC<FichaJogoProps> = ({
     if (teamNameLower && awayNameLower.includes(teamNameLower)) return 'away'
     if (teamNameLower && teamNameLower.includes(homeNameLower)) return 'home'
     if (teamNameLower && teamNameLower.includes(awayNameLower)) return 'away'
-
-    // Verifica pelo ID do time se disponível
-    if (data?.teams?.home?.id && ev.team?.id === data.teams.home.id) return 'home'
-    if (data?.teams?.away?.id && ev.team?.id === data.teams.away.id) return 'away'
 
     return 'home'
   }

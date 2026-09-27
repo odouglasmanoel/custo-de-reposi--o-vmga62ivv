@@ -43,35 +43,37 @@ routerAdd(
         return e.notFoundError('Jogo não encontrado no banco de dados.')
       }
 
-      // 1. Obter API Key
-      let apiKey = ''
+      // 1. Obter chave ativa da API-Football de config_integracoes (sem leitura de .env)
+      let chaveAtiva = ''
       try {
         const configRec = $app.findFirstRecordByData(
           'config_integracoes',
           'chave',
           'placar_ao_vivo',
         )
-        if (configRec) {
-          apiKey = (configRec.getString('api_key') || '').trim()
+        if (configRec && configRec.getBool('ativo')) {
+          chaveAtiva = (configRec.getString('api_key') || '').trim()
         }
       } catch (_) {}
 
-      if (!apiKey) {
+      if (!chaveAtiva) {
         try {
-          if ($secrets && $secrets.has && $secrets.has('API_FOOTBALL_KEY')) {
-            apiKey = ($secrets.get('API_FOOTBALL_KEY') || '').trim()
-          } else if ($secrets && $secrets.has && $secrets.has('RAPIDAPI_KEY')) {
-            apiKey = ($secrets.get('RAPIDAPI_KEY') || '').trim()
-          } else if ($os && $os.getenv) {
-            apiKey = ($os.getenv('API_FOOTBALL_KEY') || $os.getenv('RAPIDAPI_KEY') || '').trim()
+          const configRec2 = $app.findFirstRecordByData(
+            'config_integracoes',
+            'chave',
+            'api_football',
+          )
+          if (configRec2 && configRec2.getBool('ativo')) {
+            chaveAtiva = (configRec2.getString('api_key') || '').trim()
           }
         } catch (_) {}
       }
 
-      if (!apiKey) {
+      if (!chaveAtiva) {
         return e.json(400, {
           success: false,
-          error: 'Chave da API-Football não configurada no sistema.',
+          error:
+            'Chave ativa da API-Football não configurada na tabela config_integracoes (placar_ao_vivo/api_football).',
         })
       }
 
@@ -247,7 +249,11 @@ routerAdd(
               ) {
                 resDate = limiterModDate.enviarRequisicaoApiFootball(
                   urlDate,
-                  { timeout: 10, isAdminManual: true },
+                  {
+                    timeout: 10,
+                    isAdminManual: true,
+                    headers: { 'x-apisports-key': chaveAtiva },
+                  },
                   2,
                 )
               }
@@ -332,11 +338,20 @@ routerAdd(
       if (limiterMod && typeof limiterMod.enviarRequisicaoApiFootball === 'function') {
         respCall = limiterMod.enviarRequisicaoApiFootball(
           urlLineups,
-          { timeout: 15, isAdminManual: true },
+          {
+            timeout: 15,
+            isAdminManual: true,
+            headers: { 'x-apisports-key': chaveAtiva },
+          },
           2,
         )
       } else {
-        const sRes = $http.send({ url: urlLineups, method: 'GET', timeout: 15 })
+        const sRes = $http.send({
+          url: urlLineups,
+          method: 'GET',
+          headers: { 'x-apisports-key': chaveAtiva },
+          timeout: 15,
+        })
         let j = null
         try {
           j = typeof sRes.json === 'object' && sRes.json !== null ? sRes.json : JSON.parse(sRes.raw)

@@ -995,6 +995,8 @@ export default function Palpites() {
         throw new Error(resJson.error || 'Erro ao salvar palpite no servidor')
       }
 
+      setLoadError(null)
+
       toast({
         title: 'Palpite salvo com sucesso!',
         description: `Palpite para ${jogo.time_a} x ${jogo.time_b} registrado.`,
@@ -1171,6 +1173,7 @@ export default function Palpites() {
 
           if (res.ok && dataRes.success) {
             okCount++
+            setLoadError(null)
             if (dataRes.escalacoes) {
               const freshLineup: LineupResponse = {
                 status: dataRes.escalacoes.status || 'confirmada',
@@ -2421,6 +2424,8 @@ export default function Palpites() {
                       golsTimeB={(jogo as any).gols_time_b}
                       isConcluido={Boolean(jogo.resultado_finalizado)}
                       isAoVivo={isAoVivo}
+                      url_escudo_mandante={(jogo as any).url_escudo_mandante}
+                      url_escudo_visitante={(jogo as any).url_escudo_visitante}
                     />
                   )}
                 </div>
