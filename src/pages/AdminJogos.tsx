@@ -215,14 +215,37 @@ export default function AdminJogos() {
       }
     } catch (err: any) {
       const status = err?.status || err?.statusCode
-      const isAuthError =
-        status === 401 ||
-        status === 403 ||
-        err?.data?.error?.toLowerCase?.().includes('não autorizado') ||
-        err?.data?.error?.toLowerCase?.().includes('sessão expirou') ||
-        err?.message?.toLowerCase?.().includes('não autorizado')
+      const errData = err?.data || {}
+      const errMsgRaw = String(errData?.error || errData?.message || err?.message || '')
+      const isApiAuthError =
+        errData?.auth_error === true ||
+        errMsgRaw.toLowerCase().includes('erro de autenticação na api') ||
+        errMsgRaw.toLowerCase().includes('api key') ||
+        errMsgRaw.toLowerCase().includes('chave inválida') ||
+        errMsgRaw.toLowerCase().includes('chave suspensa') ||
+        errMsgRaw.toLowerCase().includes('api-sports')
 
-      if (isAuthError) {
+      if (isApiAuthError) {
+        toast({
+          title: 'Erro de Autenticação na API',
+          description:
+            errData?.error ||
+            'Erro de autenticação na API de futebol. Verifique se a API Key está ativa no painel.',
+          variant: 'destructive',
+        })
+        return
+      }
+
+      // Redireciona para /login APENAS se o erro for comprovadamente de credencial do PocketBase (sessão de auth inválida)
+      const isPbAuthError =
+        !isApiAuthError &&
+        (status === 401 || status === 403) &&
+        (errMsgRaw.toLowerCase().includes('sessão expirou') ||
+          errMsgRaw.toLowerCase().includes('the request requires valid user authorization') ||
+          errMsgRaw.toLowerCase().includes('you are not allowed') ||
+          (!pb.authStore.isValid && (status === 401 || status === 403)))
+
+      if (isPbAuthError) {
         toast({
           title: 'Sessão expirada',
           description: 'Sua sessão expirou. Faça login novamente.',
@@ -236,13 +259,11 @@ export default function AdminJogos() {
       }
 
       const errMsg =
-        err?.data?.error ||
-        err?.message ||
-        'Falha ao atualizar placar ao vivo. Verifique a conexão.'
+        errData?.error || err?.message || 'Falha ao atualizar placar ao vivo. Verifique a conexão.'
       toast({
-        title: 'Erro na atualização',
+        title: status === 429 ? 'Cota Diária da API' : 'Erro na atualização',
         description: errMsg,
-        variant: 'destructive',
+        variant: status === 429 ? 'default' : 'destructive',
       })
     } finally {
       setUpdatingLiveGameId(null)

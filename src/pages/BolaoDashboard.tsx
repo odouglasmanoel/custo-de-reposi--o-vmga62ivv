@@ -3160,8 +3160,8 @@ export default function BolaoDashboard() {
                             </Badge>
                           )}
 
-                          {/* Botão de Atualizar Placar Ao Vivo e Marcadores via API-Sports (Admin) - apenas se não encerrado */}
-                          {isAdmin && !isStatusEncerrado && (
+                          {/* Botão de Atualizar Placar Ao Vivo e Marcadores via API-Sports (Admin) - visível também em jogos encerrados */}
+                          {isAdmin && (
                             <Button
                               size="sm"
                               variant="outline"

@@ -76,38 +76,6 @@ routerAdd(
       })
     }
 
-    // Otimização de cota API-Sports:
-    // Pula chamadas externas se a partida já estiver com status "Encerrado" / resultado_finalizado no banco
-    const isJogoJaEncerrado =
-      jogoRecord.getBool('resultado_finalizado') ||
-      ['finalizado', 'encerrado', 'ft'].includes(
-        (jogoRecord.getString('status') || '').toLowerCase().trim(),
-      )
-
-    if (isJogoJaEncerrado) {
-      return e.json(200, {
-        success: true,
-        tem_placar_oficial: true,
-        message:
-          'A partida já está encerrada. Consulta externa ignorada para economizar cota da API.',
-        skipped: true,
-        jogo: {
-          id: jogoRecord.id,
-          bolao: jogoRecord.get('bolao'),
-          placar_a: jogoRecord.get('placar_a'),
-          placar_b: jogoRecord.get('placar_b'),
-          status: jogoRecord.getString('status'),
-          resultado_finalizado: jogoRecord.getBool('resultado_finalizado'),
-          gols_time_a: jogoRecord.get('gols_time_a'),
-          gols_time_b: jogoRecord.get('gols_time_b'),
-          marcadores: jogoRecord.get('marcadores'),
-          url_escudo_mandante: jogoRecord.get('url_escudo_mandante'),
-          url_escudo_visitante: jogoRecord.get('url_escudo_visitante'),
-          fixture_id: jogoRecord.get('fixture_id'),
-        },
-      })
-    }
-
     // Rate limiter check inline sem require dinâmico (respeita registro com count/max_limit/blocked)
     const dNow = new Date()
     const yyyy = dNow.getUTCFullYear()
