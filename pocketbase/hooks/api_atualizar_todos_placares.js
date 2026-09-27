@@ -382,6 +382,55 @@ routerAdd(
         })
       }
 
+      // Verifica se todos os jogos do dia já estão gravados no banco como finalizados com placar consolidado
+      const todosJaFinalizados =
+        jogosRecords.length > 0 &&
+        jogosRecords.every((rec) => {
+          const st = (rec.getString('status') || '').toLowerCase().trim()
+          const finalizado =
+            st === 'finalizado' ||
+            st === 'encerrado' ||
+            st === 'ft' ||
+            rec.getBool('resultado_finalizado')
+          const placarA = rec.get('placar_a')
+          const placarB = rec.get('placar_b')
+          const temPlacar =
+            placarA !== null &&
+            placarA !== undefined &&
+            placarB !== null &&
+            placarB !== undefined &&
+            !isNaN(Number(placarA)) &&
+            !isNaN(Number(placarB))
+          return finalizado && temPlacar
+        })
+
+      if (todosJaFinalizados) {
+        const msgConsolidada =
+          'Placares de hoje já consolidados. A API-Sports não possui registros para os confrontos consultados (nenhuma atualização necessária).'
+        return e.json(200, {
+          success: true,
+          ja_consolidados: true,
+          message: msgConsolidada,
+          notice: msgConsolidada,
+          total_jogos: jogosRecords.length,
+          fixture_ids_enviados: uniqueFixtureIds,
+          atualizados: 0,
+          jogos_com_placar_gravado: jogosRecords.length,
+          jogos_encerrados: jogosRecords.length,
+          jogos_sem_placar_null: 0,
+          resumo: {
+            total_jogos: jogosRecords.length,
+            com_placar: jogosRecords.length,
+            ao_vivo: 0,
+            sem_placar: 0,
+            encerrados: jogosRecords.length,
+            jogos_sem_dados_api: uniqueFixtureIds.length,
+          },
+          jogos: [],
+          debug_logs: rawApiLogs,
+        })
+      }
+
       return e.json(200, {
         success: false,
         notice: 'A API-Sports não retornou dados para as partidas consultadas.',
@@ -1226,6 +1275,8 @@ routerAdd(
     let messageNotice = null
     let messageSucesso = ''
 
+    const fixturesNaoLocalizadosNaApi = uniqueFixtureIds.filter((id) => !fixturesEncontrados[id])
+
     if (totalComPlacarGravado === 0 && totalAoVivo === 0 && totalEncerrados === 0) {
       messageNotice = 'Os jogos selecionados ainda não possuem placar retornado pela API-Sports.'
       messageSucesso = `Consulta concluída: 0 jogos com placar/eventos sincronizados, ${totalSemPlacarGravado} sem dados de placar disponível na API.`
@@ -1243,6 +1294,12 @@ routerAdd(
       if (totalSemPlacarGravado > 0) {
         partsMsg.push(`${totalSemPlacarGravado} sem dados na API`)
       }
+      if (
+        fixturesNaoLocalizadosNaApi.length > 0 &&
+        !partsMsg.some((p) => p.includes('sem dados'))
+      ) {
+        partsMsg.push(`${fixturesNaoLocalizadosNaApi.length} fixture(s) não localizados na API`)
+      }
       messageSucesso = `Sincronização concluída com sucesso: ${partsMsg.join(', ')}.`
     }
 
@@ -1256,6 +1313,7 @@ routerAdd(
         ao_vivo: totalAoVivo,
         sem_placar: totalSemPlacarGravado,
         encerrados: totalEncerrados,
+        jogos_sem_dados_api: fixturesNaoLocalizadosNaApi.length,
       },
       total_jogos: jogosRecords.length,
       atualizados: updatedJogosList.length,
@@ -1266,6 +1324,7 @@ routerAdd(
       fixtures_finalizados: totalEncerrados,
       fixtures_com_gols: totalComPlacarGravado,
       fixture_ids_enviados: uniqueFixtureIds,
+      fixtures_sem_dados_api: fixturesNaoLocalizadosNaApi,
       jogos: updatedJogosList,
       debug_logs: rawApiLogs,
     })

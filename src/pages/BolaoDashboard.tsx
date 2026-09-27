@@ -823,6 +823,7 @@ export default function BolaoDashboard() {
 
       const res = await pb.send<{
         success: boolean
+        ja_consolidados?: boolean
         message?: string
         notice?: string
         error?: string
@@ -837,12 +838,14 @@ export default function BolaoDashboard() {
         fixtures_finalizados?: number
         fixtures_com_gols?: number
         fixture_ids_enviados?: string[]
+        fixtures_sem_dados_api?: string[]
         resumo?: {
           total_jogos: number
           com_placar: number
           ao_vivo?: number
           sem_placar: number
           encerrados: number
+          jogos_sem_dados_api?: number
         }
         jogos?: (Partial<Jogo> & {
           tem_placar?: boolean
@@ -916,12 +919,19 @@ export default function BolaoDashboard() {
         clearDashboardCache()
         clearFichaJogoCache()
 
-        if (totalAtivosComDados === 0) {
+        if (res?.ja_consolidados) {
           toast({
-            title: 'Aviso da API',
+            title: 'Placares consolidados',
+            description:
+              res.message ||
+              'Placares de hoje já consolidados. A API-Sports não possui registros para os confrontos consultados (nenhuma atualização necessária).',
+          })
+        } else if (totalAtivosComDados === 0) {
+          toast({
+            title: 'Consulta realizada',
             description:
               res.notice ||
-              `Os jogos selecionados ainda não possuem placar finalizado ou em andamento retornado pela API-Sports. (Sem dados: ${semPlacar})`,
+              `Os jogos selecionados ainda não possuem placar retornado pela API-Sports. (Sem dados na API: ${semPlacar})`,
           })
         } else {
           const resumoPartes = []
@@ -942,12 +952,12 @@ export default function BolaoDashboard() {
         await loadData(true)
       } else if (res?.notice) {
         toast({
-          title: 'Aviso',
+          title: 'Informação da API',
           description: res.notice,
         })
       } else {
         toast({
-          title: 'Aviso',
+          title: 'Erro na atualização',
           description: res?.error || 'Não foi possível atualizar todos os placares.',
           variant: 'destructive',
         })
