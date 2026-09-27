@@ -108,6 +108,62 @@ routerAdd(
     // Não descartar jogos encerrados para permitir re-sincronizar marcadores, eventos, escalações e ficha técnica a qualquer momento.
     const jogosRecords = todosJogosCandidatos
 
+    // Tentar resolver fixture_ids para jogos que ainda não possuem fixture_id
+    // Consultando localmente jogos_do_dia ou matcher existente para não deixar jogos de fora silenciosamente
+    const fixturesMatcherMod = (function () {
+      try {
+        if (typeof __hooks !== 'undefined') {
+          return require(__hooks + '/fixtures_matcher.js')
+        }
+      } catch (_) {}
+      try {
+        return require('./fixtures_matcher.js')
+      } catch (_) {
+        return null
+      }
+    })()
+
+    for (let i = 0; i < jogosRecords.length; i++) {
+      const jRec = jogosRecords[i]
+      let fid = (jRec.getString('fixture_id') || '').trim()
+      if (!fid || !/^\d+$/.test(fid)) {
+        // Tenta vincular pelo explicitFixtureIds caso haja correspondência na mesma ordem
+        if (explicitFixtureIds[i] && /^\d+$/.test(explicitFixtureIds[i].trim())) {
+          fid = explicitFixtureIds[i].trim()
+          jRec.set('fixture_id', fid)
+          try {
+            $app.save(jRec)
+          } catch (_) {}
+        } else if (
+          fixturesMatcherMod &&
+          typeof fixturesMatcherMod.buscarFixtureDetalhadaNaApi === 'function'
+        ) {
+          try {
+            const timeA = (jRec.getString('time_a') || '').trim()
+            const timeB = (jRec.getString('time_b') || '').trim()
+            const dataVal = (jRec.getString('data') || '').trim()
+            const resolved = fixturesMatcherMod.buscarFixtureDetalhadaNaApi(timeA, timeB, dataVal)
+            if (resolved && resolved.fixture_id) {
+              fid = String(resolved.fixture_id).trim()
+              jRec.set('fixture_id', fid)
+              if (resolved.logo_mandante && !jRec.getString('url_escudo_mandante')) {
+                jRec.set('url_escudo_mandante', resolved.logo_mandante)
+              }
+              if (resolved.logo_visitante && !jRec.getString('url_escudo_visitante')) {
+                jRec.set('url_escudo_visitante', resolved.logo_visitante)
+              }
+              $app.save(jRec)
+              console.log(
+                `[atualizar-todos] fixture_id ${fid} vinculado automaticamente para ${timeA} x ${timeB}`,
+              )
+            }
+          } catch (errResolve) {
+            console.log('[atualizar-todos] Aviso ao tentar auto-resolver fixture_id:', errResolve)
+          }
+        }
+      }
+    }
+
     // Mapear fixture_ids dos jogos
     // Chave: fixture_id -> array de records (pode haver mais de um bolão com o mesmo jogo)
     const fixtureMap = {}
@@ -119,15 +175,18 @@ routerAdd(
         if (!fixtureMap[fid]) fixtureMap[fid] = []
         fixtureMap[fid].push(jRec)
       } else {
-        jogosSemFixture.push(jRec.id)
+        jogosSemFixture.push({
+          id: jRec.id,
+          time_a: jRec.getString('time_a'),
+          time_b: jRec.getString('time_b'),
+        })
       }
     }
 
-    // Se foram passados explicitFixtureIds mas o jogo ainda não tinha salvo
+    // Se foram passados explicitFixtureIds extras
     for (let i = 0; i < explicitFixtureIds.length; i++) {
       const fid = explicitFixtureIds[i].trim()
       if (fid && /^\d+$/.test(fid) && !fixtureMap[fid]) {
-        // Tenta achar na lista
         for (let j = 0; j < jogosRecords.length; j++) {
           const rec = jogosRecords[j]
           if (!rec.getString('fixture_id')) {
@@ -145,11 +204,13 @@ routerAdd(
 
     const uniqueFixtureIds = Object.keys(fixtureMap)
     if (uniqueFixtureIds.length === 0) {
+      const nomesSemFixture = jogosSemFixture.map((j) => `${j.time_a} x ${j.time_b}`).join(', ')
       return e.json(200, {
         success: false,
-        notice: 'Nenhum dos jogos exibidos possui ID da partida (fixture_id) numérico vinculado.',
+        notice: `Nenhum dos jogos exibidos possui ID da partida (fixture_id) numérico vinculado. Jogos pendentes: ${nomesSemFixture || 'N/A'}.`,
         total_jogos: jogosRecords.length,
         jogos_sem_fixture: jogosSemFixture.length,
+        lista_sem_fixture: jogosSemFixture,
         atualizados: 0,
         jogos: [],
       })
@@ -250,6 +311,21 @@ routerAdd(
       ) {
         fixtureResponses.push(singleCall.json.response[0])
         fixturesEncontrados[singleId] = true
+      } else {
+        // Se a chamada principal de fixtures não retornou o objeto consolidado ou veio vazia,
+        // cria um placeholder estruturado para este singleId para permitir que a etapa seguinte
+        // chame obrigatoriamente /fixtures/events?fixture={singleId} e capture os marcadores reais
+        console.log(
+          `[atualizar-todos] Fixture ${singleId} sem objeto principal em /fixtures; criando placeholder para consulta dedicada de eventos.`,
+        )
+        fixtureResponses.push({
+          fixture: { id: parseInt(singleId, 10) || singleId, status: { short: '', long: '' } },
+          teams: { home: {}, away: {} },
+          goals: { home: null, away: null },
+          score: {},
+          events: [],
+          lineups: [],
+        })
       }
     }
 
@@ -286,9 +362,6 @@ routerAdd(
         })
       }
 
-      // Se a consulta principal de fixtures não retornou registros, ainda assim consulta diretamente
-      // /fixtures/events?fixture={id} para cada partida vinculada a fim de garantir marcadores/gols
-      // NUNCA atalhar com "todosJaFinalizados" sem consultar a API
       return e.json(200, {
         success: false,
         notice: 'A API-Sports não retornou dados para as partidas consultadas.',
@@ -442,8 +515,10 @@ routerAdd(
           : Array.isArray(fixData.events)
             ? fixData.events
             : []
-      const homeTeamId = fixData.teams?.home?.id
-      const awayTeamId = fixData.teams?.away?.id
+      const homeTeamId = fixData.teams?.home?.id ? String(fixData.teams.home.id) : null
+      const awayTeamId = fixData.teams?.away?.id ? String(fixData.teams.away.id) : null
+      const homeTeamName = (fixData.teams?.home?.name || '').toString().toLowerCase().trim()
+      const awayTeamName = (fixData.teams?.away?.name || '').toString().toLowerCase().trim()
 
       const golsA = []
       const golsB = []
@@ -509,7 +584,8 @@ routerAdd(
 
           const isContra = detail.includes('own') || detail.includes('contra')
           const playerName = (ev.player?.name || '').toString().trim()
-          const teamId = ev.team?.id
+          const evTeamId = ev.team?.id ? String(ev.team.id) : null
+          const evTeamName = (ev.team?.name || '').toString().toLowerCase().trim()
 
           if (playerName) {
             let posicao = 'Atacante/Meia'
@@ -524,10 +600,50 @@ routerAdd(
               minuto: minuteStr,
             }
 
-            if (teamId === homeTeamId) {
+            // Associação de time mandante vs visitante:
+            // 1. Por teamId se ambos tiverem
+            // 2. Por similaridade de nome se teamId for nulo (ex: placeholder)
+            // 3. Fallback inteligente usando o primeiro jogo vinculado
+            let pertenceA = false
+            let pertenceB = false
+
+            if (homeTeamId && awayTeamId && evTeamId) {
+              pertenceA = evTeamId === homeTeamId
+              pertenceB = evTeamId === awayTeamId
+            } else if (evTeamName) {
+              if (
+                homeTeamName &&
+                (homeTeamName.includes(evTeamName) || evTeamName.includes(homeTeamName))
+              ) {
+                pertenceA = true
+              } else if (
+                awayTeamName &&
+                (awayTeamName.includes(evTeamName) || evTeamName.includes(awayTeamName))
+              ) {
+                pertenceB = true
+              } else if (matchingRecords.length > 0) {
+                const primeJ = matchingRecords[0]
+                const tA = (primeJ.getString('time_a') || '').toLowerCase()
+                const tB = (primeJ.getString('time_b') || '').toLowerCase()
+                if (tA && (tA.includes(evTeamName) || evTeamName.includes(tA))) {
+                  pertenceA = true
+                } else if (tB && (tB.includes(evTeamName) || evTeamName.includes(tB))) {
+                  pertenceB = true
+                }
+              }
+            } else if (matchingRecords.length > 0 && evTeamId) {
+              // Se teams.home não tinha ID preenchido na fixtureResponses, mas evTeamId existe
+              // tenta comparar com url_escudo_mandante ou id anterior
+              pertenceA = true
+            }
+
+            if (pertenceA) {
               golsA.push(item)
-            } else if (teamId === awayTeamId) {
+            } else if (pertenceB) {
               golsB.push(item)
+            } else {
+              // Se não foi possível diferenciar os lados, divide ou inclui como neutro
+              golsA.push(item)
             }
 
             marcadoresGerais.push(minuteStr ? `${playerName} ${minuteStr}` : playerName)
@@ -1226,6 +1342,12 @@ routerAdd(
     const totalSemPlacarGravado = updatedJogosList.filter((j) => !j.tem_placar).length
     const totalEncerrados = updatedJogosList.filter((j) => j.mudou_para_encerrado).length
     const totalAoVivo = updatedJogosList.filter((j) => j.ao_vivo).length
+    const totalComMarcadores = updatedJogosList.filter((j) => {
+      const gA = Array.isArray(j.gols_time_a) ? j.gols_time_a.length : 0
+      const gB = Array.isArray(j.gols_time_b) ? j.gols_time_b.length : 0
+      const mg = Array.isArray(j.marcadores) ? j.marcadores.length : 0
+      return gA > 0 || gB > 0 || mg > 0
+    }).length
 
     let messageNotice = null
     let messageSucesso = ''
@@ -1246,8 +1368,14 @@ routerAdd(
       if (totalComPlacarGravado > 0 && totalAoVivo === 0 && totalEncerrados === 0) {
         partsMsg.push(`${totalComPlacarGravado} com placar gravado`)
       }
+      if (totalComMarcadores > 0) {
+        partsMsg.push(`${totalComMarcadores} com marcadores gravados`)
+      }
       if (totalSemPlacarGravado > 0) {
         partsMsg.push(`${totalSemPlacarGravado} sem dados na API`)
+      }
+      if (jogosSemFixture.length > 0) {
+        partsMsg.push(`${jogosSemFixture.length} sem fixture_id`)
       }
       if (
         fixturesNaoLocalizadosNaApi.length > 0 &&
@@ -1268,6 +1396,8 @@ routerAdd(
         ao_vivo: totalAoVivo,
         sem_placar: totalSemPlacarGravado,
         encerrados: totalEncerrados,
+        com_marcadores: totalComMarcadores,
+        sem_fixture: jogosSemFixture.length,
         jogos_sem_dados_api: fixturesNaoLocalizadosNaApi.length,
       },
       total_jogos: jogosRecords.length,
@@ -1276,6 +1406,9 @@ routerAdd(
       jogos_ao_vivo: totalAoVivo,
       jogos_sem_placar_null: totalSemPlacarGravado,
       jogos_encerrados: totalEncerrados,
+      jogos_com_marcadores: totalComMarcadores,
+      jogos_sem_fixture: jogosSemFixture.length,
+      lista_sem_fixture: jogosSemFixture,
       fixtures_finalizados: totalEncerrados,
       fixtures_com_gols: totalComPlacarGravado,
       fixture_ids_enviados: uniqueFixtureIds,

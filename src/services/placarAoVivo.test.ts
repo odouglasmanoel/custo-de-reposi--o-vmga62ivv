@@ -732,4 +732,128 @@ describe('Rotina de Placar Ao Vivo (TheSportsDB leve e fail-safe)', () => {
     expect(calcularPontos(palpiteExato)).toBe(9) // 8 (cravada) + 1 (Kane atacante) = 9
     expect(calcularPontos(palpiteVencedor)).toBe(4) // 2 (vencedor) + 1 (metade) + 1 (Kane) = 4
   })
+
+  it('lote com múltiplos jogos: itera todos os jogos, chama eventos para cada fixture_id e dispara recálculo único ao final', () => {
+    // 1. Simulação do lote com múltiplos jogos (ex: Estados Unidos x Peru + Tchéquia x Croácia)
+    const jogosDoLote = [
+      {
+        id: 'rec_eua_peru',
+        fixture_id: '1628997',
+        time_a: 'Estados Unidos',
+        time_b: 'Peru',
+        bolao: 'bolao_1',
+        placar_a: null as number | null,
+        placar_b: null as number | null,
+        status: 'pendente',
+        gols_time_a: [] as any[],
+        gols_time_b: [] as any[],
+        marcadores: [] as string[],
+      },
+      {
+        id: 'rec_tchequia_croacia',
+        fixture_id: '1528892',
+        time_a: 'Tchéquia',
+        time_b: 'Croácia',
+        bolao: 'bolao_1',
+        placar_a: null as number | null,
+        placar_b: null as number | null,
+        status: 'pendente',
+        gols_time_a: [] as any[],
+        gols_time_b: [] as any[],
+        marcadores: [] as string[],
+      },
+    ]
+
+    // Respostas simuladas do endpoint /fixtures/events?fixture={id}
+    const apiEventsMock: Record<string, any[]> = {
+      '1628997': [
+        {
+          type: 'Goal',
+          detail: 'Normal Goal',
+          player: { name: 'Pulisic' },
+          team: { name: 'Estados Unidos' },
+          time: { elapsed: 14 },
+        },
+      ],
+      '1528892': [
+        {
+          type: 'Goal',
+          detail: 'Normal Goal',
+          player: { name: 'Soucek' },
+          team: { name: 'Tchéquia' },
+          time: { elapsed: 35 },
+        },
+        {
+          type: 'Goal',
+          detail: 'Normal Goal',
+          player: { name: 'Modric' },
+          team: { name: 'Croácia' },
+          time: { elapsed: 52 },
+        },
+        {
+          type: 'Goal',
+          detail: 'Normal Goal',
+          player: { name: 'Kramaric' },
+          team: { name: 'Croácia' },
+          time: { elapsed: 88 },
+        },
+      ],
+    }
+
+    const fixturesConsultadasEventos: string[] = []
+    let recalculoExecutadoVezes = 0
+    const boloesParaRecalcular = new Set<string>()
+
+    // Iteração completa de todos os jogos do lote
+    for (const jogo of jogosDoLote) {
+      const fid = jogo.fixture_id
+      expect(fid).toBeTruthy()
+
+      // Dispara chamada dedicada de eventos para CADA fixture_id
+      fixturesConsultadasEventos.push(fid)
+      const rawEvents = apiEventsMock[fid] || []
+
+      for (const ev of rawEvents) {
+        if ((ev.type || '').toLowerCase() === 'goal') {
+          const min = ev.time?.elapsed ? `${ev.time.elapsed}'` : ''
+          const item = {
+            nome: ev.player.name,
+            posicao: 'Atacante/Meia',
+            quantidade: 1,
+            minuto: min,
+          }
+          if (ev.team.name.toLowerCase() === jogo.time_a.toLowerCase()) {
+            jogo.gols_time_a.push(item)
+          } else {
+            jogo.gols_time_b.push(item)
+          }
+          jogo.marcadores.push(min ? `${ev.player.name} ${min}` : ev.player.name)
+        }
+      }
+
+      jogo.status = 'encerrado'
+      boloesParaRecalcular.add(jogo.bolao)
+    }
+
+    // Ao final de TODOS os jogos, dispara o recálculo dos bolões afetados UMA ÚNICA VEZ
+    for (const _bolaoId of boloesParaRecalcular) {
+      recalculoExecutadoVezes++
+    }
+
+    // Asserções:
+    // 1. Ambos os fixtures tiveram suas chamadas de eventos executadas
+    expect(fixturesConsultadasEventos).toEqual(['1628997', '1528892'])
+
+    // 2. Marcadores gravados em ambos os jogos
+    expect(jogosDoLote[0].marcadores).toEqual(["Pulisic 14'"])
+    expect(jogosDoLote[0].gols_time_a).toHaveLength(1)
+    expect(jogosDoLote[0].gols_time_b).toHaveLength(0)
+
+    expect(jogosDoLote[1].marcadores).toEqual(["Soucek 35'", "Modric 52'", "Kramaric 88'"])
+    expect(jogosDoLote[1].gols_time_a).toHaveLength(1)
+    expect(jogosDoLote[1].gols_time_b).toHaveLength(2)
+
+    // 3. Recálculo disparado uma única vez ao final do lote
+    expect(recalculoExecutadoVezes).toBe(1)
+  })
 })

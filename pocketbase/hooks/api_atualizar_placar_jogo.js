@@ -517,6 +517,11 @@ routerAdd(
       }
     })
 
+    const homeTeamIdStr = homeTeamId ? String(homeTeamId) : null
+    const awayTeamIdStr = awayTeamId ? String(awayTeamId) : null
+    const homeTeamName = (fixtureData.teams?.home?.name || '').toString().toLowerCase().trim()
+    const awayTeamName = (fixtureData.teams?.away?.name || '').toString().toLowerCase().trim()
+
     const golsA = []
     const golsB = []
     const marcadoresGerais = []
@@ -524,14 +529,30 @@ routerAdd(
     for (let i = 0; i < events.length; i++) {
       const ev = events[i]
       if ((ev.type || '').toString().toLowerCase() === 'goal') {
-        const detail = (ev.detail || '').toString().toLowerCase()
-        if (detail.includes('missed') || detail.includes('perdido')) {
+        const detail = (ev.detail || '').toString().toLowerCase().trim()
+        // Validez de gol: APENAS 'Normal Goal', 'Penalty' (convertido) e 'Own Goal'.
+        // IGNORAR expressamente 'Missed Penalty'/'Penalty Missed' (pênalti perdido nunca vira marcador).
+        if (
+          detail.includes('missed') ||
+          detail.includes('perdido') ||
+          detail.includes('missed penalty') ||
+          detail.includes('penalty missed')
+        ) {
           continue
         }
+
+        // Minuto como inteiro limpo
+        let minuteInt = null
+        if (ev.time && ev.time.elapsed != null) {
+          const parsedM = parseInt(ev.time.elapsed, 10)
+          if (!isNaN(parsedM)) minuteInt = parsedM
+        }
+        const minuteStr = minuteInt !== null ? `${minuteInt}'` : ''
+
         const isContra = detail.includes('own') || detail.includes('contra')
         const playerName = (ev.player?.name || '').toString().trim()
-        const minute = ev.time?.elapsed ? String(ev.time.elapsed) : ''
-        const teamId = ev.team?.id
+        const evTeamId = ev.team?.id ? String(ev.team.id) : null
+        const evTeamName = (ev.team?.name || '').toString().toLowerCase().trim()
 
         if (playerName) {
           let posicao = 'Atacante/Meia'
@@ -543,16 +564,46 @@ routerAdd(
             nome: playerName,
             posicao: posicao,
             quantidade: 1,
-            minuto: minute ? `${minute}'` : '',
+            minuto: minuteStr,
           }
 
-          if (teamId === homeTeamId) {
+          let pertenceA = false
+          let pertenceB = false
+
+          if (homeTeamIdStr && awayTeamIdStr && evTeamId) {
+            pertenceA = evTeamId === homeTeamIdStr
+            pertenceB = evTeamId === awayTeamIdStr
+          } else if (evTeamName) {
+            if (
+              homeTeamName &&
+              (homeTeamName.includes(evTeamName) || evTeamName.includes(homeTeamName))
+            ) {
+              pertenceA = true
+            } else if (
+              awayTeamName &&
+              (awayTeamName.includes(evTeamName) || evTeamName.includes(awayTeamName))
+            ) {
+              pertenceB = true
+            } else {
+              const tA = (jogoRecord.getString('time_a') || '').toLowerCase()
+              const tB = (jogoRecord.getString('time_b') || '').toLowerCase()
+              if (tA && (tA.includes(evTeamName) || evTeamName.includes(tA))) {
+                pertenceA = true
+              } else if (tB && (tB.includes(evTeamName) || evTeamName.includes(tB))) {
+                pertenceB = true
+              }
+            }
+          }
+
+          if (pertenceA) {
             golsA.push(item)
-          } else if (teamId === awayTeamId) {
+          } else if (pertenceB) {
             golsB.push(item)
+          } else {
+            golsA.push(item)
           }
 
-          marcadoresGerais.push(minute ? `${playerName} ${minute}'` : playerName)
+          marcadoresGerais.push(minuteStr ? `${playerName} ${minuteStr}` : playerName)
         }
       }
     }
