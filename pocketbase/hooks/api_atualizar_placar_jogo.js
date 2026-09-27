@@ -277,15 +277,28 @@ routerAdd(
 
       const json = respCall.json
       if (json && json.errors && Object.keys(json.errors).length > 0) {
-        const errStr = JSON.stringify(json.errors)
-        if (json.errors.token || json.errors.access || errStr.toLowerCase().includes('token')) {
+        const errStr = JSON.stringify(json.errors).toLowerCase()
+        const isParamOrPlanError =
+          errStr.includes('parameter') ||
+          errStr.includes('plan') ||
+          errStr.includes('ids parameter')
+        if (
+          !isParamOrPlanError &&
+          (errStr.includes('invalid api key') ||
+            errStr.includes('invalid key') ||
+            errStr.includes('wrong api key') ||
+            errStr.includes('wrong key') ||
+            errStr.includes('account suspended') ||
+            errStr.includes('key suspended') ||
+            errStr.includes('key expired'))
+        ) {
           return e.json(401, {
             success: false,
             auth_error: true,
             error: 'Erro de autenticação na API. Verifique se a API Key está ativa no painel.',
           })
         }
-        return e.json(502, { error: `Erro da API-Sports: ${errStr}` })
+        return e.json(502, { error: `Erro da API-Sports: ${JSON.stringify(json.errors)}` })
       }
 
       if (!json || !Array.isArray(json.response) || json.response.length === 0) {

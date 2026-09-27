@@ -281,37 +281,91 @@ function isQuotaExceededError(statusCode, jsonBody, rawBody) {
  * Avalia se o status HTTP ou o corpo JSON indica erro de autenticação (401/403, chave inválida ou suspensa)
  */
 function isAuthInvalidError(statusCode, jsonBody, rawBody) {
-  if (statusCode === 401 || statusCode === 403) return true
+  // 1. Status 401 sempre indica não autenticado
+  if (statusCode === 401) return true
 
+  // Verificação nos erros estruturados ou raw da API-Sports
   const apiErrors = jsonBody && jsonBody.errors ? jsonBody.errors : null
+  const errStr = (
+    apiErrors ? JSON.stringify(apiErrors) : rawBody && typeof rawBody === 'string' ? rawBody : ''
+  ).toLowerCase()
+
+  // EXCLUSÕES EXPLÍCITAS: erros de PARÂMETRO ou de PLANO/RECURSO (ex.: ?ids= restrito a planos pagos)
+  // NUNCA devem ser tratados como erro de autenticação da chave!
+  if (
+    errStr.includes('ids parameter') ||
+    errStr.includes('only available with paid') ||
+    errStr.includes('paid plan') ||
+    errStr.includes('free plans') ||
+    errStr.includes('free plan') ||
+    errStr.includes('parameter') ||
+    errStr.includes('is not allowed') ||
+    errStr.includes('cannot be used')
+  ) {
+    return false
+  }
+
+  // 2. Erros específicos de token / chave nos erros estruturados
   if (apiErrors) {
-    if (apiErrors.token || apiErrors.access) return true
-    const errStr = JSON.stringify(apiErrors).toLowerCase()
-    if (
-      errStr.includes('token') ||
-      errStr.includes('invalid key') ||
-      errStr.includes('unauthenticated') ||
-      errStr.includes('unauthorized') ||
-      errStr.includes('suspended') ||
-      errStr.includes('not have access') ||
-      errStr.includes('forbidden')
-    ) {
-      return true
+    if (apiErrors.token) {
+      const tokenMsg = String(apiErrors.token).toLowerCase()
+      // Se a mensagem for sobre parâmetro ou plano, não é auth invalid
+      if (!tokenMsg.includes('parameter') && !tokenMsg.includes('plan')) {
+        return true
+      }
+    }
+    // NOTA: apiErrors.access frequentemente contém mensagens de plano como:
+    // "You do not have access to this endpoint / plan" ou restrição de endpoint
+    if (apiErrors.access) {
+      const accessMsg = String(apiErrors.access).toLowerCase()
+      if (
+        accessMsg.includes('invalid key') ||
+        accessMsg.includes('wrong key') ||
+        accessMsg.includes('suspended') ||
+        accessMsg.includes('unauthenticated')
+      ) {
+        return true
+      }
+      // Se for apenas acesso negado a um endpoint/recurso de plano pago, não é erro de credencial da chave
+      if (
+        accessMsg.includes('plan') ||
+        accessMsg.includes('endpoint') ||
+        accessMsg.includes('parameter')
+      ) {
+        return false
+      }
     }
   }
 
-  if (rawBody && typeof rawBody === 'string') {
-    const lower = rawBody.toLowerCase()
+  // 3. Status 403 só é erro de auth se não for restrição de plano/parâmetro
+  if (statusCode === 403) {
     if (
-      lower.includes('invalid api key') ||
-      lower.includes('invalid token') ||
-      lower.includes('account suspended') ||
-      lower.includes('unauthenticated') ||
-      lower.includes('unauthorized') ||
-      lower.includes('forbidden')
+      errStr.includes('invalid key') ||
+      errStr.includes('wrong key') ||
+      errStr.includes('suspended') ||
+      errStr.includes('expired') ||
+      errStr.includes('unauthenticated') ||
+      errStr.includes('unauthorized')
     ) {
       return true
     }
+    // Sem mensagem de chave inválida, 403 genérico após descartar parâmetros
+    return !errStr.includes('plan') && !errStr.includes('parameter')
+  }
+
+  // 4. Frases estritas e inequívocas de chave inválida/suspensa/expirada
+  if (
+    errStr.includes('invalid api key') ||
+    errStr.includes('invalid key') ||
+    errStr.includes('wrong api key') ||
+    errStr.includes('wrong key') ||
+    errStr.includes('account suspended') ||
+    errStr.includes('key suspended') ||
+    errStr.includes('key has expired') ||
+    errStr.includes('key expired') ||
+    errStr.includes('unauthenticated')
+  ) {
+    return true
   }
 
   return false

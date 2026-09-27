@@ -172,50 +172,65 @@ routerAdd(
     const fixtureResponses = []
     const rawApiLogs = []
 
-    const chunks = []
-    for (let i = 0; i < uniqueFixtureIds.length; i += 20) {
-      chunks.push(uniqueFixtureIds.slice(i, i + 20))
+    // Estratégia de busca otimizada e 100% compatível com todos os planos da API-Sports:
+    // 1. Tentar busca em lote por data (?date=YYYY-MM-DD), que é suportada no plano Free/Developer em 1 única requisição.
+    // 2. Extrair as partidas que batem com os uniqueFixtureIds necessários.
+    // 3. Para quaisquer fixtures faltantes (ou caso a busca por data não retorne as partidas), realizar chamadas individuais seguras (?id=X).
+    // OBSERVAÇÃO: O parâmetro ?ids= consolidado NÃO é usado como chamada primária bloqueante porque a API-Sports o recusa no plano gratuito.
+    const agoraSP = new Date(Date.now() - 3 * 3600 * 1000)
+    const yyyy = agoraSP.getUTCFullYear()
+    const mm = String(agoraSP.getUTCMonth() + 1).padStart(2, '0')
+    const dd = String(agoraSP.getUTCDate()).padStart(2, '0')
+    const hojeIso = `${yyyy}-${mm}-${dd}`
+
+    const fixturesEncontrados = {}
+
+    // Tentativa 1: Buscar por data de hoje na API-Sports (?date=YYYY-MM-DD)
+    const urlDate = `https://v3.football.api-sports.io/fixtures?date=${encodeURIComponent(hojeIso)}&timezone=America%2FSao_Paulo`
+    console.log(`[atualizar-todos] Tentando busca em lote por data: ${urlDate}`)
+
+    let respDateCall = null
+    if (limiterMod && typeof limiterMod.enviarRequisicaoApiFootball === 'function') {
+      respDateCall = limiterMod.enviarRequisicaoApiFootball(
+        urlDate,
+        { timeout: 15, isAdminManual: true },
+        2,
+      )
+    } else {
+      const sendRes = $http.send({ url: urlDate, method: 'GET', timeout: 15 })
+      let j = null
+      try {
+        j =
+          typeof sendRes.json === 'object' && sendRes.json !== null
+            ? sendRes.json
+            : JSON.parse(sendRes.raw)
+      } catch (_) {}
+      respDateCall = {
+        blocked: false,
+        statusCode: sendRes ? sendRes.statusCode : 500,
+        rawResponse: sendRes,
+        json: j,
+      }
     }
 
-    for (let cIdx = 0; cIdx < chunks.length; cIdx++) {
-      const chunkIds = chunks[cIdx]
-      let url = ''
-      if (chunkIds.length === 1) {
-        url = `https://v3.football.api-sports.io/fixtures?id=${encodeURIComponent(chunkIds[0])}`
-      } else {
-        const idsJoined = chunkIds.join('-')
-        url = `https://v3.football.api-sports.io/fixtures?ids=${encodeURIComponent(idsJoined)}`
-      }
+    if (respDateCall) {
+      rawApiLogs.push({
+        url: urlDate,
+        fixture_ids: uniqueFixtureIds,
+        statusCode: respDateCall.statusCode,
+        results:
+          respDateCall.json && typeof respDateCall.json.results === 'number'
+            ? respDateCall.json.results
+            : 0,
+        response_count:
+          respDateCall.json && Array.isArray(respDateCall.json.response)
+            ? respDateCall.json.response.length
+            : 0,
+        json_exact: respDateCall.json,
+        keyUsed: respDateCall.keyUsed,
+      })
 
-      console.log(
-        `[atualizar-todos] [API-Sports Req ${cIdx + 1}/${chunks.length}] URL: ${url} | Fixture IDs: ${chunkIds.join(', ')}`,
-      )
-
-      let respCall = null
-      if (limiterMod && typeof limiterMod.enviarRequisicaoApiFootball === 'function') {
-        respCall = limiterMod.enviarRequisicaoApiFootball(
-          url,
-          { timeout: 15, isAdminManual: true },
-          2,
-        )
-      } else {
-        const sendRes = $http.send({ url, method: 'GET', timeout: 15 })
-        let j = null
-        try {
-          j =
-            typeof sendRes.json === 'object' && sendRes.json !== null
-              ? sendRes.json
-              : JSON.parse(sendRes.raw)
-        } catch (_) {}
-        respCall = {
-          blocked: false,
-          statusCode: sendRes ? sendRes.statusCode : 500,
-          rawResponse: sendRes,
-          json: j,
-        }
-      }
-
-      if (respCall.blocked && respCall.auth_error) {
+      if (respDateCall.blocked && respDateCall.auth_error) {
         return e.json(401, {
           success: false,
           auth_error: true,
@@ -225,7 +240,7 @@ routerAdd(
         })
       }
 
-      if (respCall.blocked && respCall.rate_limited) {
+      if (respDateCall.blocked && respDateCall.rate_limited) {
         return e.json(429, {
           success: false,
           error: 'Limite de requisições da API-Sports atingido nas chaves configuradas.',
@@ -234,84 +249,126 @@ routerAdd(
         })
       }
 
-      const resHttp = respCall.rawResponse
-      const json = respCall.json
-
-      rawApiLogs.push({
-        url,
-        fixture_ids: chunkIds,
-        statusCode: respCall.statusCode,
-        results: json && typeof json.results === 'number' ? json.results : 0,
-        response_count: json && Array.isArray(json.response) ? json.response.length : 0,
-        json_exact: json,
-        keyUsed: respCall.keyUsed,
-      })
-
-      if (json && json.errors && Object.keys(json.errors).length > 0) {
-        const errStr = JSON.stringify(json.errors)
-        if (errStr.includes('Ids parameter') || errStr.includes('Free plans')) {
-          console.log(
-            '[atualizar-todos] API recusou ?ids= para o plano atual. Executando fallback para ?id=...',
-          )
-          for (let fIdx = 0; fIdx < chunkIds.length; fIdx++) {
-            const singleId = chunkIds[fIdx]
-            const singleUrl = `https://v3.football.api-sports.io/fixtures?id=${encodeURIComponent(singleId)}`
-            try {
-              console.log(
-                `[atualizar-todos] [Fallback ?id=] URL: ${singleUrl} | Fixture ID: ${singleId}`,
-              )
-              const singleCall =
-                limiterMod && typeof limiterMod.enviarRequisicaoApiFootball === 'function'
-                  ? limiterMod.enviarRequisicaoApiFootball(
-                      singleUrl,
-                      { timeout: 15, isAdminManual: true },
-                      2,
-                    )
-                  : { statusCode: 500 }
-
-              if (
-                singleCall &&
-                singleCall.statusCode === 200 &&
-                singleCall.json &&
-                Array.isArray(singleCall.json.response) &&
-                singleCall.json.response.length > 0
-              ) {
-                fixtureResponses.push(singleCall.json.response[0])
-              }
-              rawApiLogs.push({
-                url: singleUrl,
-                fixture_ids: [singleId],
-                statusCode: singleCall ? singleCall.statusCode : null,
-                json_exact: singleCall ? singleCall.json : null,
-                keyUsed: singleCall ? singleCall.keyUsed : null,
-              })
-            } catch (errFallback) {
-              console.log(`[atualizar-todos] Erro no fallback ?id=${singleId}:`, errFallback)
-            }
+      if (
+        respDateCall.statusCode === 200 &&
+        respDateCall.json &&
+        Array.isArray(respDateCall.json.response)
+      ) {
+        for (let r = 0; r < respDateCall.json.response.length; r++) {
+          const item = respDateCall.json.response[r]
+          const fid = item.fixture?.id ? String(item.fixture.id) : null
+          if (fid && fixtureMap[fid]) {
+            fixtureResponses.push(item)
+            fixturesEncontrados[fid] = true
           }
-          continue
         }
       }
+    }
 
-      if (json && Array.isArray(json.response)) {
-        for (let r = 0; r < json.response.length; r++) {
-          fixtureResponses.push(json.response[r])
+    // Identifica quais fixture_ids ainda não foram obtidos pela consulta por data
+    const missingFixtureIds = uniqueFixtureIds.filter((id) => !fixturesEncontrados[id])
+
+    if (missingFixtureIds.length > 0) {
+      console.log(
+        `[atualizar-todos] ${missingFixtureIds.length} partida(s) não constavam na busca por data (${hojeIso}). Consultando individualmente por ?id=...`,
+      )
+
+      for (let mIdx = 0; mIdx < missingFixtureIds.length; mIdx++) {
+        const singleId = missingFixtureIds[mIdx]
+        const singleUrl = `https://v3.football.api-sports.io/fixtures?id=${encodeURIComponent(singleId)}`
+
+        let singleCall = null
+        if (limiterMod && typeof limiterMod.enviarRequisicaoApiFootball === 'function') {
+          singleCall = limiterMod.enviarRequisicaoApiFootball(
+            singleUrl,
+            { timeout: 15, isAdminManual: true },
+            2,
+          )
+        } else {
+          const sendRes = $http.send({ url: singleUrl, method: 'GET', timeout: 15 })
+          let j = null
+          try {
+            j =
+              typeof sendRes.json === 'object' && sendRes.json !== null
+                ? sendRes.json
+                : JSON.parse(sendRes.raw)
+          } catch (_) {}
+          singleCall = {
+            blocked: false,
+            statusCode: sendRes ? sendRes.statusCode : 500,
+            rawResponse: sendRes,
+            json: j,
+          }
+        }
+
+        rawApiLogs.push({
+          url: singleUrl,
+          fixture_ids: [singleId],
+          statusCode: singleCall ? singleCall.statusCode : null,
+          results:
+            singleCall && singleCall.json && typeof singleCall.json.results === 'number'
+              ? singleCall.json.results
+              : 0,
+          response_count:
+            singleCall && singleCall.json && Array.isArray(singleCall.json.response)
+              ? singleCall.json.response.length
+              : 0,
+          json_exact: singleCall ? singleCall.json : null,
+          keyUsed: singleCall ? singleCall.keyUsed : null,
+        })
+
+        if (singleCall && singleCall.blocked && singleCall.auth_error) {
+          return e.json(401, {
+            success: false,
+            auth_error: true,
+            error: 'Erro de autenticação na API. Verifique se a API Key está ativa no painel.',
+            notice: 'Erro de autenticação na API. Verifique se a API Key está ativa no painel.',
+            debug_logs: rawApiLogs,
+          })
+        }
+
+        if (singleCall && singleCall.blocked && singleCall.rate_limited) {
+          return e.json(429, {
+            success: false,
+            error: 'Limite de requisições da API-Sports atingido nas chaves configuradas.',
+            rate_limited: true,
+            debug_logs: rawApiLogs,
+          })
+        }
+
+        if (
+          singleCall &&
+          singleCall.statusCode === 200 &&
+          singleCall.json &&
+          Array.isArray(singleCall.json.response) &&
+          singleCall.json.response.length > 0
+        ) {
+          fixtureResponses.push(singleCall.json.response[0])
+          fixturesEncontrados[singleId] = true
         }
       }
     }
 
     if (fixtureResponses.length === 0) {
-      // Verifica se houve erro de autenticação nos logs
-      const hadAuthLog = rawApiLogs.some(
-        (l) =>
-          l.statusCode === 401 ||
-          l.statusCode === 403 ||
-          (l.json_exact &&
-            l.json_exact.errors &&
-            (l.json_exact.errors.token || l.json_exact.errors.access)),
-      )
+      // Verifica se houve erro de autenticação real nos logs (HTTP 401 ou token inválido, excluindo erros de plano/parâmetro)
+      const hadRealAuthError = rawApiLogs.some((l) => {
+        if (l.statusCode === 401) return true
+        const errors = l.json_exact && l.json_exact.errors ? l.json_exact.errors : null
+        if (!errors) return false
+        const errStr = JSON.stringify(errors).toLowerCase()
+        if (errStr.includes('parameter') || errStr.includes('plan')) return false
+        return (
+          errStr.includes('invalid api key') ||
+          errStr.includes('invalid key') ||
+          errStr.includes('wrong api key') ||
+          errStr.includes('wrong key') ||
+          errStr.includes('account suspended') ||
+          errStr.includes('key suspended') ||
+          errStr.includes('key expired')
+        )
+      })
 
-      if (hadAuthLog) {
+      if (hadRealAuthError) {
         return e.json(401, {
           success: false,
           auth_error: true,

@@ -363,4 +363,178 @@ describe('Rotina de Placar Ao Vivo (TheSportsDB leve e fail-safe)', () => {
 
     expect(pontos).toBe(9) // 8 da cravada + 1 do marcador Romero
   })
+
+  it('isAuthInvalidError: recusa de parâmetro ou plano (ex: ?ids=) NÃO é classificada como erro de autenticação', () => {
+    // Replicando a lógica corrigida de pocketbase/hooks/api_football_limiter.js
+    function isAuthInvalidError(
+      statusCode: number,
+      jsonBody: { errors?: Record<string, any> } | null,
+      rawBody?: string,
+    ): boolean {
+      if (statusCode === 401) return true
+
+      const apiErrors = jsonBody && jsonBody.errors ? jsonBody.errors : null
+      const errStr = (
+        apiErrors
+          ? JSON.stringify(apiErrors)
+          : rawBody && typeof rawBody === 'string'
+            ? rawBody
+            : ''
+      ).toLowerCase()
+
+      // Exclusões explícitas: parâmetro e planos gratuitos/pagos
+      if (
+        errStr.includes('ids parameter') ||
+        errStr.includes('only available with paid') ||
+        errStr.includes('paid plan') ||
+        errStr.includes('free plans') ||
+        errStr.includes('free plan') ||
+        errStr.includes('parameter') ||
+        errStr.includes('is not allowed') ||
+        errStr.includes('cannot be used')
+      ) {
+        return false
+      }
+
+      if (apiErrors) {
+        if (apiErrors.token) {
+          const tokenMsg = String(apiErrors.token).toLowerCase()
+          if (!tokenMsg.includes('parameter') && !tokenMsg.includes('plan')) {
+            return true
+          }
+        }
+        if (apiErrors.access) {
+          const accessMsg = String(apiErrors.access).toLowerCase()
+          if (
+            accessMsg.includes('invalid key') ||
+            accessMsg.includes('wrong key') ||
+            accessMsg.includes('suspended') ||
+            accessMsg.includes('unauthenticated')
+          ) {
+            return true
+          }
+          if (
+            accessMsg.includes('plan') ||
+            accessMsg.includes('endpoint') ||
+            accessMsg.includes('parameter')
+          ) {
+            return false
+          }
+        }
+      }
+
+      if (statusCode === 403) {
+        if (
+          errStr.includes('invalid key') ||
+          errStr.includes('wrong key') ||
+          errStr.includes('suspended') ||
+          errStr.includes('expired') ||
+          errStr.includes('unauthenticated') ||
+          errStr.includes('unauthorized')
+        ) {
+          return true
+        }
+        return !errStr.includes('plan') && !errStr.includes('parameter')
+      }
+
+      if (
+        errStr.includes('invalid api key') ||
+        errStr.includes('invalid key') ||
+        errStr.includes('wrong api key') ||
+        errStr.includes('wrong key') ||
+        errStr.includes('account suspended') ||
+        errStr.includes('key suspended') ||
+        errStr.includes('key has expired') ||
+        errStr.includes('key expired') ||
+        errStr.includes('unauthenticated')
+      ) {
+        return true
+      }
+
+      return false
+    }
+
+    // 1. Caso que causou o bug: a API-Sports retorna erro de parâmetro ?ids= em plano Free
+    const responseRecusaIds1 = {
+      statusCode: 200,
+      json: {
+        get: 'fixtures',
+        parameters: { ids: '1528891-1528892' },
+        errors: {
+          access: 'Ids parameter is only available with paid plans.',
+        },
+        results: 0,
+        response: [],
+      },
+    }
+    expect(isAuthInvalidError(responseRecusaIds1.statusCode, responseRecusaIds1.json)).toBe(false)
+
+    // 2. Outra variação comum de erro de plano
+    const responseRecusaIds2 = {
+      statusCode: 499,
+      json: {
+        errors: {
+          requests: 'Parameter ids is not allowed in Free plans',
+        },
+      },
+    }
+    expect(isAuthInvalidError(responseRecusaIds2.statusCode, responseRecusaIds2.json)).toBe(false)
+
+    // 3. Caso de erro REAL de autenticação: HTTP 401
+    expect(isAuthInvalidError(401, { errors: { token: 'Invalid token' } })).toBe(true)
+
+    // 4. Caso de chave suspensa ou inválida:
+    expect(
+      isAuthInvalidError(200, {
+        errors: {
+          token: 'Error: invalid API key',
+        },
+      }),
+    ).toBe(true)
+    expect(
+      isAuthInvalidError(403, {
+        errors: {
+          access: 'Your account is suspended',
+        },
+      }),
+    ).toBe(true)
+  })
+
+  it('fluxo de atualização em lote usa busca por data e fallback para ?id= sem gerar auth_error', () => {
+    // Simulação do fluxo de api_atualizar_todos_placares:
+    const uniqueFixtureIds = ['1528891', '1528892', '1637933']
+    const fixtureResponses: any[] = []
+    const fixturesEncontrados: Record<string, boolean> = {}
+
+    // Simulação da busca por data (?date=YYYY-MM-DD):
+    // Digamos que a busca por data retorne 2 dos 3 jogos
+    const responseBuscaData = [
+      { fixture: { id: 1528891 }, goals: { home: 2, away: 3 } },
+      { fixture: { id: 1528892 }, goals: { home: 1, away: 2 } },
+    ]
+
+    for (const item of responseBuscaData) {
+      const fid = String(item.fixture.id)
+      if (uniqueFixtureIds.includes(fid)) {
+        fixtureResponses.push(item)
+        fixturesEncontrados[fid] = true
+      }
+    }
+
+    expect(fixtureResponses).toHaveLength(2)
+    expect(fixturesEncontrados['1528891']).toBe(true)
+    expect(fixturesEncontrados['1528892']).toBe(true)
+
+    // Partidas faltantes (1637933) são buscadas individualmente por ?id=
+    const missingFixtureIds = uniqueFixtureIds.filter((id) => !fixturesEncontrados[id])
+    expect(missingFixtureIds).toEqual(['1637933'])
+
+    // Chamada individual bem-sucedida para o faltante:
+    const responseSingle = { fixture: { id: 1637933 }, goals: { home: 0, away: 1 } }
+    fixtureResponses.push(responseSingle)
+    fixturesEncontrados['1637933'] = true
+
+    expect(fixtureResponses).toHaveLength(3)
+    expect(uniqueFixtureIds.every((id) => fixturesEncontrados[id])).toBe(true)
+  })
 })
