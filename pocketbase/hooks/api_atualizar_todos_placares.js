@@ -325,6 +325,7 @@ routerAdd(
     const boloesAfetados = {}
     let finishedFixturesCount = 0
     let fixturesWithGoalsCount = 0
+    let liveUpdatedCount = 0
 
     for (let f = 0; f < fixtureResponses.length; f++) {
       const fixData = fixtureResponses[f]
@@ -458,6 +459,104 @@ routerAdd(
         }
       }
 
+      // Busca ou processamento de Escalações (lineups):
+      // Se a resposta consolidada de fixtures já trouxer lineups, usa diretamente;
+      // Caso contrário, se a partida estiver em andamento (isLive) ou finalizada (isFinished),
+      // consulta o endpoint /fixtures/lineups?fixture={fid} via limiter central com chave/fallback.
+      let parsedEscalacoesPayload = null
+      let apiLineupsRaw = Array.isArray(fixData.lineups) ? fixData.lineups : []
+
+      if (apiLineupsRaw.length === 0 && (isLive || isFinished)) {
+        try {
+          const urlLineups = `https://v3.football.api-sports.io/fixtures/lineups?fixture=${encodeURIComponent(fid)}`
+          console.log(`[atualizar-todos] Buscando lineups para fixture ${fid}...`)
+          const callLineup =
+            limiterMod && typeof limiterMod.enviarRequisicaoApiFootball === 'function'
+              ? limiterMod.enviarRequisicaoApiFootball(
+                  urlLineups,
+                  { timeout: 15, isAdminManual: true },
+                  2,
+                )
+              : null
+
+          if (
+            callLineup &&
+            callLineup.statusCode === 200 &&
+            callLineup.json &&
+            Array.isArray(callLineup.json.response) &&
+            callLineup.json.response.length > 0
+          ) {
+            apiLineupsRaw = callLineup.json.response
+          }
+        } catch (errLineups) {
+          console.log(`[atualizar-todos] Erro ao buscar lineups para fixture ${fid}:`, errLineups)
+        }
+      }
+
+      if (apiLineupsRaw.length > 0) {
+        const teamsData = []
+        for (let li = 0; li < apiLineupsRaw.length; li++) {
+          const teamBlock = apiLineupsRaw[li]
+          const teamInfo = teamBlock.team || {}
+          const starters = []
+          if (Array.isArray(teamBlock.startXI)) {
+            for (let s = 0; s < teamBlock.startXI.length; s++) {
+              const p = teamBlock.startXI[s].player || {}
+              starters.push({
+                id: p.id ? String(p.id) : '',
+                name: p.name || '',
+                number: p.number || null,
+                pos: p.pos || '',
+                grid: p.grid || null,
+              })
+            }
+          }
+          const bench = []
+          if (Array.isArray(teamBlock.substitutes)) {
+            for (let b = 0; b < teamBlock.substitutes.length; b++) {
+              const bp = teamBlock.substitutes[b].player || {}
+              bench.push({
+                id: bp.id ? String(bp.id) : '',
+                name: bp.name || '',
+                number: bp.number || null,
+                pos: bp.pos || '',
+              })
+            }
+          }
+
+          let tLogo = teamInfo.logo || ''
+          const tName = teamInfo.name || ''
+          if (tName.toLowerCase().indexOf('paris') !== -1 || tName.toLowerCase() === 'psg') {
+            tLogo = 'https://media.api-sports.io/football/teams/85.png'
+          }
+
+          teamsData.push({
+            teamId: teamInfo.id ? String(teamInfo.id) : '',
+            teamName: tName,
+            teamLogo: tLogo,
+            formation: teamBlock.formation || '',
+            coach: teamBlock.coach ? teamBlock.coach.name : '',
+            starters: starters,
+            substitutes: bench,
+          })
+        }
+
+        const hasRealLineupPlayers = teamsData.some(
+          (t) =>
+            (t.starters && t.starters.length > 0) || (t.substitutes && t.substitutes.length > 0),
+        )
+
+        if (teamsData.length > 0 && hasRealLineupPlayers) {
+          parsedEscalacoesPayload = {
+            status: 'confirmada',
+            provider: 'api_football',
+            fixtureId: fid,
+            teams: teamsData,
+            updatedAt: new Date().toISOString(),
+          }
+        }
+      }
+
       // Snapshot unificado da Ficha Técnica para o campo ficha_detalhes
       const fichaDetalhesPayload = {
         success: true,
@@ -468,6 +567,7 @@ routerAdd(
         goals: fixData.goals || {},
         fixture_status: fixData.fixture?.status || {},
         events: normalizedEvents,
+        lineups: apiLineupsRaw,
         updatedAt: new Date().toISOString(),
       }
 
@@ -475,6 +575,12 @@ routerAdd(
       try {
         $app.store().set('events_fixture_' + fid, JSON.stringify(fichaDetalhesPayload))
       } catch (_) {}
+
+      if (parsedEscalacoesPayload) {
+        try {
+          $app.store().set('lineup_' + fid, JSON.stringify(parsedEscalacoesPayload))
+        } catch (_) {}
+      }
 
       // Atualiza cada jogo vinculado a este fixture_id
       for (let j = 0; j < matchingRecords.length; j++) {
@@ -531,12 +637,14 @@ routerAdd(
         // Apenas 'finalizado' se FT/AET/PEN
         // Apenas 'ao_vivo' se explicitamente '1H', 'HT', '2H', 'ET', 'BT', 'P', 'LIVE', 'INT' E kickoff já chegou
         // Se NS/TBD, NUNCA marca como ao_vivo
+        let isAgoraAoVivo = false
         if (isFinished) {
           jRec.set('status', 'finalizado')
           jRec.set('resultado_finalizado', true)
         } else if (isLive && kickoffJaChegou) {
           jRec.set('status', 'ao_vivo')
           jRec.set('resultado_finalizado', false)
+          isAgoraAoVivo = true
         } else if (isNotStarted) {
           jRec.set('resultado_finalizado', false)
         }
@@ -545,7 +653,14 @@ routerAdd(
         if (golsB.length > 0) jRec.set('gols_time_b', golsB)
         if (marcadoresGerais.length > 0) jRec.set('marcadores', marcadoresGerais)
 
-        // Grava a ficha completa de detalhes (timeline de eventos)
+        // Gravação de Escalações com preservação:
+        // Se a API retornou escalações válidas com jogadores reais, persiste no jogo.
+        // Se a API não retornou nada, preserva a escalação existente sem sobrescrever com vazio.
+        if (parsedEscalacoesPayload) {
+          jRec.set('escalacoes', parsedEscalacoesPayload)
+        }
+
+        // Grava a ficha completa de detalhes (timeline de eventos e lineups)
         // PRESERVAÇÃO: se a API não trouxer eventos nem status ativo/finalizado e o jogo já tiver ficha gravada com eventos, não sobrescreve com vazio
         const prevFichaRaw = jRec.get('ficha_detalhes')
         const hasPrevEvents =
@@ -572,6 +687,11 @@ routerAdd(
           const isEncerrado =
             savedRec.getString('status') === 'finalizado' ||
             savedRec.getBool('resultado_finalizado')
+          const isAoVivoStatus = savedRec.getString('status') === 'ao_vivo'
+
+          if (isAoVivoStatus) {
+            liveUpdatedCount++
+          }
 
           updatedJogosList.push({
             id: savedRec.id,
@@ -583,11 +703,13 @@ routerAdd(
             status: savedRec.getString('status'),
             resultado_finalizado: savedRec.getBool('resultado_finalizado'),
             tem_placar: hasScorePersisted,
+            ao_vivo: isAoVivoStatus,
             mudou_para_encerrado: isEncerrado,
             fixture_id: fid,
             gols_time_a: savedRec.get('gols_time_a'),
             gols_time_b: savedRec.get('gols_time_b'),
             marcadores: savedRec.get('marcadores'),
+            escalacoes: savedRec.get('escalacoes'),
             ficha_detalhes: fichaDetalhesPayload,
           })
         } catch (errSave) {
@@ -1011,16 +1133,30 @@ routerAdd(
     const totalComPlacarGravado = updatedJogosList.filter((j) => j.tem_placar).length
     const totalSemPlacarGravado = updatedJogosList.filter((j) => !j.tem_placar).length
     const totalEncerrados = updatedJogosList.filter((j) => j.mudou_para_encerrado).length
+    const totalAoVivo = updatedJogosList.filter((j) => j.ao_vivo).length
 
     let messageNotice = null
     let messageSucesso = ''
 
-    if (totalComPlacarGravado === 0) {
+    if (totalComPlacarGravado === 0 && totalAoVivo === 0 && totalEncerrados === 0) {
       messageNotice =
-        'A API retornou a consulta, mas o placar oficial dos jogos ainda não foi disponibilizado na API-Sports.'
-      messageSucesso = `Consulta concluída: 0 jogos com placar gravado, ${totalSemPlacarGravado} sem placar disponível, ${totalEncerrados} encerrado(s).`
+        'Os jogos selecionados ainda não possuem placar finalizado ou em andamento retornado pela API-Sports.'
+      messageSucesso = `Consulta concluída: 0 jogos com placar gravado, ${totalSemPlacarGravado} sem dados de placar disponível.`
     } else {
-      messageSucesso = `Placares atualizados com sucesso: ${totalComPlacarGravado} jogo(s) com placar gravado, ${totalSemPlacarGravado} sem placar, ${totalEncerrados} encerrado(s).`
+      const partsMsg = []
+      if (totalAoVivo > 0) {
+        partsMsg.push(`${totalAoVivo} ao vivo / parcial(is)`)
+      }
+      if (totalEncerrados > 0) {
+        partsMsg.push(`${totalEncerrados} encerrado(s)`)
+      }
+      if (totalComPlacarGravado > 0 && totalAoVivo === 0 && totalEncerrados === 0) {
+        partsMsg.push(`${totalComPlacarGravado} com placar gravado`)
+      }
+      if (totalSemPlacarGravado > 0) {
+        partsMsg.push(`${totalSemPlacarGravado} sem dados`)
+      }
+      messageSucesso = `Sincronização concluída com sucesso: ${partsMsg.join(', ')}.`
     }
 
     return e.json(200, {
@@ -1030,12 +1166,14 @@ routerAdd(
       resumo: {
         total_jogos: jogosRecords.length,
         com_placar: totalComPlacarGravado,
+        ao_vivo: totalAoVivo,
         sem_placar: totalSemPlacarGravado,
         encerrados: totalEncerrados,
       },
       total_jogos: jogosRecords.length,
       atualizados: updatedJogosList.length,
       jogos_com_placar_gravado: totalComPlacarGravado,
+      jogos_ao_vivo: totalAoVivo,
       jogos_sem_placar_null: totalSemPlacarGravado,
       jogos_encerrados: totalEncerrados,
       fixtures_finalizados: totalEncerrados,

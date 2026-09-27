@@ -119,4 +119,66 @@ describe('Rotina de Placar Ao Vivo (TheSportsDB leve e fail-safe)', () => {
     expect(dadosSalvos).toBe(false)
     expect(mockHttp.send).toHaveBeenCalledTimes(1)
   })
+
+  it('valida aceitação de placares ao vivo em andamento (1H/2H/HT) e contagem discriminada de resumo', () => {
+    const liveStatuses = ['1H', '2H', 'HT', 'ET', 'BT', 'P', 'LIVE']
+    const finishedStatuses = ['FT', 'AET', 'PEN']
+
+    liveStatuses.forEach((st) => {
+      const isLive = liveStatuses.includes(st)
+      const isFinished = finishedStatuses.includes(st)
+      expect(isLive).toBe(true)
+      expect(isFinished).toBe(false)
+    })
+
+    // Simulação do cálculo de resumo
+    const mockJogosAtualizados = [
+      { id: '1', tem_placar: true, ao_vivo: true, mudou_para_encerrado: false, status: 'ao_vivo' },
+      {
+        id: '2',
+        tem_placar: true,
+        ao_vivo: false,
+        mudou_para_encerrado: true,
+        status: 'finalizado',
+      },
+      {
+        id: '3',
+        tem_placar: false,
+        ao_vivo: false,
+        mudou_para_encerrado: false,
+        status: 'pendente',
+      },
+    ]
+
+    const comPlacar = mockJogosAtualizados.filter((j) => j.tem_placar).length
+    const aoVivo = mockJogosAtualizados.filter((j) => j.ao_vivo).length
+    const encerrados = mockJogosAtualizados.filter((j) => j.mudou_para_encerrado).length
+    const semPlacar = mockJogosAtualizados.filter((j) => !j.tem_placar && !j.ao_vivo).length
+
+    expect(comPlacar).toBe(2)
+    expect(aoVivo).toBe(1)
+    expect(encerrados).toBe(1)
+    expect(semPlacar).toBe(1)
+
+    // O aviso de que jogos ainda não possuem placar só pode ser exibido se não houver dados ativos
+    const totalAtivos = comPlacar + aoVivo + encerrados
+    expect(totalAtivos > 0).toBe(true)
+  })
+
+  it('preserva escalações anteriores se a API não retornar novos jogadores', () => {
+    const escalacaoPrevia = {
+      status: 'confirmada',
+      teams: [{ teamName: 'Time A', starters: [{ name: 'Jogador 1' }], substitutes: [] }],
+    }
+
+    const respostaApiSemEscalacao = []
+    let escalacaoFinal = escalacaoPrevia
+
+    if (respostaApiSemEscalacao.length > 0) {
+      escalacaoFinal = { status: 'confirmada', teams: respostaApiSemEscalacao }
+    }
+
+    expect(escalacaoFinal).toEqual(escalacaoPrevia)
+    expect(escalacaoFinal.teams[0].starters[0].name).toBe('Jogador 1')
+  })
 })

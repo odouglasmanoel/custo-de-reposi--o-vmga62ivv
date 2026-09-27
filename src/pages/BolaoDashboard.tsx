@@ -830,6 +830,7 @@ export default function BolaoDashboard() {
         total_jogos?: number
         atualizados?: number
         jogos_com_placar_gravado?: number
+        jogos_ao_vivo?: number
         jogos_sem_placar_null?: number
         jogos_encerrado?: number
         jogos_encerrados?: number
@@ -839,11 +840,13 @@ export default function BolaoDashboard() {
         resumo?: {
           total_jogos: number
           com_placar: number
+          ao_vivo?: number
           sem_placar: number
           encerrados: number
         }
         jogos?: (Partial<Jogo> & {
           tem_placar?: boolean
+          ao_vivo?: boolean
           mudou_para_encerrado?: boolean
         })[]
         debug_logs?: Array<{
@@ -883,31 +886,22 @@ export default function BolaoDashboard() {
           res.resumo?.com_placar ??
           res.jogos_com_placar_gravado ??
           (res.jogos ? res.jogos.filter((j) => j.tem_placar).length : 0)
+        const aoVivo =
+          res.resumo?.ao_vivo ??
+          res.jogos_ao_vivo ??
+          (res.jogos ? res.jogos.filter((j) => j.ao_vivo || j.status === 'ao_vivo').length : 0)
         const semPlacar =
           res.resumo?.sem_placar ??
           res.jogos_sem_placar_null ??
-          (res.jogos ? res.jogos.filter((j) => !j.tem_placar).length : 0)
+          (res.jogos
+            ? res.jogos.filter((j) => !j.tem_placar && !j.ao_vivo && j.status !== 'ao_vivo').length
+            : 0)
         const encerrados =
           res.resumo?.encerrados ?? res.jogos_encerrados ?? res.fixtures_finalizados ?? 0
 
-        const resumoTexto = `Resumo: ${comPlacar} com placar gravado, ${semPlacar} sem placar na API, ${encerrados} encerrado(s).`
+        const totalAtivosComDados = comPlacar + aoVivo + encerrados
 
-        if (comPlacar === 0) {
-          toast({
-            title: 'Aviso da API',
-            description: `A API retornou a consulta, mas o placar oficial do jogo ainda não foi disponibilizado na API-Sports. (${resumoTexto})`,
-          })
-        } else {
-          toast({
-            title: 'Placares e fichas atualizados',
-            description: res.message || `Placares atualizados com sucesso! ${resumoTexto}`,
-          })
-        }
-
-        // Limpa caches locais de dashboard e fichas técnicas
-        clearDashboardCache()
-        clearFichaJogoCache()
-
+        // Se houver jogos atualizados no lote, aplica imediatamente aos estados dos cards na tela
         if (Array.isArray(res.jogos) && res.jogos.length > 0) {
           const mapNovosJogos = new Map(res.jogos.map((j) => [j.id, j]))
           setJogos((prev) =>
@@ -918,15 +912,38 @@ export default function BolaoDashboard() {
           )
         }
 
+        // Limpa caches locais de dashboard e fichas técnicas
+        clearDashboardCache()
+        clearFichaJogoCache()
+
+        if (totalAtivosComDados === 0) {
+          toast({
+            title: 'Aviso da API',
+            description:
+              res.notice ||
+              `Os jogos selecionados ainda não possuem placar finalizado ou em andamento retornado pela API-Sports. (Sem dados: ${semPlacar})`,
+          })
+        } else {
+          const resumoPartes = []
+          if (aoVivo > 0) resumoPartes.push(`${aoVivo} ao vivo / parcial(is)`)
+          if (encerrados > 0) resumoPartes.push(`${encerrados} encerrado(s)`)
+          if (comPlacar > 0 && aoVivo === 0 && encerrados === 0)
+            resumoPartes.push(`${comPlacar} com placar gravado`)
+          if (semPlacar > 0) resumoPartes.push(`${semPlacar} sem dados`)
+
+          const detalheResumo = `Resumo: ${resumoPartes.join(', ')}.`
+
+          toast({
+            title: 'Placares e fichas sincronizados',
+            description: res.message || `Atualização concluída com sucesso! ${detalheResumo}`,
+          })
+        }
+
         await loadData(true)
       } else if (res?.notice) {
-        const mensagemNotice =
-          res.notice === 'A API-Sports não retornou dados para as partidas consultadas.'
-            ? 'Os jogos selecionados ainda não possuem placar finalizado retornado pela API-Sports.'
-            : res.notice
         toast({
           title: 'Aviso',
-          description: mensagemNotice,
+          description: res.notice,
         })
       } else {
         toast({
