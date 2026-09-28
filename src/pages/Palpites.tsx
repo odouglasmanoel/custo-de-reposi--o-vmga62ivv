@@ -56,7 +56,13 @@ import { GameLineupAccordion } from '@/components/GameLineupAccordion'
 import { FichaJogo } from '@/components/FichaJogo'
 import { checkPlayerInLineup, LineupResponse } from '@/services/escalacoes'
 import { readEscudoCache } from '@/services/enquetes'
-import { getFlagCdnUrl, resolveTeamBadgeUrl, fixtureLogosMemoryCache } from '@/lib/flags'
+import {
+  getFlagCdnUrl,
+  resolveTeamBadgeUrl,
+  fixtureLogosMemoryCache,
+  extractLogosFromFichaDetalhes,
+  fetchAndCacheFixtureLogos,
+} from '@/lib/flags'
 
 interface PalpiteFormData {
   placar_a: number | string

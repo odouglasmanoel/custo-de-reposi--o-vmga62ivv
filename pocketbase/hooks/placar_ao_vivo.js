@@ -1800,7 +1800,15 @@ routerAdd('GET', '/backend/v1/placar-ao-vivo', (e) => {
         var mJaIniciou = mKickoffMs === null || Date.now() >= mKickoffMs
 
         // Se a partida encerrou oficialmente na API-Football (FT, AET, PEN), finaliza o resultado SOMENTE se kickoff já ocorreu
-        if (isFinishedStatus && homeGoals !== null && awayGoals !== null && mJaIniciou) {
+        var curStPre = (matchedJogo.getString('status') || '').toLowerCase().trim()
+        var isPreFinished = ['finalizado', 'encerrado', 'ft', 'finished'].indexOf(curStPre) !== -1
+
+        if (
+          (isFinishedStatus || isPreFinished) &&
+          homeGoals !== null &&
+          awayGoals !== null &&
+          mJaIniciou
+        ) {
           matchedJogo.set('resultado_finalizado', true)
           matchedJogo.set('status', 'finalizado')
         } else if (isLiveStatus && mJaIniciou) {

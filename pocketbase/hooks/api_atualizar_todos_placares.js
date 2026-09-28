@@ -843,11 +843,16 @@ routerAdd(
         if (awayTeamLogo) jRec.set('url_escudo_visitante', awayTeamLogo)
 
         // Atualização estrita de status:
-        // Apenas 'finalizado' se FT/AET/PEN
+        // Apenas 'finalizado' se FT/AET/PEN ou se status já for finalizado/encerrado
         // Apenas 'ao_vivo' se explicitamente '1H', 'HT', '2H', 'ET', 'BT', 'P', 'LIVE', 'INT' E kickoff já chegou
         // Se NS/TBD, NUNCA marca como ao_vivo
+        const currentStatusJRec = (jRec.getString('status') || '').toLowerCase().trim()
+        const isStatusJRecFinalizado = ['finalizado', 'encerrado', 'ft', 'finished'].includes(
+          currentStatusJRec,
+        )
+
         let isAgoraAoVivo = false
-        if (isFinished) {
+        if (isFinished || isStatusJRecFinalizado) {
           jRec.set('status', 'finalizado')
           jRec.set('resultado_finalizado', true)
         } else if (isLive && kickoffJaChegou) {

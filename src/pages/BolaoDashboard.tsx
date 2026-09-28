@@ -1796,11 +1796,26 @@ export default function BolaoDashboard() {
   // Dynamic leaderboard calculation (SUM of valid finished games + imported points + PONTUAÇÃO AO VIVO)
   // Otimizado com pré-indexação por participante em O(N) para SUM e COUNT instantâneos
   const rankingParticipantes = useMemo(() => {
-    // Jogos atualmente em andamento: kickoff já iniciado e !resultado_finalizado
+    // Jogos atualmente em andamento:
+    // (a) !resultado_finalizado
+    // (b) partida de HOJE em fuso de Brasília (isJogoHojeBrasilia)
+    // (c) kickoff já iniciado (isPalpiteEncerrado)
+    // (d) status real em andamento: status === 'ao_vivo' OU sobrescrita admin OU matchedLive?.isLive && !matchedLive?.isFinished
     const targetGames = isGeral ? allJogos : jogos
     const liveGameIds = new Set(
       targetGames
-        .filter((j) => !j.resultado_finalizado && isPalpiteEncerrado(j.data, j.hora, nowMs))
+        .filter((j) => {
+          if (j.resultado_finalizado) return false
+          if (!isJogoHojeBrasilia(j.data, nowMs)) return false
+          if (!isPalpiteEncerrado(j.data, j.hora, nowMs)) return false
+
+          if (sobrescritasAdmin[j.id]) return true
+          if (j.status === 'ao_vivo') return true
+
+          const jogoDataISO = normalizeDataISO(j.data)
+          const matchedLive = resolveLiveScoreForGame(j, apiFixtures, 0.55, jogoDataISO)
+          return Boolean(matchedLive?.isLive && !matchedLive?.isFinished)
+        })
         .map((j) => j.id),
     )
 
@@ -1961,20 +1976,24 @@ export default function BolaoDashboard() {
     allParticipantes,
     nowMs,
     liveScoresBreakdownByBetId,
+    apiFixtures,
+    sobrescritasAdmin,
   ])
 
-  // Determina se há de fato algum jogo em andamento (ao vivo)
+  // Determina se há de fato algum jogo em andamento (ao vivo) NO DIA DE HOJE
   const hasAnyLiveMatch = useMemo(() => {
     const targetGames = isGeral ? allJogos : jogos
     return targetGames.some((j) => {
       if (j.resultado_finalizado) return false
+      if (!isJogoHojeBrasilia(j.data, nowMs)) return false
+      if (!isPalpiteEncerrado(j.data, j.hora, nowMs)) return false
       if (sobrescritasAdmin[j.id]) return true
       if (j.status === 'ao_vivo') return true
       const jogoDataISO = normalizeDataISO(j.data)
       const matched = resolveLiveScoreForGame(j, apiFixtures, 0.55, jogoDataISO)
-      return Boolean(matched?.isLive)
+      return Boolean(matched?.isLive && !matched?.isFinished)
     })
-  }, [isGeral, allJogos, jogos, sobrescritasAdmin, apiFixtures])
+  }, [isGeral, allJogos, jogos, sobrescritasAdmin, apiFixtures, nowMs])
 
   // Mapa de bolões para nomes rápidos
   const bolaoMap = useMemo(() => {
@@ -3877,7 +3896,7 @@ export default function BolaoDashboard() {
                               </span>
                               <span className="text-xs font-medium text-slate-500">pts</span>
                             </div>
-                            {(part as any).pontos_ao_vivo > 0 && (
+                            {hasAnyLiveMatch && (part as any).pontos_ao_vivo > 0 && (
                               <span className="text-xs text-emerald-600 font-semibold leading-tight">
                                 (+{(part as any).pontos_ao_vivo} ao vivo)
                               </span>

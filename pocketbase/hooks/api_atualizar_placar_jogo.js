@@ -423,18 +423,22 @@ routerAdd(
     } catch (_) {}
 
     // Atualização estrita de status:
-    // Apenas finalizado se FT/AET/PEN
+    // Apenas finalizado se FT/AET/PEN ou se status já for finalizado/encerrado
     // Apenas ao_vivo se 1H/HT/2H/ET/BT/P/LIVE/INT E kickoff já passou
     // Se NS/TBD: mantém como 'pendente' ou 'aberto' (não mexe para ao_vivo)
-    if (isFinished) {
+    const currentStatusBanco = (jogoRecord.getString('status') || '').toLowerCase().trim()
+    const isStatusBancoFinalizado = ['finalizado', 'encerrado', 'ft', 'finished'].includes(
+      currentStatusBanco,
+    )
+
+    if (isFinished || isStatusBancoFinalizado) {
       jogoRecord.set('status', 'finalizado')
       jogoRecord.set('resultado_finalizado', true)
     } else if (isLive && kickoffJaChegou) {
       jogoRecord.set('status', 'ao_vivo')
       jogoRecord.set('resultado_finalizado', false)
     } else if (isNotStarted) {
-      const currentSt = (jogoRecord.getString('status') || '').toLowerCase().trim()
-      if (currentSt === 'ao_vivo') {
+      if (currentStatusBanco === 'ao_vivo') {
         jogoRecord.set('status', 'pendente')
       }
       jogoRecord.set('resultado_finalizado', false)
