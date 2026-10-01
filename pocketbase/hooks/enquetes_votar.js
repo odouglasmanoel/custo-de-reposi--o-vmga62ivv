@@ -22,8 +22,7 @@ routerAdd(
 
       const enqueteId = (body.enquete_id || body.enquete || '').trim()
       const jogoId = (body.jogo_id || body.jogo || '').trim()
-      const limiteParam = parseInt(body.limite_votos || body.limite || '10', 10) || 10
-      const limiteVotos = Math.max(10, limiteParam)
+      const limiteParam = parseInt(body.limite_votos || body.limite || '0', 10) || 0
 
       // 1. Verificação de autenticação
       let userId = authRecord ? authRecord.id : ''
@@ -83,6 +82,11 @@ routerAdd(
             'Enquete não encontrada no sistema. Atualize a página e selecione uma enquete válida.',
         })
       }
+
+      // Obtém o limite de votos definido na própria enquete (prioridade), ou usa o informado ou padrão 4
+      const enqueteLimiteNoBanco = enqueteRec.getInt('limite_votos') || 0
+      const limiteVotos =
+        enqueteLimiteNoBanco > 0 ? enqueteLimiteNoBanco : limiteParam > 0 ? limiteParam : 4
 
       const enqueteStatus = (enqueteRec.getString('status') || '').trim().toLowerCase()
       if (enqueteStatus !== 'aberta') {
