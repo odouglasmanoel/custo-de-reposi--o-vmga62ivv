@@ -217,13 +217,15 @@ export default function AdminJogos() {
       const status = err?.status || err?.statusCode
       const errData = err?.data || {}
       const errMsgRaw = String(errData?.error || errData?.message || err?.message || '')
+      // Diferenciação estrita de erro: APENAS 401 com auth_error explícito ou mensagem literal de chave suspensa/inválida
+      // NUNCA disparar se for status 404, 204, array vazio ou "fixture não localizado"
       const isApiAuthError =
-        errData?.auth_error === true ||
-        errMsgRaw.toLowerCase().includes('erro de autenticação na api') ||
-        errMsgRaw.toLowerCase().includes('api key') ||
-        errMsgRaw.toLowerCase().includes('chave inválida') ||
-        errMsgRaw.toLowerCase().includes('chave suspensa') ||
-        errMsgRaw.toLowerCase().includes('api-sports')
+        (status === 401 && errData?.auth_error === true) ||
+        (status === 401 &&
+          (errMsgRaw.toLowerCase().includes('invalid api key') ||
+            errMsgRaw.toLowerCase().includes('chave suspensa') ||
+            errMsgRaw.toLowerCase().includes('chave inválida') ||
+            errMsgRaw.toLowerCase().includes('key suspended')))
 
       if (isApiAuthError) {
         toast({

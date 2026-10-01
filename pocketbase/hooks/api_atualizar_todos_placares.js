@@ -312,9 +312,9 @@ routerAdd(
         fixtureResponses.push(singleCall.json.response[0])
         fixturesEncontrados[singleId] = true
       } else {
-        // Se a chamada principal de fixtures não retornou o objeto consolidado ou veio vazia,
-        // cria um placeholder estruturado para este singleId para permitir que a etapa seguinte
-        // chame obrigatoriamente /fixtures/events?fixture={singleId} e capture os marcadores reais
+        // Se a chamada principal de fixtures não retornou o objeto consolidado ou veio vazia (status 200/204),
+        // NÃO é erro de autenticação nem fixture inexistente a priori.
+        // Cria um placeholder estruturado para este singleId para permitir consulta dedicada de eventos.
         console.log(
           `[atualizar-todos] Fixture ${singleId} sem objeto principal em /fixtures; criando placeholder para consulta dedicada de eventos.`,
         )
@@ -325,6 +325,7 @@ routerAdd(
           score: {},
           events: [],
           lineups: [],
+          is_placeholder: true,
         })
       }
     }
@@ -515,10 +516,35 @@ routerAdd(
           : Array.isArray(fixData.events)
             ? fixData.events
             : []
-      const homeTeamId = fixData.teams?.home?.id ? String(fixData.teams.home.id) : null
-      const awayTeamId = fixData.teams?.away?.id ? String(fixData.teams.away.id) : null
-      const homeTeamName = (fixData.teams?.home?.name || '').toString().toLowerCase().trim()
-      const awayTeamName = (fixData.teams?.away?.name || '').toString().toLowerCase().trim()
+      // Marcação de fixture encontrada quando há eventos retornados ou objeto principal
+      if (
+        (dedicatedEventsRaw && dedicatedEventsRaw.length > 0) ||
+        (fixData && !fixData.is_placeholder)
+      ) {
+        fixturesEncontrados[fid] = true
+      }
+
+      function extractTeamIdFromUrl(url) {
+        if (!url || typeof url !== 'string') return null
+        const m = url.match(/teams\/(\d+)(?:\.png|\.svg|\.jpg|\b)/i)
+        return m ? String(m[1]) : null
+      }
+
+      // Extração de IDs dos times: preferência do objeto API, com fallback dos escudos/banco
+      let homeTeamId = fixData.teams?.home?.id ? String(fixData.teams.home.id) : null
+      let awayTeamId = fixData.teams?.away?.id ? String(fixData.teams.away.id) : null
+      let homeTeamName = (fixData.teams?.home?.name || '').toString().toLowerCase().trim()
+      let awayTeamName = (fixData.teams?.away?.name || '').toString().toLowerCase().trim()
+
+      if ((!homeTeamId || !awayTeamId) && matchingRecords.length > 0) {
+        const primeJ = matchingRecords[0]
+        const idFromEscudoA = extractTeamIdFromUrl(primeJ.getString('url_escudo_mandante'))
+        const idFromEscudoB = extractTeamIdFromUrl(primeJ.getString('url_escudo_visitante'))
+        if (!homeTeamId && idFromEscudoA) homeTeamId = idFromEscudoA
+        if (!awayTeamId && idFromEscudoB) awayTeamId = idFromEscudoB
+        if (!homeTeamName) homeTeamName = (primeJ.getString('time_a') || '').toLowerCase().trim()
+        if (!awayTeamName) awayTeamName = (primeJ.getString('time_b') || '').toLowerCase().trim()
+      }
 
       const golsA = []
       const golsB = []
@@ -601,65 +627,52 @@ routerAdd(
             }
 
             // Associação de time mandante vs visitante:
-            // 1. Por teamId se ambos tiverem
-            // 2. Por similaridade de nome se teamId for nulo (ex: placeholder)
-            // 3. Fallback inteligente usando o primeiro jogo vinculado
-            let pertenceA = false
-            let pertenceB = false
+            // 1. Por teamId se conhecido (via objeto da API ou via URL do escudo)
+            // 2. Por similaridade de nome se teamId for nulo
+            let evIsA = false
+            let evIsB = false
 
             if (homeTeamId && awayTeamId && evTeamId) {
-              pertenceA = evTeamId === homeTeamId
-              pertenceB = evTeamId === awayTeamId
-            } else if (evTeamId && matchingRecords.length > 0) {
-              const primeJ = matchingRecords[0]
-              const cleanAId = (primeJ.getString('url_escudo_mandante') || '').match(
-                /\/teams\/(\d+)\./,
-              )
-              const cleanBId = (primeJ.getString('url_escudo_visitante') || '').match(
-                /\/teams\/(\d+)\./,
-              )
-              const idMandante = cleanAId ? cleanAId[1] : null
-              const idVisitante = cleanBId ? cleanBId[1] : null
-              if (idMandante && evTeamId === idMandante) {
-                pertenceA = true
-              } else if (idVisitante && evTeamId === idVisitante) {
-                pertenceB = true
-              }
+              evIsA = evTeamId === homeTeamId
+              evIsB = evTeamId === awayTeamId
+            } else if (evTeamId && homeTeamId) {
+              evIsA = evTeamId === homeTeamId
+            } else if (evTeamId && awayTeamId) {
+              evIsB = evTeamId === awayTeamId
             }
 
-            if (!pertenceA && !pertenceB && evTeamName) {
+            if (!evIsA && !evIsB && evTeamName) {
               if (
                 homeTeamName &&
                 (homeTeamName.includes(evTeamName) || evTeamName.includes(homeTeamName))
               ) {
-                pertenceA = true
+                evIsA = true
               } else if (
                 awayTeamName &&
                 (awayTeamName.includes(evTeamName) || evTeamName.includes(awayTeamName))
               ) {
-                pertenceB = true
-              } else if (matchingRecords.length > 0) {
-                const primeJ = matchingRecords[0]
-                const tA = (primeJ.getString('time_a') || '').toLowerCase()
-                const tB = (primeJ.getString('time_b') || '').toLowerCase()
-                if (tA && (tA.includes(evTeamName) || evTeamName.includes(tA))) {
-                  pertenceA = true
-                } else if (tB && (tB.includes(evTeamName) || evTeamName.includes(tB))) {
-                  pertenceB = true
-                }
+                evIsB = true
               }
-            } else if (matchingRecords.length > 0 && evTeamId) {
-              // Se teams.home não tinha ID preenchido na fixtureResponses, mas evTeamId existe
-              // tenta comparar com url_escudo_mandante ou id anterior
-              pertenceA = true
             }
 
-            if (pertenceA) {
+            // Regra oficial: Gol Contra (own goal) credita ao ADVERSÁRIO
+            let destIsA = false
+            let destIsB = false
+            if (isContra) {
+              if (evIsA) destIsB = true
+              else if (evIsB) destIsA = true
+              else destIsB = true
+            } else {
+              if (evIsA) destIsA = true
+              else if (evIsB) destIsB = true
+              else destIsA = true
+            }
+
+            if (destIsA) {
               golsA.push(item)
-            } else if (pertenceB) {
+            } else if (destIsB) {
               golsB.push(item)
             } else {
-              // Se não foi possível diferenciar os lados, divide ou inclui como neutro
               golsA.push(item)
             }
 
@@ -811,28 +824,31 @@ routerAdd(
 
         const kickoffJaChegou = kickoffMs > 0 ? Date.now() >= kickoffMs : true
 
-        if (homeGoals !== null && !isNaN(homeGoals)) {
-          jRec.set('placar_a', homeGoals)
+        // Se a API trouxe goals.home/away válidos, usa eles;
+        // Se estiver em modo placeholder (objeto principal indisponível) mas temos eventos de gol com o jogo já iniciado,
+        // DERIVA o placar da contagem de gols válidos de cada lado!
+        let finalPlacarA = homeGoals
+        let finalPlacarB = awayGoals
+
+        if (
+          (finalPlacarA === null || finalPlacarB === null) &&
+          (golsA.length > 0 || golsB.length > 0) &&
+          kickoffJaChegou
+        ) {
+          finalPlacarA = golsA.length
+          finalPlacarB = golsB.length
         }
-        if (awayGoals !== null && !isNaN(awayGoals)) {
-          jRec.set('placar_b', awayGoals)
-        }
+
         if (homeTeamLogo) jRec.set('url_escudo_mandante', homeTeamLogo)
         if (awayTeamLogo) jRec.set('url_escudo_visitante', awayTeamLogo)
 
         // Gravação condicional de placar:
-        // Apenas grava placar se a partida estiver encerrada (FT/AET/PEN) ou em andamento explícito (isLive).
-        // Se for NS/TBD, NÃO grava placar zerado (0x0). Se já havia sido marcado indevidamente como ao_vivo/0x0, restaura para pendente.
-        if (isFinished || isLive) {
-          if (homeGoals !== null && !isNaN(homeGoals)) {
-            jRec.set('placar_a', homeGoals)
-          }
-          if (awayGoals !== null && !isNaN(awayGoals)) {
-            jRec.set('placar_b', awayGoals)
-          }
-        } else if (isNotStarted) {
+        // Se temos placar final definido (oficial ou derivado de gols válidos após kickoff)
+        if (finalPlacarA !== null && finalPlacarB !== null) {
+          jRec.set('placar_a', finalPlacarA)
+          jRec.set('placar_b', finalPlacarB)
+        } else if (isNotStarted && !kickoffJaChegou) {
           // Partida ainda não começou na API-Sports (NS ou TBD).
-          // Se o jogo estava indevidamente como ao_vivo, reverte para pendente
           const currentStatusJRec = (jRec.getString('status') || '').toLowerCase().trim()
           if (currentStatusJRec === 'ao_vivo') {
             jRec.set('status', 'pendente')
@@ -859,7 +875,14 @@ routerAdd(
           jRec.set('status', 'ao_vivo')
           jRec.set('resultado_finalizado', false)
           isAgoraAoVivo = true
-        } else if (isNotStarted) {
+        } else if (kickoffJaChegou && (golsA.length > 0 || golsB.length > 0)) {
+          // Placeholder com gols em jogo cujo horário já iniciou: marca ao vivo se não estava finalizado
+          if (!isStatusJRecFinalizado) {
+            jRec.set('status', 'ao_vivo')
+            jRec.set('resultado_finalizado', false)
+            isAgoraAoVivo = true
+          }
+        } else if (isNotStarted && !kickoffJaChegou) {
           jRec.set('resultado_finalizado', false)
         }
 
@@ -1374,7 +1397,44 @@ routerAdd(
     let messageNotice = null
     let messageSucesso = ''
 
+    // Apenas considera fixture "não localizado na API" se NÃO veio objeto principal E NÃO veio nenhum evento
     const fixturesNaoLocalizadosNaApi = uniqueFixtureIds.filter((id) => !fixturesEncontrados[id])
+
+    // Registrar log no painel Admin se algum fixture realmente falhou na busca completa
+    if (fixturesNaoLocalizadosNaApi.length > 0) {
+      console.log(
+        `[atualizar-todos] [ADMIN AVISO] ${fixturesNaoLocalizadosNaApi.length} fixture_id(s) não localizados na API: ${fixturesNaoLocalizadosNaApi.join(', ')}`,
+      )
+      try {
+        let recLogsAdmin = null
+        try {
+          recLogsAdmin = $app.findFirstRecordByFilter(
+            'config_integracoes',
+            "chave = 'admin_api_logs'",
+          )
+        } catch (_) {}
+        const novoLog = {
+          data_hora: new Date().toISOString(),
+          tipo: 'fixtures_nao_localizados',
+          ids: fixturesNaoLocalizadosNaApi,
+          mensagem: `Fixture(s) não localizados na API-Sports: ${fixturesNaoLocalizadosNaApi.join(', ')}`,
+        }
+        if (recLogsAdmin) {
+          let lista = []
+          try {
+            lista = JSON.parse(recLogsAdmin.getString('api_key') || '[]')
+          } catch (_) {
+            lista = []
+          }
+          lista.unshift(novoLog)
+          if (lista.length > 50) lista = lista.slice(0, 50)
+          recLogsAdmin.set('api_key', JSON.stringify(lista))
+          $app.save(recLogsAdmin)
+        }
+      } catch (errLogAdm) {
+        console.log('[atualizar-todos] Aviso ao registrar log admin:', errLogAdm)
+      }
+    }
 
     if (totalComPlacarGravado === 0 && totalAoVivo === 0 && totalEncerrados === 0) {
       messageNotice = 'Os jogos selecionados ainda não possuem placar retornado pela API-Sports.'

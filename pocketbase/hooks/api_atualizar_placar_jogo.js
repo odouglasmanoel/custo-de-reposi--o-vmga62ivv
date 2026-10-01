@@ -270,20 +270,31 @@ routerAdd(
       }
 
       if (!json || !Array.isArray(json.response) || json.response.length === 0) {
-        return e.json(404, {
-          error: `Nenhuma partida encontrada na API-Sports para o fixture_id ${fixtureIdParaUso}.`,
-        })
+        // Se a chamada principal de /fixtures retornou vazio (status 200/204),
+        // NÃO é erro de autenticação nem significa que a fixture inexiste:
+        // usa placeholder estruturado para que a busca dedicada de /fixtures/events processe os eventos!
+        console.log(
+          `[atualizar-jogo] Fixture ${fixtureIdParaUso} sem objeto principal em /fixtures; criando placeholder para eventos dedicados.`,
+        )
+        fixtureData = {
+          fixture: {
+            id: parseInt(fixtureIdParaUso, 10) || fixtureIdParaUso,
+            status: { short: '', long: '' },
+          },
+          teams: { home: {}, away: {} },
+          goals: { home: null, away: null },
+          score: {},
+          events: [],
+          lineups: [],
+          is_placeholder: true,
+        }
+      } else {
+        fixtureData = json.response[0]
       }
-
-      fixtureData = json.response[0]
     } catch (err) {
       return e.json(500, {
         error: 'Falha na comunicação com a API-Sports: ' + (err.message || String(err)),
       })
-    }
-
-    if (!fixtureData) {
-      return e.json(404, { error: 'Dados da partida não puderam ser processados.' })
     }
 
     // Verifica horário de kickoff do jogo no horário de Brasília (UTC-3)
@@ -528,11 +539,11 @@ routerAdd(
     }
 
     const idMandante =
-      extractTeamIdFromUrl(jogoRecord.getString('url_escudo_mandante')) ||
-      (homeTeamId ? String(homeTeamId) : null)
+      (homeTeamId ? String(homeTeamId) : null) ||
+      extractTeamIdFromUrl(jogoRecord.getString('url_escudo_mandante'))
     const idVisitante =
-      extractTeamIdFromUrl(jogoRecord.getString('url_escudo_visitante')) ||
-      (awayTeamId ? String(awayTeamId) : null)
+      (awayTeamId ? String(awayTeamId) : null) ||
+      extractTeamIdFromUrl(jogoRecord.getString('url_escudo_visitante'))
     const timeANome = (
       jogoRecord.getString('time_a') ||
       fixtureData.teams?.home?.name ||
@@ -599,6 +610,10 @@ routerAdd(
           if (idMandante && idVisitante && evTeamId) {
             evIsA = evTeamId === idMandante
             evIsB = evTeamId === idVisitante
+          } else if (evTeamId && idMandante) {
+            evIsA = evTeamId === idMandante
+          } else if (evTeamId && idVisitante) {
+            evIsB = evTeamId === idVisitante
           } else if (teamNorm) {
             if (timeANorm && (timeANorm.includes(teamNorm) || teamNorm.includes(timeANorm))) {
               evIsA = true
@@ -616,7 +631,7 @@ routerAdd(
           if (isContra) {
             if (evIsA) destIsB = true
             else if (evIsB) destIsA = true
-            else destIsA = true
+            else destIsB = true
           } else {
             if (evIsA) destIsA = true
             else if (evIsB) destIsB = true
@@ -636,20 +651,40 @@ routerAdd(
       }
     }
 
-    if (golsA.length > 0 || golsB.length > 0) {
-      jogoRecord.set('placar_a', golsA.length)
-      jogoRecord.set('placar_b', golsB.length)
+    // Se temos gols oficiais da API (homeGoals !== null e awayGoals !== null)
+    // usamos eles; se estiver em placeholder e tiver gols detectados em jogo iniciado, usamos a contagem
+    let defPlacarA = homeGoals
+    let defPlacarB = awayGoals
+    if (
+      (defPlacarA === null || defPlacarB === null) &&
+      (golsA.length > 0 || golsB.length > 0) &&
+      kickoffJaChegou
+    ) {
+      defPlacarA = golsA.length
+      defPlacarB = golsB.length
+    }
+
+    if (defPlacarA !== null && defPlacarB !== null) {
+      jogoRecord.set('placar_a', defPlacarA)
+      jogoRecord.set('placar_b', defPlacarB)
+    }
+
+    if (golsA.length > 0) {
       jogoRecord.set('gols_time_a', golsA)
+    } else if (defPlacarA === 0 && (isFinished || isLive)) {
+      jogoRecord.set('gols_time_a', [])
+    }
+
+    if (golsB.length > 0) {
       jogoRecord.set('gols_time_b', golsB)
+    } else if (defPlacarB === 0 && (isFinished || isLive)) {
+      jogoRecord.set('gols_time_b', [])
+    }
+
+    if (marcadoresGerais.length > 0) {
       jogoRecord.set('marcadores', marcadoresGerais)
-    } else if (isFinished || isLive) {
-      if (homeGoals === 0 && awayGoals === 0) {
-        jogoRecord.set('placar_a', 0)
-        jogoRecord.set('placar_b', 0)
-        jogoRecord.set('gols_time_a', [])
-        jogoRecord.set('gols_time_b', [])
-        jogoRecord.set('marcadores', [])
-      }
+    } else if (defPlacarA === 0 && defPlacarB === 0 && (isFinished || isLive)) {
+      jogoRecord.set('marcadores', [])
     }
 
     if (

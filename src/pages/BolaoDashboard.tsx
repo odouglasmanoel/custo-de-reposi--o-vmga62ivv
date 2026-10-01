@@ -1097,11 +1097,12 @@ export default function BolaoDashboard() {
       const errData = err?.data || {}
       const errMsgRaw = String(errData?.error || errData?.message || err?.message || '')
       const isApiAuthError =
-        errData?.auth_error === true ||
-        errMsgRaw.toLowerCase().includes('erro de autenticação na api') ||
-        errMsgRaw.toLowerCase().includes('api key') ||
-        errMsgRaw.toLowerCase().includes('chave inválida') ||
-        errMsgRaw.toLowerCase().includes('chave suspensa')
+        (status === 401 && errData?.auth_error === true) ||
+        (status === 401 &&
+          (errMsgRaw.toLowerCase().includes('invalid api key') ||
+            errMsgRaw.toLowerCase().includes('chave suspensa') ||
+            errMsgRaw.toLowerCase().includes('chave inválida') ||
+            errMsgRaw.toLowerCase().includes('key suspended')))
 
       if (isApiAuthError) {
         toast({
@@ -1236,11 +1237,12 @@ export default function BolaoDashboard() {
       const errData = err?.data || {}
       const errMsgRaw = String(errData?.error || errData?.message || err?.message || '')
       const isApiAuthError =
-        errData?.auth_error === true ||
-        errMsgRaw.toLowerCase().includes('erro de autenticação na api') ||
-        errMsgRaw.toLowerCase().includes('api key') ||
-        errMsgRaw.toLowerCase().includes('chave inválida') ||
-        errMsgRaw.toLowerCase().includes('chave suspensa')
+        (status === 401 && errData?.auth_error === true) ||
+        (status === 401 &&
+          (errMsgRaw.toLowerCase().includes('invalid api key') ||
+            errMsgRaw.toLowerCase().includes('chave suspensa') ||
+            errMsgRaw.toLowerCase().includes('chave inválida') ||
+            errMsgRaw.toLowerCase().includes('key suspended')))
 
       if (isApiAuthError) {
         toast({
