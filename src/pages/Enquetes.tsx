@@ -1174,28 +1174,27 @@ export default function Enquetes() {
     const cleanId = rawFid.replace(/\D/g, '').trim()
 
     if (forcedLogos?.home || forcedLogos?.away) {
-      if (forcedLogos.home && !isApiSportsLogo(editLogoCasa)) {
+      if (forcedLogos.home) {
         setEditLogoCasa(forcedLogos.home)
       }
-      if (forcedLogos.away && !isApiSportsLogo(editLogoVisitante)) {
+      if (forcedLogos.away) {
         setEditLogoVisitante(forcedLogos.away)
       }
       return
     }
 
     if (!cleanId) return
-    if (isApiSportsLogo(editLogoCasa) && isApiSportsLogo(editLogoVisitante)) return
 
     setBuscandoFixtureEdit(true)
     try {
       const res = await buscarFixtureDetalhes(cleanId)
       if (res.success && res.fixture) {
         let mudou = false
-        if (res.fixture.homeTeamLogo && !isApiSportsLogo(editLogoCasa)) {
+        if (res.fixture.homeTeamLogo) {
           setEditLogoCasa(res.fixture.homeTeamLogo)
           mudou = true
         }
-        if (res.fixture.awayTeamLogo && !isApiSportsLogo(editLogoVisitante)) {
+        if (res.fixture.awayTeamLogo) {
           setEditLogoVisitante(res.fixture.awayTeamLogo)
           mudou = true
         }
@@ -1228,28 +1227,27 @@ export default function Enquetes() {
     const cleanId = rawFid.replace(/\D/g, '').trim()
 
     if (forcedLogos?.home || forcedLogos?.away) {
-      if (forcedLogos.home && !isApiSportsLogo(ativaManualLogoCasa)) {
+      if (forcedLogos.home) {
         setAtivaManualLogoCasa(forcedLogos.home)
       }
-      if (forcedLogos.away && !isApiSportsLogo(ativaManualLogoVisitante)) {
+      if (forcedLogos.away) {
         setAtivaManualLogoVisitante(forcedLogos.away)
       }
       return
     }
 
     if (!cleanId) return
-    if (isApiSportsLogo(ativaManualLogoCasa) && isApiSportsLogo(ativaManualLogoVisitante)) return
 
     setBuscandoFixtureAtiva(true)
     try {
       const res = await buscarFixtureDetalhes(cleanId)
       if (res.success && res.fixture) {
         let mudou = false
-        if (res.fixture.homeTeamLogo && !isApiSportsLogo(ativaManualLogoCasa)) {
+        if (res.fixture.homeTeamLogo) {
           setAtivaManualLogoCasa(res.fixture.homeTeamLogo)
           mudou = true
         }
-        if (res.fixture.awayTeamLogo && !isApiSportsLogo(ativaManualLogoVisitante)) {
+        if (res.fixture.awayTeamLogo) {
           setAtivaManualLogoVisitante(res.fixture.awayTeamLogo)
           mudou = true
         }
@@ -1274,15 +1272,93 @@ export default function Enquetes() {
   }
 
   // Admin: Botão explícito "Buscar ID" no modal Adicionar Jogo Manual na Enquete Ativa
+  // Se o campo de ID contiver um valor numérico, busca diretamente pela fixture na API-Football
+  // e preenche os escudos mandante e visitante (além de nomes/liga se vazios).
+  // Se o ID estiver vazio, faz fallback para busca por Mandante + Visitante + Data.
   const handleBuscarIdManualAtiva = async () => {
+    const fidManual = ativaManualFixtureId.replace(/\D/g, '').trim()
+
+    if (fidManual) {
+      setBuscandoFixtureAtiva(true)
+      setAvisoBuscaAtiva(null)
+      try {
+        const res = await buscarFixtureDetalhes(fidManual)
+        if (res.success && res.fixture) {
+          const f = res.fixture
+          const fidStr = String(f.id || fidManual).replace(/\D/g, '')
+          setAtivaManualFixtureId(fidStr)
+          setAutoLookupAtivaFeedback(`ID #${fidStr} identificado`)
+          setAlternativasAtiva([])
+          setAvisoBuscaAtiva(null)
+
+          // Sempre atualiza os escudos mandante e visitante com o que a API retornar
+          if (f.homeTeamLogo) {
+            setAtivaManualLogoCasa(f.homeTeamLogo)
+          }
+          if (f.awayTeamLogo) {
+            setAtivaManualLogoVisitante(f.awayTeamLogo)
+          }
+
+          // Preenche nomes dos times apenas se ainda não preenchidos pelo usuário
+          if (f.homeTeamName && !ativaManualMandante.trim()) {
+            setAtivaManualMandante(f.homeTeamName)
+          }
+          if (f.awayTeamName && !ativaManualVisitante.trim()) {
+            setAtivaManualVisitante(f.awayTeamName)
+          }
+
+          // Preenche competição e data apenas se ainda não preenchidos
+          if (f.leagueName && !ativaManualCompeticao.trim()) {
+            setAtivaManualCompeticao(f.leagueName)
+          }
+          if (f.date && !ativaManualData.trim()) {
+            try {
+              const dtParts = f.date.split('T')
+              if (dtParts[0]) setAtivaManualData(dtParts[0])
+            } catch {
+              /* ignore */
+            }
+          }
+
+          toast({
+            title: 'Partida identificada!',
+            description: `ID #${fidStr} e escudos oficiais vinculados com sucesso.`,
+          })
+        } else if (res.rate_limited) {
+          const aviso =
+            'Cota diária da API atingida (80/dia, reset às 21h). O ID foi mantido para salvamento.'
+          setAvisoBuscaAtiva(aviso)
+          toast({
+            title: 'Cota de requisições atingida',
+            description: aviso,
+          })
+        } else {
+          setAvisoBuscaAtiva(
+            res.error || `Nenhuma partida encontrada na API-Football para o ID #${fidManual}.`,
+          )
+          toast({
+            title: 'Partida não encontrada',
+            description: `Nenhum confronto localizado na API-Football para o ID #${fidManual}.`,
+            variant: 'destructive',
+          })
+        }
+      } catch {
+        setAvisoBuscaAtiva('Falha na comunicação com o serviço de busca da API.')
+      } finally {
+        setBuscandoFixtureAtiva(false)
+      }
+      return
+    }
+
+    // Fallback: busca por mandante e data quando ID estiver vazio
     const mandante = ativaManualMandante.trim()
     const visitante = ativaManualVisitante.trim()
     const data = ativaManualData.trim()
 
     if (!mandante || !data) {
       toast({
-        title: 'Preencha os campos',
-        description: 'Preencha ao menos o Mandante e a Data do jogo para buscar o ID na API.',
+        title: 'Preencha o ID ou os campos',
+        description: 'Informe o ID da partida ou preencha ao menos o Mandante e a Data do jogo.',
         variant: 'destructive',
       })
       return
@@ -1299,11 +1375,11 @@ export default function Enquetes() {
         setAlternativasAtiva([])
         setAvisoBuscaAtiva(null)
 
-        // Preenche/sobrescreve escudos se forem vazios ou links não oficiais
-        if (res.fixture.homeTeamLogo && !isApiSportsLogo(ativaManualLogoCasa)) {
+        // Preenche escudos com os oficiais da API
+        if (res.fixture.homeTeamLogo) {
           setAtivaManualLogoCasa(res.fixture.homeTeamLogo)
         }
-        if (res.fixture.awayTeamLogo && !isApiSportsLogo(ativaManualLogoVisitante)) {
+        if (res.fixture.awayTeamLogo) {
           setAtivaManualLogoVisitante(res.fixture.awayTeamLogo)
         }
 
@@ -1337,15 +1413,93 @@ export default function Enquetes() {
   }
 
   // Admin: Botão explícito "Buscar ID" no modal Editar Jogo da Enquete
+  // Se o campo de ID contiver um valor numérico, busca diretamente pela fixture na API-Football
+  // e preenche os escudos mandante e visitante (além de nomes/liga se vazios).
+  // Se o ID estiver vazio, faz fallback para busca por Mandante + Visitante + Data.
   const handleBuscarIdManualEdit = async () => {
+    const fidManual = editFixtureId.replace(/\D/g, '').trim()
+
+    if (fidManual) {
+      setBuscandoFixtureEdit(true)
+      setAvisoBuscaEdit(null)
+      try {
+        const res = await buscarFixtureDetalhes(fidManual)
+        if (res.success && res.fixture) {
+          const f = res.fixture
+          const fidStr = String(f.id || fidManual).replace(/\D/g, '')
+          setEditFixtureId(fidStr)
+          setAutoLookupEditFeedback(`ID #${fidStr} identificado`)
+          setAlternativasEdit([])
+          setAvisoBuscaEdit(null)
+
+          // Sempre atualiza os escudos mandante e visitante com o que a API retornar
+          if (f.homeTeamLogo) {
+            setEditLogoCasa(f.homeTeamLogo)
+          }
+          if (f.awayTeamLogo) {
+            setEditLogoVisitante(f.awayTeamLogo)
+          }
+
+          // Preenche nomes dos times apenas se ainda não preenchidos pelo usuário
+          if (f.homeTeamName && !editMandante.trim()) {
+            setEditMandante(f.homeTeamName)
+          }
+          if (f.awayTeamName && !editVisitante.trim()) {
+            setEditVisitante(f.awayTeamName)
+          }
+
+          // Preenche competição e data apenas se ainda não preenchidos
+          if (f.leagueName && !editCompeticao.trim()) {
+            setEditCompeticao(f.leagueName)
+          }
+          if (f.date && !editData.trim()) {
+            try {
+              const dtParts = f.date.split('T')
+              if (dtParts[0]) setEditData(dtParts[0])
+            } catch {
+              /* ignore */
+            }
+          }
+
+          toast({
+            title: 'Partida identificada!',
+            description: `ID #${fidStr} e escudos oficiais vinculados com sucesso.`,
+          })
+        } else if (res.rate_limited) {
+          const aviso =
+            'Cota diária da API atingida (80/dia, reset às 21h). O ID foi mantido para salvamento.'
+          setAvisoBuscaEdit(aviso)
+          toast({
+            title: 'Cota de requisições atingida',
+            description: aviso,
+          })
+        } else {
+          setAvisoBuscaEdit(
+            res.error || `Nenhuma partida encontrada na API-Football para o ID #${fidManual}.`,
+          )
+          toast({
+            title: 'Partida não encontrada',
+            description: `Nenhum confronto localizado na API-Football para o ID #${fidManual}.`,
+            variant: 'destructive',
+          })
+        }
+      } catch {
+        setAvisoBuscaEdit('Falha na comunicação com o serviço de busca da API.')
+      } finally {
+        setBuscandoFixtureEdit(false)
+      }
+      return
+    }
+
+    // Fallback: busca por mandante e data quando ID estiver vazio
     const mandante = editMandante.trim()
     const visitante = editVisitante.trim()
     const data = editData.trim()
 
     if (!mandante || !data) {
       toast({
-        title: 'Preencha os campos',
-        description: 'Preencha ao menos o Mandante e a Data do jogo para buscar o ID na API.',
+        title: 'Preencha o ID ou os campos',
+        description: 'Informe o ID da partida ou preencha ao menos o Mandante e a Data do jogo.',
         variant: 'destructive',
       })
       return
@@ -1362,11 +1516,11 @@ export default function Enquetes() {
         setAlternativasEdit([])
         setAvisoBuscaEdit(null)
 
-        // Preenche/sobrescreve escudos se forem vazios ou links não oficiais
-        if (res.fixture.homeTeamLogo && !isApiSportsLogo(editLogoCasa)) {
+        // Preenche escudos com os oficiais da API
+        if (res.fixture.homeTeamLogo) {
           setEditLogoCasa(res.fixture.homeTeamLogo)
         }
-        if (res.fixture.awayTeamLogo && !isApiSportsLogo(editLogoVisitante)) {
+        if (res.fixture.awayTeamLogo) {
           setEditLogoVisitante(res.fixture.awayTeamLogo)
         }
 
