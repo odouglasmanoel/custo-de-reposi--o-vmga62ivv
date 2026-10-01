@@ -75,6 +75,7 @@ import {
   toggleVotoJogo,
   toggleAdminSelecaoJogo,
   atualizarStatusEnquete,
+  editarEnquete,
   cadastrarJogosAprovadosNaCopaConi,
   excluirEnquete,
   adicionarJogoManualNaEnquete,
@@ -85,8 +86,99 @@ import {
   isApiSportsLogo,
   readListaEnquetesCache,
   readEnqueteDetalhesCache,
+  readEscudoCache,
 } from '@/services/enquetes'
 import { getFlagCdnUrl, resolveTeamBadgeUrl } from '@/lib/flags'
+
+/**
+ * Componente robusto de exibição de escudo para Enquetes com fallback de 4 níveis:
+ * 1. URL do banco / ficha_detalhes oficial
+ * 2. Cache local (readEscudoCache)
+ * 3. FlagCDN se seleção
+ * 4. Monograma / sigla
+ * Mantém dimensões mínimas no mobile e desktop sem colapso.
+ */
+function EnqueteTeamBadge({
+  nomeTime,
+  savedLogo,
+  sizeClass = 'h-7 w-7 sm:h-8 sm:w-8 min-w-[28px] min-h-[28px]',
+  textClass = 'text-[10px] font-black uppercase text-slate-700',
+}: {
+  nomeTime: string
+  savedLogo?: string | null
+  sizeClass?: string
+  textClass?: string
+}) {
+  const [hasError, setHasError] = useState(false)
+  const [triedFlagCdn, setTriedFlagCdn] = useState(false)
+
+  // Resolução inicial
+  const resolvedSrc = useMemo(() => {
+    // 1. URL do banco / resolução oficial
+    const r = resolveTeamBadgeUrl({ teamName: nomeTime, savedBadge: savedLogo || undefined })
+    if (r) return r
+    // 2. Cache local
+    const c = readEscudoCache(nomeTime)
+    if (c) return c
+    // 3. FlagCDN para seleções
+    const flag = getFlagCdnUrl(nomeTime, { cacheBust: true })
+    if (flag) return flag
+    return undefined
+  }, [nomeTime, savedLogo])
+
+  const [currentSrc, setCurrentSrc] = useState<string | undefined>(resolvedSrc)
+
+  useEffect(() => {
+    setHasError(false)
+    setTriedFlagCdn(false)
+    setCurrentSrc(resolvedSrc)
+  }, [resolvedSrc])
+
+  const handleError = () => {
+    // Nível 2 de fallback se a primeira falhou: tentar cache
+    const cached = readEscudoCache(nomeTime)
+    if (cached && cached !== currentSrc) {
+      setCurrentSrc(cached)
+      return
+    }
+
+    // Nível 3: FlagCDN
+    if (!triedFlagCdn) {
+      setTriedFlagCdn(true)
+      const flag = getFlagCdnUrl(nomeTime, { cacheBust: true })
+      if (flag && flag !== currentSrc) {
+        setCurrentSrc(flag)
+        return
+      }
+    }
+
+    // Nível 4: Fallback definitivo para monograma
+    setHasError(true)
+  }
+
+  if (!currentSrc || hasError) {
+    return (
+      <div
+        className={`${sizeClass} rounded-full bg-slate-100 border border-slate-200 flex items-center justify-center shrink-0 ${textClass}`}
+        title={nomeTime}
+      >
+        <span>{nomeTime ? nomeTime.slice(0, 2).toUpperCase() : '?'}</span>
+      </div>
+    )
+  }
+
+  return (
+    <img
+      src={currentSrc}
+      alt={nomeTime}
+      className={`${sizeClass} shrink-0 object-contain`}
+      loading="lazy"
+      decoding="async"
+      crossOrigin={currentSrc.includes('flagcdn.com') ? 'anonymous' : undefined}
+      onError={handleError}
+    />
+  )
+}
 
 function WhatsAppIcon({ className = 'h-4 w-4 shrink-0' }: { className?: string }) {
   return (
@@ -243,6 +335,74 @@ export default function Enquetes() {
   const [buscandoAutoLookupAtiva, setBuscandoAutoLookupAtiva] = useState(false)
   const [alternativasAtiva, setAlternativasAtiva] = useState<FixtureDetalhesItem[]>([])
   const [avisoBuscaAtiva, setAvisoBuscaAtiva] = useState<string | null>(null)
+
+  // Admin: Modal de Edição da Enquete Ativa (Título, Limite, Período, Prazo e Descrição)
+  const [dialogEditarEnqueteOpen, setDialogEditarEnqueteOpen] = useState(false)
+  const [editEnqueteTitulo, setEditEnqueteTitulo] = useState('')
+  const [editEnqueteLimiteVotos, setEditEnqueteLimiteVotos] = useState('4')
+  const [editEnqueteDataInicio, setEditEnqueteDataInicio] = useState('')
+  const [editEnqueteDataFim, setEditEnqueteDataFim] = useState('')
+  const [editEnqueteDataLimiteVotacao, setEditEnqueteDataLimiteVotacao] = useState('')
+  const [editEnqueteDescricao, setEditEnqueteDescricao] = useState('')
+  const [salvandoEdicaoEnquete, setSalvandoEdicaoEnquete] = useState(false)
+
+  const handleAbrirModalEditarEnquete = () => {
+    if (!activePoll) return
+    setEditEnqueteTitulo(activePoll.titulo || '')
+    setEditEnqueteLimiteVotos(String(activePoll.limite_votos || 4))
+    setEditEnqueteDataInicio(activePoll.data_inicio || '')
+    setEditEnqueteDataFim(activePoll.data_fim || '')
+    setEditEnqueteDataLimiteVotacao(
+      activePoll.data_limite_votacao
+        ? activePoll.data_limite_votacao.replace(' ', 'T').slice(0, 16)
+        : '',
+    )
+    setEditEnqueteDescricao(activePoll.descricao || '')
+    setDialogEditarEnqueteOpen(true)
+  }
+
+  const handleSalvarEdicaoEnquete = async () => {
+    if (!activePoll) return
+    const limiteNum = Math.max(1, parseInt(editEnqueteLimiteVotos, 10) || 4)
+    if (!editEnqueteDataInicio || !editEnqueteDataFim) {
+      toast({
+        title: 'Datas obrigatórias',
+        description: 'Informe a data inicial e a data final da enquete.',
+        variant: 'destructive',
+      })
+      return
+    }
+
+    setSalvandoEdicaoEnquete(true)
+    try {
+      const atualizada = await editarEnquete(activePoll.id, {
+        titulo: editEnqueteTitulo,
+        limite_votos: limiteNum,
+        data_inicio: editEnqueteDataInicio,
+        data_fim: editEnqueteDataFim,
+        data_limite_votacao: editEnqueteDataLimiteVotacao,
+        descricao: editEnqueteDescricao,
+      })
+
+      setActivePoll((prev) => (prev ? { ...prev, ...atualizada } : atualizada))
+      setDialogEditarEnqueteOpen(false)
+      toast({
+        title: 'Enquete atualizada!',
+        description: 'As alterações foram salvas com sucesso. Votos e jogos preservados.',
+      })
+      await carregarListaEnquetes(false)
+      await carregarDetalhesEnquete(activePoll.id, false)
+    } catch (err: any) {
+      console.error('Erro ao editar enquete:', err)
+      toast({
+        title: 'Erro ao salvar alterações',
+        description: err?.message || 'Verifique os dados informados e tente novamente.',
+        variant: 'destructive',
+      })
+    } finally {
+      setSalvandoEdicaoEnquete(false)
+    }
+  }
 
   // Admin: Modal de Edição de Jogo da Enquete
   const [jogoEmEdicao, setJogoEmEdicao] = useState<JogoComVotos | null>(null)
@@ -2188,107 +2348,40 @@ export default function Enquetes() {
               </div>
 
               {/* Confronto */}
-              {(() => {
-                const logoA = resolveTeamBadgeUrl({
-                  teamName: jogo.time_a,
-                  savedBadge: jogo.logo_casa,
-                })
-                const logoB = resolveTeamBadgeUrl({
-                  teamName: jogo.time_b,
-                  savedBadge: jogo.logo_visitante,
-                })
+              <div className="my-3 flex items-center justify-between gap-2">
+                {/* Time A */}
+                <div className="flex flex-1 items-center gap-2 min-w-0">
+                  <EnqueteTeamBadge
+                    nomeTime={jogo.time_a}
+                    savedLogo={jogo.logo_casa}
+                    sizeClass="h-7 w-7 sm:h-8 sm:w-8 min-w-[28px] min-h-[28px] shrink-0 object-contain"
+                  />
+                  <span
+                    className="min-w-0 truncate text-[11px] sm:text-xs font-bold text-slate-800 leading-tight"
+                    title={jogo.time_a}
+                  >
+                    {jogo.time_a}
+                  </span>
+                </div>
 
-                return (
-                  <div className="my-3 flex items-center justify-between gap-2">
-                    {/* Time A */}
-                    <div className="flex flex-1 items-center gap-2 min-w-0">
-                      {logoA ? (
-                        <img
-                          src={logoA}
-                          alt={jogo.time_a}
-                          className="h-7 w-7 object-contain shrink-0"
-                          loading="lazy"
-                          decoding="async"
-                          crossOrigin={logoA.includes('flagcdn.com') ? 'anonymous' : undefined}
-                          onError={(e) => {
-                            const flagUrl = getFlagCdnUrl(jogo.time_a, { cacheBust: true })
-                            if (flagUrl && e.currentTarget.src !== flagUrl) {
-                              e.currentTarget.crossOrigin = 'anonymous'
-                              e.currentTarget.src = flagUrl
-                              return
-                            }
-                            e.currentTarget.style.display = 'none'
-                            const fallback = e.currentTarget
-                              .nextElementSibling as HTMLElement | null
-                            if (fallback) fallback.style.display = 'flex'
-                          }}
-                        />
-                      ) : null}
-                      <div
-                        className={`h-7 w-7 rounded-full bg-slate-100 border border-slate-200 items-center justify-center shrink-0 ${
-                          logoA ? 'hidden' : 'flex'
-                        }`}
-                        title={jogo.time_a}
-                      >
-                        <span className="text-[10px] font-black uppercase text-slate-700">
-                          {jogo.time_a.slice(0, 2).toUpperCase()}
-                        </span>
-                      </div>
-                      <span
-                        className="text-[11px] sm:text-xs font-bold text-slate-800 leading-tight break-words line-clamp-2 sm:line-clamp-3"
-                        title={jogo.time_a}
-                      >
-                        {jogo.time_a}
-                      </span>
-                    </div>
+                {/* Versus */}
+                <div className="px-1 text-[11px] font-black text-slate-400 shrink-0">x</div>
 
-                    {/* Versus */}
-                    <div className="px-1 text-[11px] font-black text-slate-400 shrink-0">x</div>
-
-                    {/* Time B */}
-                    <div className="flex flex-1 items-center justify-end gap-2 text-right min-w-0">
-                      <span
-                        className="text-[11px] sm:text-xs font-bold text-slate-800 leading-tight break-words line-clamp-2 sm:line-clamp-3 text-right"
-                        title={jogo.time_b}
-                      >
-                        {jogo.time_b}
-                      </span>
-                      {logoB ? (
-                        <img
-                          src={logoB}
-                          alt={jogo.time_b}
-                          className="h-7 w-7 object-contain shrink-0"
-                          loading="lazy"
-                          decoding="async"
-                          crossOrigin={logoB.includes('flagcdn.com') ? 'anonymous' : undefined}
-                          onError={(e) => {
-                            const flagUrl = getFlagCdnUrl(jogo.time_b, { cacheBust: true })
-                            if (flagUrl && e.currentTarget.src !== flagUrl) {
-                              e.currentTarget.crossOrigin = 'anonymous'
-                              e.currentTarget.src = flagUrl
-                              return
-                            }
-                            e.currentTarget.style.display = 'none'
-                            const fallback = e.currentTarget
-                              .nextElementSibling as HTMLElement | null
-                            if (fallback) fallback.style.display = 'flex'
-                          }}
-                        />
-                      ) : null}
-                      <div
-                        className={`h-7 w-7 rounded-full bg-slate-100 border border-slate-200 items-center justify-center shrink-0 ${
-                          logoB ? 'hidden' : 'flex'
-                        }`}
-                        title={jogo.time_b}
-                      >
-                        <span className="text-[10px] font-black uppercase text-slate-700">
-                          {jogo.time_b.slice(0, 2).toUpperCase()}
-                        </span>
-                      </div>
-                    </div>
-                  </div>
-                )
-              })()}
+                {/* Time B */}
+                <div className="flex flex-1 items-center justify-end gap-2 text-right min-w-0">
+                  <span
+                    className="min-w-0 truncate text-[11px] sm:text-xs font-bold text-slate-800 leading-tight text-right"
+                    title={jogo.time_b}
+                  >
+                    {jogo.time_b}
+                  </span>
+                  <EnqueteTeamBadge
+                    nomeTime={jogo.time_b}
+                    savedLogo={jogo.logo_visitante}
+                    sizeClass="h-7 w-7 sm:h-8 sm:w-8 min-w-[28px] min-h-[28px] shrink-0 object-contain"
+                  />
+                </div>
+              </div>
 
               {/* Rodapé do Card: Checkbox e Contagem de Votos */}
               <div className="flex items-center justify-between pt-2 border-t border-slate-100">
@@ -2711,6 +2804,17 @@ export default function Enquetes() {
             {isAdmin && (
               <div className="flex flex-wrap items-center gap-2">
                 <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={handleAbrirModalEditarEnquete}
+                  className="h-8 border-slate-300 bg-white text-xs font-bold text-slate-700 hover:bg-slate-50 shadow-xs"
+                  title="Editar Enquete"
+                >
+                  <Pencil className="mr-1.5 h-3.5 w-3.5 text-amber-600" />
+                  Editar Enquete
+                </Button>
+
+                <Button
                   variant="default"
                   size="sm"
                   onClick={handleAbrirModalAdicionarManualAtiva}
@@ -3000,45 +3104,14 @@ export default function Enquetes() {
                               <div>
                                 <div className="flex flex-wrap items-center gap-2">
                                   {/* Escudo Mandante */}
-                                  <div className="flex items-center gap-1.5">
-                                    {logoA ? (
-                                      <img
-                                        src={logoA}
-                                        alt={jogo.time_a}
-                                        className="h-5 w-5 object-contain shrink-0"
-                                        loading="lazy"
-                                        decoding="async"
-                                        crossOrigin={
-                                          logoA.includes('flagcdn.com') ? 'anonymous' : undefined
-                                        }
-                                        onError={(e) => {
-                                          const flagUrl = getFlagCdnUrl(jogo.time_a, {
-                                            cacheBust: true,
-                                          })
-                                          if (flagUrl && e.currentTarget.src !== flagUrl) {
-                                            e.currentTarget.crossOrigin = 'anonymous'
-                                            e.currentTarget.src = flagUrl
-                                            return
-                                          }
-                                          e.currentTarget.style.display = 'none'
-                                          const fallback = e.currentTarget
-                                            .nextElementSibling as HTMLElement | null
-                                          if (fallback) fallback.style.display = 'flex'
-                                        }}
-                                      />
-                                    ) : null}
-                                    <div
-                                      className={`h-5 w-5 rounded-full bg-slate-100 border border-slate-200 items-center justify-center shrink-0 ${
-                                        logoA ? 'hidden' : 'flex'
-                                      }`}
-                                      title={jogo.time_a}
-                                    >
-                                      <span className="text-[8px] font-black uppercase text-slate-700">
-                                        {jogo.time_a.slice(0, 2).toUpperCase()}
-                                      </span>
-                                    </div>
+                                  <div className="flex items-center gap-1.5 min-w-0">
+                                    <EnqueteTeamBadge
+                                      nomeTime={jogo.time_a}
+                                      savedLogo={jogo.logo_casa}
+                                      sizeClass="h-5 w-5 min-w-[20px] min-h-[20px] shrink-0 object-contain"
+                                    />
                                     <span
-                                      className="text-xs sm:text-sm font-bold text-slate-900 leading-tight break-words"
+                                      className="min-w-0 truncate text-xs sm:text-sm font-bold text-slate-900 leading-tight"
                                       title={jogo.time_a}
                                     >
                                       {jogo.time_a}
@@ -3050,45 +3123,14 @@ export default function Enquetes() {
                                   </span>
 
                                   {/* Escudo Visitante */}
-                                  <div className="flex items-center gap-1.5">
-                                    {logoB ? (
-                                      <img
-                                        src={logoB}
-                                        alt={jogo.time_b}
-                                        className="h-5 w-5 object-contain shrink-0"
-                                        loading="lazy"
-                                        decoding="async"
-                                        crossOrigin={
-                                          logoB.includes('flagcdn.com') ? 'anonymous' : undefined
-                                        }
-                                        onError={(e) => {
-                                          const flagUrl = getFlagCdnUrl(jogo.time_b, {
-                                            cacheBust: true,
-                                          })
-                                          if (flagUrl && e.currentTarget.src !== flagUrl) {
-                                            e.currentTarget.crossOrigin = 'anonymous'
-                                            e.currentTarget.src = flagUrl
-                                            return
-                                          }
-                                          e.currentTarget.style.display = 'none'
-                                          const fallback = e.currentTarget
-                                            .nextElementSibling as HTMLElement | null
-                                          if (fallback) fallback.style.display = 'flex'
-                                        }}
-                                      />
-                                    ) : null}
-                                    <div
-                                      className={`h-5 w-5 rounded-full bg-slate-100 border border-slate-200 items-center justify-center shrink-0 ${
-                                        logoB ? 'hidden' : 'flex'
-                                      }`}
-                                      title={jogo.time_b}
-                                    >
-                                      <span className="text-[8px] font-black uppercase text-slate-700">
-                                        {jogo.time_b.slice(0, 2).toUpperCase()}
-                                      </span>
-                                    </div>
+                                  <div className="flex items-center gap-1.5 min-w-0">
+                                    <EnqueteTeamBadge
+                                      nomeTime={jogo.time_b}
+                                      savedLogo={jogo.logo_visitante}
+                                      sizeClass="h-5 w-5 min-w-[20px] min-h-[20px] shrink-0 object-contain"
+                                    />
                                     <span
-                                      className="text-xs sm:text-sm font-bold text-slate-900 leading-tight break-words"
+                                      className="min-w-0 truncate text-xs sm:text-sm font-bold text-slate-900 leading-tight"
                                       title={jogo.time_b}
                                     >
                                       {jogo.time_b}
@@ -3212,6 +3254,152 @@ export default function Enquetes() {
           </TabsContent>
         </Tabs>
       )}
+
+      {/* DIALOG ADMIN: Editar Enquete Ativa (Título, Limite, Período, Prazo e Instruções) */}
+      <Dialog open={dialogEditarEnqueteOpen} onOpenChange={setDialogEditarEnqueteOpen}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-base font-bold text-[#0F172A]">
+              <Pencil className="h-5 w-5 text-amber-600" />
+              Editar Enquete
+            </DialogTitle>
+            <DialogDescription className="text-xs text-slate-500">
+              Altere as configurações da enquete ativa. Todos os jogos, votos computados e
+              estatísticas serão preservados intactos.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-3.5 py-1">
+            {/* Título da Enquete */}
+            <div className="space-y-1.5">
+              <Label htmlFor="edit-enquete-titulo" className="text-xs font-bold text-slate-700">
+                Título da Enquete *:
+              </Label>
+              <Input
+                id="edit-enquete-titulo"
+                placeholder="Ex.: Enquete Copa Coni — Rodada 10"
+                value={editEnqueteTitulo}
+                onChange={(e) => setEditEnqueteTitulo(e.target.value)}
+                className="h-9 text-xs font-medium"
+              />
+            </div>
+
+            {/* Limite de Votos por Participante */}
+            <div className="space-y-1.5">
+              <Label
+                htmlFor="edit-enquete-limite-votos"
+                className="text-xs font-bold text-slate-700"
+              >
+                Limite de Votos por Participante *:
+              </Label>
+              <Input
+                id="edit-enquete-limite-votos"
+                type="number"
+                min={1}
+                placeholder="4"
+                value={editEnqueteLimiteVotos}
+                onChange={(e) => setEditEnqueteLimiteVotos(e.target.value)}
+                className="h-9 text-xs"
+              />
+              <p className="text-[11px] text-slate-500">
+                Quantidade máxima de confrontos em que cada participante pode votar (mínimo 1).
+              </p>
+            </div>
+
+            {/* Intervalo de Datas: Inicial e Final */}
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <div className="space-y-1.5">
+                <Label
+                  htmlFor="edit-enquete-data-inicio"
+                  className="text-xs font-bold text-slate-700"
+                >
+                  Data Inicial *:
+                </Label>
+                <Input
+                  id="edit-enquete-data-inicio"
+                  type="date"
+                  value={editEnqueteDataInicio}
+                  onChange={(e) => setEditEnqueteDataInicio(e.target.value)}
+                  className="h-9 text-xs"
+                />
+              </div>
+
+              <div className="space-y-1.5">
+                <Label htmlFor="edit-enquete-data-fim" className="text-xs font-bold text-slate-700">
+                  Data Final *:
+                </Label>
+                <Input
+                  id="edit-enquete-data-fim"
+                  type="date"
+                  value={editEnqueteDataFim}
+                  onChange={(e) => setEditEnqueteDataFim(e.target.value)}
+                  className="h-9 text-xs"
+                />
+              </div>
+            </div>
+
+            {/* Data e Hora Limite de Votação (datetime-local) */}
+            <div className="space-y-1.5">
+              <Label htmlFor="edit-enquete-prazo" className="text-xs font-bold text-slate-700">
+                Data e Hora Limite de Votação *:
+              </Label>
+              <Input
+                id="edit-enquete-prazo"
+                type="datetime-local"
+                value={editEnqueteDataLimiteVotacao}
+                onChange={(e) => setEditEnqueteDataLimiteVotacao(e.target.value)}
+                className="h-9 text-xs"
+              />
+              <p className="text-[11px] text-slate-500">
+                Ao atingir esse prazo, o sistema encerra automaticamente a recepção de votos.
+              </p>
+            </div>
+
+            {/* Observações / Instruções (Opcional) */}
+            <div className="space-y-1.5">
+              <Label
+                htmlFor="edit-enquete-descricao"
+                className="text-xs font-semibold text-slate-700"
+              >
+                Observações / Instruções (Opcional):
+              </Label>
+              <Input
+                id="edit-enquete-descricao"
+                placeholder="Ex.: Vote em até 4 confrontos para a rodada."
+                value={editEnqueteDescricao}
+                onChange={(e) => setEditEnqueteDescricao(e.target.value)}
+                className="h-9 text-xs"
+              />
+            </div>
+          </div>
+
+          <DialogFooter className="mt-2">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => setDialogEditarEnqueteOpen(false)}
+              disabled={salvandoEdicaoEnquete}
+            >
+              Cancelar
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              onClick={handleSalvarEdicaoEnquete}
+              disabled={salvandoEdicaoEnquete}
+              className="bg-amber-600 font-bold text-white hover:bg-amber-700 shadow-xs"
+            >
+              {salvandoEdicaoEnquete ? (
+                <RefreshCw className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <Check className="mr-1.5 h-3.5 w-3.5" />
+              )}
+              Salvar Alterações
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* DIALOG ADMIN: Criar Nova Enquete por Intervalo de Datas */}
       <Dialog open={dialogNovaEnqueteOpen} onOpenChange={setDialogNovaEnqueteOpen}>
@@ -3617,104 +3805,26 @@ export default function Enquetes() {
                             <Square className="h-4 w-4 text-slate-300 shrink-0" />
                           )}
                           {/* Escudo Mandante */}
-                          {(() => {
-                            const badgeA = resolveTeamBadgeUrl({
-                              teamName: j.time_a,
-                              savedBadge: j.logo_casa,
-                            })
-                            return (
-                              <>
-                                {badgeA ? (
-                                  <img
-                                    src={badgeA}
-                                    alt={j.time_a}
-                                    className="h-5 w-5 object-contain shrink-0"
-                                    loading="lazy"
-                                    decoding="async"
-                                    crossOrigin={
-                                      badgeA.includes('flagcdn.com') ? 'anonymous' : undefined
-                                    }
-                                    onError={(e) => {
-                                      const flagUrl = getFlagCdnUrl(j.time_a, { cacheBust: true })
-                                      if (flagUrl && e.currentTarget.src !== flagUrl) {
-                                        e.currentTarget.crossOrigin = 'anonymous'
-                                        e.currentTarget.src = flagUrl
-                                        return
-                                      }
-                                      e.currentTarget.style.display = 'none'
-                                      const fallback = e.currentTarget
-                                        .nextElementSibling as HTMLElement | null
-                                      if (fallback) fallback.style.display = 'flex'
-                                    }}
-                                  />
-                                ) : null}
-                                <div
-                                  className={`h-5 w-5 rounded-full bg-slate-100 border border-slate-200 items-center justify-center shrink-0 ${
-                                    badgeA ? 'hidden' : 'flex'
-                                  }`}
-                                  title={j.time_a}
-                                >
-                                  <span className="text-[8px] font-black uppercase text-slate-700">
-                                    {j.time_a.slice(0, 2).toUpperCase()}
-                                  </span>
-                                </div>
-                              </>
-                            )
-                          })()}
+                          <EnqueteTeamBadge
+                            nomeTime={j.time_a}
+                            savedLogo={j.logo_casa}
+                            sizeClass="h-5 w-5 min-w-[20px] min-h-[20px] shrink-0 object-contain"
+                          />
                           <span
-                            className="font-bold text-slate-800 break-words leading-tight"
+                            className="font-bold text-slate-800 truncate leading-tight"
                             title={j.time_a}
                           >
                             {j.time_a}
                           </span>
                           <span className="text-slate-400 font-bold text-[10px] shrink-0">x</span>
                           {/* Escudo Visitante */}
-                          {(() => {
-                            const badgeB = resolveTeamBadgeUrl({
-                              teamName: j.time_b,
-                              savedBadge: j.logo_visitante,
-                            })
-                            return (
-                              <>
-                                {badgeB ? (
-                                  <img
-                                    src={badgeB}
-                                    alt={j.time_b}
-                                    className="h-5 w-5 object-contain shrink-0"
-                                    loading="lazy"
-                                    decoding="async"
-                                    crossOrigin={
-                                      badgeB.includes('flagcdn.com') ? 'anonymous' : undefined
-                                    }
-                                    onError={(e) => {
-                                      const flagUrl = getFlagCdnUrl(j.time_b, { cacheBust: true })
-                                      if (flagUrl && e.currentTarget.src !== flagUrl) {
-                                        e.currentTarget.crossOrigin = 'anonymous'
-                                        e.currentTarget.src = flagUrl
-                                        return
-                                      }
-                                      e.currentTarget.style.display = 'none'
-                                      const fallback = e.currentTarget
-                                        .nextElementSibling as HTMLElement | null
-                                      if (fallback) fallback.style.display = 'flex'
-                                    }}
-                                  />
-                                ) : null}
-                                <div
-                                  className={`h-5 w-5 rounded-full bg-slate-100 border border-slate-200 items-center justify-center shrink-0 ${
-                                    badgeB ? 'hidden' : 'flex'
-                                  }`}
-                                  title={j.time_b}
-                                >
-                                  <span className="text-[8px] font-black uppercase text-slate-700">
-                                    {j.time_b.slice(0, 2).toUpperCase()}
-                                  </span>
-                                </div>
-                              </>
-                            )
-                          })()}
+                          <EnqueteTeamBadge
+                            nomeTime={j.time_b}
+                            savedLogo={j.logo_visitante}
+                            sizeClass="h-5 w-5 min-w-[20px] min-h-[20px] shrink-0 object-contain"
+                          />
                           <span
-                            className="font-bold text-slate-800 break-words leading-tight"
+                            className="font-bold text-slate-800 truncate leading-tight"
                             title={j.time_b}
                           >
                             {j.time_b}
@@ -3857,100 +3967,32 @@ export default function Enquetes() {
           <div className="max-h-48 overflow-y-auto divide-y divide-slate-100 rounded-lg border border-slate-200 p-2">
             {jogosAprovadosParaConi.map((j) => (
               <div key={j.id} className="flex items-center justify-between py-1.5 text-xs">
-                <div className="flex items-center gap-1.5">
-                  {(() => {
-                    const badgeA = resolveTeamBadgeUrl({
-                      teamName: j.time_a,
-                      savedBadge: j.logo_casa,
-                    })
-                    const badgeB = resolveTeamBadgeUrl({
-                      teamName: j.time_b,
-                      savedBadge: j.logo_visitante,
-                    })
-                    return (
-                      <>
-                        {badgeA ? (
-                          <img
-                            src={badgeA}
-                            alt={j.time_a}
-                            className="h-4 w-4 object-contain shrink-0"
-                            loading="lazy"
-                            decoding="async"
-                            crossOrigin={badgeA.includes('flagcdn.com') ? 'anonymous' : undefined}
-                            onError={(e) => {
-                              const flagUrl = getFlagCdnUrl(j.time_a, { cacheBust: true })
-                              if (flagUrl && e.currentTarget.src !== flagUrl) {
-                                e.currentTarget.crossOrigin = 'anonymous'
-                                e.currentTarget.src = flagUrl
-                                return
-                              }
-                              e.currentTarget.style.display = 'none'
-                              const fallback = e.currentTarget
-                                .nextElementSibling as HTMLElement | null
-                              if (fallback) fallback.style.display = 'flex'
-                            }}
-                          />
-                        ) : null}
-                        <div
-                          className={`h-4 w-4 rounded-full bg-slate-100 border border-slate-200 items-center justify-center shrink-0 ${
-                            badgeA ? 'hidden' : 'flex'
-                          }`}
-                          title={j.time_a}
-                        >
-                          <span className="text-[7px] font-black uppercase text-slate-700">
-                            {j.time_a.slice(0, 2).toUpperCase()}
-                          </span>
-                        </div>
-                        <span
-                          className="font-bold text-slate-800 break-words leading-tight"
-                          title={j.time_a}
-                        >
-                          {j.time_a}
-                        </span>
-                        <span className="text-[10px] font-bold text-slate-400 shrink-0">x</span>
-                        {badgeB ? (
-                          <img
-                            src={badgeB}
-                            alt={j.time_b}
-                            className="h-4 w-4 object-contain shrink-0"
-                            loading="lazy"
-                            decoding="async"
-                            crossOrigin={badgeB.includes('flagcdn.com') ? 'anonymous' : undefined}
-                            onError={(e) => {
-                              const flagUrl = getFlagCdnUrl(j.time_b, { cacheBust: true })
-                              if (flagUrl && e.currentTarget.src !== flagUrl) {
-                                e.currentTarget.crossOrigin = 'anonymous'
-                                e.currentTarget.src = flagUrl
-                                return
-                              }
-                              e.currentTarget.style.display = 'none'
-                              const fallback = e.currentTarget
-                                .nextElementSibling as HTMLElement | null
-                              if (fallback) fallback.style.display = 'flex'
-                            }}
-                          />
-                        ) : null}
-                        <div
-                          className={`h-4 w-4 rounded-full bg-slate-100 border border-slate-200 items-center justify-center shrink-0 ${
-                            badgeB ? 'hidden' : 'flex'
-                          }`}
-                          title={j.time_b}
-                        >
-                          <span className="text-[7px] font-black uppercase text-slate-700">
-                            {j.time_b.slice(0, 2).toUpperCase()}
-                          </span>
-                        </div>
-                        <span
-                          className="font-bold text-slate-800 break-words leading-tight"
-                          title={j.time_b}
-                        >
-                          {j.time_b}
-                        </span>
-                      </>
-                    )
-                  })()}
+                <div className="flex items-center gap-1.5 min-w-0">
+                  <EnqueteTeamBadge
+                    nomeTime={j.time_a}
+                    savedLogo={j.logo_casa}
+                    sizeClass="h-4 w-4 min-w-[16px] min-h-[16px] shrink-0 object-contain"
+                  />
+                  <span
+                    className="font-bold text-slate-800 truncate leading-tight"
+                    title={j.time_a}
+                  >
+                    {j.time_a}
+                  </span>
+                  <span className="text-[10px] font-bold text-slate-400 shrink-0">x</span>
+                  <EnqueteTeamBadge
+                    nomeTime={j.time_b}
+                    savedLogo={j.logo_visitante}
+                    sizeClass="h-4 w-4 min-w-[16px] min-h-[16px] shrink-0 object-contain"
+                  />
+                  <span
+                    className="font-bold text-slate-800 truncate leading-tight"
+                    title={j.time_b}
+                  >
+                    {j.time_b}
+                  </span>
                 </div>
-                <span className="text-slate-500 text-[11px]">
+                <span className="text-slate-500 text-[11px] shrink-0">
                   ({j.campeonato} — {formatDataBR(j.data)} {formatHoraBR(j.horario || '16:00')})
                 </span>
               </div>

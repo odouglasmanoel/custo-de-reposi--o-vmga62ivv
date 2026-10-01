@@ -853,6 +853,10 @@ export function readEscudoCache(teamName: string): string | null {
   // Invalidação e purga de cache contaminado:
   // Se o time for Paris / PSG mas a URL apontar para 192 (Köln) ou koln/cologne, expurga!
   const isParis = key.includes('paris') || key === 'psg'
+  const isCoritiba =
+    key === 'coritiba' || key === 'cfc' || key === 'coxa' || key.includes('coritiba')
+  const isChapecoense =
+    key === 'chapecoense' || key === 'chape' || key === 'acf' || key.includes('chapecoense')
   const isSelecao = isNationalTeam(teamName)
   const flagUrl = getFlagCdnUrl(teamName)
 
@@ -928,10 +932,40 @@ export function readEscudoCache(teamName: string): string | null {
     return dinamarcaOfficial
   }
 
+  // Sanitização de escudos invertidos Coritiba x Chapecoense no cache
+  const sanitizeCachedUrl = (url: string): string => {
+    if (!url) return url
+    if (
+      isCoritiba &&
+      (url.includes('/147.png') || url.includes('/147_') || url.includes('/teams/147.'))
+    ) {
+      return 'https://media.api-sports.io/football/teams/132.png'
+    }
+    if (
+      isChapecoense &&
+      (url.includes('/132.png') || url.includes('/132_') || url.includes('/teams/132.'))
+    ) {
+      return 'https://media.api-sports.io/football/teams/147.png'
+    }
+    return url
+  }
+
   // Helper de validação do valor do cache
   const isValidCachedUrl = (url: string) => {
     if (!url) return false
     if (isContaminatedBadge(teamName, url)) return false
+    if (
+      isCoritiba &&
+      (url.includes('/147.png') || url.includes('/147_') || url.includes('/teams/147.'))
+    ) {
+      return false
+    }
+    if (
+      isChapecoense &&
+      (url.includes('/132.png') || url.includes('/132_') || url.includes('/teams/132.'))
+    ) {
+      return false
+    }
     if (isSelecao) {
       // Se for seleção nacional, só aceita se for a FlagCDN ou escudo oficial da seleção
       if (url.startsWith('https://flagcdn.com/')) return true
@@ -944,7 +978,8 @@ export function readEscudoCache(teamName: string): string | null {
   // 1. Memória RAM
   const fromMem = escudoMemoryCache.get(key)
   if (fromMem !== undefined) {
-    if (!isValidCachedUrl(fromMem)) {
+    const sanitizedMem = sanitizeCachedUrl(fromMem)
+    if (!isValidCachedUrl(sanitizedMem)) {
       escudoMemoryCache.delete(key)
       try {
         localStorage.removeItem(`${ESCUDO_CACHE_PREFIX}_${key}`)
@@ -952,7 +987,15 @@ export function readEscudoCache(teamName: string): string | null {
         /* ignore */
       }
     } else {
-      return fromMem
+      if (sanitizedMem !== fromMem) {
+        setWithBoundedCapacity(escudoMemoryCache, key, sanitizedMem, 200)
+        try {
+          localStorage.setItem(`${ESCUDO_CACHE_PREFIX}_${key}`, sanitizedMem)
+        } catch {
+          /* ignore */
+        }
+      }
+      return sanitizedMem
     }
   }
 
@@ -960,11 +1003,19 @@ export function readEscudoCache(teamName: string): string | null {
   try {
     const raw = localStorage.getItem(`${ESCUDO_CACHE_PREFIX}_${key}`)
     if (raw !== null) {
-      if (!isValidCachedUrl(raw)) {
+      const sanitizedRaw = sanitizeCachedUrl(raw)
+      if (!isValidCachedUrl(sanitizedRaw)) {
         localStorage.removeItem(`${ESCUDO_CACHE_PREFIX}_${key}`)
       } else {
-        setWithBoundedCapacity(escudoMemoryCache, key, raw, 200)
-        return raw
+        if (sanitizedRaw !== raw) {
+          try {
+            localStorage.setItem(`${ESCUDO_CACHE_PREFIX}_${key}`, sanitizedRaw)
+          } catch {
+            /* ignore */
+          }
+        }
+        setWithBoundedCapacity(escudoMemoryCache, key, sanitizedRaw, 200)
+        return sanitizedRaw
       }
     }
   } catch {
@@ -1317,6 +1368,35 @@ export async function atualizarStatusEnquete(
   await pb.collection('enquetes').update(enqueteId, payload)
   invalidateEnqueteCache(enqueteId)
   writeListaEnquetesCache([]) // Força revalidação da lista
+}
+
+/**
+ * Admin: Edita metadados da enquete ativa (título, limite de votos, período, prazo e instruções)
+ * NUNCA toca em enquete_jogos ou enquete_votos — votos são preservados intactos.
+ */
+export async function editarEnquete(
+  enqueteId: string,
+  dados: {
+    titulo: string
+    limite_votos: number
+    data_inicio: string
+    data_fim: string
+    data_limite_votacao: string
+    descricao?: string
+  },
+): Promise<EnqueteModel> {
+  const payload: Record<string, any> = {
+    titulo: dados.titulo.trim(),
+    limite_votos: Math.max(1, Number(dados.limite_votos) || 4),
+    data_inicio: dados.data_inicio.trim(),
+    data_fim: dados.data_fim.trim(),
+    data_limite_votacao: dados.data_limite_votacao.trim(),
+    descricao: (dados.descricao || '').trim(),
+  }
+  const atualizada = await pb.collection('enquetes').update<EnqueteModel>(enqueteId, payload)
+  invalidateEnqueteCache(enqueteId)
+  writeListaEnquetesCache([])
+  return atualizada
 }
 
 /**

@@ -474,5 +474,31 @@ describe('flags.ts - FlagCDN Helper e Seleções Nacionais', () => {
 
     const acfBadge = resolveTeamBadgeUrl({ teamName: 'ACF' })
     expect(acfBadge).toBe('https://media.api-sports.io/football/teams/147.png')
+
+    // Casos específicos solicitados:
+    // "EC Vitória x Chapecoense" (visitante = ACF / Chapecoense -> 147)
+    const visitanteChape = resolveTeamBadgeUrl({ teamName: 'Chapecoense' })
+    expect(visitanteChape).toBe('https://media.api-sports.io/football/teams/147.png')
+    const visitanteAcf = resolveTeamBadgeUrl({ teamName: 'ACF' })
+    expect(visitanteAcf).toBe('https://media.api-sports.io/football/teams/147.png')
+
+    // "Fluminense x Coritiba" (visitante = CFC / Coritiba -> 132)
+    const visitanteCoritiba = resolveTeamBadgeUrl({ teamName: 'Coritiba' })
+    expect(visitanteCoritiba).toBe('https://media.api-sports.io/football/teams/132.png')
+    const visitanteCfc = resolveTeamBadgeUrl({ teamName: 'CFC' })
+    expect(visitanteCfc).toBe('https://media.api-sports.io/football/teams/132.png')
+
+    // Testar que descarta URLs invertidas salvas no banco
+    const coritibaComLixo = resolveTeamBadgeUrl({
+      teamName: 'Coritiba',
+      savedBadge: 'https://media.api-sports.io/football/teams/147.png',
+    })
+    expect(coritibaComLixo).toBe('https://media.api-sports.io/football/teams/132.png')
+
+    const chapeComLixo = resolveTeamBadgeUrl({
+      teamName: 'Chapecoense',
+      savedBadge: 'https://media.api-sports.io/football/teams/132.png',
+    })
+    expect(chapeComLixo).toBe('https://media.api-sports.io/football/teams/147.png')
   })
 })

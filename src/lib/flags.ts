@@ -789,6 +789,51 @@ export function resolveTeamBadgeUrl(params: {
   }
 
   // --- Caso Clube ---
+  // Mapeamento estrito prioritário para Coritiba e Chapecoense (evita qualquer inversão residual ou heurística de sigla)
+  const normLower = normalizeCountryName(teamName)
+  const normClean = normLower.replace(/[^a-z0-9]/g, '')
+  if (
+    normLower === 'coritiba' ||
+    normClean === 'coritiba' ||
+    normClean === 'cfc' ||
+    normClean === 'coxa' ||
+    normClean === 'coritibafbc'
+  ) {
+    // Se o savedBadge ou badgeLevel1 aponta erroneamente para 147 (Chapecoense), descarta e usa 132
+    if (badgeLevel1 && (badgeLevel1.includes('/147.') || badgeLevel1.includes('/147_'))) {
+      // Ignora badgeLevel1 invertido
+    } else if (badgeLevel1 && badgeLevel1.includes('/132.')) {
+      return badgeLevel1
+    }
+    if (savedBadge && (savedBadge.includes('/147.') || savedBadge.includes('/147_'))) {
+      // Ignora savedBadge invertido
+    } else if (savedBadge && savedBadge.includes('/132.')) {
+      return savedBadge
+    }
+    return 'https://media.api-sports.io/football/teams/132.png'
+  }
+
+  if (
+    normLower === 'chapecoense' ||
+    normClean === 'chapecoense' ||
+    normClean === 'chape' ||
+    normClean === 'acf' ||
+    normClean === 'chapecoenseaf'
+  ) {
+    // Se o savedBadge ou badgeLevel1 aponta erroneamente para 132 (Coritiba), descarta e usa 147
+    if (badgeLevel1 && (badgeLevel1.includes('/132.') || badgeLevel1.includes('/132_'))) {
+      // Ignora badgeLevel1 invertido
+    } else if (badgeLevel1 && badgeLevel1.includes('/147.')) {
+      return badgeLevel1
+    }
+    if (savedBadge && (savedBadge.includes('/132.') || savedBadge.includes('/132_'))) {
+      // Ignora savedBadge invertido
+    } else if (savedBadge && savedBadge.includes('/147.')) {
+      return savedBadge
+    }
+    return 'https://media.api-sports.io/football/teams/147.png'
+  }
+
   // Nível 1: ficha_detalhes do banco ou url salva oficial (media.api-sports.io)
   if (badgeLevel1 && badgeLevel1.includes('media.api-sports.io')) {
     return badgeLevel1
