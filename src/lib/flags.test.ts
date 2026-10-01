@@ -136,10 +136,35 @@ describe('flags.ts - FlagCDN Helper e Seleções Nacionais', () => {
       }),
     ).toBe(realMadrid)
 
-    // Clube sem imagem retorna null (para monograma)
+    // Clube brasileiro sem imagem salva no banco agora resolve pelo dicionário estático (Corinthians -> 131, Botafogo -> 120, Vasco -> 133)
     expect(
       resolveTeamBadgeUrl({
         teamName: 'Corinthians',
+        savedBadge: '',
+        liveOrCacheBadge: '',
+      }),
+    ).toBe('https://media.api-sports.io/football/teams/131.png')
+
+    expect(
+      resolveTeamBadgeUrl({
+        teamName: 'Botafogo',
+        savedBadge: '',
+        liveOrCacheBadge: '',
+      }),
+    ).toBe('https://media.api-sports.io/football/teams/120.png')
+
+    expect(
+      resolveTeamBadgeUrl({
+        teamName: 'Vasco da Gama',
+        savedBadge: '',
+        liveOrCacheBadge: '',
+      }),
+    ).toBe('https://media.api-sports.io/football/teams/133.png')
+
+    // Clube sem nenhum registro ou mapeamento retorna null (para monograma)
+    expect(
+      resolveTeamBadgeUrl({
+        teamName: 'Clube Totalmente Desconhecido XYZ 123',
         savedBadge: '',
         liveOrCacheBadge: '',
       }),

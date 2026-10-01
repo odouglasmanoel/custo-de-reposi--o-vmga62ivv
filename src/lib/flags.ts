@@ -362,6 +362,75 @@ export function isNationalTeam(teamName?: string | null): boolean {
  * IDs conhecidos e verificados da API-Sports exclusivos de Seleções Nacionais.
  * URLs com estes IDs específicos podem ser usadas para seleções sem risco de contaminação por clubes.
  */
+/**
+ * Mapeamento estático local dos principais clubes brasileiros e internacionais
+ * para resolução imediata de escudos oficiais na API-Football (media.api-sports.io).
+ */
+export const OFFICIAL_CLUB_TEAM_IDS: Record<string, number> = {
+  botafogo: 120,
+  'botafogo rj': 120,
+  'botafogo fr': 120,
+  bfr: 120,
+  vasco: 133,
+  'vasco da gama': 133,
+  'cr vasco da gama': 133,
+  flamengo: 127,
+  fluminense: 124,
+  palmeiras: 121,
+  corinthians: 131,
+  saopaulo: 126,
+  'sao paulo': 126,
+  santos: 128,
+  gremio: 130,
+  internacional: 119,
+  inter: 119,
+  atleticomineiro: 1062,
+  'atletico mineiro': 1062,
+  'atletico-mg': 1062,
+  cruzeiro: 135,
+  bahia: 118,
+  fortaleza: 154,
+  athleticopr: 134,
+  'athletico paranaense': 134,
+  'athletico-pr': 134,
+  coritiba: 132,
+  vitoria: 140,
+  cuiaba: 1200,
+  criciuma: 141,
+  juventude: 152,
+  goias: 144,
+  sport: 147,
+  ceara: 129,
+  avai: 138,
+  psg: 85,
+  'paris saint germain': 85,
+  'paris saint-germain': 85,
+  realmadrid: 541,
+  'real madrid': 541,
+  barcelona: 529,
+  manchestercity: 50,
+  'manchester city': 50,
+  liverpool: 40,
+}
+
+export function getClubTeamId(teamName?: string | null): number | null {
+  if (!teamName) return null
+  const clean = normalizeCountryName(teamName)
+  if (OFFICIAL_CLUB_TEAM_IDS[clean]) {
+    return OFFICIAL_CLUB_TEAM_IDS[clean]
+  }
+  const stripped = clean.replace(/[^a-z0-9]/g, '')
+  if (OFFICIAL_CLUB_TEAM_IDS[stripped]) {
+    return OFFICIAL_CLUB_TEAM_IDS[stripped]
+  }
+  return null
+}
+
+export function getClubLogoUrl(teamName?: string | null): string | null {
+  const teamId = getClubTeamId(teamName)
+  return teamId ? `https://media.api-sports.io/football/teams/${teamId}.png` : null
+}
+
 export const OFFICIAL_NATIONAL_TEAM_IDS: Record<string, number> = {
   franca: 2,
   france: 2,
@@ -748,6 +817,12 @@ export function resolveTeamBadgeUrl(params: {
     !checkCorrompido(teamName, liveOrCacheBadge)
   ) {
     return liveOrCacheBadge
+  }
+
+  // Nível 3.5: Dicionário estático de clubes (Botafogo -> 120, Vasco -> 133, etc.)
+  const clubFallback = getClubLogoUrl(teamName)
+  if (clubFallback) {
+    return clubFallback
   }
 
   // Nível 4: Fallback final (null => monograma / sigla)
