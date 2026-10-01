@@ -1304,12 +1304,17 @@ routerAdd(
       if (!teamName) return ''
       var cleanKey = normalizarNomeEscudo(teamName)
 
-      // 0) Tratamento explícito para PSG e Dinamarca (oficiais API-Sports)
-      if (cleanKey === 'paris saint germain') {
-        return 'https://media.api-sports.io/football/teams/85.png'
+      // 0) Tratamento explícito para escudos oficiais conhecidos da API-Sports
+      var KNOWN_OFFICIAL_BADGES = {
+        coritiba: 'https://media.api-sports.io/football/teams/132.png',
+        chapecoense: 'https://media.api-sports.io/football/teams/147.png',
+        'paris saint germain': 'https://media.api-sports.io/football/teams/85.png',
+        psg: 'https://media.api-sports.io/football/teams/85.png',
+        dinamarca: 'https://media.api-sports.io/football/teams/21.png',
+        denmark: 'https://media.api-sports.io/football/teams/21.png',
       }
-      if (cleanKey === 'dinamarca' || cleanKey === 'denmark') {
-        return 'https://media.api-sports.io/football/teams/21.png'
+      if (KNOWN_OFFICIAL_BADGES[cleanKey]) {
+        return KNOWN_OFFICIAL_BADGES[cleanKey]
       }
 
       // 1) Cache em memória
@@ -1467,32 +1472,19 @@ onRecordCreate((e) => {
           500,
           0,
         )
-        var nomeCopa = 'Copa Coni'
-        var curTitulo = enq.getString('titulo') || ''
-        var matchPrefixo = curTitulo.match(/^(?:Enquete\s+)?([^\-—–]+)/i)
-        if (matchPrefixo && matchPrefixo[1].trim()) {
-          var parsedPrefixo = matchPrefixo[1].trim()
-          if (!/\d/.test(parsedPrefixo)) {
-            nomeCopa = parsedPrefixo.replace(/^Enquete\s+/i, '').trim() || nomeCopa
-          }
-        }
         if (jogos.length > 0) {
           var dMin = jogos[0].getString('data')
           var dMax = jogos[jogos.length - 1].getString('data')
           if (dMin && dMax) {
             enq.set('data_inicio', dMin)
             enq.set('data_fim', dMax)
-            enq.set(
-              'titulo',
-              'Enquete ' + nomeCopa + ' — ' + formatBR(dMin) + ' a ' + formatBR(dMax),
-            )
             $app.save(enq)
           }
         }
       }
     }
   } catch (errRecalc) {
-    console.log('[enquete_jogos onRecordCreate] Erro ao recalcular título da enquete:', errRecalc)
+    console.log('[enquete_jogos onRecordCreate] Erro ao recalcular datas da enquete:', errRecalc)
   }
 }, 'enquete_jogos')
 
@@ -1533,32 +1525,19 @@ onRecordUpdate((e) => {
           500,
           0,
         )
-        var nomeCopa = 'Copa Coni'
-        var curTitulo = enq.getString('titulo') || ''
-        var matchPrefixo = curTitulo.match(/^(?:Enquete\s+)?([^\-—–]+)/i)
-        if (matchPrefixo && matchPrefixo[1].trim()) {
-          var parsedPrefixo = matchPrefixo[1].trim()
-          if (!/\d/.test(parsedPrefixo)) {
-            nomeCopa = parsedPrefixo.replace(/^Enquete\s+/i, '').trim() || nomeCopa
-          }
-        }
         if (jogos.length > 0) {
           var dMin = jogos[0].getString('data')
           var dMax = jogos[jogos.length - 1].getString('data')
           if (dMin && dMax) {
             enq.set('data_inicio', dMin)
             enq.set('data_fim', dMax)
-            enq.set(
-              'titulo',
-              'Enquete ' + nomeCopa + ' — ' + formatBR(dMin) + ' a ' + formatBR(dMax),
-            )
             $app.save(enq)
           }
         }
       }
     }
   } catch (errRecalc) {
-    console.log('[enquete_jogos onRecordUpdate] Erro ao recalcular título da enquete:', errRecalc)
+    console.log('[enquete_jogos onRecordUpdate] Erro ao recalcular datas da enquete:', errRecalc)
   }
 }, 'enquete_jogos')
 
@@ -1609,27 +1588,12 @@ onRecordDelete((e) => {
           if (dMin && dMax) {
             enq.set('data_inicio', dMin)
             enq.set('data_fim', dMax)
-            enq.set(
-              'titulo',
-              'Enquete ' + nomeCopa + ' — ' + formatBR(dMin) + ' a ' + formatBR(dMax),
-            )
-            $app.save(enq)
-          }
-        } else {
-          // Fallback: usa data_inicio e data_fim pré-definidas
-          var dInicio = enq.getString('data_inicio')
-          var dFim = enq.getString('data_fim')
-          if (dInicio && dFim) {
-            enq.set(
-              'titulo',
-              'Enquete ' + nomeCopa + ' — ' + formatBR(dInicio) + ' a ' + formatBR(dFim),
-            )
             $app.save(enq)
           }
         }
       }
     }
   } catch (errRecalc) {
-    console.log('[enquete_jogos onRecordDelete] Erro ao recalcular título da enquete:', errRecalc)
+    console.log('[enquete_jogos onRecordDelete] Erro ao recalcular datas da enquete:', errRecalc)
   }
 }, 'enquete_jogos')

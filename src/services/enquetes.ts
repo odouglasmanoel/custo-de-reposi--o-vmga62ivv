@@ -876,6 +876,8 @@ export function readEscudoCache(teamName: string): string | null {
     bahia: 'https://media.api-sports.io/football/teams/118.png',
     fortaleza: 'https://media.api-sports.io/football/teams/154.png',
     athleticopr: 'https://media.api-sports.io/football/teams/134.png',
+    coritiba: 'https://media.api-sports.io/football/teams/132.png',
+    chapecoense: 'https://media.api-sports.io/football/teams/147.png',
     paisdegales: 'https://media.api-sports.io/football/teams/767.png',
     gales: 'https://media.api-sports.io/football/teams/767.png',
     wales: 'https://media.api-sports.io/football/teams/767.png',

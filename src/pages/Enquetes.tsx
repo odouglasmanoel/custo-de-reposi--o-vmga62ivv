@@ -175,6 +175,7 @@ export default function Enquetes() {
   const [dataLimiteVotacao, setDataLimiteVotacao] = useState(
     datasPadrao.dataFim ? `${datasPadrao.dataFim}T12:00` : '',
   )
+  const [limiteVotosCriacao, setLimiteVotosCriacao] = useState('4')
   const [tituloEnquete, setTituloEnquete] = useState('')
   const [descricaoEnquete, setDescricaoEnquete] = useState('')
   const [buscandoJogos, setBuscandoJogos] = useState(false)
@@ -196,11 +197,14 @@ export default function Enquetes() {
   const [manualAvisoDuplicado, setManualAvisoDuplicado] = useState<string | null>(null)
 
   // Título dinâmico da enquete ativa calculado em tempo real:
-  // Lê dinamicamente e com prioridade absoluta as propriedades de activePoll (Single Source of Truth)
-  // Se a enquete tiver data_inicio e data_fim preenchidas, monta o período diretamente da enquete selecionada,
-  // garantindo atualização síncrona imediata no onChange do select sem depender de revalidação ou jogos.
+  // 3.a) Priorizar activePoll.titulo quando informado pelo usuário; a formatação dinâmica
+  // "Enquete ${nomeCopa} — ${dInicio} a ${dFim}" serve apenas como fallback quando não há título salvo.
   const tituloEnqueteAtiva = useMemo(() => {
     if (!activePoll) return ''
+    const tituloTrim = (activePoll.titulo || '').trim()
+    if (tituloTrim) {
+      return tituloTrim
+    }
     const nomeCopa = extrairNomeCopaEnquete(activePoll.titulo, 'Copa Coni')
     const dInicio = formatDataBR(activePoll.data_inicio)
     const dFim = formatDataBR(activePoll.data_fim)
@@ -449,9 +453,9 @@ export default function Enquetes() {
     [user?.id],
   )
 
-  // Total de votos do usuário logado na enquete ativa (piso mínimo de 10 votos)
+  // Total de votos do usuário logado na enquete ativa (piso mínimo de 1 voto, padrão 4)
   const totalMeusVotos = meusVotosIds.size
-  const limiteVotos = Math.max(10, activePoll?.limite_votos || 10)
+  const limiteVotos = Math.max(1, activePoll?.limite_votos || 4)
   const limiteAtingido = totalMeusVotos >= limiteVotos
 
   // Ranking dos jogos por total de votos (decrescente)
@@ -595,7 +599,7 @@ export default function Enquetes() {
     const jaVotado = meusVotosIds.has(jogoId)
     if (!jaVotado && limiteAtingido) {
       toast({
-        title: `Limite de ${limiteVotos} votos atingido!`,
+        title: `Limite de ${limiteVotos} votos atingido`,
         description: `Você já utilizou os ${limiteVotos} votos permitidos. Para votar nesta partida, desmarque outra primeiro.`,
         variant: 'destructive',
       })
@@ -948,7 +952,7 @@ export default function Enquetes() {
         dataFim,
         dataLimiteVotacao: dataLimiteVotacao.trim() || undefined,
         jogos: jogosParaSalvar,
-        limiteVotos: 10,
+        limiteVotos: Number(limiteVotosCriacao) || 4,
       })
 
       toast({
@@ -961,6 +965,7 @@ export default function Enquetes() {
       setJogosPreSelecionados(new Set())
       setTituloEnquete('')
       setDescricaoEnquete('')
+      setLimiteVotosCriacao('4')
       setFormManualAberto(false)
       setManualTimeA('')
       setManualTimeB('')
@@ -2111,16 +2116,16 @@ export default function Enquetes() {
         return (
           <Card
             onClick={() => {
-              if (statusEnquete === 'aberta' && !isBlocked) {
+              if (statusEnquete === 'aberta') {
                 onToggleVoto(jogo.id)
               }
             }}
-            className={`relative cursor-pointer transition-all duration-200 hover:shadow-md ${
+            className={`relative transition-all duration-200 hover:shadow-md ${
               votado
-                ? 'border-2 border-emerald-500 bg-emerald-50/40 shadow-xs'
+                ? 'cursor-pointer border-2 border-emerald-500 bg-emerald-50/40 shadow-xs'
                 : isBlocked
-                  ? 'border-slate-200 bg-slate-50/70 opacity-60 cursor-not-allowed'
-                  : 'border-slate-200 bg-white hover:border-slate-300'
+                  ? 'border-slate-200 bg-slate-50/70 opacity-50 cursor-not-allowed'
+                  : 'cursor-pointer border-slate-200 bg-white hover:border-slate-300'
             }`}
           >
             {/* Badge de Top 4 Votados */}
@@ -2293,20 +2298,26 @@ export default function Enquetes() {
                   disabled={statusEnquete !== 'aberta' || isBlocked}
                   onClick={(e) => {
                     e.stopPropagation()
+                    if (isBlocked) {
+                      onToggleVoto(jogo.id)
+                      return
+                    }
                     onToggleVoto(jogo.id)
                   }}
                   className={`flex items-center gap-1.5 text-xs font-bold transition ${
                     votado
-                      ? 'text-emerald-700 hover:text-emerald-800'
+                      ? 'text-emerald-700 hover:text-emerald-800 cursor-pointer'
                       : isBlocked
-                        ? 'text-slate-400 cursor-not-allowed'
-                        : 'text-slate-600 hover:text-slate-900'
+                        ? 'text-slate-400 opacity-50 cursor-not-allowed'
+                        : 'text-slate-600 hover:text-slate-900 cursor-pointer'
                   }`}
                 >
                   {votado ? (
                     <CheckSquare className="h-5 w-5 text-emerald-600 fill-emerald-100" />
                   ) : (
-                    <Square className="h-5 w-5 text-slate-400" />
+                    <Square
+                      className={`h-5 w-5 ${isBlocked ? 'text-slate-300' : 'text-slate-400'}`}
+                    />
                   )}
                   <span>{votado ? 'Voto selecionado' : 'Votar neste jogo'}</span>
                 </button>
@@ -3267,6 +3278,26 @@ export default function Enquetes() {
               />
               <p className="text-[11px] text-slate-500">
                 A votação será encerrada automaticamente assim que este horário for atingido.
+              </p>
+            </div>
+
+            {/* Campo Limite de Votos por Participante */}
+            <div className="space-y-1.5">
+              <Label htmlFor="limite-votos-criacao" className="text-xs font-bold text-slate-700">
+                Limite de Votos por Participante *:
+              </Label>
+              <Input
+                id="limite-votos-criacao"
+                type="number"
+                min={1}
+                placeholder="Ex.: 4"
+                value={limiteVotosCriacao}
+                onChange={(e) => setLimiteVotosCriacao(e.target.value)}
+                className="h-9 text-xs"
+              />
+              <p className="text-[11px] text-slate-500">
+                Quantidade máxima de jogos que cada participante poderá selecionar durante a
+                votação.
               </p>
             </div>
 

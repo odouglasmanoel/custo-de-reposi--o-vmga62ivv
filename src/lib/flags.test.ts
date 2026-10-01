@@ -450,4 +450,29 @@ describe('flags.ts - FlagCDN Helper e Seleções Nacionais', () => {
     expect(extractLogosFromFichaDetalhes('')).toBeNull()
     expect(extractLogosFromFichaDetalhes(null)).toBeNull()
   })
+
+  it('(c) resolveTeamBadgeUrl("Coritiba") retorna a URL com team_id 132 e NUNCA 147; "Chapecoense" retorna 147 e NUNCA 132', () => {
+    const coritibaBadge = resolveTeamBadgeUrl({ teamName: 'Coritiba' })
+    expect(coritibaBadge).toBe('https://media.api-sports.io/football/teams/132.png')
+    expect(coritibaBadge).not.toContain('147')
+
+    const coritibaFbcBadge = resolveTeamBadgeUrl({ teamName: 'Coritiba FBC' })
+    expect(coritibaFbcBadge).toBe('https://media.api-sports.io/football/teams/132.png')
+
+    const cfcBadge = resolveTeamBadgeUrl({ teamName: 'CFC' })
+    expect(cfcBadge).toBe('https://media.api-sports.io/football/teams/132.png')
+
+    const coxaBadge = resolveTeamBadgeUrl({ teamName: 'Coxa' })
+    expect(coxaBadge).toBe('https://media.api-sports.io/football/teams/132.png')
+
+    const chapecoenseBadge = resolveTeamBadgeUrl({ teamName: 'Chapecoense' })
+    expect(chapecoenseBadge).toBe('https://media.api-sports.io/football/teams/147.png')
+    expect(chapecoenseBadge).not.toContain('132')
+
+    const chapeBadge = resolveTeamBadgeUrl({ teamName: 'Chape' })
+    expect(chapeBadge).toBe('https://media.api-sports.io/football/teams/147.png')
+
+    const acfBadge = resolveTeamBadgeUrl({ teamName: 'ACF' })
+    expect(acfBadge).toBe('https://media.api-sports.io/football/teams/147.png')
+  })
 })
