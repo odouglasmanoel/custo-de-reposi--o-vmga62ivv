@@ -8,10 +8,9 @@ export const ProtectedRoute: React.FC<{ children: React.ReactNode }> = ({ childr
   const { user, loading } = useAuth()
   const location = useLocation()
 
-  // Se o PocketBase authStore já possui credencial válida síncrona, não bloqueia em spinner
-  const hasValidAuth = !!user || pb.authStore.isValid
-
-  if (loading && !hasValidAuth) {
+  // Se ainda estiver em fase de loading (refresh inicial em andamento), NUNCA redireciona.
+  // Aguarda a resolução silenciosa do refresh para não empurrar o usuário indevidamente para /login.
+  if (loading) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-[#F3F6F9]">
         <div className="flex flex-col items-center gap-3">
@@ -22,7 +21,8 @@ export const ProtectedRoute: React.FC<{ children: React.ReactNode }> = ({ childr
     )
   }
 
-  if (!user && !loading && !pb.authStore.isValid) {
+  // Só redireciona se o loading concluiu e nenhuma credencial for válida
+  if (!user && !pb.authStore.isValid) {
     return <Navigate to="/login" state={{ from: location, sessionExpired: true }} replace />
   }
 
@@ -33,9 +33,7 @@ export const BolaoRoute: React.FC<{ children: React.ReactNode }> = ({ children }
   const { user, loading, isBolaoMember } = useAuth()
   const location = useLocation()
 
-  const hasValidAuth = !!user || pb.authStore.isValid
-
-  if (loading && !hasValidAuth) {
+  if (loading) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-[#F3F6F9]">
         <div className="flex flex-col items-center gap-3">
@@ -46,7 +44,7 @@ export const BolaoRoute: React.FC<{ children: React.ReactNode }> = ({ children }
     )
   }
 
-  if (!user && !loading && !pb.authStore.isValid) {
+  if (!user && !pb.authStore.isValid) {
     return <Navigate to="/login" state={{ from: location, sessionExpired: true }} replace />
   }
 
@@ -61,9 +59,7 @@ export const AdminRoute: React.FC<{ children: React.ReactNode }> = ({ children }
   const { user, loading, isAdmin } = useAuth()
   const location = useLocation()
 
-  const hasValidAuth = !!user || pb.authStore.isValid
-
-  if (loading && !hasValidAuth) {
+  if (loading) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-[#F3F6F9]">
         <div className="flex flex-col items-center gap-3">
@@ -76,7 +72,7 @@ export const AdminRoute: React.FC<{ children: React.ReactNode }> = ({ children }
     )
   }
 
-  if (!user && !loading && !pb.authStore.isValid) {
+  if (!user && !pb.authStore.isValid) {
     return <Navigate to="/login" state={{ from: location, sessionExpired: true }} replace />
   }
 

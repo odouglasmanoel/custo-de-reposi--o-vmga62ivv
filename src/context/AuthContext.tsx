@@ -62,19 +62,60 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [loading, setLoading] = useState<boolean>(true)
 
   useEffect(() => {
-    // Initial sync
-    setUser(pb.authStore.record)
-    setToken(pb.authStore.token)
-    setLoading(false)
+    // Initial sync imediato a partir do LocalAuthStore (localStorage)
+    const initialRecord = pb.authStore.record
+    const initialToken = pb.authStore.token
+    setUser(initialRecord)
+    setToken(initialToken)
 
-    // Listen to auth changes
+    // Se temos credencial salva ou token salvo, tentamos renovação silenciosa
+    // sem bloquear a UI se o token ainda for formalmente válido
+    const initAuth = async () => {
+      if (initialToken) {
+        try {
+          // Chamada silenciosa de authRefresh
+          const refreshed = await pb.collection('users').authRefresh()
+          setUser(refreshed.record)
+          setToken(refreshed.token)
+        } catch (err: any) {
+          const status = err?.status ?? err?.statusCode
+          const isDefinitiveAuthError = status === 401 || status === 403
+          if (isDefinitiveAuthError) {
+            // Token rejeitado definitivamente pelo servidor (expirou ou foi revogado)
+            logout()
+          } else {
+            // Em erro de rede móvel (ex: offline, sinal fraco, captive portal),
+            // se o token local ainda for válido, preservamos o usuário conectado
+            console.warn('Renovação silenciosa adiada por instabilidade de rede:', err)
+          }
+        }
+      }
+      setLoading(false)
+    }
+
+    initAuth()
+
+    // Listen to auth changes (login, logout, refresh em outros componentes)
     const unsubscribe = pb.authStore.onChange((newToken, newModel) => {
       setToken(newToken)
       setUser(newModel)
     })
 
+    // Ao voltar para a aba ou desbloquear o celular (visibilitychange),
+    // se o usuário estiver logado e online, fazemos refresh proativo se necessário
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible' && pb.authStore.isValid && navigator.onLine) {
+        refreshUser().catch(() => {})
+      }
+    }
+
+    document.addEventListener('visibilitychange', handleVisibilityChange)
+    window.addEventListener('online', handleVisibilityChange)
+
     return () => {
       unsubscribe()
+      document.removeEventListener('visibilitychange', handleVisibilityChange)
+      window.removeEventListener('online', handleVisibilityChange)
     }
   }, [])
 
@@ -130,19 +171,24 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }
 
   const refreshUser = async () => {
-    if (pb.authStore.isValid) {
-      try {
-        const refreshed = await pb.collection('users').authRefresh()
-        setUser(refreshed.record)
-        setToken(refreshed.token)
-      } catch (err: any) {
-        // Só deslogar em rejeição definitiva de credencial (401 do PocketBase em authRefresh).
-        // Em falha de rede/timeout/status 0/5xx ou erro transitório, JAMAIS limpa o authStore.
-        const status = err?.status ?? err?.statusCode
-        const isDefinitiveAuthError = status === 401
-        if (isDefinitiveAuthError) {
-          logout()
-        }
+    // Se não há token gravado, não há o que renovar
+    if (!pb.authStore.token) return
+
+    try {
+      const refreshed = await pb.collection('users').authRefresh()
+      setUser(refreshed.record)
+      setToken(refreshed.token)
+    } catch (err: any) {
+      const status = err?.status ?? err?.statusCode
+      // 401 ou 403 indica que o token foi invalidado/expirou no servidor
+      const isDefinitiveAuthError = status === 401 || status === 403
+
+      if (isDefinitiveAuthError) {
+        logout()
+      } else {
+        // Falha de rede móvel, offline, timeout ou status 0/5xx:
+        // Mantém as credenciais locais intactas para não derrubar a sessão do usuário
+        console.warn('Falha transitória na renovação de sessão (mantendo credencial local):', err)
       }
     }
   }

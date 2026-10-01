@@ -18,20 +18,25 @@ export default function Login() {
   const [loginError, setLoginError] = useState<string | null>(null)
   const [passwordError, setPasswordError] = useState<string | null>(null)
 
-  // Detecta se o usuário foi redirecionado por sessão expirada
+  // Detecta se o usuário foi redirecionado por sessão expirada (seja via location.state ou query param ?expired=1)
+  const searchParams = new URLSearchParams(location.search)
   const sessionExpired = Boolean(
-    (location.state as { sessionExpired?: boolean } | undefined)?.sessionExpired,
+    (location.state as { sessionExpired?: boolean } | undefined)?.sessionExpired ||
+    searchParams.get('expired') === '1',
   )
 
-  // Desvio imediato não-bloqueante se o usuário já estiver logado no PocketBase
+  // Desvio imediato se o usuário já estiver logado no PocketBase
   React.useEffect(() => {
     if (pb.authStore.isValid && pb.authStore.record) {
       const stateFrom = (
-        location.state as { from?: { pathname?: string; search?: string } } | undefined
+        location.state as { from?: { pathname?: string; search?: string } | string } | undefined
       )?.from
-      const targetPath = stateFrom?.pathname
-        ? `${stateFrom.pathname}${stateFrom.search || ''}`
-        : null
+      let targetPath: string | null = null
+      if (typeof stateFrom === 'string') {
+        targetPath = stateFrom
+      } else if (stateFrom?.pathname) {
+        targetPath = `${stateFrom.pathname}${stateFrom.search || ''}`
+      }
 
       if (targetPath && targetPath !== '/login') {
         navigate(targetPath, { replace: true })
@@ -169,9 +174,14 @@ export default function Login() {
             </div>
 
             {sessionExpired && !error && (
-              <div className="mb-5 flex items-center gap-2.5 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
-                <AlertCircle className="h-4 w-4 shrink-0 text-amber-600" />
-                <span>Sua sessão expirou. Por favor, faça login novamente para continuar.</span>
+              <div className="mb-5 flex items-start gap-2.5 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
+                <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
+                <div>
+                  <p className="font-semibold text-amber-900">Sessão expirada</p>
+                  <p className="text-xs text-amber-700">
+                    Sua sessão foi encerrada por inatividade. Faça login novamente para continuar.
+                  </p>
+                </div>
               </div>
             )}
 
