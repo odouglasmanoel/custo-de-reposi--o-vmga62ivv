@@ -105,6 +105,22 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     // se o usuário estiver logado e online, fazemos refresh proativo se necessário
     const handleVisibilityChange = () => {
       if (document.visibilityState === 'visible' && pb.authStore.isValid && navigator.onLine) {
+        // Se o token ainda tiver validade suficiente (mais de 10 minutos), evita recriar o objeto user
+        // desnecessariamente ao trocar de abas no navegador, o que causava re-renders e re-fetches
+        try {
+          const token = pb.authStore.token
+          if (token) {
+            const parts = token.split('.')
+            if (parts.length === 3) {
+              const payload = JSON.parse(atob(parts[1]))
+              if (payload.exp && payload.exp - Date.now() / 1000 > 600) {
+                return
+              }
+            }
+          }
+        } catch {
+          /* ignore */
+        }
         refreshUser().catch(() => {})
       }
     }

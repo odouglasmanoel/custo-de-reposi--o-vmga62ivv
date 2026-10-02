@@ -88,9 +88,39 @@ interface PalpitesLocalCache {
 }
 
 const CACHE_PREFIX = 'cr_palpites_cache_v1'
+const DRAFTS_KEY_PREFIX = 'cr_palpites_drafts_v1'
 
 function getLocalCacheKey(userId: string, targetBolao: string, filterPendentes: boolean): string {
   return `${CACHE_PREFIX}_${userId || 'anon'}_${targetBolao || 'all'}_${filterPendentes ? 'p1' : 'p0'}`
+}
+
+function getDraftsStorageKey(userId: string): string {
+  return `${DRAFTS_KEY_PREFIX}_${userId || 'anon'}`
+}
+
+function readLocalDrafts(userId: string): Record<string, PalpiteFormData> {
+  try {
+    const key = getDraftsStorageKey(userId)
+    const raw = localStorage.getItem(key)
+    if (!raw) return {}
+    const parsed = JSON.parse(raw)
+    return typeof parsed === 'object' && parsed !== null ? parsed : {}
+  } catch {
+    return {}
+  }
+}
+
+function writeLocalDrafts(userId: string, drafts: Record<string, PalpiteFormData>) {
+  try {
+    const key = getDraftsStorageKey(userId)
+    if (Object.keys(drafts).length === 0) {
+      localStorage.removeItem(key)
+    } else {
+      localStorage.setItem(key, JSON.stringify(drafts))
+    }
+  } catch {
+    /* ignore */
+  }
 }
 
 function readLocalCache(
@@ -189,11 +219,17 @@ export default function Palpites() {
 
   const currentScopeKey = isGeralParam ? GERAL_BOLAO_ID : activeBolaoId || 'default'
 
+  const currentUserId = (user?.id as string) || (user?.email as string) || ''
+
   // Leitura inicial síncrona do cache local para renderização INSTANTÂNEA (SWR: stale-while-revalidate)
   const initialCache = useMemo(() => {
-    const uid = (user?.id as string) || (user?.email as string) || ''
-    return readLocalCache(uid, currentScopeKey, initialPendentes)
-  }, [user?.id, user?.email, currentScopeKey, initialPendentes])
+    return readLocalCache(currentUserId, currentScopeKey, initialPendentes)
+  }, [currentUserId, currentScopeKey, initialPendentes])
+
+  // Rascunhos locais com alterações não salvas pelo usuário
+  const initialDrafts = useMemo(() => {
+    return readLocalDrafts(currentUserId)
+  }, [currentUserId])
 
   const [jogos, setJogos] = useState<Jogo[]>(() => initialCache?.jogos || [])
   const [currentPage, setCurrentPage] = useState<number>(() => initialCache?.currentPage || 1)
@@ -209,10 +245,29 @@ export default function Palpites() {
   const [palpites, setPalpites] = useState<Record<string, Palpite>>(
     () => initialCache?.palpites || {},
   )
-  const [formData, setFormData] = useState<Record<string, PalpiteFormData>>(
-    () => initialCache?.formData || {},
-  )
-  const [editingGames, setEditingGames] = useState<Record<string, boolean>>({})
+
+  // Conjunto de jogos que possuem alterações pendentes/não salvas
+  const [dirtyGames, setDirtyGames] = useState<Record<string, boolean>>(() => {
+    const res: Record<string, boolean> = {}
+    for (const jId of Object.keys(initialDrafts)) {
+      res[jId] = true
+    }
+    return res
+  })
+
+  // formData mesclado com quaisquer rascunhos pendentes do usuário
+  const [formData, setFormData] = useState<Record<string, PalpiteFormData>>(() => {
+    const base = initialCache?.formData || {}
+    return { ...base, ...initialDrafts }
+  })
+
+  const [editingGames, setEditingGames] = useState<Record<string, boolean>>(() => {
+    const res: Record<string, boolean> = {}
+    for (const jId of Object.keys(initialDrafts)) {
+      res[jId] = true
+    }
+    return res
+  })
   const [savingGameId, setSavingGameId] = useState<string | null>(null)
   const [expandedDetails, setExpandedDetails] = useState<Record<string, boolean>>({})
   const [loadedLineups, setLoadedLineups] = useState<Record<string, LineupResponse>>({})
@@ -246,6 +301,12 @@ export default function Palpites() {
   // Referência para chave de contexto anterior para carregar cache na troca de copa/filtro
   const prevScopeRef = useRef<string>(`${currentScopeKey}_${initialPendentes}`)
 
+  // Referência sempre atualizada de dirtyGames e formData para o fetch assíncrono consultar
+  const dirtyGamesRef = useRef<Record<string, boolean>>(dirtyGames)
+  dirtyGamesRef.current = dirtyGames
+  const formDataRef = useRef<Record<string, PalpiteFormData>>(formData)
+  formDataRef.current = formData
+
   // Atualiza periodicamente o horário atual para sincronizar o bloqueio de encerramento em tempo real
   useEffect(() => {
     const timer = setInterval(() => {
@@ -273,10 +334,26 @@ export default function Palpites() {
 
     const uid = (user?.id as string) || (user?.email as string) || ''
     const cached = readLocalCache(uid, currentScopeKey, filterPendentes)
+    const currentDrafts = readLocalDrafts(uid)
+
     if (cached && cached.jogos.length > 0) {
       setJogos(cached.jogos)
       setPalpites(cached.palpites || {})
-      setFormData(cached.formData || {})
+      setFormData((prev) => {
+        // Preserva qualquer formulário dirty ativo ou em rascunho
+        const merged = { ...(cached.formData || {}) }
+        for (const [jId, isDirty] of Object.entries(dirtyGamesRef.current)) {
+          if (isDirty && prev[jId]) {
+            merged[jId] = prev[jId]
+          }
+        }
+        for (const [jId, draftData] of Object.entries(currentDrafts)) {
+          if (!merged[jId] || dirtyGamesRef.current[jId]) {
+            merged[jId] = draftData
+          }
+        }
+        return merged
+      })
       setUserParticipantsMap(cached.userParticipantsMap || {})
       setCurrentPage(cached.currentPage || 1)
       setTotalPages(cached.totalPages || 1)
@@ -516,13 +593,53 @@ export default function Palpites() {
             }
             setPalpites(nextPalpitesMap)
 
-            const nextFormDataMap: Record<string, PalpiteFormData> = append ? { ...formData } : {}
+            const uid = (user.id as string) || (user.email as string) || ''
+            const localDrafts = readLocalDrafts(uid)
+
+            // Atualiza formData PRESERVANDO estritamente os campos que o usuário está editando (dirty) ou com rascunho
+            setFormData((prev) => {
+              const updated = append ? { ...prev } : {}
+              for (const p of myPalpites) {
+                // Se o usuário possui alterações pendentes para este jogo, NÃO sobrescreve com dados do backend
+                if (dirtyGamesRef.current[p.jogo] && prev[p.jogo]) {
+                  updated[p.jogo] = prev[p.jogo]
+                  continue
+                }
+                if (localDrafts[p.jogo]) {
+                  updated[p.jogo] = localDrafts[p.jogo]
+                  continue
+                }
+
+                const gA = p.placar_a !== null && p.placar_a !== undefined ? Number(p.placar_a) : 0
+                const gB = p.placar_b !== null && p.placar_b !== undefined ? Number(p.placar_b) : 0
+                const normA = normalizeScorersArray(p.goleadores_a, gA)
+                const normB = normalizeScorersArray(p.goleadores_b, gB)
+                updated[p.jogo] = {
+                  placar_a: p.placar_a ?? '',
+                  placar_b: p.placar_b ?? '',
+                  goleadores_a: normA.names,
+                  goleadores_b: normB.names,
+                  goleadores_contra_a: normA.contraFlags,
+                  goleadores_contra_b: normB.contraFlags,
+                  vencedor_penaltis: p.vencedor_penaltis || 'N',
+                }
+              }
+              // Preserva também jogos dirty que não tenham palpite no backend
+              for (const [jId, isDirty] of Object.entries(dirtyGamesRef.current)) {
+                if (isDirty && prev[jId] && !updated[jId]) {
+                  updated[jId] = prev[jId]
+                }
+              }
+              return updated
+            })
+
+            const nextFormDataMapForCache: Record<string, PalpiteFormData> = {}
             for (const p of myPalpites) {
               const gA = p.placar_a !== null && p.placar_a !== undefined ? Number(p.placar_a) : 0
               const gB = p.placar_b !== null && p.placar_b !== undefined ? Number(p.placar_b) : 0
               const normA = normalizeScorersArray(p.goleadores_a, gA)
               const normB = normalizeScorersArray(p.goleadores_b, gB)
-              nextFormDataMap[p.jogo] = {
+              nextFormDataMapForCache[p.jogo] = {
                 placar_a: p.placar_a ?? '',
                 placar_b: p.placar_b ?? '',
                 goleadores_a: normA.names,
@@ -532,14 +649,12 @@ export default function Palpites() {
                 vencedor_penaltis: p.vencedor_penaltis || 'N',
               }
             }
-            setFormData(nextFormDataMap)
 
             // Grava no cache local para renderização instantânea nas próximas visitas (SWR)
-            const uid = (user.id as string) || (user.email as string) || ''
             writeLocalCache(uid, GERAL_BOLAO_ID, filterPendentes, {
               jogos: gamesResult,
               palpites: nextPalpitesMap,
-              formData: nextFormDataMap,
+              formData: nextFormDataMapForCache,
               currentPage: 1,
               totalPages: 1,
               totalItems: gamesResult.length,
@@ -642,13 +757,51 @@ export default function Palpites() {
             }
             setPalpites(nextPalpitesMap)
 
-            const nextFormDataMap: Record<string, PalpiteFormData> = append ? { ...formData } : {}
+            const uid = (user.id as string) || (user.email as string) || ''
+            const localDrafts = readLocalDrafts(uid)
+
+            // Atualiza formData PRESERVANDO estritamente os campos que o usuário está editando (dirty) ou com rascunho
+            setFormData((prev) => {
+              const updated = append ? { ...prev } : {}
+              for (const p of myPalpites) {
+                if (dirtyGamesRef.current[p.jogo] && prev[p.jogo]) {
+                  updated[p.jogo] = prev[p.jogo]
+                  continue
+                }
+                if (localDrafts[p.jogo]) {
+                  updated[p.jogo] = localDrafts[p.jogo]
+                  continue
+                }
+
+                const gA = p.placar_a !== null && p.placar_a !== undefined ? Number(p.placar_a) : 0
+                const gB = p.placar_b !== null && p.placar_b !== undefined ? Number(p.placar_b) : 0
+                const normA = normalizeScorersArray(p.goleadores_a, gA)
+                const normB = normalizeScorersArray(p.goleadores_b, gB)
+                updated[p.jogo] = {
+                  placar_a: p.placar_a ?? '',
+                  placar_b: p.placar_b ?? '',
+                  goleadores_a: normA.names,
+                  goleadores_b: normB.names,
+                  goleadores_contra_a: normA.contraFlags,
+                  goleadores_contra_b: normB.contraFlags,
+                  vencedor_penaltis: p.vencedor_penaltis || 'N',
+                }
+              }
+              for (const [jId, isDirty] of Object.entries(dirtyGamesRef.current)) {
+                if (isDirty && prev[jId] && !updated[jId]) {
+                  updated[jId] = prev[jId]
+                }
+              }
+              return updated
+            })
+
+            const nextFormDataMapForCache: Record<string, PalpiteFormData> = {}
             for (const p of myPalpites) {
               const gA = p.placar_a !== null && p.placar_a !== undefined ? Number(p.placar_a) : 0
               const gB = p.placar_b !== null && p.placar_b !== undefined ? Number(p.placar_b) : 0
               const normA = normalizeScorersArray(p.goleadores_a, gA)
               const normB = normalizeScorersArray(p.goleadores_b, gB)
-              nextFormDataMap[p.jogo] = {
+              nextFormDataMapForCache[p.jogo] = {
                 placar_a: p.placar_a ?? '',
                 placar_b: p.placar_b ?? '',
                 goleadores_a: normA.names,
@@ -658,14 +811,12 @@ export default function Palpites() {
                 vencedor_penaltis: p.vencedor_penaltis || 'N',
               }
             }
-            setFormData(nextFormDataMap)
 
             // Grava no cache local para renderização instantânea nas próximas visitas (SWR)
-            const uid = (user.id as string) || (user.email as string) || ''
             writeLocalCache(uid, currentTargetBolaoId, filterPendentes, {
               jogos: gamesResult,
               palpites: nextPalpitesMap,
-              formData: nextFormDataMap,
+              formData: nextFormDataMapForCache,
               currentPage: 1,
               totalPages: 1,
               totalItems: gamesResult.length,
@@ -717,32 +868,55 @@ export default function Palpites() {
     }
   }
 
+  // Função auxiliar para marcar jogo como dirty e salvar rascunho imediatamente no localStorage
+  const updateFormAndSaveDraft = useCallback(
+    (jogoId: string, updater: (cur: PalpiteFormData) => PalpiteFormData) => {
+      setDirtyGames((prevDirty) => ({
+        ...prevDirty,
+        [jogoId]: true,
+      }))
+      setEditingGames((prevEditing) => ({
+        ...prevEditing,
+        [jogoId]: true,
+      }))
+      setFormData((prev) => {
+        const cur = prev[jogoId] || {
+          placar_a: '',
+          placar_b: '',
+          goleadores_a: [],
+          goleadores_b: [],
+          vencedor_penaltis: 'N',
+        }
+        const nextForm = updater(cur)
+        const updated = {
+          ...prev,
+          [jogoId]: nextForm,
+        }
+        // Auto-save no storage local para suportar troca de aba, recarga ou queda de conexão
+        const uid = (user?.id as string) || (user?.email as string) || ''
+        const currentDrafts = readLocalDrafts(uid)
+        currentDrafts[jogoId] = nextForm
+        writeLocalDrafts(uid, currentDrafts)
+        return updated
+      })
+    },
+    [user?.id, user?.email],
+  )
+
   const handleScoreChange = (jogoId: string, team: 'a' | 'b', rawVal: string) => {
     const valNum = rawVal === '' ? '' : Math.max(0, parseInt(rawVal, 10) || 0)
-    setFormData((prev) => {
-      const cur = prev[jogoId] || {
-        placar_a: '',
-        placar_b: '',
-        goleadores_a: [],
-        goleadores_b: [],
-        vencedor_penaltis: 'N',
-      }
-
+    updateFormAndSaveDraft(jogoId, (cur) => {
       if (team === 'a') {
         const goalCount = typeof valNum === 'number' ? valNum : 0
         const updated = normalizeScorersArray(cur.goleadores_a, goalCount)
-        // Preserva flags existentes se houver
         const nextContraFlags = Array.from({ length: goalCount }).map(
           (_, i) => cur.goleadores_contra_a?.[i] ?? updated.contraFlags[i] ?? false,
         )
         return {
-          ...prev,
-          [jogoId]: {
-            ...cur,
-            placar_a: valNum,
-            goleadores_a: updated.names,
-            goleadores_contra_a: nextContraFlags,
-          },
+          ...cur,
+          placar_a: valNum,
+          goleadores_a: updated.names,
+          goleadores_contra_a: nextContraFlags,
         }
       } else {
         const goalCount = typeof valNum === 'number' ? valNum : 0
@@ -751,13 +925,10 @@ export default function Palpites() {
           (_, i) => cur.goleadores_contra_b?.[i] ?? updated.contraFlags[i] ?? false,
         )
         return {
-          ...prev,
-          [jogoId]: {
-            ...cur,
-            placar_b: valNum,
-            goleadores_b: updated.names,
-            goleadores_contra_b: nextContraFlags,
-          },
+          ...cur,
+          placar_b: valNum,
+          goleadores_b: updated.names,
+          goleadores_contra_b: nextContraFlags,
         }
       }
     })
@@ -769,34 +940,20 @@ export default function Palpites() {
     index: number,
     nameValue: string,
   ) => {
-    setFormData((prev) => {
-      const cur = prev[jogoId] || {
-        placar_a: '',
-        placar_b: '',
-        goleadores_a: [],
-        goleadores_b: [],
-        vencedor_penaltis: 'N',
-      }
-
+    updateFormAndSaveDraft(jogoId, (cur) => {
       if (team === 'a') {
         const list = [...(cur.goleadores_a || [])]
         list[index] = nameValue
         return {
-          ...prev,
-          [jogoId]: {
-            ...cur,
-            goleadores_a: list,
-          },
+          ...cur,
+          goleadores_a: list,
         }
       } else {
         const list = [...(cur.goleadores_b || [])]
         list[index] = nameValue
         return {
-          ...prev,
-          [jogoId]: {
-            ...cur,
-            goleadores_b: list,
-          },
+          ...cur,
+          goleadores_b: list,
         }
       }
     })
@@ -808,52 +965,29 @@ export default function Palpites() {
     index: number,
     checked: boolean,
   ) => {
-    setFormData((prev) => {
-      const cur = prev[jogoId] || {
-        placar_a: '',
-        placar_b: '',
-        goleadores_a: [],
-        goleadores_b: [],
-        vencedor_penaltis: 'N',
-      }
-
+    updateFormAndSaveDraft(jogoId, (cur) => {
       if (team === 'a') {
         const flags = [...(cur.goleadores_contra_a || [])]
         flags[index] = checked
         return {
-          ...prev,
-          [jogoId]: {
-            ...cur,
-            goleadores_contra_a: flags,
-          },
+          ...cur,
+          goleadores_contra_a: flags,
         }
       } else {
         const flags = [...(cur.goleadores_contra_b || [])]
         flags[index] = checked
         return {
-          ...prev,
-          [jogoId]: {
-            ...cur,
-            goleadores_contra_b: flags,
-          },
+          ...cur,
+          goleadores_contra_b: flags,
         }
       }
     })
   }
 
   const handlePenaltisChange = (jogoId: string, value: string) => {
-    setFormData((prev) => ({
-      ...prev,
-      [jogoId]: {
-        ...(prev[jogoId] || {
-          placar_a: '',
-          placar_b: '',
-          goleadores_a: [],
-          goleadores_b: [],
-          vencedor_penaltis: 'N',
-        }),
-        vencedor_penaltis: value,
-      },
+    updateFormAndSaveDraft(jogoId, (cur) => ({
+      ...cur,
+      vencedor_penaltis: value,
     }))
   }
 
@@ -1007,6 +1141,18 @@ export default function Palpites() {
       toast({
         title: 'Palpite salvo com sucesso!',
         description: `Palpite para ${jogo.time_a} x ${jogo.time_b} registrado.`,
+      })
+      // Remove o rascunho temporário do storage local
+      const uid = (user?.id as string) || (user?.email as string) || ''
+      const draftsAfterSave = readLocalDrafts(uid)
+      delete draftsAfterSave[jogo.id]
+      writeLocalDrafts(uid, draftsAfterSave)
+
+      // Limpa status de dirty e modo de edição para este jogo
+      setDirtyGames((prev) => {
+        const next = { ...prev }
+        delete next[jogo.id]
+        return next
       })
       setEditingGames((prev) => ({
         ...prev,
@@ -2755,6 +2901,18 @@ export default function Palpites() {
                   }))
                 }
                 onCancelEditing={(id, p) => {
+                  // Limpa rascunho persistido e marca jogo como limpo
+                  const uid = (user?.id as string) || (user?.email as string) || ''
+                  const curDrafts = readLocalDrafts(uid)
+                  delete curDrafts[id]
+                  writeLocalDrafts(uid, curDrafts)
+
+                  setDirtyGames((prev) => {
+                    const next = { ...prev }
+                    delete next[id]
+                    return next
+                  })
+
                   if (p) {
                     const gA =
                       p.placar_a !== null && p.placar_a !== undefined ? Number(p.placar_a) : 0
@@ -2772,6 +2930,17 @@ export default function Palpites() {
                         goleadores_contra_a: normA.contraFlags,
                         goleadores_contra_b: normB.contraFlags,
                         vencedor_penaltis: p.vencedor_penaltis || 'N',
+                      },
+                    }))
+                  } else {
+                    setFormData((prev) => ({
+                      ...prev,
+                      [id]: {
+                        placar_a: '',
+                        placar_b: '',
+                        goleadores_a: [],
+                        goleadores_b: [],
+                        vencedor_penaltis: 'N',
                       },
                     }))
                   }
