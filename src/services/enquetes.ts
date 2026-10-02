@@ -935,6 +935,14 @@ export function readEscudoCache(teamName: string): string | null {
     mirassolfc: 'https://media.api-sports.io/football/teams/10214.png',
     remo: 'https://media.api-sports.io/football/teams/10213.png',
     clubedoremo: 'https://media.api-sports.io/football/teams/10213.png',
+    estudiantes: 'https://media.api-sports.io/football/teams/450.png',
+    estudiantesdelaplata: 'https://media.api-sports.io/football/teams/450.png',
+    estudianteslp: 'https://media.api-sports.io/football/teams/450.png',
+    est: 'https://media.api-sports.io/football/teams/450.png',
+    riverplate: 'https://media.api-sports.io/football/teams/435.png',
+    river: 'https://media.api-sports.io/football/teams/435.png',
+    bocajuniors: 'https://media.api-sports.io/football/teams/451.png',
+    boca: 'https://media.api-sports.io/football/teams/451.png',
     paisdegales: 'https://media.api-sports.io/football/teams/767.png',
     gales: 'https://media.api-sports.io/football/teams/767.png',
     wales: 'https://media.api-sports.io/football/teams/767.png',
@@ -985,7 +993,16 @@ export function readEscudoCache(teamName: string): string | null {
     return dinamarcaOfficial
   }
 
-  // Sanitização de escudos invertidos Coritiba x Chapecoense no cache
+  // Sanitização de escudos invertidos no cache (Coritiba x Chapecoense, Estudiantes x River Plate, etc.)
+  const isEstudiantes =
+    key === 'estudiantes' ||
+    key === 'estudiantesdelaplata' ||
+    key === 'estudianteslp' ||
+    key === 'est' ||
+    key.includes('estudiantes')
+  const isRiver =
+    key === 'riverplate' || key === 'river' || key === 'cariverplate' || key.includes('riverplate')
+
   const sanitizeCachedUrl = (url: string): string => {
     if (!url) return url
     if (
@@ -1005,6 +1022,24 @@ export function readEscudoCache(teamName: string): string | null {
         url.includes('/132.'))
     ) {
       return 'https://media.api-sports.io/football/teams/147.png'
+    }
+    if (
+      isEstudiantes &&
+      (url.includes('/435.png') ||
+        url.includes('/435_') ||
+        url.includes('/teams/435.') ||
+        url.includes('/435.'))
+    ) {
+      return 'https://media.api-sports.io/football/teams/450.png'
+    }
+    if (
+      isRiver &&
+      (url.includes('/450.png') ||
+        url.includes('/450_') ||
+        url.includes('/teams/450.') ||
+        url.includes('/450.'))
+    ) {
+      return 'https://media.api-sports.io/football/teams/435.png'
     }
     return url
   }
@@ -1028,6 +1063,24 @@ export function readEscudoCache(teamName: string): string | null {
         url.includes('/132_') ||
         url.includes('/teams/132.') ||
         url.includes('/132.'))
+    ) {
+      return false
+    }
+    if (
+      isEstudiantes &&
+      (url.includes('/435.png') ||
+        url.includes('/435_') ||
+        url.includes('/teams/435.') ||
+        url.includes('/435.'))
+    ) {
+      return false
+    }
+    if (
+      isRiver &&
+      (url.includes('/450.png') ||
+        url.includes('/450_') ||
+        url.includes('/teams/450.') ||
+        url.includes('/450.'))
     ) {
       return false
     }

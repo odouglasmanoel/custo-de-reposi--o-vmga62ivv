@@ -530,15 +530,15 @@ export const OFFICIAL_CLUB_TEAM_IDS: Record<string, number> = {
   'boca juniors': 451,
   'ca boca juniors': 451,
   boca: 451,
-  riverplate: 450,
-  'river plate': 450,
-  'ca river plate': 450,
-  river: 450,
-  estudiantes: 435,
-  'estudiantes de la plata': 435,
-  'estudiantes lp': 435,
-  'estudiantes l.p.': 435,
-  estudianteslp: 435,
+  riverplate: 435,
+  'river plate': 435,
+  'ca river plate': 435,
+  river: 435,
+  estudiantes: 450,
+  'estudiantes de la plata': 450,
+  'estudiantes lp': 450,
+  'estudiantes l.p.': 450,
+  estudianteslp: 450,
   montevideocitytorque: 2365,
   'montevideo city torque': 2365,
   'montevideo city': 2365,
@@ -1059,9 +1059,110 @@ export function resolveTeamBadgeUrl(params: {
     return staticClubBadge
   }
 
-  // Mapeamento estrito prioritário para Coritiba e Chapecoense (evita qualquer inversão residual ou heurística de sigla)
+  // Mapeamento estrito prioritário e blindagem contra inversão para os 6 clubes específicos:
+  // 1. Estudiantes de La Plata -> 450 (e NUNCA River Plate 435)
+  // 2. Chapecoense -> 147 (e NUNCA Coritiba 132)
+  // 3. Coritiba -> 132 (e NUNCA Chapecoense 147)
+  // 4. Red Bull Bragantino -> 1199 (e NUNCA 130 Grêmio ou outros)
+  // 5. Mirassol -> 10214
+  // 6. Remo -> 10213 (e NUNCA 121 Palmeiras ou outros)
   const normLower = normalizeCountryName(teamName)
   const normClean = normLower.replace(/[^a-z0-9]/g, '')
+
+  // Blindagem Estudiantes (450) x River Plate (435)
+  if (
+    normLower === 'estudiantes' ||
+    normClean === 'estudiantes' ||
+    normClean === 'estudiantesdelaplata' ||
+    normClean === 'estudianteslp' ||
+    normClean === 'est'
+  ) {
+    if (
+      badgeLevel1 &&
+      !badgeLevel1.includes('/435.') &&
+      !badgeLevel1.includes('/435_') &&
+      !badgeLevel1.includes('/435.png') &&
+      badgeLevel1.includes('/450.')
+    ) {
+      return badgeLevel1
+    }
+    if (
+      savedBadge &&
+      !savedBadge.includes('/435.') &&
+      !savedBadge.includes('/435_') &&
+      !savedBadge.includes('/435.png') &&
+      savedBadge.includes('/450.')
+    ) {
+      return savedBadge
+    }
+    if (
+      badgeLevel2 &&
+      !badgeLevel2.includes('/435.') &&
+      !badgeLevel2.includes('/435_') &&
+      !badgeLevel2.includes('/435.png') &&
+      badgeLevel2.includes('/450.')
+    ) {
+      return badgeLevel2
+    }
+    if (
+      liveOrCacheBadge &&
+      !liveOrCacheBadge.includes('/435.') &&
+      !liveOrCacheBadge.includes('/435_') &&
+      !liveOrCacheBadge.includes('/435.png') &&
+      liveOrCacheBadge.includes('/450.')
+    ) {
+      return liveOrCacheBadge
+    }
+    return 'https://media.api-sports.io/football/teams/450.png'
+  }
+
+  // Blindagem River Plate (435)
+  if (
+    normLower === 'river plate' ||
+    normClean === 'riverplate' ||
+    normClean === 'river' ||
+    normClean === 'cariverplate'
+  ) {
+    if (
+      badgeLevel1 &&
+      !badgeLevel1.includes('/450.') &&
+      !badgeLevel1.includes('/450_') &&
+      !badgeLevel1.includes('/450.png') &&
+      badgeLevel1.includes('/435.')
+    ) {
+      return badgeLevel1
+    }
+    if (
+      savedBadge &&
+      !savedBadge.includes('/450.') &&
+      !savedBadge.includes('/450_') &&
+      !savedBadge.includes('/450.png') &&
+      savedBadge.includes('/435.')
+    ) {
+      return savedBadge
+    }
+    if (
+      badgeLevel2 &&
+      !badgeLevel2.includes('/450.') &&
+      !badgeLevel2.includes('/450_') &&
+      !badgeLevel2.includes('/450.png') &&
+      badgeLevel2.includes('/435.')
+    ) {
+      return badgeLevel2
+    }
+    if (
+      liveOrCacheBadge &&
+      !liveOrCacheBadge.includes('/450.') &&
+      !liveOrCacheBadge.includes('/450_') &&
+      !liveOrCacheBadge.includes('/450.png') &&
+      liveOrCacheBadge.includes('/435.')
+    ) {
+      return liveOrCacheBadge
+    }
+    return 'https://media.api-sports.io/football/teams/435.png'
+  }
+
+  // Blindagem Coritiba (132) x Chapecoense (147)
   if (
     normLower === 'coritiba' ||
     normClean === 'coritiba' ||
@@ -1069,8 +1170,6 @@ export function resolveTeamBadgeUrl(params: {
     normClean === 'coxa' ||
     normClean === 'coritibafbc'
   ) {
-    // Se liveOrCacheBadge ou badgeLevel2 aponta para 147, descarta
-    // Para Coritiba, descarta QUALQUER url com 147.png e força 132.png
     if (
       badgeLevel1 &&
       !badgeLevel1.includes('/147.') &&
@@ -1110,6 +1209,7 @@ export function resolveTeamBadgeUrl(params: {
     return 'https://media.api-sports.io/football/teams/132.png'
   }
 
+  // Blindagem Chapecoense (147) x Coritiba (132)
   if (
     normLower === 'chapecoense' ||
     normClean === 'chapecoense' ||
@@ -1117,7 +1217,6 @@ export function resolveTeamBadgeUrl(params: {
     normClean === 'acf' ||
     normClean === 'chapecoenseaf'
   ) {
-    // Para Chapecoense, descarta QUALQUER url com 132.png e força 147.png
     if (
       badgeLevel1 &&
       !badgeLevel1.includes('/132.') &&
@@ -1155,6 +1254,69 @@ export function resolveTeamBadgeUrl(params: {
       return liveOrCacheBadge
     }
     return 'https://media.api-sports.io/football/teams/147.png'
+  }
+
+  // Blindagem Red Bull Bragantino (1199)
+  if (
+    normClean === 'redbullbragantino' ||
+    normClean === 'bragantino' ||
+    normClean === 'rbbragantino'
+  ) {
+    if (badgeLevel1 && !badgeLevel1.includes('/130.') && badgeLevel1.includes('/1199.')) {
+      return badgeLevel1
+    }
+    if (savedBadge && !savedBadge.includes('/130.') && savedBadge.includes('/1199.')) {
+      return savedBadge
+    }
+    if (badgeLevel2 && !badgeLevel2.includes('/130.') && badgeLevel2.includes('/1199.')) {
+      return badgeLevel2
+    }
+    if (
+      liveOrCacheBadge &&
+      !liveOrCacheBadge.includes('/130.') &&
+      liveOrCacheBadge.includes('/1199.')
+    ) {
+      return liveOrCacheBadge
+    }
+    return 'https://media.api-sports.io/football/teams/1199.png'
+  }
+
+  // Blindagem Mirassol (10214)
+  if (normClean === 'mirassol' || normClean === 'mirassolfc') {
+    if (badgeLevel1 && badgeLevel1.includes('/10214.')) {
+      return badgeLevel1
+    }
+    if (savedBadge && savedBadge.includes('/10214.')) {
+      return savedBadge
+    }
+    if (badgeLevel2 && badgeLevel2.includes('/10214.')) {
+      return badgeLevel2
+    }
+    if (liveOrCacheBadge && liveOrCacheBadge.includes('/10214.')) {
+      return liveOrCacheBadge
+    }
+    return 'https://media.api-sports.io/football/teams/10214.png'
+  }
+
+  // Blindagem Remo (10213)
+  if (normClean === 'remo' || normClean === 'clubedoremo') {
+    if (badgeLevel1 && !badgeLevel1.includes('/121.') && badgeLevel1.includes('/10213.')) {
+      return badgeLevel1
+    }
+    if (savedBadge && !savedBadge.includes('/121.') && savedBadge.includes('/10213.')) {
+      return savedBadge
+    }
+    if (badgeLevel2 && !badgeLevel2.includes('/121.') && badgeLevel2.includes('/10213.')) {
+      return badgeLevel2
+    }
+    if (
+      liveOrCacheBadge &&
+      !liveOrCacheBadge.includes('/121.') &&
+      liveOrCacheBadge.includes('/10213.')
+    ) {
+      return liveOrCacheBadge
+    }
+    return 'https://media.api-sports.io/football/teams/10213.png'
   }
 
   // Nível 1: ficha_detalhes do banco ou url salva oficial (media.api-sports.io)

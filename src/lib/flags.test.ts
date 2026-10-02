@@ -578,18 +578,56 @@ describe('flags.ts - FlagCDN Helper e Seleções Nacionais', () => {
     }
   })
 
-  it('(h) Boca Juniors (451), Estudiantes (435) e River Plate (450) mapeados exatamente', () => {
+  it('(h) Boca Juniors (451), Estudiantes (450) e River Plate (435) mapeados exatamente', () => {
     expect(resolveTeamBadgeUrl({ teamName: 'Boca Juniors' })).toBe(
       'https://media.api-sports.io/football/teams/451.png',
     )
     expect(resolveTeamBadgeUrl({ teamName: 'Estudiantes' })).toBe(
-      'https://media.api-sports.io/football/teams/435.png',
+      'https://media.api-sports.io/football/teams/450.png',
     )
     expect(resolveTeamBadgeUrl({ teamName: 'Estudiantes de La Plata' })).toBe(
-      'https://media.api-sports.io/football/teams/435.png',
+      'https://media.api-sports.io/football/teams/450.png',
     )
     expect(resolveTeamBadgeUrl({ teamName: 'River Plate' })).toBe(
-      'https://media.api-sports.io/football/teams/450.png',
+      'https://media.api-sports.io/football/teams/435.png',
+    )
+  })
+
+  it('(i) Blindagem contra inversão: Estudiantes x River Plate e Coritiba x Chapecoense', () => {
+    // Se Estudiantes vier com 435 (River), descarta e força 450
+    expect(
+      resolveTeamBadgeUrl({
+        teamName: 'Estudiantes de La Plata',
+        savedBadge: 'https://media.api-sports.io/football/teams/435.png',
+      }),
+    ).toBe('https://media.api-sports.io/football/teams/450.png')
+
+    // Se River Plate vier com 450 (Estudiantes), descarta e força 435
+    expect(
+      resolveTeamBadgeUrl({
+        teamName: 'River Plate',
+        savedBadge: 'https://media.api-sports.io/football/teams/450.png',
+      }),
+    ).toBe('https://media.api-sports.io/football/teams/435.png')
+
+    // Bragantino, Mirassol e Remo
+    expect(resolveTeamBadgeUrl({ teamName: 'Red Bull Bragantino' })).toBe(
+      'https://media.api-sports.io/football/teams/1199.png',
+    )
+    expect(resolveTeamBadgeUrl({ teamName: 'RB Bragantino' })).toBe(
+      'https://media.api-sports.io/football/teams/1199.png',
+    )
+    expect(resolveTeamBadgeUrl({ teamName: 'Mirassol' })).toBe(
+      'https://media.api-sports.io/football/teams/10214.png',
+    )
+    expect(resolveTeamBadgeUrl({ teamName: 'Mirassol FC' })).toBe(
+      'https://media.api-sports.io/football/teams/10214.png',
+    )
+    expect(resolveTeamBadgeUrl({ teamName: 'Remo' })).toBe(
+      'https://media.api-sports.io/football/teams/10213.png',
+    )
+    expect(resolveTeamBadgeUrl({ teamName: 'Clube do Remo' })).toBe(
+      'https://media.api-sports.io/football/teams/10213.png',
     )
   })
 })
