@@ -63,6 +63,7 @@ import {
   extractLogosFromFichaDetalhes,
   fetchAndCacheFixtureLogos,
 } from '@/lib/flags'
+import { TeamShield as SharedTeamShield } from '@/components/TeamShield'
 
 interface PalpiteFormData {
   placar_a: number | string
@@ -1252,7 +1253,7 @@ export default function Palpites() {
     fixtureId,
     fichaDetalhes,
     isSide,
-    sizeClass = 'h-10 w-10 sm:h-12 sm:w-12',
+    sizeClass = 'h-10 w-10 sm:h-12 sm:w-12 min-w-[28px] min-h-[28px]',
     textClass = 'text-xs font-bold text-slate-700',
   }: {
     escudo: string | undefined
@@ -1264,203 +1265,16 @@ export default function Palpites() {
     sizeClass?: string
     textClass?: string
   }) {
-    const [hasError, setHasError] = useState(false)
-    const [triedFlagCdn, setTriedFlagCdn] = useState(false)
-    const [currentSrc, setCurrentSrc] = useState<string | undefined>(escudo)
-    const [resolvingAsync, setResolvingAsync] = useState(false)
-
-    const resolveSyncLogo = useCallback((): string | undefined => {
-      if (escudo && escudo.trim() !== '') return escudo.trim()
-
-      if (fichaDetalhes) {
-        const extracted = extractLogosFromFichaDetalhes(fichaDetalhes)
-        if (extracted) {
-          const sideLogo =
-            isSide === 'home'
-              ? extracted.home
-              : isSide === 'away'
-                ? extracted.away
-                : extracted.home || extracted.away
-          if (sideLogo && sideLogo.trim() !== '') {
-            return sideLogo.trim()
-          }
-        }
-      }
-
-      if (fixtureId) {
-        const cleanId = String(fixtureId).replace(/\D/g, '').trim()
-        if (cleanId && fixtureLogosMemoryCache.has(cleanId)) {
-          const c = fixtureLogosMemoryCache.get(cleanId)!
-          const cached = isSide === 'home' ? c.home : isSide === 'away' ? c.away : c.home || c.away
-          if (cached && cached.trim() !== '') {
-            return cached.trim()
-          }
-        }
-      }
-
-      if (nomeTime) {
-        const fallbackBadge = readEscudoCache(nomeTime)
-        if (fallbackBadge && fallbackBadge.trim() !== '') {
-          return fallbackBadge.trim()
-        }
-      }
-
-      if (nomeTime) {
-        const flagUrl = getFlagCdnUrl(nomeTime, { cacheBust: true })
-        if (flagUrl && flagUrl.trim() !== '') {
-          return flagUrl.trim()
-        }
-      }
-
-      return undefined
-    }, [escudo, fichaDetalhes, isSide, fixtureId, nomeTime])
-
-    useEffect(() => {
-      setHasError(false)
-      setTriedFlagCdn(false)
-
-      const initialCandidate = resolveSyncLogo()
-      if (initialCandidate) {
-        setCurrentSrc(initialCandidate)
-        return
-      }
-
-      if (fixtureId && !resolvingAsync) {
-        const cleanId = String(fixtureId).replace(/\D/g, '').trim()
-        if (cleanId) {
-          setResolvingAsync(true)
-          fetchAndCacheFixtureLogos(cleanId)
-            .then((res) => {
-              if (res) {
-                const fetched =
-                  isSide === 'home' ? res.home : isSide === 'away' ? res.away : res.home || res.away
-                if (fetched && fetched.trim() !== '') {
-                  setCurrentSrc(fetched.trim())
-                  return
-                }
-              }
-              if (nomeTime) {
-                const flagUrl = getFlagCdnUrl(nomeTime, { cacheBust: true })
-                if (flagUrl) {
-                  setCurrentSrc(flagUrl)
-                  return
-                }
-              }
-            })
-            .catch(() => {})
-            .finally(() => setResolvingAsync(false))
-        }
-      } else {
-        setCurrentSrc(undefined)
-      }
-    }, [escudo, fichaDetalhes, fixtureId, isSide, nomeTime, resolveSyncLogo])
-
-    const handleError = () => {
-      if (!nomeTime) {
-        setHasError(true)
-        return
-      }
-
-      // Nível 1: tenta extrair de fichaDetalhes se fornecido e ainda não usado
-      if (fichaDetalhes) {
-        const extracted = resolveTeamBadgeUrl({
-          teamName: nomeTime,
-          fichaDetalhes,
-          isSide,
-        })
-        if (extracted && extracted !== currentSrc) {
-          setCurrentSrc(extracted)
-          return
-        }
-      }
-
-      // Nível 2: tenta extrair via fixtureId em cache memoizado
-      if (fixtureId) {
-        const cleanId = String(fixtureId).replace(/\D/g, '').trim()
-        if (cleanId && fixtureLogosMemoryCache.has(cleanId)) {
-          const c = fixtureLogosMemoryCache.get(cleanId)!
-          const cached = isSide === 'home' ? c.home : isSide === 'away' ? c.away : c.home || c.away
-          if (cached && cached !== currentSrc) {
-            setCurrentSrc(cached)
-            return
-          }
-        }
-        if (cleanId && !resolvingAsync) {
-          setResolvingAsync(true)
-          fetchAndCacheFixtureLogos(cleanId)
-            .then((res) => {
-              if (res) {
-                const fetched =
-                  isSide === 'home' ? res.home : isSide === 'away' ? res.away : res.home || res.away
-                if (fetched && fetched !== currentSrc) {
-                  setCurrentSrc(fetched)
-                  return
-                }
-              }
-            })
-            .catch(() => {})
-            .finally(() => setResolvingAsync(false))
-        }
-      }
-
-      // Nível 3: tenta cache oficial em memória/localStorage
-      const fallbackBadge = readEscudoCache(nomeTime)
-      if (fallbackBadge && fallbackBadge !== currentSrc) {
-        setCurrentSrc(fallbackBadge)
-        return
-      }
-
-      // Nível 4: Bandeira FlagCDN para seleções
-      if (!triedFlagCdn) {
-        setTriedFlagCdn(true)
-        const flagUrl = getFlagCdnUrl(nomeTime, { cacheBust: true })
-        if (flagUrl && flagUrl !== currentSrc) {
-          setCurrentSrc(flagUrl)
-          return
-        }
-      }
-
-      setHasError(true)
-    }
-
-    if (!currentSrc || hasError) {
-      const flagFallback =
-        !triedFlagCdn && nomeTime ? getFlagCdnUrl(nomeTime, { cacheBust: true }) : null
-      if (flagFallback && flagFallback !== currentSrc) {
-        return (
-          <img
-            src={flagFallback}
-            alt={nomeTime}
-            className={`${sizeClass} object-contain drop-shadow-xs`}
-            loading="eager"
-            decoding="async"
-            crossOrigin="anonymous"
-            onError={() => {
-              setTriedFlagCdn(true)
-              setHasError(true)
-            }}
-          />
-        )
-      }
-
-      return (
-        <div
-          className={`${sizeClass} rounded-full bg-slate-100 border border-slate-300 flex items-center justify-center ${textClass}`}
-          title={nomeTime}
-        >
-          {sigla || (nomeTime ? nomeTime.slice(0, 2).toUpperCase() : '?')}
-        </div>
-      )
-    }
     return (
-      <img
-        src={currentSrc}
-        alt={nomeTime}
-        className={`${sizeClass} object-contain drop-shadow-xs`}
-        loading="eager"
-        decoding="async"
-        crossOrigin={currentSrc.includes('flagcdn.com') ? 'anonymous' : undefined}
-        onError={handleError}
+      <SharedTeamShield
+        teamName={nomeTime}
+        escudo={escudo}
+        fixtureId={fixtureId}
+        fichaDetalhes={fichaDetalhes}
+        isSide={isSide}
+        sigla={sigla}
+        sizeClass={sizeClass}
+        textClass={textClass}
       />
     )
   }

@@ -495,13 +495,15 @@ export function stringSimilarity(strA: string, strB: string): number {
   if (cleanA === cleanB) return 1
 
   // Substring / Subpalavra exata (ex: "LDU" dentro de "LDU Quito", "Atlético-MG" vs "Atletico-MG")
-  if (cleanA.includes(cleanB) || cleanB.includes(cleanA)) {
+  // PROIBIDO matching de substring cega para siglas/palavras muito curtas (<= 3 letras como cfc/acf) que causam colisões
+  const minCleanLen = Math.min(cleanA.length, cleanB.length)
+  if (minCleanLen >= 4 && (cleanA.includes(cleanB) || cleanB.includes(cleanA))) {
     return 0.92
   }
 
-  // Token matching: se qualquer palavra significativa coincide
-  const tokensA = cleanA.split(/\s+/).filter((t) => t.length >= 3)
-  const tokensB = cleanB.split(/\s+/).filter((t) => t.length >= 3)
+  // Token matching: apenas palavras significativas com pelo menos 4 caracteres para evitar colisão por siglas curtas
+  const tokensA = cleanA.split(/\s+/).filter((t) => t.length >= 4)
+  const tokensB = cleanB.split(/\s+/).filter((t) => t.length >= 4)
   const hasCommonToken = tokensA.some((tA) => tokensB.includes(tA))
   if (hasCommonToken && (tokensA.length <= 2 || tokensB.length <= 2)) {
     return 0.88

@@ -71,242 +71,41 @@ import {
   extractLogosFromFichaDetalhes,
   fetchAndCacheFixtureLogos,
 } from '@/lib/flags'
+import { TeamShield as SharedTeamShield } from '@/components/TeamShield'
 
 export function TeamShield({
   escudo,
   nomeTime,
+  teamName,
   sigla,
   fixtureId,
   fichaDetalhes,
   isSide,
-  sizeClass = 'h-9 w-9 sm:h-10 sm:w-10',
+  sizeClass = 'h-9 w-9 sm:h-10 sm:w-10 min-w-[28px] min-h-[28px]',
   textClass = 'text-xs font-bold text-slate-700',
 }: {
-  escudo: string | undefined
-  nomeTime: string
-  sigla: string
+  escudo?: string | null
+  nomeTime?: string
+  teamName?: string
+  sigla?: string
   fixtureId?: string | number | null
   fichaDetalhes?: any
   isSide?: 'home' | 'away'
   sizeClass?: string
   textClass?: string
 }) {
-  const [hasError, setHasError] = useState(false)
-  const [triedFlagCdn, setTriedFlagCdn] = useState(false)
-  const [resolvedSrc, setResolvedSrc] = useState<string | undefined>(escudo || undefined)
-  const [resolvingAsync, setResolvingAsync] = useState(false)
-
-  // Função síncrona para resolver o melhor logo disponível nos 4 níveis
-  const resolveSyncLogo = useCallback((): string | undefined => {
-    if (escudo && escudo.trim() !== '') return escudo.trim()
-
-    // Nível 1: extrair de fichaDetalhes (suporta string JSON e objeto)
-    if (fichaDetalhes) {
-      const extracted = extractLogosFromFichaDetalhes(fichaDetalhes)
-      if (extracted) {
-        const sideLogo =
-          isSide === 'home'
-            ? extracted.home
-            : isSide === 'away'
-              ? extracted.away
-              : extracted.home || extracted.away
-        if (sideLogo && sideLogo.trim() !== '') {
-          return sideLogo.trim()
-        }
-      }
-    }
-
-    // Nível 2 síncrono: tentar memória de fixtureLogosMemoryCache se fixtureId fornecido
-    if (fixtureId) {
-      const cleanId = String(fixtureId).replace(/\D/g, '').trim()
-      if (cleanId && fixtureLogosMemoryCache.has(cleanId)) {
-        const c = fixtureLogosMemoryCache.get(cleanId)!
-        const cached = isSide === 'home' ? c.home : isSide === 'away' ? c.away : c.home || c.away
-        if (cached && cached.trim() !== '') {
-          return cached.trim()
-        }
-      }
-    }
-
-    // Nível 3: readEscudoCache
-    if (nomeTime) {
-      const fallbackBadge = readEscudoCache(nomeTime)
-      if (fallbackBadge && fallbackBadge.trim() !== '') {
-        return fallbackBadge.trim()
-      }
-    }
-
-    // Nível 4: Bandeira FlagCDN se for seleção nacional
-    if (nomeTime) {
-      const flagUrl = getFlagCdnUrl(nomeTime, { cacheBust: true })
-      if (flagUrl && flagUrl.trim() !== '') {
-        return flagUrl.trim()
-      }
-    }
-
-    return undefined
-  }, [escudo, fichaDetalhes, isSide, fixtureId, nomeTime])
-
-  // Efeito principal: se escudo/fichaDetalhes/fixtureId mudar, resolve imediatamente
-  useEffect(() => {
-    setHasError(false)
-    setTriedFlagCdn(false)
-
-    const initialCandidate = resolveSyncLogo()
-    if (initialCandidate) {
-      setResolvedSrc(initialCandidate)
-      return
-    }
-
-    // Se síncrono não resolveu e temos fixtureId, dispara Nível 2 assíncrono (fetchAndCacheFixtureLogos)
-    if (fixtureId && !resolvingAsync) {
-      const cleanId = String(fixtureId).replace(/\D/g, '').trim()
-      if (cleanId) {
-        setResolvingAsync(true)
-        fetchAndCacheFixtureLogos(cleanId)
-          .then((res) => {
-            if (res) {
-              const fetched =
-                isSide === 'home' ? res.home : isSide === 'away' ? res.away : res.home || res.away
-              if (fetched && fetched.trim() !== '') {
-                setResolvedSrc(fetched.trim())
-                return
-              }
-            }
-            // Se falhar o fetch e for seleção, tenta FlagCDN
-            if (nomeTime) {
-              const flagUrl = getFlagCdnUrl(nomeTime, { cacheBust: true })
-              if (flagUrl) {
-                setResolvedSrc(flagUrl)
-                return
-              }
-            }
-          })
-          .catch(() => {
-            /* ignore */
-          })
-          .finally(() => {
-            setResolvingAsync(false)
-          })
-      }
-    } else {
-      setResolvedSrc(undefined)
-    }
-  }, [escudo, fichaDetalhes, fixtureId, isSide, nomeTime, resolveSyncLogo])
-
-  const handleError = () => {
-    if (!nomeTime) {
-      setHasError(true)
-      return
-    }
-
-    // Nível 1: tenta extrair de fichaDetalhes se fornecido e ainda não usado
-    if (fichaDetalhes) {
-      const extracted = resolveTeamBadgeUrl({
-        teamName: nomeTime,
-        fichaDetalhes,
-        isSide,
-      })
-      if (extracted && extracted !== resolvedSrc) {
-        setResolvedSrc(extracted)
-        return
-      }
-    }
-
-    // Nível 2: tenta extrair via fixtureId em cache memoizado ou assíncrono
-    if (fixtureId) {
-      const cleanId = String(fixtureId).replace(/\D/g, '').trim()
-      if (cleanId && fixtureLogosMemoryCache.has(cleanId)) {
-        const c = fixtureLogosMemoryCache.get(cleanId)!
-        const cached = isSide === 'home' ? c.home : isSide === 'away' ? c.away : c.home || c.away
-        if (cached && cached !== resolvedSrc) {
-          setResolvedSrc(cached)
-          return
-        }
-      }
-      if (cleanId && !resolvingAsync) {
-        setResolvingAsync(true)
-        fetchAndCacheFixtureLogos(cleanId)
-          .then((res) => {
-            if (res) {
-              const fetched =
-                isSide === 'home' ? res.home : isSide === 'away' ? res.away : res.home || res.away
-              if (fetched && fetched !== resolvedSrc) {
-                setResolvedSrc(fetched)
-                return
-              }
-            }
-          })
-          .catch(() => {})
-          .finally(() => setResolvingAsync(false))
-      }
-    }
-
-    // Nível 3: tenta cache oficial em memória/localStorage
-    const fallbackBadge = readEscudoCache(nomeTime)
-    if (fallbackBadge && fallbackBadge !== resolvedSrc) {
-      setResolvedSrc(fallbackBadge)
-      return
-    }
-
-    // Nível 4: Bandeira FlagCDN para seleções
-    if (!triedFlagCdn) {
-      setTriedFlagCdn(true)
-      const flagUrl = getFlagCdnUrl(nomeTime, { cacheBust: true })
-      if (flagUrl && flagUrl !== resolvedSrc) {
-        setResolvedSrc(flagUrl)
-        return
-      }
-    }
-
-    setHasError(true)
-  }
-
-  if (!resolvedSrc || hasError) {
-    // Se a imagem falhou mas for seleção conhecida e ainda não tentamos a FlagCDN diretamente:
-    const flagFallback =
-      !triedFlagCdn && nomeTime ? getFlagCdnUrl(nomeTime, { cacheBust: true }) : null
-    if (flagFallback && flagFallback !== resolvedSrc) {
-      return (
-        <div className={`${sizeClass} shrink-0 flex items-center justify-center`}>
-          <img
-            src={flagFallback}
-            alt={nomeTime}
-            className="w-full h-full object-contain drop-shadow-xs"
-            loading="eager"
-            decoding="async"
-            crossOrigin="anonymous"
-            onError={() => {
-              setTriedFlagCdn(true)
-              setHasError(true)
-            }}
-          />
-        </div>
-      )
-    }
-
-    return (
-      <div
-        className={`${sizeClass} rounded-full bg-slate-100 border border-slate-300 flex items-center justify-center shrink-0 ${textClass}`}
-        title={nomeTime}
-      >
-        {sigla || (nomeTime ? nomeTime.slice(0, 2).toUpperCase() : '?')}
-      </div>
-    )
-  }
-
+  const effectiveTeamName = teamName || nomeTime || ''
   return (
-    <div className={`${sizeClass} shrink-0 flex items-center justify-center`}>
-      <img
-        src={resolvedSrc}
-        alt={nomeTime}
-        className="w-full h-full object-contain drop-shadow-xs"
-        loading="eager"
-        decoding="async"
-        crossOrigin={resolvedSrc.includes('flagcdn.com') ? 'anonymous' : undefined}
-        onError={handleError}
-      />
-    </div>
+    <SharedTeamShield
+      teamName={effectiveTeamName}
+      escudo={escudo}
+      fixtureId={fixtureId}
+      fichaDetalhes={fichaDetalhes}
+      isSide={isSide}
+      sigla={sigla}
+      sizeClass={sizeClass}
+      textClass={textClass}
+    />
   )
 }
 

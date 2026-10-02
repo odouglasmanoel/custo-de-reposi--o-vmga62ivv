@@ -8,12 +8,11 @@ import {
   Clock,
   ArrowRightLeft,
 } from 'lucide-react'
-import { resolveTeamBadgeUrl } from '@/lib/flags'
+import { resolveTeamBadgeUrl, getFlagCdnUrl, fetchAndCacheFixtureLogos } from '@/lib/flags'
 import { fetchEventosJogo, MatchEvent, FichaJogoResponse } from '@/services/eventosJogo'
 import { useAuth } from '@/context/AuthContext'
 import { isJogoConcluido } from '@/lib/jogoStatus'
-
-import { getFlagCdnUrl, fetchAndCacheFixtureLogos } from '@/lib/flags'
+import { TeamShield } from '@/components/TeamShield'
 import { readEscudoCache } from '@/services/enquetes'
 
 export interface FichaJogoProps {
@@ -460,48 +459,40 @@ export const FichaJogo: React.FC<FichaJogoProps> = ({
         <div className="mt-3 bg-slate-50/80 dark:bg-slate-900/50 rounded-lg p-3 border border-slate-200/80 dark:border-slate-800 transition-all">
           {/* Cabeçalho dos Times com Escudos */}
           <div className="grid grid-cols-2 gap-4 pb-2.5 mb-2.5 border-b border-slate-200 dark:border-slate-800 text-xs font-bold text-slate-700 dark:text-slate-200">
-            <div className="flex items-center gap-2">
-              {badgeA ? (
-                <img
-                  src={badgeA}
-                  alt={timeA}
-                  className="w-5 h-5 object-contain rounded-full bg-white shadow-xs"
-                  loading="lazy"
-                  onError={handleBadgeErrorA}
-                />
-              ) : (
-                <div className="w-5 h-5 rounded-full bg-slate-200 dark:bg-slate-700 flex items-center justify-center text-[10px] font-bold">
-                  {timeA.slice(0, 2).toUpperCase()}
-                </div>
-              )}
-              <span className="truncate">{timeA}</span>
+            <div className="flex items-center gap-2 min-w-0">
+              <TeamShield
+                teamName={timeA}
+                escudo={badgeA}
+                fixtureId={numFixtureId}
+                fichaDetalhes={data}
+                isSide="home"
+                sizeClass="w-5 h-5 min-w-[20px] min-h-[20px]"
+                textClass="text-[9px] font-bold text-slate-700"
+              />
+              <span className="truncate min-w-0">{timeA}</span>
               {typeof placarA === 'number' && (
-                <span className="ml-auto text-emerald-600 dark:text-emerald-400 font-extrabold text-sm">
+                <span className="ml-auto text-emerald-600 dark:text-emerald-400 font-extrabold text-sm shrink-0">
                   {placarA}
                 </span>
               )}
             </div>
 
-            <div className="flex items-center justify-end gap-2 text-right">
+            <div className="flex items-center justify-end gap-2 text-right min-w-0">
               {typeof placarB === 'number' && (
-                <span className="mr-auto text-emerald-600 dark:text-emerald-400 font-extrabold text-sm">
+                <span className="mr-auto text-emerald-600 dark:text-emerald-400 font-extrabold text-sm shrink-0">
                   {placarB}
                 </span>
               )}
-              <span className="truncate">{timeB}</span>
-              {badgeB ? (
-                <img
-                  src={badgeB}
-                  alt={timeB}
-                  className="w-5 h-5 object-contain rounded-full bg-white shadow-xs"
-                  loading="lazy"
-                  onError={handleBadgeErrorB}
-                />
-              ) : (
-                <div className="w-5 h-5 rounded-full bg-slate-200 dark:bg-slate-700 flex items-center justify-center text-[10px] font-bold">
-                  {timeB.slice(0, 2).toUpperCase()}
-                </div>
-              )}
+              <span className="truncate min-w-0">{timeB}</span>
+              <TeamShield
+                teamName={timeB}
+                escudo={badgeB}
+                fixtureId={numFixtureId}
+                fichaDetalhes={data}
+                isSide="away"
+                sizeClass="w-5 h-5 min-w-[20px] min-h-[20px]"
+                textClass="text-[9px] font-bold text-slate-700"
+              />
             </div>
           </div>
 
