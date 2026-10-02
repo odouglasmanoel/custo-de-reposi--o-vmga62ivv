@@ -11,6 +11,166 @@ export interface LiveScorerItem {
   teamSide?: 'home' | 'away' | null
 }
 
+export interface MatchScoreDerivationResult {
+  homeScore: number | null
+  awayScore: number | null
+  derivedFromEvents: boolean
+  validGoalEventsCount: number
+}
+
+/**
+ * Deriva os placares de mandante e visitante a partir dos eventos oficiais da partida.
+ * Regras:
+ * - Filtra apenas eventos válidos do tipo 'Goal' / 'goal'.
+ * - Exclui expressamente pênalti perdido ('missed penalty', 'pênalti perdido', 'penalty missed').
+ * - Exclui disputas de pênaltis pós-jogo ('shootout', 'penalty shootout', 'disputa de pênaltis').
+ * - Gol normal e pênalti convertido creditam ao time do evento (prioritariamente por team ID).
+ * - Gol contra ('own goal', 'gol contra') credita ao ADVERSÁRIO do time do evento.
+ * - Se não houver eventos de gol válidos, preserva o placar bruto (rawHomeScore / rawAwayScore).
+ * - Se houver eventos de gol válidos, o placar derivado é a soma exata por time.
+ */
+export function deriveScoresFromEvents(
+  events?: any[] | null,
+  homeTeamId?: number | string | null,
+  awayTeamId?: number | string | null,
+  rawHomeScore?: number | null,
+  rawAwayScore?: number | null,
+  homeTeamName?: string | null,
+  awayTeamName?: string | null,
+): MatchScoreDerivationResult {
+  const normHomeId =
+    homeTeamId != null && String(homeTeamId).trim() ? String(homeTeamId).trim() : null
+  const normAwayId =
+    awayTeamId != null && String(awayTeamId).trim() ? String(awayTeamId).trim() : null
+  const cleanHome = homeTeamName ? cleanTeamName(homeTeamName) : ''
+  const cleanAway = awayTeamName ? cleanTeamName(awayTeamName) : ''
+
+  if (!Array.isArray(events) || events.length === 0) {
+    return {
+      homeScore: rawHomeScore ?? null,
+      awayScore: rawAwayScore ?? null,
+      derivedFromEvents: false,
+      validGoalEventsCount: 0,
+    }
+  }
+
+  let derivedHome = 0
+  let derivedAway = 0
+  let validGoalEventsCount = 0
+
+  for (const ev of events) {
+    if (!ev) continue
+    const typeStr = (ev.type || ev.category || '').toString().toLowerCase().trim()
+    const detailStr = (ev.detail || '').toString().toLowerCase().trim()
+    const commentsStr = (ev.comments || '').toString().toLowerCase().trim()
+
+    // Considera apenas eventos de gol
+    if (!typeStr.includes('goal') && typeStr !== 'gol') {
+      continue
+    }
+
+    // Exclui pênaltis perdidos
+    if (
+      detailStr.includes('missed') ||
+      detailStr.includes('perdido') ||
+      commentsStr.includes('missed') ||
+      commentsStr.includes('perdido')
+    ) {
+      continue
+    }
+
+    // Exclui disputa de pênaltis pós-tempo normal/prorrogação
+    if (
+      detailStr.includes('shootout') ||
+      detailStr.includes('penalty shootout') ||
+      commentsStr.includes('shootout') ||
+      typeStr.includes('shootout')
+    ) {
+      continue
+    }
+
+    // É um gol válido
+    validGoalEventsCount++
+
+    const isOwnGoal =
+      detailStr.includes('own') ||
+      detailStr.includes('contra') ||
+      commentsStr.includes('own goal') ||
+      commentsStr.includes('contra')
+
+    const evTeamId =
+      ev.team?.id != null && String(ev.team.id).trim() ? String(ev.team.id).trim() : null
+    const evTeamName = (ev.team?.name || '').toString().trim()
+    const cleanEvTeam = evTeamName ? cleanTeamName(evTeamName) : ''
+    const evTeamSide = ev.team?.side || ev.teamSide || null
+
+    // 1. Determina se o evento pertence ao mandante ou visitante
+    let isEventHome: boolean | null = null
+
+    // Prioridade máxima: ID
+    if (evTeamId && (normHomeId || normAwayId)) {
+      if (normHomeId && evTeamId === normHomeId) {
+        isEventHome = true
+      } else if (normAwayId && evTeamId === normAwayId) {
+        isEventHome = false
+      }
+    }
+
+    // Prioridade 2: Flag explícita side
+    if (isEventHome === null && evTeamSide) {
+      if (evTeamSide === 'home') isEventHome = true
+      else if (evTeamSide === 'away') isEventHome = false
+    }
+
+    // Prioridade 3: Nome limpo / sinônimos
+    if (isEventHome === null && cleanEvTeam) {
+      const matchHome =
+        cleanHome && (cleanHome.includes(cleanEvTeam) || cleanEvTeam.includes(cleanHome))
+      const matchAway =
+        cleanAway && (cleanAway.includes(cleanEvTeam) || cleanEvTeam.includes(cleanAway))
+      if (matchHome && !matchAway) {
+        isEventHome = true
+      } else if (matchAway && !matchHome) {
+        isEventHome = false
+      }
+    }
+
+    // Se ainda não casou e temos fallback de times
+    if (isEventHome === null) {
+      // Default conservador: se não casar de jeito nenhum, assume mandante apenas se não houver visitante
+      isEventHome = true
+    }
+
+    // 2. Destino do gol: se for gol contra, credita ao adversário
+    let creditedToHome = isEventHome
+    if (isOwnGoal) {
+      creditedToHome = !isEventHome
+    }
+
+    if (creditedToHome) {
+      derivedHome++
+    } else {
+      derivedAway++
+    }
+  }
+
+  if (validGoalEventsCount === 0) {
+    return {
+      homeScore: rawHomeScore ?? null,
+      awayScore: rawAwayScore ?? null,
+      derivedFromEvents: false,
+      validGoalEventsCount: 0,
+    }
+  }
+
+  return {
+    homeScore: derivedHome,
+    awayScore: derivedAway,
+    derivedFromEvents: true,
+    validGoalEventsCount,
+  }
+}
+
 export interface ApiFootballFixture {
   provider?: 'football_data' | 'thesportsdb' | 'api_football'
   fixture?: {
@@ -85,6 +245,8 @@ export function formatFixtureToLiveScore(
 ): MatchedLiveScore {
   const homeName = fixture.teams?.home?.name || ''
   const awayName = fixture.teams?.away?.name || ''
+  const homeTeamId = fixture.teams?.home?.id ?? null
+  const awayTeamId = fixture.teams?.away?.id ?? null
 
   // Extrai goals reais atualizados. Quando null/undefined/indisponível na API, retorna null (nunca 0 falso).
   const rawHome: number | null =
@@ -105,6 +267,20 @@ export function formatFixtureToLiveScore(
           ? Number(fixture.score.halftime.away)
           : null
 
+  // Deriva o placar dos eventos oficiais da partida (gols válidos, excluindo pênaltis perdidos e disputa pós-jogo; gol contra vai pro adversário)
+  const scoreDerivation = deriveScoresFromEvents(
+    fixture.events,
+    homeTeamId,
+    awayTeamId,
+    rawHome,
+    rawAway,
+    homeName,
+    awayName,
+  )
+
+  const effectiveHomeScore = scoreDerivation.homeScore
+  const effectiveAwayScore = scoreDerivation.awayScore
+
   // Se informado os nomes cadastrados, verifica se time A é home ou away
   let isHomeA = true
   if (jogoTimeA && jogoTimeB && homeName && awayName) {
@@ -115,8 +291,8 @@ export function formatFixtureToLiveScore(
     }
   }
 
-  const placarA = isHomeA ? rawHome : rawAway
-  const placarB = isHomeA ? rawAway : rawHome
+  const placarA = isHomeA ? effectiveHomeScore : effectiveAwayScore
+  const placarB = isHomeA ? effectiveAwayScore : effectiveHomeScore
 
   const statusShort = fixture.fixture?.status?.short || ''
   const statusLong = fixture.fixture?.status?.long || ''

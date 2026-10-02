@@ -356,5 +356,58 @@ describe('Componente FichaJogo', () => {
         ).toBeNull()
       })
     })
+
+    it('alinha evento do mandante à esquerda e evento do visitante à direita por team ID', async () => {
+      vi.mocked(eventosService.fetchEventosJogo).mockResolvedValueOnce({
+        success: true,
+        teams: {
+          home: { id: 10, name: 'Palmeiras' },
+          away: { id: 20, name: 'Flamengo' },
+        },
+        events: [
+          {
+            type: 'Goal',
+            detail: 'Normal Goal',
+            time: { elapsed: 15 },
+            team: { id: 10, name: 'Palmeiras' },
+            player: { name: 'Veiga' },
+          },
+          {
+            type: 'Goal',
+            detail: 'Normal Goal',
+            time: { elapsed: 75 },
+            team: { id: 20, name: 'Flamengo' },
+            player: { name: 'Arrascaeta' },
+          },
+        ],
+      })
+
+      const { container } = render(
+        <FichaJogo
+          fixtureId="3001"
+          timeA="Palmeiras"
+          timeB="Flamengo"
+          isConcluido={false}
+          defaultOpen={true}
+        />,
+      )
+
+      await waitFor(() => {
+        expect(screen.getByText('Veiga')).toBeDefined()
+        expect(screen.getByText('Arrascaeta')).toBeDefined()
+      })
+
+      // Veiga (mandante, id 10): deve estar visível no bloco esquerdo (text-right, opacity-100)
+      const veigaEl = screen.getByText('Veiga')
+      const veigaHomeContainer = veigaEl.closest('.w-1\\/2')
+      expect(veigaHomeContainer?.className).toContain('text-right')
+      expect(veigaHomeContainer?.className).toContain('opacity-100')
+
+      // Arrascaeta (visitante, id 20): deve estar visível no bloco direito (text-left, opacity-100)
+      const arrascaetaEl = screen.getByText('Arrascaeta')
+      const arrascaetaAwayContainer = arrascaetaEl.closest('.w-1\\/2')
+      expect(arrascaetaAwayContainer?.className).toContain('text-left')
+      expect(arrascaetaAwayContainer?.className).toContain('opacity-100')
+    })
   })
 })

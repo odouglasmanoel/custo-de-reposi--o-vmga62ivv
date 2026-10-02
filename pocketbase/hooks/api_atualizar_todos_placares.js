@@ -824,15 +824,20 @@ routerAdd(
 
         const kickoffJaChegou = kickoffMs > 0 ? Date.now() >= kickoffMs : true
 
-        // Se a API trouxe goals.home/away válidos, usa eles;
-        // Se estiver em modo placeholder (objeto principal indisponível) mas temos eventos de gol com o jogo já iniciado,
-        // DERIVA o placar da contagem de gols válidos de cada lado!
+        // DERIVAÇÃO ESTRITA DE PLACAR A PARTIR DOS EVENTOS VÁLIDOS:
+        // Se há eventos de gols válidos computados (golsA e/ou golsB) e o jogo já iniciou,
+        // o placar derivado da soma exata dos eventos sobrepõe o placar bruto;
+        // Se não há eventos de gols válidos, mantém os gols oficiais informados pela API.
         let finalPlacarA = homeGoals
         let finalPlacarB = awayGoals
 
-        if (
+        const totalGolsEventos = golsA.length + golsB.length
+        if (totalGolsEventos > 0 && kickoffJaChegou) {
+          finalPlacarA = golsA.length
+          finalPlacarB = golsB.length
+        } else if (
           (finalPlacarA === null || finalPlacarB === null) &&
-          (golsA.length > 0 || golsB.length > 0) &&
+          totalGolsEventos > 0 &&
           kickoffJaChegou
         ) {
           finalPlacarA = golsA.length

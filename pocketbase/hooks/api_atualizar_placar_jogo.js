@@ -651,13 +651,23 @@ routerAdd(
       }
     }
 
-    // Se temos gols oficiais da API (homeGoals !== null e awayGoals !== null)
-    // usamos eles; se estiver em placeholder e tiver gols detectados em jogo iniciado, usamos a contagem
+    // DERIVAÇÃO ESTRITA DE PLACAR A PARTIR DOS EVENTOS:
+    // Se há eventos de gols válidos computados (golsA e/ou golsB), o placar DERIVADO
+    // sobrepõe o placar bruto para garantir que o placar geral bata exatamente com a soma dos gols válidos.
+    // Se não há eventos de gols válidos, preserva o placar bruto oficial da API.
     let defPlacarA = homeGoals
     let defPlacarB = awayGoals
-    if (
+
+    const totalEventGoals = golsA.length + golsB.length
+    if (totalEventGoals > 0 && kickoffJaChegou) {
+      defPlacarA = golsA.length
+      defPlacarB = golsB.length
+      console.log(
+        `[atualizar-jogo] Placar derivado diretamente dos eventos válidos da partida: ${defPlacarA} x ${defPlacarB} (bruto API era ${homeGoals} x ${awayGoals})`,
+      )
+    } else if (
       (defPlacarA === null || defPlacarB === null) &&
-      (golsA.length > 0 || golsB.length > 0) &&
+      totalEventGoals > 0 &&
       kickoffJaChegou
     ) {
       defPlacarA = golsA.length

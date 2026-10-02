@@ -24,7 +24,7 @@ import { toast } from '@/hooks/use-toast'
 import { useAuth } from '@/context/AuthContext'
 import pb from '@/lib/pocketbase/client'
 import { useRealtime } from '@/hooks/use-realtime'
-import { isFixtureLive } from '@/lib/apiFootballMatcher'
+import { isFixtureLive, cleanTeamName } from '@/lib/apiFootballMatcher'
 import type { DayFixture } from '@/pages/JogosDoDia'
 import { setWithBoundedCapacity } from '@/lib/cacheManager'
 
@@ -534,25 +534,68 @@ export function MatchDetailsModal({ isOpen, onClose, match }: MatchDetailsModalP
     }
 
     const teamName = ev.team?.name || ''
-    const isHome =
-      teamName &&
-      homeName &&
-      teamName.toLowerCase().includes(homeName.toLowerCase().substring(0, 4))
-    const isAway =
-      teamName &&
-      awayName &&
-      teamName.toLowerCase().includes(awayName.toLowerCase().substring(0, 4))
+    const evTeamId =
+      ev.team?.id != null && String(ev.team.id).trim() ? String(ev.team.id).trim() : null
+    const homeTeamId =
+      match.teams?.home?.id != null && String(match.teams.home.id).trim()
+        ? String(match.teams.home.id).trim()
+        : null
+    const awayTeamId =
+      match.teams?.away?.id != null && String(match.teams.away.id).trim()
+        ? String(match.teams.away.id).trim()
+        : null
+
+    // Determina isHome / isAway priorizando SEMPRE team ID da API Football
+    let isHome = false
+    let isAway = false
+
+    if (evTeamId && (homeTeamId || awayTeamId)) {
+      if (homeTeamId && evTeamId === homeTeamId) {
+        isHome = true
+      } else if (awayTeamId && evTeamId === awayTeamId) {
+        isAway = true
+      }
+    }
+
+    const evAny = ev as any
+    const explicitSide = evAny.teamSide || (ev.team as any)?.side || evAny.side
+    if (!isHome && !isAway && explicitSide) {
+      if (explicitSide === 'home') isHome = true
+      else if (explicitSide === 'away') isAway = true
+    }
+
+    if (!isHome && !isAway && teamName) {
+      const cleanTeam = cleanTeamName(teamName)
+      const cleanHome = homeName ? cleanTeamName(homeName) : ''
+      const cleanAway = awayName ? cleanTeamName(awayName) : ''
+
+      const matchH = cleanHome && (cleanHome.includes(cleanTeam) || cleanTeam.includes(cleanHome))
+      const matchA = cleanAway && (cleanAway.includes(cleanTeam) || cleanTeam.includes(cleanAway))
+
+      if (matchH && !matchA) {
+        isHome = true
+      } else if (matchA && !matchH) {
+        isAway = true
+      }
+    }
+
+    // Alinhamento estrito:
+    // isHome true => alinhado à esquerda (items-start, text-left)
+    // isHome false / isAway => alinhado à direita (items-end, text-right, flex-row-reverse)
+    const alignRight = isAway || (!isHome && awayName)
 
     return (
       <div
         key={idx}
-        className="flex items-center gap-3 rounded-lg border border-slate-100 bg-white p-2.5 shadow-2xs hover:border-slate-200 transition"
+        className={`flex items-center gap-3 rounded-lg border border-slate-100 bg-white p-2.5 shadow-2xs hover:border-slate-200 transition ${
+          alignRight ? 'flex-row-reverse text-right' : 'text-left'
+        }`}
       >
         <span className="text-base shrink-0" role="img" aria-label="evento">
           {icon}
         </span>
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2">
+        <div className={`flex-1 min-w-0 flex flex-col ${alignRight ? 'items-end' : 'items-start'}`}>
+          <div className={`flex items-center gap-2 ${alignRight ? 'flex-row-reverse' : ''}`}>
             <span className="font-semibold text-xs text-slate-800 truncate">{eventTitle}</span>
             {teamName && (
               <Badge

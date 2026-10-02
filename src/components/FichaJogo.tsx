@@ -269,40 +269,71 @@ export const FichaJogo: React.FC<FichaJogoProps> = ({
 
   const idMandante = useMemo(() => {
     return (
+      (data?.teams?.home?.id != null ? String(data.teams.home.id) : null) ||
       extractTeamIdFromUrl(url_escudo_mandante) ||
-      extractTeamIdFromUrl(badgeA) ||
-      (data?.teams?.home?.id ? String(data.teams.home.id) : null)
+      extractTeamIdFromUrl(badgeA)
     )
   }, [url_escudo_mandante, badgeA, data])
 
   const idVisitante = useMemo(() => {
     return (
+      (data?.teams?.away?.id != null ? String(data.teams.away.id) : null) ||
       extractTeamIdFromUrl(url_escudo_visitante) ||
-      extractTeamIdFromUrl(badgeB) ||
-      (data?.teams?.away?.id ? String(data.teams.away.id) : null)
+      extractTeamIdFromUrl(badgeB)
     )
   }, [url_escudo_visitante, badgeB, data])
 
   // Normalização do lado: lado esquerdo só mandante, direito só visitante
+  // Regra crítica: SEMPRE priorizar team ID da API Football sobre matching de nome.
+  // Se IDs não casarem e nomes não casarem, NÃO assumir mandante cego quando o evento
+  // possuir dados de visitante explícitos.
   const getSide = (ev: MatchEvent): 'home' | 'away' => {
-    const evTeamId = ev.team?.id ? String(ev.team.id) : null
+    const evTeamId =
+      ev.team?.id != null && String(ev.team.id).trim() ? String(ev.team.id).trim() : null
 
-    // Decidido PRIMEIRO por ID
-    if (evTeamId && idMandante && evTeamId === idMandante) return 'home'
-    if (evTeamId && idVisitante && evTeamId === idVisitante) return 'away'
+    // 1. Prioridade máxima absoluta: API Team ID
+    if (evTeamId) {
+      if (idMandante && evTeamId === idMandante) return 'home'
+      if (idVisitante && evTeamId === idVisitante) return 'away'
+    }
 
-    if (ev.team?.side) return ev.team.side
+    // 2. Side explícito se já informado pela fonte/mock
+    if (ev.team?.side === 'home' || ev.team?.side === 'away') {
+      return ev.team.side
+    }
 
-    // Fallback por nome se ID ausente
-    const teamNameLower = (ev.team?.name || '').toLowerCase()
-    const homeNameLower = timeA.toLowerCase()
-    const awayNameLower = timeB.toLowerCase()
+    // 3. Fallback por nome limpo normalizado
+    const evTeamName = (ev.team?.name || '').trim().toLowerCase()
+    const homeNameLower = (timeA || data?.teams?.home?.name || '').trim().toLowerCase()
+    const awayNameLower = (timeB || data?.teams?.away?.name || '').trim().toLowerCase()
 
-    if (teamNameLower && homeNameLower.includes(teamNameLower)) return 'home'
-    if (teamNameLower && awayNameLower.includes(teamNameLower)) return 'away'
-    if (teamNameLower && teamNameLower.includes(homeNameLower)) return 'home'
-    if (teamNameLower && teamNameLower.includes(awayNameLower)) return 'away'
+    const cleanTeam = evTeamName.replace(/[^a-z0-9]/g, '')
+    const cleanHome = homeNameLower.replace(/[^a-z0-9]/g, '')
+    const cleanAway = awayNameLower.replace(/[^a-z0-9]/g, '')
 
+    if (cleanTeam) {
+      const matchHome =
+        cleanHome && (cleanHome.includes(cleanTeam) || cleanTeam.includes(cleanHome))
+      const matchAway =
+        cleanAway && (cleanAway.includes(cleanTeam) || cleanTeam.includes(cleanAway))
+
+      if (matchHome && !matchAway) return 'home'
+      if (matchAway && !matchHome) return 'away'
+    }
+
+    // 4. Se IDs da API foram fornecidos na partida mas o evento tem um evTeamId desconhecido,
+    // verifica se é mais provável visitante (evitando empilhar tudo no mandante por omissão)
+    if (
+      evTeamId &&
+      idMandante &&
+      evTeamId !== idMandante &&
+      idVisitante &&
+      evTeamId === idVisitante
+    ) {
+      return 'away'
+    }
+
+    // Default conservador final: se nada casou mas temos away explicitado no nome
     return 'home'
   }
 

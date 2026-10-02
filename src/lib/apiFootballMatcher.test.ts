@@ -8,6 +8,7 @@ import {
   matchGameWithApiFixtures,
   resolveLiveScoreForGame,
   formatFixtureToLiveScore,
+  deriveScoresFromEvents,
   getFixtureDateSaoPaulo,
   type ApiFootballFixture,
 } from './apiFootballMatcher'
@@ -808,6 +809,123 @@ describe('apiFootballMatcher', () => {
         'Jogador Normal',
         'Jogador Contra (contra)',
       ])
+    })
+  })
+
+  describe('deriveScoresFromEvents - não-regressão de derivação e alinhamento', () => {
+    it('eventos com 1 gol por time => placar derivado 1x1 exatamente', () => {
+      const events = [
+        {
+          type: 'Goal',
+          detail: 'Normal Goal',
+          team: { id: 100, name: 'Flamengo' },
+          player: { name: 'Pedro' },
+        },
+        {
+          type: 'Goal',
+          detail: 'Normal Goal',
+          team: { id: 200, name: 'Palmeiras' },
+          player: { name: 'Veiga' },
+        },
+      ]
+
+      const res = deriveScoresFromEvents(events, 100, 200, 0, 0, 'Flamengo', 'Palmeiras')
+      expect(res.derivedFromEvents).toBe(true)
+      expect(res.homeScore).toBe(1)
+      expect(res.awayScore).toBe(1)
+      expect(res.validGoalEventsCount).toBe(2)
+    })
+
+    it('gol contra do mandante credita ponto para o visitante', () => {
+      const events = [
+        {
+          type: 'Goal',
+          detail: 'Own Goal',
+          team: { id: 100, name: 'Time Mandante' },
+          player: { name: 'Zagueiro Mandante' },
+        },
+      ]
+
+      const res = deriveScoresFromEvents(events, 100, 200, 0, 0)
+      expect(res.derivedFromEvents).toBe(true)
+      expect(res.homeScore).toBe(0)
+      expect(res.awayScore).toBe(1)
+    })
+
+    it('gol contra do visitante credita ponto para o mandante', () => {
+      const events = [
+        {
+          type: 'Goal',
+          detail: 'Own Goal',
+          team: { id: 200, name: 'Time Visitante' },
+          player: { name: 'Zagueiro Visitante' },
+        },
+      ]
+
+      const res = deriveScoresFromEvents(events, 100, 200, 0, 0)
+      expect(res.derivedFromEvents).toBe(true)
+      expect(res.homeScore).toBe(1)
+      expect(res.awayScore).toBe(0)
+    })
+
+    it('pênalti perdido não conta no placar nem como gol válido', () => {
+      const events = [
+        {
+          type: 'Goal',
+          detail: 'Missed Penalty',
+          team: { id: 100, name: 'Time Mandante' },
+          player: { name: 'Batedor' },
+        },
+        {
+          type: 'Goal',
+          detail: 'Penalty Missed',
+          team: { id: 200, name: 'Time Visitante' },
+          player: { name: 'Batedor Visitante' },
+        },
+      ]
+
+      const res = deriveScoresFromEvents(events, 100, 200, 0, 0)
+      expect(res.derivedFromEvents).toBe(false)
+      expect(res.homeScore).toBe(0)
+      expect(res.awayScore).toBe(0)
+      expect(res.validGoalEventsCount).toBe(0)
+    })
+
+    it('quando não há eventos de gol válidos, preserva o placar bruto informado', () => {
+      const res = deriveScoresFromEvents([], 100, 200, 3, 2)
+      expect(res.derivedFromEvents).toBe(false)
+      expect(res.homeScore).toBe(3)
+      expect(res.awayScore).toBe(2)
+    })
+
+    it('integração com formatFixtureToLiveScore: sobrepõe placar divergente pela soma dos eventos válidos', () => {
+      const fixture: ApiFootballFixture = {
+        fixture: { id: 5555, status: { short: '2H', long: 'Second Half' } },
+        teams: {
+          home: { id: 10, name: 'Real Madrid' },
+          away: { id: 20, name: 'Barcelona' },
+        },
+        goals: { home: 0, away: 0 }, // placar bruto incorreto na API
+        events: [
+          {
+            type: 'Goal',
+            detail: 'Normal Goal',
+            player: { name: 'Vinicius Jr' },
+            team: { id: 10, name: 'Real Madrid' },
+          },
+          {
+            type: 'Goal',
+            detail: 'Penalty',
+            player: { name: 'Lewandowski' },
+            team: { id: 20, name: 'Barcelona' },
+          },
+        ],
+      }
+
+      const formatted = formatFixtureToLiveScore(fixture, 'Real Madrid', 'Barcelona')
+      // Placar A e B agora são 1 x 1 em vez de 0 x 0
+      expect(formatted.placarA).toBe(1)
+      expect(formatted.placarB).toBe(1)
     })
   })
 })

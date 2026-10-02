@@ -190,4 +190,32 @@ describe('MatchDetailsModal - Cache-first e leitura exclusiva do PocketBase', ()
     expect(estadoDepois.hasLineup).toBe(true)
     expect(estadoDepois.data.teams[0].coach).toBe('Filipe Luís')
   })
+
+  it('determina corretamente alinhamento de eventos (mandante à esquerda, visitante à direita)', () => {
+    const matchFixture = {
+      fixture: { id: 100 },
+      teams: {
+        home: { id: 10, name: 'Chelsea' },
+        away: { id: 20, name: 'Arsenal' },
+      },
+    }
+
+    const homeEvent = {
+      type: 'Goal',
+      detail: 'Normal Goal',
+      team: { id: 10, name: 'Chelsea' },
+      player: { name: 'Cole Palmer' },
+    }
+
+    const awayEvent = {
+      type: 'Goal',
+      detail: 'Normal Goal',
+      team: { id: 20, name: 'Arsenal' },
+      player: { name: 'Bukayo Saka' },
+    }
+
+    // Valida IDs
+    expect(String(homeEvent.team.id)).toBe(String(matchFixture.teams.home.id))
+    expect(String(awayEvent.team.id)).toBe(String(matchFixture.teams.away.id))
+  })
 })

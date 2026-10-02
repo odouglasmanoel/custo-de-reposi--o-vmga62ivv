@@ -1675,6 +1675,67 @@ routerAdd('GET', '/backend/v1/placar-ao-vivo', (e) => {
             ? fixItem.goals.away
             : null
 
+        // DERIVAÇÃO ESTRITA DE PLACAR A PARTIR DOS EVENTOS DA PARTIDA:
+        // Se a fixture possui eventos de gols válidos, calcula a soma exata por equipe;
+        // gols normais e pênaltis convertidos para a equipe do evento;
+        // gols contra (own goal) creditados ao adversário; pênaltis perdidos e disputa pós-jogo ignorados.
+        var derivedHomeFromEvents = 0
+        var derivedAwayFromEvents = 0
+        var hasValidGoalEvents = false
+
+        if (Array.isArray(fixItem.events) && fixItem.events.length > 0) {
+          var homeTeamIdVal =
+            fixItem.teams && fixItem.teams.home && fixItem.teams.home.id != null
+              ? String(fixItem.teams.home.id)
+              : null
+          var awayTeamIdVal =
+            fixItem.teams && fixItem.teams.away && fixItem.teams.away.id != null
+              ? String(fixItem.teams.away.id)
+              : null
+
+          for (var evi = 0; evi < fixItem.events.length; evi++) {
+            var evItem = fixItem.events[evi]
+            if (!evItem) continue
+            var evType = (evItem.type || '').toString().toLowerCase()
+            var evDetail = (evItem.detail || '').toString().toLowerCase()
+            var evComm = (evItem.comments || '').toString().toLowerCase()
+
+            if (evType.indexOf('goal') === -1 && evType !== 'gol') continue
+            if (
+              evDetail.indexOf('missed') !== -1 ||
+              evDetail.indexOf('perdido') !== -1 ||
+              evComm.indexOf('missed') !== -1
+            )
+              continue
+            if (evDetail.indexOf('shootout') !== -1 || evComm.indexOf('shootout') !== -1) continue
+
+            hasValidGoalEvents = true
+            var isOwnG =
+              evDetail.indexOf('own') !== -1 ||
+              evDetail.indexOf('contra') !== -1 ||
+              evComm.indexOf('own') !== -1
+            var evTId = evItem.team && evItem.team.id != null ? String(evItem.team.id) : null
+            var evSide = evItem.teamSide || (evItem.team ? evItem.team.side : null)
+
+            var isEvHome = true
+            if (evTId && (homeTeamIdVal || awayTeamIdVal)) {
+              if (homeTeamIdVal && evTId === homeTeamIdVal) isEvHome = true
+              else if (awayTeamIdVal && evTId === awayTeamIdVal) isEvHome = false
+            } else if (evSide === 'home') {
+              isEvHome = true
+            } else if (evSide === 'away') {
+              isEvHome = false
+            }
+
+            var creditedHome = isOwnG ? !isEvHome : isEvHome
+            if (creditedHome) derivedHomeFromEvents++
+            else derivedAwayFromEvents++
+          }
+        }
+
+        var effectiveHomeG = hasValidGoalEvents ? derivedHomeFromEvents : homeGoals
+        var effectiveAwayG = hasValidGoalEvents ? derivedAwayFromEvents : awayGoals
+
         var fixStatusShort =
           fixItem.fixture.status && fixItem.fixture.status.short
             ? String(fixItem.fixture.status.short).toUpperCase().trim()
@@ -1687,9 +1748,13 @@ routerAdd('GET', '/backend/v1/placar-ao-vivo', (e) => {
         // VALIDAÇÃO ESTRITA:
         // "Apenas atualize o status de um jogo para 'Ao Vivo' se a API-Sports retornar explicitamente que a partida está em andamento."
         // "Se o status na API-Sports for 'NS' (Not Started) ou 'TBD', MANTENHA o jogo como 'Pendente' / 'Aberto', e NÃO grave placar zerado (0 x 0) nem marque como 'Ao Vivo'."
-        if ((isFinishedStatus || isLiveStatus) && homeGoals !== null && awayGoals !== null) {
-          matchedJogo.set('placar_a', homeGoals)
-          matchedJogo.set('placar_b', awayGoals)
+        if (
+          (isFinishedStatus || isLiveStatus) &&
+          effectiveHomeG !== null &&
+          effectiveAwayG !== null
+        ) {
+          matchedJogo.set('placar_a', effectiveHomeG)
+          matchedJogo.set('placar_b', effectiveAwayG)
         }
 
         // Se os eventos ou scorers contêm marcadores, organiza para persistir em goleadores_a e goleadores_b
