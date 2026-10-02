@@ -89,4 +89,40 @@ describe('Resolução de Escudos e Purga de Contaminação Dinamarca / B.S.C.', 
     )
     expect(res3).toBe('https://media.api-sports.io/football/teams/1090.png')
   })
+
+  it('Vitória nunca resolve para 140 (Criciúma) e sim 136; Criciúma resolve para 140', () => {
+    expect(readEscudoCache('Vitória')).toBe('https://media.api-sports.io/football/teams/136.png')
+    expect(readEscudoCache('EC Vitória')).toBe('https://media.api-sports.io/football/teams/136.png')
+    expect(readEscudoCache('Criciúma')).toBe('https://media.api-sports.io/football/teams/140.png')
+  })
+
+  it('Coritiba e Chapecoense: sem colisão, descarta caches invertidos', () => {
+    // Se localStorage tiver 147 para Coritiba, readEscudoCache descarta e força 132
+    localStorage.setItem(
+      '__escudo_cache__coritiba',
+      'https://media.api-sports.io/football/teams/147.png',
+    )
+    expect(readEscudoCache('Coritiba')).toBe('https://media.api-sports.io/football/teams/132.png')
+
+    // Se localStorage tiver 132 para Chapecoense, readEscudoCache descarta e força 147
+    localStorage.setItem(
+      '__escudo_cache__chapecoense',
+      'https://media.api-sports.io/football/teams/132.png',
+    )
+    expect(readEscudoCache('Chapecoense')).toBe(
+      'https://media.api-sports.io/football/teams/147.png',
+    )
+  })
+
+  it('São Paulo e Santos resolvem para 126 e 128 tanto com acento quanto sem acento ou sigla SPFC/santosfc', () => {
+    expect(readEscudoCache('São Paulo')).toBe('https://media.api-sports.io/football/teams/126.png')
+    expect(readEscudoCache('sao paulo')).toBe('https://media.api-sports.io/football/teams/126.png')
+    expect(readEscudoCache('spfc')).toBe('https://media.api-sports.io/football/teams/126.png')
+    expect(readEscudoCache('SPFC')).toBe('https://media.api-sports.io/football/teams/126.png')
+
+    expect(readEscudoCache('Santos')).toBe('https://media.api-sports.io/football/teams/128.png')
+    expect(readEscudoCache('santos')).toBe('https://media.api-sports.io/football/teams/128.png')
+    expect(readEscudoCache('santosfc')).toBe('https://media.api-sports.io/football/teams/128.png')
+    expect(readEscudoCache('Santos FC')).toBe('https://media.api-sports.io/football/teams/128.png')
+  })
 })

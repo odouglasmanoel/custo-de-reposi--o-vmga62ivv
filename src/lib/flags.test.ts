@@ -501,4 +501,80 @@ describe('flags.ts - FlagCDN Helper e Seleções Nacionais', () => {
     })
     expect(chapeComLixo).toBe('https://media.api-sports.io/football/teams/147.png')
   })
+
+  it('(d) Vitória resolve para 136 e NUNCA 140 (Criciúma); Criciúma resolve para 140', () => {
+    const vitoriaBadge = resolveTeamBadgeUrl({ teamName: 'Vitória' })
+    expect(vitoriaBadge).toBe('https://media.api-sports.io/football/teams/136.png')
+    expect(vitoriaBadge).not.toContain('140')
+
+    const ecVitoriaBadge = resolveTeamBadgeUrl({ teamName: 'EC Vitória' })
+    expect(ecVitoriaBadge).toBe('https://media.api-sports.io/football/teams/136.png')
+
+    const criciumaBadge = resolveTeamBadgeUrl({ teamName: 'Criciúma' })
+    expect(criciumaBadge).toBe('https://media.api-sports.io/football/teams/140.png')
+  })
+
+  it('(e) Cruzeiro resolve para 135 e NUNCA 132 (Coritiba)', () => {
+    const cruzeiroBadge = resolveTeamBadgeUrl({ teamName: 'Cruzeiro' })
+    expect(cruzeiroBadge).toBe('https://media.api-sports.io/football/teams/135.png')
+    expect(cruzeiroBadge).not.toContain('132')
+  })
+
+  it('(f) São Paulo e Santos resolvem para 126 e 128 com paridade em variações de nome', () => {
+    // São Paulo
+    expect(resolveTeamBadgeUrl({ teamName: 'São Paulo' })).toBe(
+      'https://media.api-sports.io/football/teams/126.png',
+    )
+    expect(resolveTeamBadgeUrl({ teamName: 'sao paulo' })).toBe(
+      'https://media.api-sports.io/football/teams/126.png',
+    )
+    expect(resolveTeamBadgeUrl({ teamName: 'SPFC' })).toBe(
+      'https://media.api-sports.io/football/teams/126.png',
+    )
+
+    // Santos
+    expect(resolveTeamBadgeUrl({ teamName: 'Santos' })).toBe(
+      'https://media.api-sports.io/football/teams/128.png',
+    )
+    expect(resolveTeamBadgeUrl({ teamName: 'santos' })).toBe(
+      'https://media.api-sports.io/football/teams/128.png',
+    )
+    expect(resolveTeamBadgeUrl({ teamName: 'Santos FC' })).toBe(
+      'https://media.api-sports.io/football/teams/128.png',
+    )
+    expect(resolveTeamBadgeUrl({ teamName: 'santosfc' })).toBe(
+      'https://media.api-sports.io/football/teams/128.png',
+    )
+  })
+
+  it('(g) Todos os clubes da Série A mapeados com seus respectivos IDs oficiais', () => {
+    const serieAMap: Record<string, string> = {
+      'São Paulo': '126',
+      Santos: '128',
+      Flamengo: '127',
+      Corinthians: '131',
+      Palmeiras: '121',
+      Fluminense: '124',
+      Botafogo: '120',
+      Vasco: '133',
+      Coritiba: '132',
+      Chapecoense: '147',
+      Grêmio: '130',
+      Internacional: '119',
+      'Atlético Mineiro': '1062',
+      Bahia: '118',
+      Fortaleza: '154',
+      'Athletico Paranaense': '134',
+      Juventude: '152',
+      'Red Bull Bragantino': '1199',
+      Cuiabá: '1200',
+      Mirassol: '10214',
+      Remo: '10213',
+    }
+
+    for (const [teamName, expectedId] of Object.entries(serieAMap)) {
+      const badge = resolveTeamBadgeUrl({ teamName })
+      expect(badge).toBe(`https://media.api-sports.io/football/teams/${expectedId}.png`)
+    }
+  })
 })

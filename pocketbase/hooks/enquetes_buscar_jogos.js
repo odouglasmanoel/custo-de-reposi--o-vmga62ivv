@@ -1273,12 +1273,25 @@ routerAdd(
       var normB = normalizarNomeEscudo(b)
       if (!normA || !normB) return 0
       if (normA === normB) return 1
-      if (normA.indexOf(normB) !== -1 || normB.indexOf(normA) !== -1) return 0.92
+
+      // REGRA: matching por sigla curta (2-3 letras) é PROIBIDO (exigir nome com 4+ caracteres)
+      // Nunca relacionar tokens como "CFC", "ACF" por proximidade ou substring
+      if (normA.length < 4 || normB.length < 4) {
+        return 0
+      }
+
+      if (normA.indexOf(normB) !== -1 || normB.indexOf(normA) !== -1) {
+        // Exige ao menos 4 caracteres para aceitar substring
+        if (Math.min(normA.length, normB.length) >= 4) {
+          return 0.92
+        }
+        return 0
+      }
       var tA = normA.split(/\s+/).filter(function (t) {
-        return t.length >= 3
+        return t.length >= 4
       })
       var tB = normB.split(/\s+/).filter(function (t) {
-        return t.length >= 3
+        return t.length >= 4
       })
       var common = false
       for (var ti = 0; ti < tA.length; ti++) {
@@ -1297,7 +1310,7 @@ routerAdd(
     // Helper unificado de busca de escudo respeitando a ordem e exigindo similaridade >= 0.85:
     // TheSportsDB ELIMINADO TOTALMENTE por diretriz do usuário Douglas.
     // Fontes permitidas:
-    // 0) Escudos oficiais conhecidos (PSG, Dinamarca, etc. na API-Sports)
+    // 0) Escudos oficiais conhecidos (Série A, PSG, Dinamarca, etc. na API-Sports)
     // 1) Cache em memória (validado, descartando TheSportsDB)
     // 2) Football-Data.org (crest) com similaridade >= 0.85
     var fetchTeamBadgeOrdered = function (teamName) {
@@ -1307,7 +1320,41 @@ routerAdd(
       // 0) Tratamento explícito para escudos oficiais conhecidos da API-Sports
       var KNOWN_OFFICIAL_BADGES = {
         coritiba: 'https://media.api-sports.io/football/teams/132.png',
+        coritibafbc: 'https://media.api-sports.io/football/teams/132.png',
+        coxa: 'https://media.api-sports.io/football/teams/132.png',
         chapecoense: 'https://media.api-sports.io/football/teams/147.png',
+        chapecoenseaf: 'https://media.api-sports.io/football/teams/147.png',
+        chape: 'https://media.api-sports.io/football/teams/147.png',
+        vitoria: 'https://media.api-sports.io/football/teams/136.png',
+        ecvitoria: 'https://media.api-sports.io/football/teams/136.png',
+        criciuma: 'https://media.api-sports.io/football/teams/140.png',
+        criciumaec: 'https://media.api-sports.io/football/teams/140.png',
+        cruzeiro: 'https://media.api-sports.io/football/teams/135.png',
+        saopaulo: 'https://media.api-sports.io/football/teams/126.png',
+        spfc: 'https://media.api-sports.io/football/teams/126.png',
+        santos: 'https://media.api-sports.io/football/teams/128.png',
+        santosfc: 'https://media.api-sports.io/football/teams/128.png',
+        flamengo: 'https://media.api-sports.io/football/teams/127.png',
+        corinthians: 'https://media.api-sports.io/football/teams/131.png',
+        palmeiras: 'https://media.api-sports.io/football/teams/121.png',
+        fluminense: 'https://media.api-sports.io/football/teams/124.png',
+        botafogo: 'https://media.api-sports.io/football/teams/120.png',
+        vasco: 'https://media.api-sports.io/football/teams/133.png',
+        gremio: 'https://media.api-sports.io/football/teams/130.png',
+        internacional: 'https://media.api-sports.io/football/teams/119.png',
+        inter: 'https://media.api-sports.io/football/teams/119.png',
+        atleticomineiro: 'https://media.api-sports.io/football/teams/1062.png',
+        bahia: 'https://media.api-sports.io/football/teams/118.png',
+        fortaleza: 'https://media.api-sports.io/football/teams/154.png',
+        athleticopr: 'https://media.api-sports.io/football/teams/134.png',
+        athleticoparanaense: 'https://media.api-sports.io/football/teams/134.png',
+        juventude: 'https://media.api-sports.io/football/teams/152.png',
+        redbullbragantino: 'https://media.api-sports.io/football/teams/1199.png',
+        rbbragantino: 'https://media.api-sports.io/football/teams/1199.png',
+        bragantino: 'https://media.api-sports.io/football/teams/1199.png',
+        cuiaba: 'https://media.api-sports.io/football/teams/1200.png',
+        mirassol: 'https://media.api-sports.io/football/teams/10214.png',
+        remo: 'https://media.api-sports.io/football/teams/10213.png',
         'paris saint germain': 'https://media.api-sports.io/football/teams/85.png',
         psg: 'https://media.api-sports.io/football/teams/85.png',
         dinamarca: 'https://media.api-sports.io/football/teams/21.png',

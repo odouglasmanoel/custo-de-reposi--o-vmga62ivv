@@ -89,7 +89,7 @@ import {
   readEscudoCache,
 } from '@/services/enquetes'
 import { TeamShield } from '@/components/TeamShield'
-import { resolveTeamBadgeUrl } from '@/lib/flags'
+import { resolveTeamBadgeUrl, getClubLogoUrl } from '@/lib/flags'
 
 /**
  * Adaptador de compatibilidade que redireciona para o TeamShield único,
@@ -1187,9 +1187,9 @@ export default function Enquetes() {
     }
 
     // Resolução de escudos:
-    // Se o usuário digitou uma URL customizada, usa ela; se deixou vazio, envia vazio e deixa a API-Football resolver.
-    let logoAFinal = customLogoA
-    let logoBFinal = customLogoB
+    // Se o usuário digitou uma URL customizada, usa ela; se deixou vazio, tenta resolver da tabela canônica
+    let logoAFinal = customLogoA || readEscudoCache(timeA) || getClubLogoUrl(timeA) || ''
+    let logoBFinal = customLogoB || readEscudoCache(timeB) || getClubLogoUrl(timeB) || ''
 
     const regiaoCalculada =
       competicao.toLowerCase().includes('brasileir') || competicao.toLowerCase().includes('copa')

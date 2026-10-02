@@ -6,6 +6,7 @@ import {
   isNationalTeam,
   isOfficialNationalTeamBadge,
   isContaminatedBadge,
+  getClubLogoUrl,
 } from '@/lib/flags'
 
 export interface EnqueteModel extends RecordModel {
@@ -723,6 +724,20 @@ export async function adicionarJogoManualNaEnquete(params: {
   if (isTheSportsDbLogo(logoCasa)) logoCasa = ''
   if (isTheSportsDbLogo(logoVisitante)) logoVisitante = ''
 
+  // Se não foi informado logo_casa/logo_visitante, resolve antecipadamente pela tabela canônica
+  if (!logoCasa && params.time_a) {
+    const canonicalCasa = readEscudoCache(params.time_a) || getClubLogoUrl(params.time_a)
+    if (canonicalCasa) {
+      logoCasa = canonicalCasa
+    }
+  }
+  if (!logoVisitante && params.time_b) {
+    const canonicalVisitante = readEscudoCache(params.time_b) || getClubLogoUrl(params.time_b)
+    if (canonicalVisitante) {
+      logoVisitante = canonicalVisitante
+    }
+  }
+
   let fixtureIdEncontrado = ''
   let escudosAtualizados = false
   let autoLookupSucesso = false
@@ -864,6 +879,8 @@ export function readEscudoCache(teamName: string): string | null {
   const KNOWN_OFFICIAL_BADGES: Record<string, string> = {
     botafogo: 'https://media.api-sports.io/football/teams/120.png',
     botafogorj: 'https://media.api-sports.io/football/teams/120.png',
+    botafogofr: 'https://media.api-sports.io/football/teams/120.png',
+    bfr: 'https://media.api-sports.io/football/teams/120.png',
     vasco: 'https://media.api-sports.io/football/teams/133.png',
     vascodagama: 'https://media.api-sports.io/football/teams/133.png',
     crvascodagama: 'https://media.api-sports.io/football/teams/133.png',
@@ -872,16 +889,43 @@ export function readEscudoCache(teamName: string): string | null {
     palmeiras: 'https://media.api-sports.io/football/teams/121.png',
     corinthians: 'https://media.api-sports.io/football/teams/131.png',
     saopaulo: 'https://media.api-sports.io/football/teams/126.png',
+    spfc: 'https://media.api-sports.io/football/teams/126.png',
     santos: 'https://media.api-sports.io/football/teams/128.png',
+    santosfc: 'https://media.api-sports.io/football/teams/128.png',
     gremio: 'https://media.api-sports.io/football/teams/130.png',
     internacional: 'https://media.api-sports.io/football/teams/119.png',
+    inter: 'https://media.api-sports.io/football/teams/119.png',
     atleticomineiro: 'https://media.api-sports.io/football/teams/1062.png',
+    atleticomg: 'https://media.api-sports.io/football/teams/1062.png',
     cruzeiro: 'https://media.api-sports.io/football/teams/135.png',
     bahia: 'https://media.api-sports.io/football/teams/118.png',
     fortaleza: 'https://media.api-sports.io/football/teams/154.png',
     athleticopr: 'https://media.api-sports.io/football/teams/134.png',
+    athleticoparanaense: 'https://media.api-sports.io/football/teams/134.png',
+    athletico: 'https://media.api-sports.io/football/teams/134.png',
     coritiba: 'https://media.api-sports.io/football/teams/132.png',
+    coritibafbc: 'https://media.api-sports.io/football/teams/132.png',
+    coxa: 'https://media.api-sports.io/football/teams/132.png',
+    cfc: 'https://media.api-sports.io/football/teams/132.png',
     chapecoense: 'https://media.api-sports.io/football/teams/147.png',
+    chapecoenseaf: 'https://media.api-sports.io/football/teams/147.png',
+    chape: 'https://media.api-sports.io/football/teams/147.png',
+    acf: 'https://media.api-sports.io/football/teams/147.png',
+    vitoria: 'https://media.api-sports.io/football/teams/136.png',
+    ecvitoria: 'https://media.api-sports.io/football/teams/136.png',
+    criciuma: 'https://media.api-sports.io/football/teams/140.png',
+    criciumaec: 'https://media.api-sports.io/football/teams/140.png',
+    cuiaba: 'https://media.api-sports.io/football/teams/1200.png',
+    cuiabaec: 'https://media.api-sports.io/football/teams/1200.png',
+    juventude: 'https://media.api-sports.io/football/teams/152.png',
+    ecjuventude: 'https://media.api-sports.io/football/teams/152.png',
+    redbullbragantino: 'https://media.api-sports.io/football/teams/1199.png',
+    rbbragantino: 'https://media.api-sports.io/football/teams/1199.png',
+    bragantino: 'https://media.api-sports.io/football/teams/1199.png',
+    mirassol: 'https://media.api-sports.io/football/teams/10214.png',
+    mirassolfc: 'https://media.api-sports.io/football/teams/10214.png',
+    remo: 'https://media.api-sports.io/football/teams/10213.png',
+    clubedoremo: 'https://media.api-sports.io/football/teams/10213.png',
     paisdegales: 'https://media.api-sports.io/football/teams/767.png',
     gales: 'https://media.api-sports.io/football/teams/767.png',
     wales: 'https://media.api-sports.io/football/teams/767.png',
@@ -937,13 +981,19 @@ export function readEscudoCache(teamName: string): string | null {
     if (!url) return url
     if (
       isCoritiba &&
-      (url.includes('/147.png') || url.includes('/147_') || url.includes('/teams/147.'))
+      (url.includes('/147.png') ||
+        url.includes('/147_') ||
+        url.includes('/teams/147.') ||
+        url.includes('/147.'))
     ) {
       return 'https://media.api-sports.io/football/teams/132.png'
     }
     if (
       isChapecoense &&
-      (url.includes('/132.png') || url.includes('/132_') || url.includes('/teams/132.'))
+      (url.includes('/132.png') ||
+        url.includes('/132_') ||
+        url.includes('/teams/132.') ||
+        url.includes('/132.'))
     ) {
       return 'https://media.api-sports.io/football/teams/147.png'
     }
@@ -956,13 +1006,19 @@ export function readEscudoCache(teamName: string): string | null {
     if (isContaminatedBadge(teamName, url)) return false
     if (
       isCoritiba &&
-      (url.includes('/147.png') || url.includes('/147_') || url.includes('/teams/147.'))
+      (url.includes('/147.png') ||
+        url.includes('/147_') ||
+        url.includes('/teams/147.') ||
+        url.includes('/147.'))
     ) {
       return false
     }
     if (
       isChapecoense &&
-      (url.includes('/132.png') || url.includes('/132_') || url.includes('/teams/132.'))
+      (url.includes('/132.png') ||
+        url.includes('/132_') ||
+        url.includes('/teams/132.') ||
+        url.includes('/132.'))
     ) {
       return false
     }
@@ -1178,6 +1234,20 @@ export async function editarJogoEnquete(
   }
   if (isTheSportsDbLogo(logoVisitanteFinal)) {
     logoVisitanteFinal = ''
+  }
+
+  // Se logoCasaFinal ou logoVisitanteFinal estiverem vazios, tenta resolver pela tabela canônica antes de persistir
+  if (!logoCasaFinal && params.time_a) {
+    const canonicalCasa = readEscudoCache(params.time_a) || getClubLogoUrl(params.time_a)
+    if (canonicalCasa) {
+      logoCasaFinal = canonicalCasa
+    }
+  }
+  if (!logoVisitanteFinal && params.time_b) {
+    const canonicalVisitante = readEscudoCache(params.time_b) || getClubLogoUrl(params.time_b)
+    if (canonicalVisitante) {
+      logoVisitanteFinal = canonicalVisitante
+    }
   }
 
   let fixtureIdEncontrado = ''

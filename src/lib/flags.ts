@@ -401,10 +401,26 @@ export const OFFICIAL_CLUB_TEAM_IDS: Record<string, number> = {
   'chapecoense af': 147,
   chape: 147,
   acf: 147,
-  vitoria: 140,
+  vitoria: 136,
+  'ec vitoria': 136,
+  'esporte clube vitoria': 136,
+  criciuma: 140,
+  'criciuma ec': 140,
+  'criciuma esporte clube': 140,
   cuiaba: 1200,
-  criciuma: 141,
+  'cuiaba ec': 1200,
   juventude: 152,
+  'ec juventude': 152,
+  redbullbragantino: 1199,
+  'red bull bragantino': 1199,
+  bragantino: 1199,
+  'rb bragantino': 1199,
+  mirassol: 10214,
+  'mirassol fc': 10214,
+  remo: 10213,
+  'clube do remo': 10213,
+  spfc: 126,
+  santosfc: 128,
   goias: 144,
   sport: 794,
   ceara: 129,
@@ -799,16 +815,43 @@ export function resolveTeamBadgeUrl(params: {
     normClean === 'coxa' ||
     normClean === 'coritibafbc'
   ) {
-    // Se o savedBadge ou badgeLevel1 aponta erroneamente para 147 (Chapecoense), descarta e usa 132
-    if (badgeLevel1 && (badgeLevel1.includes('/147.') || badgeLevel1.includes('/147_'))) {
-      // Ignora badgeLevel1 invertido
-    } else if (badgeLevel1 && badgeLevel1.includes('/132.')) {
+    // Se liveOrCacheBadge ou badgeLevel2 aponta para 147, descarta
+    // Para Coritiba, descarta QUALQUER url com 147.png e força 132.png
+    if (
+      badgeLevel1 &&
+      !badgeLevel1.includes('/147.') &&
+      !badgeLevel1.includes('/147_') &&
+      !badgeLevel1.includes('/147.png') &&
+      badgeLevel1.includes('/132.')
+    ) {
       return badgeLevel1
     }
-    if (savedBadge && (savedBadge.includes('/147.') || savedBadge.includes('/147_'))) {
-      // Ignora savedBadge invertido
-    } else if (savedBadge && savedBadge.includes('/132.')) {
+    if (
+      savedBadge &&
+      !savedBadge.includes('/147.') &&
+      !savedBadge.includes('/147_') &&
+      !savedBadge.includes('/147.png') &&
+      savedBadge.includes('/132.')
+    ) {
       return savedBadge
+    }
+    if (
+      badgeLevel2 &&
+      !badgeLevel2.includes('/147.') &&
+      !badgeLevel2.includes('/147_') &&
+      !badgeLevel2.includes('/147.png') &&
+      badgeLevel2.includes('/132.')
+    ) {
+      return badgeLevel2
+    }
+    if (
+      liveOrCacheBadge &&
+      !liveOrCacheBadge.includes('/147.') &&
+      !liveOrCacheBadge.includes('/147_') &&
+      !liveOrCacheBadge.includes('/147.png') &&
+      liveOrCacheBadge.includes('/132.')
+    ) {
+      return liveOrCacheBadge
     }
     return 'https://media.api-sports.io/football/teams/132.png'
   }
@@ -820,16 +863,42 @@ export function resolveTeamBadgeUrl(params: {
     normClean === 'acf' ||
     normClean === 'chapecoenseaf'
   ) {
-    // Se o savedBadge ou badgeLevel1 aponta erroneamente para 132 (Coritiba), descarta e usa 147
-    if (badgeLevel1 && (badgeLevel1.includes('/132.') || badgeLevel1.includes('/132_'))) {
-      // Ignora badgeLevel1 invertido
-    } else if (badgeLevel1 && badgeLevel1.includes('/147.')) {
+    // Para Chapecoense, descarta QUALQUER url com 132.png e força 147.png
+    if (
+      badgeLevel1 &&
+      !badgeLevel1.includes('/132.') &&
+      !badgeLevel1.includes('/132_') &&
+      !badgeLevel1.includes('/132.png') &&
+      badgeLevel1.includes('/147.')
+    ) {
       return badgeLevel1
     }
-    if (savedBadge && (savedBadge.includes('/132.') || savedBadge.includes('/132_'))) {
-      // Ignora savedBadge invertido
-    } else if (savedBadge && savedBadge.includes('/147.')) {
+    if (
+      savedBadge &&
+      !savedBadge.includes('/132.') &&
+      !savedBadge.includes('/132_') &&
+      !savedBadge.includes('/132.png') &&
+      savedBadge.includes('/147.')
+    ) {
       return savedBadge
+    }
+    if (
+      badgeLevel2 &&
+      !badgeLevel2.includes('/132.') &&
+      !badgeLevel2.includes('/132_') &&
+      !badgeLevel2.includes('/132.png') &&
+      badgeLevel2.includes('/147.')
+    ) {
+      return badgeLevel2
+    }
+    if (
+      liveOrCacheBadge &&
+      !liveOrCacheBadge.includes('/132.') &&
+      !liveOrCacheBadge.includes('/132_') &&
+      !liveOrCacheBadge.includes('/132.png') &&
+      liveOrCacheBadge.includes('/147.')
+    ) {
+      return liveOrCacheBadge
     }
     return 'https://media.api-sports.io/football/teams/147.png'
   }
