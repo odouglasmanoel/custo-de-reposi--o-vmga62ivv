@@ -16,6 +16,95 @@ export interface TournamentMetadata {
 }
 
 /**
+ * Mapeamento canônico determinístico de nomes de ligas/competições no frontend,
+ * garantindo unificação e deduplicação estrita de abas e filtros:
+ * "Brazilian Serie A" / "Serie A Brazil" -> "Brasileirão Série A"
+ * "Brazilian Serie B" / "Serie B Brazil" -> "Brasileirão Série B"
+ */
+export const LEAGUE_CANONICAL_FRONTEND_MAP: Record<string, string> = {
+  'brazilian serie a': 'Brasileirão Série A',
+  'brazilian série a': 'Brasileirão Série A',
+  'serie a brazil': 'Brasileirão Série A',
+  'serie a brasil': 'Brasileirão Série A',
+  'campeonato brasileiro': 'Brasileirão Série A',
+  'campeonato brasileiro serie a': 'Brasileirão Série A',
+  'campeonato brasileiro série a': 'Brasileirão Série A',
+  brasileirao: 'Brasileirão Série A',
+  brasileirão: 'Brasileirão Série A',
+  'brasileirao serie a': 'Brasileirão Série A',
+  'brasileirão serie a': 'Brasileirão Série A',
+  'brasileirao série a': 'Brasileirão Série A',
+  'brasileirão série a': 'Brasileirão Série A',
+  'brazilian serie b': 'Brasileirão Série B',
+  'brazilian série b': 'Brasileirão Série B',
+  'serie b brazil': 'Brasileirão Série B',
+  'serie b brasil': 'Brasileirão Série B',
+  'brasileirao serie b': 'Brasileirão Série B',
+  'brasileirão serie b': 'Brasileirão Série B',
+  'copa libertadores': 'Copa Libertadores',
+  'copa conmebol libertadores': 'Copa Libertadores',
+  'conmebol libertadores': 'Copa Libertadores',
+  'copa sudamericana': 'Copa Sul-Americana',
+  'copa sul-americana': 'Copa Sul-Americana',
+  'conmebol sudamericana': 'Copa Sul-Americana',
+  'copa do brasil': 'Copa do Brasil',
+  'premier league': 'Premier League',
+  'la liga': 'La Liga',
+  laliga: 'La Liga',
+  'serie a tim': 'Serie A (Itália)',
+  bundesliga: 'Bundesliga',
+  'ligue 1': 'Ligue 1',
+  'champions league': 'Champions League',
+  'uefa champions league': 'Champions League',
+  'europa league': 'UEFA Europa League',
+  'uefa europa league': 'UEFA Europa League',
+  'conference league': 'UEFA Conference League',
+}
+
+/**
+ * Normaliza o nome da liga/campeonato no cliente:
+ * Unifica e deduplica variações como "Brazilian Serie A" -> "Brasileirão Série A"
+ */
+export function normalizeLeagueName(name?: string | null): string {
+  if (!name) return ''
+  const trimmed = String(name).trim()
+  if (!trimmed) return ''
+
+  let low = trimmed.toLowerCase()
+  try {
+    low = low.normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+  } catch {
+    /* ignore */
+  }
+  low = low.replace(/\s+/g, ' ').trim()
+
+  if (LEAGUE_CANONICAL_FRONTEND_MAP[low]) {
+    return LEAGUE_CANONICAL_FRONTEND_MAP[low]
+  }
+
+  if (
+    low.includes('brazilian serie a') ||
+    low.includes('serie a brazil') ||
+    low === 'brasileirao' ||
+    low === 'brasileirao serie a' ||
+    (low.includes('serie a') && (low.includes('brasil') || low.includes('brazil')))
+  ) {
+    return 'Brasileirão Série A'
+  }
+
+  if (
+    low.includes('brazilian serie b') ||
+    low.includes('serie b brazil') ||
+    low === 'brasileirao serie b' ||
+    (low.includes('serie b') && (low.includes('brasil') || low.includes('brazil')))
+  ) {
+    return 'Brasileirão Série B'
+  }
+
+  return trimmed
+}
+
+/**
  * Normaliza string removendo acentos e pontuações para comparação robusta.
  */
 function normalizeTournamentName(name: string): string {

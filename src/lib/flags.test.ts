@@ -577,4 +577,19 @@ describe('flags.ts - FlagCDN Helper e Seleções Nacionais', () => {
       expect(badge).toBe(`https://media.api-sports.io/football/teams/${expectedId}.png`)
     }
   })
+
+  it('(h) Boca Juniors (451), Estudiantes (435) e River Plate (450) mapeados exatamente', () => {
+    expect(resolveTeamBadgeUrl({ teamName: 'Boca Juniors' })).toBe(
+      'https://media.api-sports.io/football/teams/451.png',
+    )
+    expect(resolveTeamBadgeUrl({ teamName: 'Estudiantes' })).toBe(
+      'https://media.api-sports.io/football/teams/435.png',
+    )
+    expect(resolveTeamBadgeUrl({ teamName: 'Estudiantes de La Plata' })).toBe(
+      'https://media.api-sports.io/football/teams/435.png',
+    )
+    expect(resolveTeamBadgeUrl({ teamName: 'River Plate' })).toBe(
+      'https://media.api-sports.io/football/teams/450.png',
+    )
+  })
 })

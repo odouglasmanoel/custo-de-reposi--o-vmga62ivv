@@ -1,7 +1,17 @@
 import { describe, it, expect } from 'vitest'
-import { getRegionAndCountryByTournament } from './tournamentRegionMatcher'
+import { getRegionAndCountryByTournament, normalizeLeagueName } from './tournamentRegionMatcher'
 
 describe('tournamentRegionMatcher', () => {
+  it('normaliza e deduplica Brazilian Serie A -> Brasileirão Série A no cliente', () => {
+    expect(normalizeLeagueName('Brazilian Serie A')).toBe('Brasileirão Série A')
+    expect(normalizeLeagueName('brazilian serie a')).toBe('Brasileirão Série A')
+    expect(normalizeLeagueName('Serie A Brazil')).toBe('Brasileirão Série A')
+    expect(normalizeLeagueName('brasileirao')).toBe('Brasileirão Série A')
+    expect(normalizeLeagueName('Brasileirão')).toBe('Brasileirão Série A')
+    expect(normalizeLeagueName('Brazilian Serie B')).toBe('Brasileirão Série B')
+    expect(normalizeLeagueName('Premier League')).toBe('Premier League')
+    expect(normalizeLeagueName('UEFA Champions League')).toBe('Champions League')
+  })
   it('mapeia competições europeias corretamente para Futebol Europeu (evitando América do Sul)', () => {
     const res1 = getRegionAndCountryByTournament('Europa League')
     expect(res1.region).toBe('Futebol Europeu')

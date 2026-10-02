@@ -41,6 +41,7 @@ import {
   isFixtureLive,
   isFixtureFinished,
 } from '@/lib/apiFootballMatcher'
+import { normalizeLeagueName } from '@/lib/tournamentRegionMatcher'
 import {
   buscarJogosIntervalo,
   buscarEscudoTime,
@@ -535,6 +536,8 @@ export default function JogosDoDia() {
           const stShort = rec.status_short || 'NS'
           const stLong = rec.status_long || 'Agendado'
           const isLive = ['1H', 'HT', '2H', 'ET', 'BT', 'P', 'LIVE'].includes(stShort.toUpperCase())
+          const rawLeagueName = rec.campeonato || 'Futebol'
+          const normalizedLeagueName = normalizeLeagueName(rawLeagueName)
 
           return {
             fixture: {
@@ -548,7 +551,7 @@ export default function JogosDoDia() {
             },
             league: {
               id: rec.league_id || 0,
-              name: rec.campeonato || 'Futebol',
+              name: normalizedLeagueName,
               country: rec.pais || 'Brasil',
               logo: rec.campeonato_logo || '',
               round: rec.round || '',
@@ -714,11 +717,11 @@ export default function JogosDoDia() {
   // Zero polling pelo frontend! A tela lê exclusivamente a tabela local do banco.
   // Nenhuma requisição à API externa é disparada no cliente por timers ou kickoffs.
 
-  // Lista de competições 100% dinâmica derivada dos jogos do dia
+  // Lista de competições 100% dinâmica derivada dos jogos do dia (com normalização e deduplicação no frontend)
   const availableCompetitions = useMemo(() => {
     const compsMap = new Map<string, string>()
     for (const f of relevantFixtures) {
-      const leagueName = (f.league?.name || '').trim()
+      const leagueName = normalizeLeagueName(f.league?.name)
       if (leagueName) compsMap.set(leagueName, leagueName)
     }
     return Array.from(compsMap.keys()).sort((a, b) => a.localeCompare(b))
@@ -776,12 +779,15 @@ export default function JogosDoDia() {
   // Filtragem e busca baseadas no conjunto de ligas relevantes
   const filteredFixtures = useMemo(() => {
     return relevantFixtures.filter((f) => {
-      // Filtro de competição 100% dinâmico
-      if (
-        selectedCompetition !== 'todos' &&
-        (f.league?.name || '').trim() !== selectedCompetition
-      ) {
-        return false
+      // Filtro de competição 100% dinâmico com normalização
+      if (selectedCompetition !== 'todos') {
+        const normName = normalizeLeagueName(f.league?.name)
+        if (
+          normName !== selectedCompetition &&
+          (f.league?.name || '').trim() !== selectedCompetition
+        ) {
+          return false
+        }
       }
 
       // Filtro de divisão / fase

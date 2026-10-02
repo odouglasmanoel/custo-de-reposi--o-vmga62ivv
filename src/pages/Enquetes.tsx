@@ -90,6 +90,7 @@ import {
 } from '@/services/enquetes'
 import { TeamShield } from '@/components/TeamShield'
 import { resolveTeamBadgeUrl, getClubLogoUrl } from '@/lib/flags'
+import { normalizeLeagueName } from '@/lib/tournamentRegionMatcher'
 
 /**
  * Adaptador de compatibilidade que redireciona para o TeamShield único,
@@ -620,16 +621,36 @@ export default function Enquetes() {
       })
   }, [jogosEnquete])
 
-  // Filtro de jogos na lista de votação
+  // Normalização e unificação canônica de competições no cliente para abas/filtros
+  // (ex.: "Brazilian Serie A" -> "Brasileirão Série A")
+  const competicoesEnqueteNormalizadas = useMemo(() => {
+    const counts = new Map<string, number>()
+    for (const j of jogosEnquete) {
+      const nomeComp = normalizeLeagueName(j.campeonato) || 'Outros'
+      counts.set(nomeComp, (counts.get(nomeComp) || 0) + 1)
+    }
+
+    // Ordena por contagem decrescente e em caso de empate, alfabeticamente
+    return Array.from(counts.entries())
+      .map(([nome, total]) => ({ nome, total }))
+      .sort((a, b) => {
+        if (b.total !== a.total) {
+          return b.total - a.total
+        }
+        return a.nome.localeCompare(b.nome, 'pt-BR')
+      })
+  }, [jogosEnquete])
+
+  // Filtro de jogos na lista de votação com normalização de liga
   const jogosFiltradosVotacao = useMemo(() => {
     if (filtroCategoria === 'todos') return jogosEnquete
     if (filtroCategoria === 'meus-votos') {
       return jogosEnquete.filter((j) => meusVotosIds.has(j.id))
     }
-    // Filtro dinâmico por competição exata
+    // Filtro dinâmico por competição normalizada
     return jogosEnquete.filter((j) => {
-      const nomeComp = (j.campeonato || '').trim() || 'Outros'
-      return nomeComp === filtroCategoria
+      const nomeComp = normalizeLeagueName(j.campeonato) || 'Outros'
+      return nomeComp === filtroCategoria || (j.campeonato || '').trim() === filtroCategoria
     })
   }, [jogosEnquete, filtroCategoria, meusVotosIds])
 
@@ -2828,8 +2849,8 @@ export default function Enquetes() {
                   Todos ({jogosEnquete.length})
                 </Button>
 
-                {/* Botões Dinâmicos: Um para cada competição presente nos jogos */}
-                {competicoesEnquete.map((comp) => {
+                {/* Botões Dinâmicos: Um para cada competição presente nos jogos (normalizado e deduplicado) */}
+                {competicoesEnqueteNormalizadas.map((comp) => {
                   const isSelected = filtroCategoria === comp.nome
                   return (
                     <Button
