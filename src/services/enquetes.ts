@@ -738,6 +738,15 @@ export async function adicionarJogoManualNaEnquete(params: {
     }
   }
 
+  const staticCasa =
+    getClubLogoUrl(params.time_a) ||
+    (isNationalTeam(params.time_a) ? getFlagCdnUrl(params.time_a) : '')
+  const staticVisitante =
+    getClubLogoUrl(params.time_b) ||
+    (isNationalTeam(params.time_b) ? getFlagCdnUrl(params.time_b) : '')
+  if (staticCasa) logoCasa = staticCasa
+  if (staticVisitante) logoVisitante = staticVisitante
+
   let fixtureIdEncontrado = ''
   let escudosAtualizados = false
   let autoLookupSucesso = false
@@ -758,12 +767,12 @@ export async function adicionarJogoManualNaEnquete(params: {
         fixtureIdEncontrado = cleanFixtureId
         autoLookupSucesso = true
 
-        // Substitui URLs de escudo pelos logos oficiais da API
-        if (lookupRes.fixture.homeTeamLogo) {
+        // Substitui URLs de escudo pelos logos oficiais da API se não forem conflitantes
+        if (lookupRes.fixture.homeTeamLogo && !staticCasa) {
           logoCasa = lookupRes.fixture.homeTeamLogo
           escudosAtualizados = true
         }
-        if (lookupRes.fixture.awayTeamLogo) {
+        if (lookupRes.fixture.awayTeamLogo && !staticVisitante) {
           logoVisitante = lookupRes.fixture.awayTeamLogo
           escudosAtualizados = true
         }
@@ -786,11 +795,11 @@ export async function adicionarJogoManualNaEnquete(params: {
     try {
       const res = await buscarFixtureDetalhes(cleanFixtureId)
       if (res.success && res.fixture) {
-        if (res.fixture.homeTeamLogo && !isApiSportsLogo(logoCasa)) {
+        if (res.fixture.homeTeamLogo && (!isApiSportsLogo(logoCasa) || !staticCasa)) {
           logoCasa = res.fixture.homeTeamLogo
           escudosAtualizados = true
         }
-        if (res.fixture.awayTeamLogo && !isApiSportsLogo(logoVisitante)) {
+        if (res.fixture.awayTeamLogo && (!isApiSportsLogo(logoVisitante) || !staticVisitante)) {
           logoVisitante = res.fixture.awayTeamLogo
           escudosAtualizados = true
         }
@@ -813,8 +822,8 @@ export async function adicionarJogoManualNaEnquete(params: {
     data: params.data,
     horario: params.horario || '16:00',
     fixture_id: cleanFixtureId,
-    logo_casa: logoCasa,
-    logo_visitante: logoVisitante,
+    logo_casa: staticCasa || logoCasa,
+    logo_visitante: staticVisitante || logoVisitante,
     campeonato_logo: params.campeonato_logo || '',
     selecionado_admin: false,
     cadastrado_bolao: false,
@@ -1237,13 +1246,25 @@ export async function editarJogoEnquete(
   }
 
   // Se logoCasaFinal ou logoVisitanteFinal estiverem vazios, tenta resolver pela tabela canônica antes de persistir
-  if (!logoCasaFinal && params.time_a) {
+  const staticCasaEdit =
+    getClubLogoUrl(params.time_a) ||
+    (isNationalTeam(params.time_a) ? getFlagCdnUrl(params.time_a) : '')
+  const staticVisitanteEdit =
+    getClubLogoUrl(params.time_b) ||
+    (isNationalTeam(params.time_b) ? getFlagCdnUrl(params.time_b) : '')
+
+  if (staticCasaEdit) {
+    logoCasaFinal = staticCasaEdit
+  } else if (!logoCasaFinal && params.time_a) {
     const canonicalCasa = readEscudoCache(params.time_a) || getClubLogoUrl(params.time_a)
     if (canonicalCasa) {
       logoCasaFinal = canonicalCasa
     }
   }
-  if (!logoVisitanteFinal && params.time_b) {
+
+  if (staticVisitanteEdit) {
+    logoVisitanteFinal = staticVisitanteEdit
+  } else if (!logoVisitanteFinal && params.time_b) {
     const canonicalVisitante = readEscudoCache(params.time_b) || getClubLogoUrl(params.time_b)
     if (canonicalVisitante) {
       logoVisitanteFinal = canonicalVisitante
@@ -1324,8 +1345,8 @@ export async function editarJogoEnquete(
     regiao: params.regiao?.trim() || 'Brasileirão & Copas',
     data: params.data,
     horario: params.horario || '16:00',
-    logo_casa: logoCasaFinal,
-    logo_visitante: logoVisitanteFinal,
+    logo_casa: staticCasaEdit || logoCasaFinal,
+    logo_visitante: staticVisitanteEdit || logoVisitanteFinal,
   }
 
   if (fixtureIdFinal) {

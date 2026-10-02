@@ -735,6 +735,11 @@ export function resolveTeamBadgeUrl(params: {
       : null
 
   if (isSelecao) {
+    // 0. Nível 0: Dicionário estático canônico ou Bandeira FlagCDN da seleção nacional (PRIORIDADE MÁXIMA)
+    if (flagUrl) {
+      return flagUrl
+    }
+
     // 1. Nível 1: ficha_detalhes ou savedBadge oficial da seleção (ou URL válida media.api-sports.io que não seja contaminada)
     if (badgeLevel1) {
       if (isOfficialNationalTeamBadge(teamName, badgeLevel1)) {
@@ -805,6 +810,13 @@ export function resolveTeamBadgeUrl(params: {
   }
 
   // --- Caso Clube ---
+  // Prioridade 0: Dicionário Canônico Estático Oficial (RESOLUÇÃO SISTÊMICA INFALÍVEL)
+  // Mapeia diretamente Red Bull Bragantino, Mirassol, Remo, Chapecoense, Coritiba, Grêmio etc.
+  const staticClubBadge = getClubLogoUrl(teamName)
+  if (staticClubBadge) {
+    return staticClubBadge
+  }
+
   // Mapeamento estrito prioritário para Coritiba e Chapecoense (evita qualquer inversão residual ou heurística de sigla)
   const normLower = normalizeCountryName(teamName)
   const normClean = normLower.replace(/[^a-z0-9]/g, '')
