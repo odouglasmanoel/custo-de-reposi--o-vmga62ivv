@@ -22,6 +22,7 @@ import {
 import { getPalpiteMarcadoresPorTime, splitMatchScorersByTeam } from '@/lib/scorerUtils'
 import { AdminEditMarcadoresModal } from '@/components/AdminEditMarcadoresModal'
 import { FichaJogo } from '@/components/FichaJogo'
+import { TeamShield } from '@/components/TeamShield'
 import { getScoreBreakdownBadges } from '@/lib/scoreBadgeUtils'
 
 interface HistoricoPoolCache {
@@ -750,21 +751,41 @@ export default function Historico() {
                         <div key={jogo.id} className="p-4 bg-white hover:bg-slate-50/70">
                           <div className="flex flex-wrap items-center justify-between gap-2">
                             <div className="flex flex-wrap items-center gap-2">
-                              <span
-                                className="font-bold text-sm text-[#0F172A] line-clamp-2 leading-tight"
-                                title={jogo.time_a}
-                              >
-                                {jogo.time_a}
-                              </span>
+                              <div className="flex items-center gap-1.5 min-w-0">
+                                <TeamShield
+                                  teamName={jogo.time_a}
+                                  escudo={(jogo as any).url_escudo_mandante}
+                                  fixtureId={jogo.api_fixture_id || (jogo as any).fixture_id}
+                                  fichaDetalhes={(jogo as any).ficha_detalhes}
+                                  isSide="home"
+                                  sizeClass="h-5 w-5 sm:h-6 sm:w-6 min-w-[20px] min-h-[20px]"
+                                />
+                                <span
+                                  className="font-bold text-sm text-[#0F172A] line-clamp-2 leading-tight"
+                                  title={jogo.time_a}
+                                >
+                                  {jogo.time_a}
+                                </span>
+                              </div>
                               <span className="rounded bg-slate-900 px-2 py-0.5 text-xs font-black text-white shrink-0">
                                 {hasPlacar ? `${jogo.placar_a} x ${jogo.placar_b}` : 'A definir'}
                               </span>
-                              <span
-                                className="font-bold text-sm text-[#0F172A] line-clamp-2 leading-tight"
-                                title={jogo.time_b}
-                              >
-                                {jogo.time_b}
-                              </span>
+                              <div className="flex items-center gap-1.5 min-w-0">
+                                <TeamShield
+                                  teamName={jogo.time_b}
+                                  escudo={(jogo as any).url_escudo_visitante}
+                                  fixtureId={jogo.api_fixture_id || (jogo as any).fixture_id}
+                                  fichaDetalhes={(jogo as any).ficha_detalhes}
+                                  isSide="away"
+                                  sizeClass="h-5 w-5 sm:h-6 sm:w-6 min-w-[20px] min-h-[20px]"
+                                />
+                                <span
+                                  className="font-bold text-sm text-[#0F172A] line-clamp-2 leading-tight"
+                                  title={jogo.time_b}
+                                >
+                                  {jogo.time_b}
+                                </span>
+                              </div>
                               {isAoVivo ? (
                                 <Badge className="border border-emerald-300 bg-emerald-500 text-white font-bold text-[10px] px-2 py-0.5 shadow-xs animate-pulse">
                                   Ao Vivo

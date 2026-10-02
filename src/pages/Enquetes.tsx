@@ -88,94 +88,40 @@ import {
   readEnqueteDetalhesCache,
   readEscudoCache,
 } from '@/services/enquetes'
-import { getFlagCdnUrl, resolveTeamBadgeUrl } from '@/lib/flags'
+import { TeamShield } from '@/components/TeamShield'
+import { resolveTeamBadgeUrl } from '@/lib/flags'
 
 /**
- * Componente robusto de exibição de escudo para Enquetes com fallback de 4 níveis:
- * 1. URL do banco / ficha_detalhes oficial
- * 2. Cache local (readEscudoCache)
- * 3. FlagCDN se seleção
- * 4. Monograma / sigla
- * Mantém dimensões mínimas no mobile e desktop sem colapso.
+ * Adaptador de compatibilidade que redireciona para o TeamShield único,
+ * preservando todas as prioridades oficiais (ficha_detalhes > tabela canônica > URL cadastrada)
+ * e repassando fixtureId e isSide quando disponíveis.
  */
 function EnqueteTeamBadge({
   nomeTime,
   savedLogo,
+  fixtureId,
+  fichaDetalhes,
+  isSide,
   sizeClass = 'h-7 w-7 sm:h-8 sm:w-8 min-w-[28px] min-h-[28px]',
   textClass = 'text-[10px] font-black uppercase text-slate-700',
 }: {
   nomeTime: string
   savedLogo?: string | null
+  fixtureId?: string | number | null
+  fichaDetalhes?: any
+  isSide?: 'home' | 'away'
   sizeClass?: string
   textClass?: string
 }) {
-  const [hasError, setHasError] = useState(false)
-  const [triedFlagCdn, setTriedFlagCdn] = useState(false)
-
-  // Resolução inicial
-  const resolvedSrc = useMemo(() => {
-    // 1. URL do banco / resolução oficial
-    const r = resolveTeamBadgeUrl({ teamName: nomeTime, savedBadge: savedLogo || undefined })
-    if (r) return r
-    // 2. Cache local
-    const c = readEscudoCache(nomeTime)
-    if (c) return c
-    // 3. FlagCDN para seleções
-    const flag = getFlagCdnUrl(nomeTime, { cacheBust: true })
-    if (flag) return flag
-    return undefined
-  }, [nomeTime, savedLogo])
-
-  const [currentSrc, setCurrentSrc] = useState<string | undefined>(resolvedSrc)
-
-  useEffect(() => {
-    setHasError(false)
-    setTriedFlagCdn(false)
-    setCurrentSrc(resolvedSrc)
-  }, [resolvedSrc])
-
-  const handleError = () => {
-    // Nível 2 de fallback se a primeira falhou: tentar cache
-    const cached = readEscudoCache(nomeTime)
-    if (cached && cached !== currentSrc) {
-      setCurrentSrc(cached)
-      return
-    }
-
-    // Nível 3: FlagCDN
-    if (!triedFlagCdn) {
-      setTriedFlagCdn(true)
-      const flag = getFlagCdnUrl(nomeTime, { cacheBust: true })
-      if (flag && flag !== currentSrc) {
-        setCurrentSrc(flag)
-        return
-      }
-    }
-
-    // Nível 4: Fallback definitivo para monograma
-    setHasError(true)
-  }
-
-  if (!currentSrc || hasError) {
-    return (
-      <div
-        className={`${sizeClass} rounded-full bg-slate-100 border border-slate-200 flex items-center justify-center shrink-0 ${textClass}`}
-        title={nomeTime}
-      >
-        <span>{nomeTime ? nomeTime.slice(0, 2).toUpperCase() : '?'}</span>
-      </div>
-    )
-  }
-
   return (
-    <img
-      src={currentSrc}
-      alt={nomeTime}
-      className={`${sizeClass} shrink-0 object-contain`}
-      loading="lazy"
-      decoding="async"
-      crossOrigin={currentSrc.includes('flagcdn.com') ? 'anonymous' : undefined}
-      onError={handleError}
+    <TeamShield
+      teamName={nomeTime}
+      escudo={savedLogo}
+      fixtureId={fixtureId}
+      fichaDetalhes={fichaDetalhes}
+      isSide={isSide}
+      sizeClass={sizeClass}
+      textClass={textClass}
     />
   )
 }
@@ -2354,6 +2300,8 @@ export default function Enquetes() {
                   <EnqueteTeamBadge
                     nomeTime={jogo.time_a}
                     savedLogo={jogo.logo_casa}
+                    fixtureId={jogo.fixture_id}
+                    isSide="home"
                     sizeClass="h-7 w-7 sm:h-8 sm:w-8 min-w-[28px] min-h-[28px] shrink-0 object-contain"
                   />
                   <span
@@ -2378,6 +2326,8 @@ export default function Enquetes() {
                   <EnqueteTeamBadge
                     nomeTime={jogo.time_b}
                     savedLogo={jogo.logo_visitante}
+                    fixtureId={jogo.fixture_id}
+                    isSide="away"
                     sizeClass="h-7 w-7 sm:h-8 sm:w-8 min-w-[28px] min-h-[28px] shrink-0 object-contain"
                   />
                 </div>
@@ -3108,6 +3058,8 @@ export default function Enquetes() {
                                     <EnqueteTeamBadge
                                       nomeTime={jogo.time_a}
                                       savedLogo={jogo.logo_casa}
+                                      fixtureId={jogo.fixture_id}
+                                      isSide="home"
                                       sizeClass="h-5 w-5 min-w-[20px] min-h-[20px] shrink-0 object-contain"
                                     />
                                     <span
@@ -3127,6 +3079,8 @@ export default function Enquetes() {
                                     <EnqueteTeamBadge
                                       nomeTime={jogo.time_b}
                                       savedLogo={jogo.logo_visitante}
+                                      fixtureId={jogo.fixture_id}
+                                      isSide="away"
                                       sizeClass="h-5 w-5 min-w-[20px] min-h-[20px] shrink-0 object-contain"
                                     />
                                     <span
@@ -3808,6 +3762,8 @@ export default function Enquetes() {
                           <EnqueteTeamBadge
                             nomeTime={j.time_a}
                             savedLogo={j.logo_casa}
+                            fixtureId={j.fixture_id}
+                            isSide="home"
                             sizeClass="h-5 w-5 min-w-[20px] min-h-[20px] shrink-0 object-contain"
                           />
                           <span
@@ -3821,6 +3777,8 @@ export default function Enquetes() {
                           <EnqueteTeamBadge
                             nomeTime={j.time_b}
                             savedLogo={j.logo_visitante}
+                            fixtureId={j.fixture_id}
+                            isSide="away"
                             sizeClass="h-5 w-5 min-w-[20px] min-h-[20px] shrink-0 object-contain"
                           />
                           <span
@@ -3971,6 +3929,8 @@ export default function Enquetes() {
                   <EnqueteTeamBadge
                     nomeTime={j.time_a}
                     savedLogo={j.logo_casa}
+                    fixtureId={j.fixture_id}
+                    isSide="home"
                     sizeClass="h-4 w-4 min-w-[16px] min-h-[16px] shrink-0 object-contain"
                   />
                   <span
@@ -3983,6 +3943,8 @@ export default function Enquetes() {
                   <EnqueteTeamBadge
                     nomeTime={j.time_b}
                     savedLogo={j.logo_visitante}
+                    fixtureId={j.fixture_id}
+                    isSide="away"
                     sizeClass="h-4 w-4 min-w-[16px] min-h-[16px] shrink-0 object-contain"
                   />
                   <span

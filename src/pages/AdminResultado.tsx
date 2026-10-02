@@ -23,6 +23,7 @@ import { useToast } from '@/hooks/use-toast'
 import { formatDataBR, formatHoraBR } from '@/lib/dateUtils'
 import { AdminEditMarcadoresModal } from '@/components/AdminEditMarcadoresModal'
 import { formatPalpiteMarcadoresSummary, getPalpiteMarcadoresPorTime } from '@/lib/scorerUtils'
+import { TeamShield } from '@/components/TeamShield'
 
 export default function AdminResultado() {
   const { id } = useParams<{ id: string }>()
@@ -470,12 +471,35 @@ export default function AdminResultado() {
                 <Shield className="h-5 w-5" />
               </span>
               <div className="flex flex-wrap items-center gap-2">
-                <h1
-                  className="text-xl font-bold tracking-tight text-[#0F172A] sm:text-2xl break-words leading-tight line-clamp-3 sm:line-clamp-none"
-                  title={`${jogo.time_a} x ${jogo.time_b}`}
-                >
-                  {jogo.time_a} x {jogo.time_b}
-                </h1>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <div className="flex items-center gap-1.5">
+                    <TeamShield
+                      teamName={jogo.time_a}
+                      escudo={(jogo as any).url_escudo_mandante}
+                      fixtureId={fixtureId || jogo.fixture_id || (jogo as any).api_fixture_id}
+                      fichaDetalhes={(jogo as any).ficha_detalhes}
+                      isSide="home"
+                      sizeClass="h-6 w-6 sm:h-7 sm:w-7 min-w-[24px] min-h-[24px]"
+                    />
+                    <span className="text-xl font-bold tracking-tight text-[#0F172A] sm:text-2xl break-words leading-tight">
+                      {jogo.time_a}
+                    </span>
+                  </div>
+                  <span className="text-slate-400 font-black text-sm">x</span>
+                  <div className="flex items-center gap-1.5">
+                    <TeamShield
+                      teamName={jogo.time_b}
+                      escudo={(jogo as any).url_escudo_visitante}
+                      fixtureId={fixtureId || jogo.fixture_id || (jogo as any).api_fixture_id}
+                      fichaDetalhes={(jogo as any).ficha_detalhes}
+                      isSide="away"
+                      sizeClass="h-6 w-6 sm:h-7 sm:w-7 min-w-[24px] min-h-[24px]"
+                    />
+                    <span className="text-xl font-bold tracking-tight text-[#0F172A] sm:text-2xl break-words leading-tight">
+                      {jogo.time_b}
+                    </span>
+                  </div>
+                </div>
                 {jogo.competicao && (
                   <Badge
                     variant="secondary"
@@ -576,29 +600,59 @@ export default function AdminResultado() {
         </div>
 
         <div className="mt-6 flex flex-wrap items-center justify-center gap-4 sm:gap-8">
-          <div className="w-36 text-center">
-            <Label className="text-xs font-bold text-slate-700">{jogo.time_a}</Label>
+          <div className="w-40 flex flex-col items-center text-center">
+            <div className="flex items-center gap-1.5 mb-1">
+              <TeamShield
+                teamName={jogo.time_a}
+                escudo={(jogo as any).url_escudo_mandante}
+                fixtureId={fixtureId || jogo.fixture_id || (jogo as any).api_fixture_id}
+                fichaDetalhes={(jogo as any).ficha_detalhes}
+                isSide="home"
+                sizeClass="h-5 w-5 min-w-[20px] min-h-[20px]"
+              />
+              <Label
+                className="text-xs font-bold text-slate-700 truncate max-w-[120px]"
+                title={jogo.time_a}
+              >
+                {jogo.time_a}
+              </Label>
+            </div>
             <Input
               type="number"
               min="0"
               value={placarA}
               onChange={(e) => handlePlacarAChange(e.target.value)}
               placeholder="0"
-              className="mt-2 h-16 text-center text-3xl font-black text-[#0F2A43] focus-visible:border-[#10B981] focus-visible:ring-[#10B981]"
+              className="mt-1 h-16 w-full text-center text-3xl font-black text-[#0F2A43] focus-visible:border-[#10B981] focus-visible:ring-[#10B981]"
             />
           </div>
 
           <div className="pt-6 text-2xl font-black text-slate-400">X</div>
 
-          <div className="w-36 text-center">
-            <Label className="text-xs font-bold text-slate-700">{jogo.time_b}</Label>
+          <div className="w-40 flex flex-col items-center text-center">
+            <div className="flex items-center gap-1.5 mb-1">
+              <TeamShield
+                teamName={jogo.time_b}
+                escudo={(jogo as any).url_escudo_visitante}
+                fixtureId={fixtureId || jogo.fixture_id || (jogo as any).api_fixture_id}
+                fichaDetalhes={(jogo as any).ficha_detalhes}
+                isSide="away"
+                sizeClass="h-5 w-5 min-w-[20px] min-h-[20px]"
+              />
+              <Label
+                className="text-xs font-bold text-slate-700 truncate max-w-[120px]"
+                title={jogo.time_b}
+              >
+                {jogo.time_b}
+              </Label>
+            </div>
             <Input
               type="number"
               min="0"
               value={placarB}
               onChange={(e) => handlePlacarBChange(e.target.value)}
               placeholder="0"
-              className="mt-2 h-16 text-center text-3xl font-black text-[#0F2A43] focus-visible:border-[#10B981] focus-visible:ring-[#10B981]"
+              className="mt-1 h-16 w-full text-center text-3xl font-black text-[#0F2A43] focus-visible:border-[#10B981] focus-visible:ring-[#10B981]"
             />
           </div>
         </div>

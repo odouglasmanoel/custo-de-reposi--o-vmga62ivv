@@ -49,6 +49,7 @@ import { AdminManageParticipantesModal } from '@/components/AdminManageParticipa
 import { useToast } from '@/hooks/use-toast'
 import { getErrorMessage } from '@/lib/pocketbase/errors'
 import { cn } from '@/lib/utils'
+import { TeamShield } from '@/components/TeamShield'
 
 export default function AdminJogos() {
   const navigate = useNavigate()
@@ -1218,31 +1219,62 @@ export default function AdminJogos() {
                   return (
                     <tr key={jogo.id} className="hover:bg-slate-50/80">
                       <td className="px-3 py-3">
-                        <div className="flex flex-wrap items-center gap-1.5">
-                          <span
-                            className="font-bold text-[#0F172A] break-words leading-tight"
-                            title={`${jogo.time_a} x ${jogo.time_b}`}
-                          >
-                            {jogo.time_a} x {jogo.time_b}
-                          </span>
-                          {jogo.competicao && (
-                            <span className="rounded bg-indigo-50 border border-indigo-200 px-1.5 py-0.5 text-[10px] font-semibold text-indigo-700">
-                              {jogo.competicao}
-                            </span>
-                          )}
-                          {jogo.fixture_id && (
-                            <span
-                              className="rounded bg-emerald-50 border border-emerald-200 px-1.5 py-0.5 text-[10px] font-mono font-semibold text-emerald-800"
-                              title={`ID direto API-Football: ${jogo.fixture_id}`}
-                            >
-                              ID: {jogo.fixture_id}
-                            </span>
-                          )}
-                          {jogo.tem_penaltis && (
-                            <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-800">
-                              Pênaltis possíveis
-                            </span>
-                          )}
+                        <div className="flex flex-col gap-1.5">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <div className="flex items-center gap-1.5">
+                              <TeamShield
+                                teamName={jogo.time_a}
+                                escudo={(jogo as any).url_escudo_mandante}
+                                fixtureId={jogo.fixture_id || (jogo as any).api_fixture_id}
+                                fichaDetalhes={(jogo as any).ficha_detalhes}
+                                isSide="home"
+                                sizeClass="h-5 w-5 min-w-[20px] min-h-[20px]"
+                              />
+                              <span
+                                className="font-bold text-[#0F172A] break-words leading-tight"
+                                title={jogo.time_a}
+                              >
+                                {jogo.time_a}
+                              </span>
+                            </div>
+                            <span className="text-slate-400 font-black text-[11px]">x</span>
+                            <div className="flex items-center gap-1.5">
+                              <TeamShield
+                                teamName={jogo.time_b}
+                                escudo={(jogo as any).url_escudo_visitante}
+                                fixtureId={jogo.fixture_id || (jogo as any).api_fixture_id}
+                                fichaDetalhes={(jogo as any).ficha_detalhes}
+                                isSide="away"
+                                sizeClass="h-5 w-5 min-w-[20px] min-h-[20px]"
+                              />
+                              <span
+                                className="font-bold text-[#0F172A] break-words leading-tight"
+                                title={jogo.time_b}
+                              >
+                                {jogo.time_b}
+                              </span>
+                            </div>
+                          </div>
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            {jogo.competicao && (
+                              <span className="rounded bg-indigo-50 border border-indigo-200 px-1.5 py-0.5 text-[10px] font-semibold text-indigo-700">
+                                {jogo.competicao}
+                              </span>
+                            )}
+                            {jogo.fixture_id && (
+                              <span
+                                className="rounded bg-emerald-50 border border-emerald-200 px-1.5 py-0.5 text-[10px] font-mono font-semibold text-emerald-800"
+                                title={`ID direto API-Football: ${jogo.fixture_id}`}
+                              >
+                                ID: {jogo.fixture_id}
+                              </span>
+                            )}
+                            {jogo.tem_penaltis && (
+                              <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-800">
+                                Pênaltis possíveis
+                              </span>
+                            )}
+                          </div>
                         </div>
                       </td>
                       <td className="px-3 py-3 text-slate-600 whitespace-nowrap">
@@ -1388,7 +1420,32 @@ export default function AdminJogos() {
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2 text-base font-bold text-[#0F172A]">
               <Pencil className="h-4 w-4 text-amber-600" />
-              Editar Jogo Cadastrado
+              <span>Editar Jogo Cadastrado</span>
+              {editingJogo && (
+                <div className="ml-auto flex items-center gap-1.5">
+                  <TeamShield
+                    teamName={editTimeA || editingJogo.time_a}
+                    escudo={(editingJogo as any).url_escudo_mandante}
+                    fixtureId={
+                      editFixtureId || editingJogo.fixture_id || (editingJogo as any).api_fixture_id
+                    }
+                    fichaDetalhes={(editingJogo as any).ficha_detalhes}
+                    isSide="home"
+                    sizeClass="h-5 w-5 min-w-[20px] min-h-[20px]"
+                  />
+                  <span className="text-slate-400 text-xs font-black">x</span>
+                  <TeamShield
+                    teamName={editTimeB || editingJogo.time_b}
+                    escudo={(editingJogo as any).url_escudo_visitante}
+                    fixtureId={
+                      editFixtureId || editingJogo.fixture_id || (editingJogo as any).api_fixture_id
+                    }
+                    fichaDetalhes={(editingJogo as any).ficha_detalhes}
+                    isSide="away"
+                    sizeClass="h-5 w-5 min-w-[20px] min-h-[20px]"
+                  />
+                </div>
+              )}
             </DialogTitle>
             <DialogDescription className="text-xs text-[#64748B]">
               Atualize os dados do confronto. Nomes oficiais em inglês (ex.:{' '}
@@ -1552,7 +1609,7 @@ export default function AdminJogos() {
               Tem certeza que deseja remover o confronto{' '}
               <strong className="text-slate-800">
                 {gameToDelete?.time_a} x {gameToDelete?.time_b}
-              </strong>
+              </strong>{' '}
               ? Esta ação não pode ser desfeita.
             </DialogDescription>
           </DialogHeader>
