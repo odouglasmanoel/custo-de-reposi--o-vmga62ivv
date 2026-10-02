@@ -72,9 +72,31 @@ routerAdd('GET', '/backend/v1/eventos-jogo', (e) => {
               is_finalizado: isFinalizado,
               fixture_id: fixtureIdParam,
               events: parsedFicha.events,
-              teams: parsedFicha.teams || {
-                home: { name: matchingJogo.getString('time_a') },
-                away: { name: matchingJogo.getString('time_b') },
+              teams: {
+                home: {
+                  name:
+                    (parsedFicha.teams && parsedFicha.teams.home && parsedFicha.teams.home.name) ||
+                    matchingJogo.getString('time_a'),
+                  id:
+                    (parsedFicha.teams && parsedFicha.teams.home && parsedFicha.teams.home.id) ||
+                    (idMandante ? parseInt(idMandante, 10) : null),
+                  logo:
+                    (parsedFicha.teams && parsedFicha.teams.home && parsedFicha.teams.home.logo) ||
+                    matchingJogo.getString('url_escudo_mandante') ||
+                    null,
+                },
+                away: {
+                  name:
+                    (parsedFicha.teams && parsedFicha.teams.away && parsedFicha.teams.away.name) ||
+                    matchingJogo.getString('time_b'),
+                  id:
+                    (parsedFicha.teams && parsedFicha.teams.away && parsedFicha.teams.away.id) ||
+                    (idVisitante ? parseInt(idVisitante, 10) : null),
+                  logo:
+                    (parsedFicha.teams && parsedFicha.teams.away && parsedFicha.teams.away.logo) ||
+                    matchingJogo.getString('url_escudo_visitante') ||
+                    null,
+                },
               },
               goals: parsedFicha.goals || {
                 home: matchingJogo.getInt('placar_a'),
@@ -209,8 +231,16 @@ routerAdd('GET', '/backend/v1/eventos-jogo', (e) => {
         events: fallbackEvents,
         teams: matchingJogo
           ? {
-              home: { name: matchingJogo.getString('time_a') },
-              away: { name: matchingJogo.getString('time_b') },
+              home: {
+                name: matchingJogo.getString('time_a'),
+                id: idMandante ? parseInt(idMandante, 10) : null,
+                logo: matchingJogo.getString('url_escudo_mandante') || null,
+              },
+              away: {
+                name: matchingJogo.getString('time_b'),
+                id: idVisitante ? parseInt(idVisitante, 10) : null,
+                logo: matchingJogo.getString('url_escudo_visitante') || null,
+              },
             }
           : {},
         goals: matchingJogo
@@ -506,18 +536,144 @@ routerAdd('GET', '/backend/v1/eventos-jogo', (e) => {
     const timeANorm = stripAccents(timeANome)
     const timeBNorm = stripAccents(timeBNome)
 
-    function extractTeamIdFromUrl(url) {
-      if (!url || typeof url !== 'string') return null
-      const m = url.match(/teams\/(\d+)(?:\.png|\.svg|\.jpg|\b)/i)
-      return m ? String(m[1]) : null
+    // Dicionário de IDs oficiais para seleções e clubes comuns
+    const OFFICIAL_TEAM_IDS_MAP = {
+      belgica: 1,
+      belgium: 1,
+      franca: 2,
+      france: 2,
+      croacia: 3,
+      croatia: 3,
+      brasil: 6,
+      brazil: 6,
+      uruguai: 7,
+      uruguay: 7,
+      colombia: 8,
+      espanha: 9,
+      spain: 9,
+      inglaterra: 10,
+      england: 10,
+      chile: 11,
+      peru: 12,
+      dinamarca: 21,
+      denmark: 21,
+      alemanha: 25,
+      germany: 25,
+      argentina: 26,
+      portugal: 27,
+      turquia: 777,
+      turkey: 777,
+      turkiye: 777,
+      italia: 768,
+      italy: 768,
+      paisdegales: 767,
+      gales: 767,
+      wales: 767,
+      escocia: 1108,
+      scotland: 1108,
+      irlandadonorte: 771,
+      northernireland: 771,
+      noruega: 1090,
+      norway: 1090,
+      georgia: 1104,
+      holanda: 1118,
+      paisesbaixos: 1118,
+      netherlands: 1118,
+      lituania: 1097,
+      lithuania: 1097,
+      azerbaijao: 1096,
+      azerbaijan: 1096,
+      suica: 15,
+      switzerland: 15,
+      polonia: 24,
+      poland: 24,
+      servia: 14,
+      serbia: 14,
+      suecia: 29,
+      sweden: 29,
+      austria: 30,
+      hungria: 769,
+      hungary: 769,
+      republicatcheca: 770,
+      tchequia: 770,
+      czechrepublic: 770,
+      czechia: 770,
+      romenia: 772,
+      romania: 772,
+      eslovaquia: 773,
+      slovakia: 773,
+      eslovenia: 774,
+      slovenia: 774,
+      albania: 775,
+      grecia: 776,
+      greece: 776,
+      finlandia: 778,
+      finland: 778,
+      irlanda: 779,
+      ireland: 779,
+      islandia: 780,
+      iceland: 780,
+      ucrania: 781,
+      ukraine: 781,
+      estadosunidos: 2384,
+      usa: 2384,
+      mexico: 16,
+      canada: 2382,
+      equador: 2381,
+      ecuador: 2381,
+      paraguai: 2383,
+      paraguay: 2383,
+      venezuela: 2380,
+      bolivia: 2379,
+      marrocos: 31,
+      morocco: 31,
+      senegal: 13,
+      gana: 1504,
+      ghana: 1504,
+      nigeria: 19,
+      camaroes: 1530,
+      cameroon: 1530,
+      costadomarfim: 1501,
+      ivorycoast: 1501,
+      egito: 32,
+      egypt: 32,
+      argelia: 28,
+      algeria: 28,
+      tunisia: 23,
+      africadosul: 1507,
+      southafrica: 1507,
+      japao: 17,
+      japan: 17,
+      coreiadosul: 20,
+      southkorea: 20,
+      australia: 18,
+      arabiasaudita: 22,
+      saudiarabia: 22,
+      catar: 1569,
+      qatar: 1569,
+      ira: 2385,
+      iran: 2385,
+    }
+
+    function resolveOfficialIdBackend(nome, urlEscudo) {
+      if (urlEscudo && typeof urlEscudo === 'string') {
+        const m = urlEscudo.match(/teams\/(\d+)(?:\.png|\.svg|\.jpg|\b)/i)
+        if (m) return String(m[1])
+      }
+      if (!nome) return null
+      const clean = stripAccents(String(nome).toLowerCase()).replace(/[^a-z0-9]/g, '')
+      if (OFFICIAL_TEAM_IDS_MAP[clean]) {
+        return String(OFFICIAL_TEAM_IDS_MAP[clean])
+      }
+      return null
     }
 
     const idMandante = matchingJogo
-      ? extractTeamIdFromUrl(matchingJogo.getString('url_escudo_mandante'))
-      : null
+      ? resolveOfficialIdBackend(timeANome, matchingJogo.getString('url_escudo_mandante'))
+      : resolveOfficialIdBackend(timeANome, null)
     const idVisitante = matchingJogo
-      ? extractTeamIdFromUrl(matchingJogo.getString('url_escudo_visitante'))
-      : null
+      ? resolveOfficialIdBackend(timeBNome, matchingJogo.getString('url_escudo_visitante'))
+      : resolveOfficialIdBackend(timeBNome, null)
 
     for (let i = 0; i < rawEvents.length; i++) {
       const ev = rawEvents[i]
@@ -618,8 +774,16 @@ routerAdd('GET', '/backend/v1/eventos-jogo', (e) => {
       events: normalizedEvents,
       teams: matchingJogo
         ? {
-            home: { name: matchingJogo.getString('time_a') },
-            away: { name: matchingJogo.getString('time_b') },
+            home: {
+              name: matchingJogo.getString('time_a'),
+              id: idMandante ? parseInt(idMandante, 10) : null,
+              logo: matchingJogo.getString('url_escudo_mandante') || null,
+            },
+            away: {
+              name: matchingJogo.getString('time_b'),
+              id: idVisitante ? parseInt(idVisitante, 10) : null,
+              logo: matchingJogo.getString('url_escudo_visitante') || null,
+            },
           }
         : {},
       goals: matchingJogo
@@ -656,9 +820,34 @@ routerAdd('GET', '/backend/v1/eventos-jogo', (e) => {
         // Preservação de escalações existentes contra sobrescrita com listas em branco
         const mergedLineups = existingFicha.lineups || matchingJogo.get('escalacoes') || null
 
+        const existingTeamsObj = existingFicha.teams || {}
+        const mergedTeams = {
+          home: Object.assign({}, existingTeamsObj.home || {}, {
+            name: matchingJogo.getString('time_a'),
+            id: idMandante
+              ? parseInt(idMandante, 10)
+              : (existingTeamsObj.home && existingTeamsObj.home.id) || null,
+            logo:
+              matchingJogo.getString('url_escudo_mandante') ||
+              (existingTeamsObj.home && existingTeamsObj.home.logo) ||
+              null,
+          }),
+          away: Object.assign({}, existingTeamsObj.away || {}, {
+            name: matchingJogo.getString('time_b'),
+            id: idVisitante
+              ? parseInt(idVisitante, 10)
+              : (existingTeamsObj.away && existingTeamsObj.away.id) || null,
+            logo:
+              matchingJogo.getString('url_escudo_visitante') ||
+              (existingTeamsObj.away && existingTeamsObj.away.logo) ||
+              null,
+          }),
+        }
+
         const mergedFicha = Object.assign({}, existingFicha, {
           events: normalizedEvents,
           lineups: mergedLineups,
+          teams: mergedTeams,
           updatedAt: new Date().toISOString(),
         })
 

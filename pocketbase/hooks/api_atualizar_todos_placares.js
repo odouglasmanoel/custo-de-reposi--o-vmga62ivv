@@ -530,11 +530,139 @@ routerAdd(
         return m ? String(m[1]) : null
       }
 
+      const BACKEND_OFFICIAL_IDS = {
+        belgica: 1,
+        belgium: 1,
+        franca: 2,
+        france: 2,
+        croacia: 3,
+        croatia: 3,
+        brasil: 6,
+        brazil: 6,
+        uruguai: 7,
+        uruguay: 7,
+        colombia: 8,
+        espanha: 9,
+        spain: 9,
+        inglaterra: 10,
+        england: 10,
+        chile: 11,
+        peru: 12,
+        dinamarca: 21,
+        denmark: 21,
+        alemanha: 25,
+        germany: 25,
+        argentina: 26,
+        portugal: 27,
+        turquia: 777,
+        turkey: 777,
+        turkiye: 777,
+        italia: 768,
+        italy: 768,
+        paisdegales: 767,
+        gales: 767,
+        wales: 767,
+        escocia: 1108,
+        scotland: 1108,
+        irlandadonorte: 771,
+        northernireland: 771,
+        noruega: 1090,
+        norway: 1090,
+        georgia: 1104,
+        holanda: 1118,
+        paisesbaixos: 1118,
+        netherlands: 1118,
+        lituania: 1097,
+        lithuania: 1097,
+        azerbaijao: 1096,
+        azerbaijan: 1096,
+        suica: 15,
+        switzerland: 15,
+        polonia: 24,
+        poland: 24,
+        servia: 14,
+        serbia: 14,
+        suecia: 29,
+        sweden: 29,
+        austria: 30,
+        hungria: 769,
+        hungary: 769,
+        republicatcheca: 770,
+        tchequia: 770,
+        czechrepublic: 770,
+        czechia: 770,
+        romenia: 772,
+        romania: 772,
+        eslovaquia: 773,
+        slovakia: 773,
+        eslovenia: 774,
+        slovenia: 774,
+        albania: 775,
+        grecia: 776,
+        greece: 776,
+        finlandia: 778,
+        finland: 778,
+        irlanda: 779,
+        ireland: 779,
+        islandia: 780,
+        iceland: 780,
+        ucrania: 781,
+        ukraine: 781,
+        estadosunidos: 2384,
+        usa: 2384,
+        mexico: 16,
+        canada: 2382,
+        equador: 2381,
+        ecuador: 2381,
+        paraguai: 2383,
+        paraguay: 2383,
+        venezuela: 2380,
+        bolivia: 2379,
+        marrocos: 31,
+        morocco: 31,
+        senegal: 13,
+        gana: 1504,
+        ghana: 1504,
+        nigeria: 19,
+        camaroes: 1530,
+        cameroon: 1530,
+        costadomarfim: 1501,
+        ivorycoast: 1501,
+        egito: 32,
+        egypt: 32,
+        argelia: 28,
+        algeria: 28,
+        tunisia: 23,
+        africadosul: 1507,
+        southafrica: 1507,
+        japao: 17,
+        japan: 17,
+        coreiadosul: 20,
+        southkorea: 20,
+        australia: 18,
+        arabiasaudita: 22,
+        saudiarabia: 22,
+        catar: 1569,
+        qatar: 1569,
+        ira: 2385,
+        iran: 2385,
+      }
+
+      function resolveIdFromCleanName(nm) {
+        if (!nm) return null
+        const clean = nm.toLowerCase().replace(/[^a-z0-9]/g, '')
+        if (BACKEND_OFFICIAL_IDS[clean]) return String(BACKEND_OFFICIAL_IDS[clean])
+        return null
+      }
+
       // Extração de IDs dos times: preferência do objeto API, com fallback dos escudos/banco
       let homeTeamId = fixData.teams?.home?.id ? String(fixData.teams.home.id) : null
       let awayTeamId = fixData.teams?.away?.id ? String(fixData.teams.away.id) : null
       let homeTeamName = (fixData.teams?.home?.name || '').toString().toLowerCase().trim()
       let awayTeamName = (fixData.teams?.away?.name || '').toString().toLowerCase().trim()
+
+      if (!homeTeamId) homeTeamId = resolveIdFromCleanName(homeTeamName)
+      if (!awayTeamId) awayTeamId = resolveIdFromCleanName(awayTeamName)
 
       if ((!homeTeamId || !awayTeamId) && matchingRecords.length > 0) {
         const primeJ = matchingRecords[0]
@@ -544,6 +672,8 @@ routerAdd(
         if (!awayTeamId && idFromEscudoB) awayTeamId = idFromEscudoB
         if (!homeTeamName) homeTeamName = (primeJ.getString('time_a') || '').toLowerCase().trim()
         if (!awayTeamName) awayTeamName = (primeJ.getString('time_b') || '').toLowerCase().trim()
+        if (!homeTeamId) homeTeamId = resolveIdFromCleanName(homeTeamName)
+        if (!awayTeamId) awayTeamId = resolveIdFromCleanName(awayTeamName)
       }
 
       const golsA = []
@@ -779,13 +909,35 @@ routerAdd(
         }
       }
 
+      // Preenchimento de teams com IDs garantidos (home.id e away.id)
+      const enhancedTeams = {
+        home: Object.assign({}, fixData.teams?.home || {}, {
+          id: homeTeamId ? parseInt(homeTeamId, 10) : fixData.teams?.home?.id || null,
+          name:
+            fixData.teams?.home?.name ||
+            (matchingRecords[0] ? matchingRecords[0].getString('time_a') : ''),
+          logo:
+            fixData.teams?.home?.logo ||
+            (matchingRecords[0] ? matchingRecords[0].getString('url_escudo_mandante') : ''),
+        }),
+        away: Object.assign({}, fixData.teams?.away || {}, {
+          id: awayTeamId ? parseInt(awayTeamId, 10) : fixData.teams?.away?.id || null,
+          name:
+            fixData.teams?.away?.name ||
+            (matchingRecords[0] ? matchingRecords[0].getString('time_b') : ''),
+          logo:
+            fixData.teams?.away?.logo ||
+            (matchingRecords[0] ? matchingRecords[0].getString('url_escudo_visitante') : ''),
+        }),
+      }
+
       // Snapshot unificado da Ficha Técnica para o campo ficha_detalhes
       const fichaDetalhesPayload = {
         success: true,
         cached: false,
         source: 'api_football_batch',
         fixture_id: fid,
-        teams: fixData.teams || {},
+        teams: enhancedTeams,
         goals: fixData.goals || {},
         fixture_status: fixData.fixture?.status || {},
         events: normalizedEvents,

@@ -743,6 +743,314 @@ export const OFFICIAL_NATIONAL_TEAM_IDS: Record<string, number> = {
   lithuania: 1097,
   azerbaijao: 1096,
   azerbaijan: 1096,
+  suica: 15,
+  switzerland: 15,
+  polonia: 24,
+  poland: 24,
+  servia: 14,
+  serbia: 14,
+  suecia: 29,
+  sweden: 29,
+  austria: 30,
+  hungria: 769,
+  hungary: 769,
+  republicatcheca: 770,
+  tchequia: 770,
+  czechrepublic: 770,
+  czechia: 770,
+  romenia: 772,
+  romania: 772,
+  eslovaquia: 773,
+  slovakia: 773,
+  eslovenia: 774,
+  slovenia: 774,
+  albania: 775,
+  grecia: 776,
+  greece: 776,
+  finlandia: 778,
+  finland: 778,
+  irlanda: 779,
+  ireland: 779,
+  islandia: 780,
+  iceland: 780,
+  ucrania: 781,
+  ukraine: 781,
+  estadosunidos: 2384,
+  usa: 2384,
+  mexico: 16,
+  canada: 2382,
+  colombia: 8,
+  chile: 11,
+  peru: 12,
+  equador: 2381,
+  ecuador: 2381,
+  paraguai: 2383,
+  paraguay: 2383,
+  venezuela: 2380,
+  bolivia: 2379,
+  marrocos: 31,
+  morocco: 31,
+  senegal: 13,
+  gana: 1504,
+  ghana: 1504,
+  nigeria: 19,
+  camaroes: 1530,
+  cameroon: 1530,
+  costadomarfim: 1501,
+  ivorycoast: 1501,
+  egito: 32,
+  egypt: 32,
+  argelia: 28,
+  algeria: 28,
+  tunisia: 23,
+  africadosul: 1507,
+  southafrica: 1507,
+  japao: 17,
+  japan: 17,
+  coreiadosul: 20,
+  southkorea: 20,
+  australia: 18,
+  arabiasaudita: 22,
+  saudiarabia: 22,
+  catar: 1569,
+  qatar: 1569,
+  ira: 2385,
+  iran: 2385,
+  iraque: 1567,
+  iraq: 1567,
+}
+
+/**
+ * Dicionário multilíngue bidirecional de seleções e variações de nomes
+ * (Português <-> Inglês <-> Espanhol <-> variações comuns)
+ */
+export const MULTILINGUAL_COUNTRY_SYNONYMS: Record<string, string[]> = {
+  turquia: ['turkey', 'turkiye', 'tuerkei', 'turquia'],
+  turkey: ['turquia', 'turkiye', 'tuerkei', 'turkey'],
+  turkiye: ['turquia', 'turkey', 'tuerkei', 'turkiye'],
+  belgica: ['belgium', 'belgique', 'belgien', 'belgica'],
+  belgium: ['belgica', 'belgique', 'belgien', 'belgium'],
+  alemanha: ['germany', 'deutschland', 'allemagne', 'alemanha'],
+  germany: ['alemanha', 'deutschland', 'allemagne', 'germany'],
+  franca: ['france', 'frankreich', 'francia', 'franca'],
+  france: ['franca', 'frankreich', 'francia', 'france'],
+  espanha: ['spain', 'espana', 'spanien', 'espagne', 'espanha'],
+  spain: ['espanha', 'espana', 'spanien', 'espagne', 'spain'],
+  inglaterra: ['england', 'angleterre', 'england', 'inglaterra'],
+  england: ['inglaterra', 'angleterre', 'england'],
+  italia: ['italy', 'italien', 'italie', 'italia'],
+  italy: ['italia', 'italien', 'italie', 'italy'],
+  holanda: ['netherlands', 'holland', 'paises baixos', 'paisesbaixos', 'pays bas', 'holanda'],
+  netherlands: ['holanda', 'holland', 'paises baixos', 'paisesbaixos', 'pays bas', 'netherlands'],
+  paisesbaixos: ['netherlands', 'holland', 'holanda', 'paises baixos', 'paisesbaixos'],
+  croacia: ['croatia', 'kroatien', 'croatie', 'croacia'],
+  croatia: ['croacia', 'kroatien', 'croatie', 'croatia'],
+  dinamarca: ['denmark', 'danemark', 'daenemark', 'dinamarca'],
+  denmark: ['dinamarca', 'danemark', 'daenemark', 'denmark'],
+  portugal: ['portugal'],
+  suica: ['switzerland', 'schweiz', 'suisse', 'svizzera', 'suica'],
+  switzerland: ['suica', 'schweiz', 'suisse', 'svizzera', 'switzerland'],
+  suecia: ['sweden', 'schweden', 'suede', 'suecia'],
+  sweden: ['suecia', 'schweden', 'suede', 'sweden'],
+  polonia: ['poland', 'polen', 'pologne', 'polonia'],
+  poland: ['polonia', 'polen', 'pologne', 'poland'],
+  servia: ['serbia', 'serbien', 'serbie', 'servia'],
+  serbia: ['servia', 'serbien', 'serbie', 'serbia'],
+  tchequia: [
+    'czechia',
+    'czech republic',
+    'czechrepublic',
+    'republica tcheca',
+    'republicatcheca',
+    'tchequia',
+  ],
+  czechia: [
+    'tchequia',
+    'czech republic',
+    'czechrepublic',
+    'republica tcheca',
+    'republicatcheca',
+    'czechia',
+  ],
+  czechrepublic: ['tchequia', 'czechia', 'republica tcheca', 'republicatcheca', 'czech republic'],
+  austria: ['austria', 'oesterreich', 'autriche'],
+  hungria: ['hungary', 'ungarn', 'hongrie', 'hungria'],
+  hungary: ['hungria', 'ungarn', 'hongrie', 'hungary'],
+  eslovenia: ['slovenia', 'slowenien', 'slovenie', 'eslovenia'],
+  slovenia: ['eslovenia', 'slowenien', 'slovenie', 'slovenia'],
+  eslovaquia: ['slovakia', 'slowakei', 'slovaquie', 'eslovaquia'],
+  slovakia: ['eslovaquia', 'slowakei', 'slovaquie', 'slovakia'],
+  romenia: ['romania', 'rumaenien', 'roumanie', 'romenia'],
+  romania: ['romenia', 'rumaenien', 'roumanie', 'romania'],
+  escocia: ['scotland', 'schottland', 'ecosse', 'escocia'],
+  scotland: ['escocia', 'schottland', 'ecosse', 'scotland'],
+  gales: ['wales', 'pays de gales', 'pais de gales', 'paisdegales', 'cymru', 'gales'],
+  wales: ['gales', 'pays de gales', 'pais de gales', 'paisdegales', 'cymru', 'wales'],
+  paisdegales: ['wales', 'gales', 'pays de gales', 'pais de gales', 'cymru'],
+  irlandadonorte: [
+    'northern ireland',
+    'northernireland',
+    'irlande du nord',
+    'nordirland',
+    'irlandadonorte',
+  ],
+  northernireland: ['irlanda do norte', 'irlandadonorte', 'northern ireland'],
+  irlanda: ['ireland', 'irland', 'irlande', 'republic of ireland', 'irlanda'],
+  ireland: ['irlanda', 'irland', 'irlande', 'republic of ireland', 'ireland'],
+  grecia: ['greece', 'griechenland', 'grece', 'grecia'],
+  greece: ['grecia', 'griechenland', 'grece', 'greece'],
+  finlandia: ['finland', 'finnland', 'finlande', 'finlandia'],
+  finland: ['finlandia', 'finnland', 'finlande', 'finland'],
+  islandia: ['iceland', 'island', 'islande', 'islandia'],
+  iceland: ['islandia', 'island', 'islande', 'iceland'],
+  noruega: ['norway', 'norwegen', 'norvege', 'noruega'],
+  norway: ['noruega', 'norwegen', 'norvege', 'norway'],
+  ucrania: ['ukraine', 'ukraina', 'ucrania'],
+  ukraine: ['ucrania', 'ukraina', 'ukraine'],
+  georgia: ['georgia', 'georgie'],
+  albania: ['albania', 'albanie', 'albanien'],
+  estadosunidos: [
+    'united states',
+    'usa',
+    'us',
+    'eua',
+    'etats unis',
+    'estados unidos',
+    'estadosunidos',
+  ],
+  usa: ['estados unidos', 'estadosunidos', 'united states', 'eua', 'usa'],
+  mexico: ['mexico', 'mexique'],
+  canada: ['canada'],
+  brasil: ['brazil', 'brasilien', 'bresil', 'brasil'],
+  brazil: ['brasil', 'brasilien', 'bresil', 'brazil'],
+  argentina: ['argentina', 'argentine', 'argentinien'],
+  uruguai: ['uruguay', 'uruguai'],
+  uruguay: ['uruguai', 'uruguay'],
+  colombia: ['colombia', 'colombie'],
+  chile: ['chile', 'chili'],
+  peru: ['peru', 'perou'],
+  equador: ['ecuador', 'equateur', 'equador'],
+  ecuador: ['equador', 'equateur', 'ecuador'],
+  paraguai: ['paraguay', 'paraguai'],
+  paraguay: ['paraguai', 'paraguay'],
+  venezuela: ['venezuela'],
+  bolivia: ['bolivia', 'bolivie'],
+  marrocos: ['morocco', 'marokko', 'maroc', 'marruecos', 'marrocos'],
+  morocco: ['marrocos', 'marokko', 'maroc', 'marruecos', 'morocco'],
+  senegal: ['senegal'],
+  gana: ['ghana', 'gana'],
+  ghana: ['gana', 'ghana'],
+  nigeria: ['nigeria'],
+  camaroes: ['cameroon', 'kamerun', 'cameroun', 'camaroes'],
+  cameroon: ['camaroes', 'kamerun', 'cameroun', 'cameroon'],
+  costadomarfim: [
+    'ivory coast',
+    'cote d ivoire',
+    'cotedivoire',
+    'ivorycoast',
+    'costa do marfim',
+    'costadomarfim',
+  ],
+  ivorycoast: ['costa do marfim', 'costadomarfim', 'cote d ivoire', 'ivory coast'],
+  egito: ['egypt', 'aegypten', 'egypte', 'egipto', 'egito'],
+  egypt: ['egito', 'aegypten', 'egypte', 'egipto', 'egypt'],
+  argelia: ['algeria', 'algerie', 'algerien', 'argelia'],
+  algeria: ['argelia', 'algerie', 'algerien', 'algeria'],
+  tunisia: ['tunisia', 'tunesien', 'tunisie'],
+  africadosul: [
+    'south africa',
+    'southafrica',
+    'suedafrika',
+    'afrique du sud',
+    'africa do sul',
+    'africadosul',
+  ],
+  southafrica: ['africa do sul', 'africadosul', 'south africa'],
+  japao: ['japan', 'japon', 'japao'],
+  japan: ['japao', 'japon', 'japan'],
+  coreiadosul: [
+    'south korea',
+    'southkorea',
+    'suedkorea',
+    'coree du sud',
+    'coreia do sul',
+    'coreiadosul',
+  ],
+  southkorea: ['coreia do sul', 'coreiadosul', 'south korea'],
+  australia: ['australia', 'australie', 'australien'],
+  arabiasaudita: [
+    'saudi arabia',
+    'saudiarabia',
+    'saudi arabien',
+    'arabie saoudite',
+    'arabia saudita',
+    'arabiasaudita',
+  ],
+  saudiarabia: ['arabia saudita', 'arabiasaudita', 'saudi arabia'],
+  catar: ['qatar', 'catar'],
+  qatar: ['catar', 'qatar'],
+  ira: ['iran', 'ira'],
+  iran: ['ira', 'iran'],
+  lituania: ['lithuania', 'lietuva', 'litauen', 'lituanie', 'lituania'],
+  lithuania: ['lituania', 'lietuva', 'litauen', 'lituanie', 'lithuania'],
+  azerbaijao: ['azerbaijan', 'azerbaycan', 'aserbaidschan', 'azerbaidjan', 'azerbaijao'],
+  azerbaijan: ['azerbaijao', 'azerbaycan', 'aserbaidschan', 'azerbaidjan', 'azerbaijan'],
+}
+
+/**
+ * Verifica se dois nomes de equipes casam considerando grafias multilíngues (ex: Turkey <-> Turquia)
+ */
+export function matchTeamNamesMultilingual(nameA?: string | null, nameB?: string | null): boolean {
+  if (!nameA || !nameB) return false
+  const normA = normalizeCountryName(nameA)
+  const normB = normalizeCountryName(nameB)
+  if (!normA || !normB) return false
+  if (normA === normB) return true
+
+  // Substring simples
+  if (normA.includes(normB) || normB.includes(normA)) return true
+
+  // Verifica via dicionário multilíngue
+  const synonymsA = MULTILINGUAL_COUNTRY_SYNONYMS[normA] || []
+  for (const syn of synonymsA) {
+    const normSyn = normalizeCountryName(syn)
+    if (normSyn === normB || normSyn.includes(normB) || normB.includes(normSyn)) {
+      return true
+    }
+  }
+
+  const synonymsB = MULTILINGUAL_COUNTRY_SYNONYMS[normB] || []
+  for (const syn of synonymsB) {
+    const normSyn = normalizeCountryName(syn)
+    if (normSyn === normA || normSyn.includes(normA) || normA.includes(normSyn)) {
+      return true
+    }
+  }
+
+  return false
+}
+
+/**
+ * Resolve o Team ID oficial da API-Sports / API-Football para um time (seleção ou clube)
+ */
+export function resolveOfficialTeamId(
+  teamName?: string | null,
+  escudoUrl?: string | null,
+): string | null {
+  if (escudoUrl) {
+    const m = String(escudoUrl).match(/teams\/(\d+)(?:\.png|\.svg|\.jpg|\b)/i)
+    if (m) return String(m[1])
+  }
+  if (!teamName) return null
+  const norm = normalizeCountryName(teamName)
+  if (OFFICIAL_NATIONAL_TEAM_IDS[norm]) {
+    return String(OFFICIAL_NATIONAL_TEAM_IDS[norm])
+  }
+  const clubId = getClubTeamId(teamName)
+  if (clubId) {
+    return String(clubId)
+  }
+  return null
 }
 
 /**

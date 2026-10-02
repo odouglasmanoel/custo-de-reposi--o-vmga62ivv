@@ -8,7 +8,15 @@ import {
   Clock,
   ArrowRightLeft,
 } from 'lucide-react'
-import { resolveTeamBadgeUrl, getFlagCdnUrl, fetchAndCacheFixtureLogos } from '@/lib/flags'
+import {
+  resolveTeamBadgeUrl,
+  getFlagCdnUrl,
+  fetchAndCacheFixtureLogos,
+  resolveOfficialTeamId,
+  matchTeamNamesMultilingual,
+  OFFICIAL_NATIONAL_TEAM_IDS,
+  normalizeCountryName,
+} from '@/lib/flags'
 import { fetchEventosJogo, MatchEvent, FichaJogoResponse } from '@/services/eventosJogo'
 import { useAuth } from '@/context/AuthContext'
 import { isJogoConcluido } from '@/lib/jogoStatus'
@@ -268,28 +276,37 @@ export const FichaJogo: React.FC<FichaJogoProps> = ({
   }
 
   const idMandante = useMemo(() => {
-    return (
-      (data?.teams?.home?.id != null ? String(data.teams.home.id) : null) ||
-      extractTeamIdFromUrl(url_escudo_mandante) ||
-      extractTeamIdFromUrl(badgeA)
-    )
-  }, [url_escudo_mandante, badgeA, data])
+    if (data?.teams?.home?.id != null) return String(data.teams.home.id)
+    const officialId =
+      OFFICIAL_NATIONAL_TEAM_IDS[normalizeCountryName(timeA)] ||
+      OFFICIAL_NATIONAL_TEAM_IDS[normalizeCountryName(data?.teams?.home?.name)]
+    if (officialId) return String(officialId)
+    const resolved = resolveOfficialTeamId(timeA, url_escudo_mandante || badgeA)
+    if (resolved) return String(resolved)
+    return extractTeamIdFromUrl(url_escudo_mandante) || extractTeamIdFromUrl(badgeA)
+  }, [timeA, url_escudo_mandante, badgeA, data])
 
   const idVisitante = useMemo(() => {
-    return (
-      (data?.teams?.away?.id != null ? String(data.teams.away.id) : null) ||
-      extractTeamIdFromUrl(url_escudo_visitante) ||
-      extractTeamIdFromUrl(badgeB)
-    )
-  }, [url_escudo_visitante, badgeB, data])
+    if (data?.teams?.away?.id != null) return String(data.teams.away.id)
+    const officialId =
+      OFFICIAL_NATIONAL_TEAM_IDS[normalizeCountryName(timeB)] ||
+      OFFICIAL_NATIONAL_TEAM_IDS[normalizeCountryName(data?.teams?.away?.name)]
+    if (officialId) return String(officialId)
+    const resolved = resolveOfficialTeamId(timeB, url_escudo_visitante || badgeB)
+    if (resolved) return String(resolved)
+    return extractTeamIdFromUrl(url_escudo_visitante) || extractTeamIdFromUrl(badgeB)
+  }, [timeB, url_escudo_visitante, badgeB, data])
 
   // Normalização do lado: lado esquerdo só mandante, direito só visitante
   // Regra crítica: SEMPRE priorizar team ID da API Football sobre matching de nome.
-  // Se IDs não casarem e nomes não casarem, NÃO assumir mandante cego quando o evento
-  // possuir dados de visitante explícitos.
+  // Casamento multilíngue (ex: Turkey <-> Turquia, Belgium <-> Bélgica).
   const getSide = (ev: MatchEvent): 'home' | 'away' => {
     const evTeamId =
-      ev.team?.id != null && String(ev.team.id).trim() ? String(ev.team.id).trim() : null
+      ev.team?.id != null && String(ev.team.id).trim()
+        ? String(ev.team.id).trim()
+        : ev.team?.name
+          ? resolveOfficialTeamId(ev.team.name)
+          : null
 
     // 1. Prioridade máxima absoluta: API Team ID
     if (evTeamId) {
@@ -302,34 +319,39 @@ export const FichaJogo: React.FC<FichaJogoProps> = ({
       return ev.team.side
     }
 
-    // 3. Fallback por nome limpo normalizado
-    const evTeamName = (ev.team?.name || '').trim().toLowerCase()
-    const homeNameLower = (timeA || data?.teams?.home?.name || '').trim().toLowerCase()
-    const awayNameLower = (timeB || data?.teams?.away?.name || '').trim().toLowerCase()
+    // 3. Casamento por nome com dicionário multilíngue (EN <-> PT)
+    const evTeamName = (ev.team?.name || '').trim()
+    const homeName = timeA || data?.teams?.home?.name || ''
+    const awayName = timeB || data?.teams?.away?.name || ''
 
-    const cleanTeam = evTeamName.replace(/[^a-z0-9]/g, '')
-    const cleanHome = homeNameLower.replace(/[^a-z0-9]/g, '')
-    const cleanAway = awayNameLower.replace(/[^a-z0-9]/g, '')
+    if (evTeamName) {
+      const matchHomeMulti = matchTeamNamesMultilingual(evTeamName, homeName)
+      const matchAwayMulti = matchTeamNamesMultilingual(evTeamName, awayName)
 
-    if (cleanTeam) {
-      const matchHome =
-        cleanHome && (cleanHome.includes(cleanTeam) || cleanTeam.includes(cleanHome))
-      const matchAway =
-        cleanAway && (cleanAway.includes(cleanTeam) || cleanTeam.includes(cleanAway))
+      if (matchHomeMulti && !matchAwayMulti) return 'home'
+      if (matchAwayMulti && !matchHomeMulti) return 'away'
 
-      if (matchHome && !matchAway) return 'home'
-      if (matchAway && !matchHome) return 'away'
+      // Substring limpa direta
+      const cleanTeam = evTeamName.toLowerCase().replace(/[^a-z0-9]/g, '')
+      const cleanHome = homeName.toLowerCase().replace(/[^a-z0-9]/g, '')
+      const cleanAway = awayName.toLowerCase().replace(/[^a-z0-9]/g, '')
+
+      if (cleanTeam) {
+        const matchHome =
+          cleanHome && (cleanHome.includes(cleanTeam) || cleanTeam.includes(cleanHome))
+        const matchAway =
+          cleanAway && (cleanAway.includes(cleanTeam) || cleanTeam.includes(cleanAway))
+
+        if (matchHome && !matchAway) return 'home'
+        if (matchAway && !matchHome) return 'away'
+      }
     }
 
-    // 4. Se IDs da API foram fornecidos na partida mas o evento tem um evTeamId desconhecido,
-    // verifica se é mais provável visitante (evitando empilhar tudo no mandante por omissão)
-    if (
-      evTeamId &&
-      idMandante &&
-      evTeamId !== idMandante &&
-      idVisitante &&
-      evTeamId === idVisitante
-    ) {
+    // 4. Se o evento possui evTeamId e só temos um dos IDs mapeados ou eles diferem:
+    if (evTeamId && idMandante && evTeamId !== idMandante) {
+      return 'away'
+    }
+    if (evTeamId && idVisitante && evTeamId === idVisitante) {
       return 'away'
     }
 

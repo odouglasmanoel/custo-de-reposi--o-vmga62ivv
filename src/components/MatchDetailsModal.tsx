@@ -25,6 +25,12 @@ import { useAuth } from '@/context/AuthContext'
 import pb from '@/lib/pocketbase/client'
 import { useRealtime } from '@/hooks/use-realtime'
 import { isFixtureLive, cleanTeamName } from '@/lib/apiFootballMatcher'
+import {
+  resolveOfficialTeamId,
+  matchTeamNamesMultilingual,
+  OFFICIAL_NATIONAL_TEAM_IDS,
+  normalizeCountryName,
+} from '@/lib/flags'
 import type { DayFixture } from '@/pages/JogosDoDia'
 import { setWithBoundedCapacity } from '@/lib/cacheManager'
 
@@ -535,15 +541,28 @@ export function MatchDetailsModal({ isOpen, onClose, match }: MatchDetailsModalP
 
     const teamName = ev.team?.name || ''
     const evTeamId =
-      ev.team?.id != null && String(ev.team.id).trim() ? String(ev.team.id).trim() : null
-    const homeTeamId =
+      ev.team?.id != null && String(ev.team.id).trim()
+        ? String(ev.team.id).trim()
+        : ev.team?.name
+          ? resolveOfficialTeamId(ev.team.name)
+          : null
+
+    const resolvedHomeId =
       match.teams?.home?.id != null && String(match.teams.home.id).trim()
         ? String(match.teams.home.id).trim()
-        : null
-    const awayTeamId =
+        : OFFICIAL_NATIONAL_TEAM_IDS[normalizeCountryName(homeName)]
+          ? String(OFFICIAL_NATIONAL_TEAM_IDS[normalizeCountryName(homeName)])
+          : resolveOfficialTeamId(homeName, match.teams?.home?.logo)
+
+    const resolvedAwayId =
       match.teams?.away?.id != null && String(match.teams.away.id).trim()
         ? String(match.teams.away.id).trim()
-        : null
+        : OFFICIAL_NATIONAL_TEAM_IDS[normalizeCountryName(awayName)]
+          ? String(OFFICIAL_NATIONAL_TEAM_IDS[normalizeCountryName(awayName)])
+          : resolveOfficialTeamId(awayName, match.teams?.away?.logo)
+
+    const homeTeamId = resolvedHomeId ? String(resolvedHomeId).trim() : null
+    const awayTeamId = resolvedAwayId ? String(resolvedAwayId).trim() : null
 
     // Determina isHome / isAway priorizando SEMPRE team ID da API Football
     let isHome = false
@@ -554,6 +573,10 @@ export function MatchDetailsModal({ isOpen, onClose, match }: MatchDetailsModalP
         isHome = true
       } else if (awayTeamId && evTeamId === awayTeamId) {
         isAway = true
+      } else if (homeTeamId && !awayTeamId && evTeamId !== homeTeamId) {
+        isAway = true
+      } else if (awayTeamId && !homeTeamId && evTeamId !== awayTeamId) {
+        isHome = true
       }
     }
 
@@ -565,24 +588,33 @@ export function MatchDetailsModal({ isOpen, onClose, match }: MatchDetailsModalP
     }
 
     if (!isHome && !isAway && teamName) {
-      const cleanTeam = cleanTeamName(teamName)
-      const cleanHome = homeName ? cleanTeamName(homeName) : ''
-      const cleanAway = awayName ? cleanTeamName(awayName) : ''
+      const matchHomeMulti = matchTeamNamesMultilingual(teamName, homeName)
+      const matchAwayMulti = matchTeamNamesMultilingual(teamName, awayName)
 
-      const matchH = cleanHome && (cleanHome.includes(cleanTeam) || cleanTeam.includes(cleanHome))
-      const matchA = cleanAway && (cleanAway.includes(cleanTeam) || cleanTeam.includes(cleanAway))
-
-      if (matchH && !matchA) {
+      if (matchHomeMulti && !matchAwayMulti) {
         isHome = true
-      } else if (matchA && !matchH) {
+      } else if (matchAwayMulti && !matchHomeMulti) {
         isAway = true
+      } else {
+        const cleanTeam = cleanTeamName(teamName)
+        const cleanHome = homeName ? cleanTeamName(homeName) : ''
+        const cleanAway = awayName ? cleanTeamName(awayName) : ''
+
+        const matchH = cleanHome && (cleanHome.includes(cleanTeam) || cleanTeam.includes(cleanHome))
+        const matchA = cleanAway && (cleanAway.includes(cleanTeam) || cleanTeam.includes(cleanAway))
+
+        if (matchH && !matchA) {
+          isHome = true
+        } else if (matchA && !matchH) {
+          isAway = true
+        }
       }
     }
 
     // Alinhamento estrito:
     // isHome true => alinhado à esquerda (items-start, text-left)
     // isHome false / isAway => alinhado à direita (items-end, text-right, flex-row-reverse)
-    const alignRight = isAway || (!isHome && awayName)
+    const alignRight = isAway || (!isHome && Boolean(awayName))
 
     return (
       <div

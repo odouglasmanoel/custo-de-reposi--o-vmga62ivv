@@ -382,7 +382,7 @@ describe('Componente FichaJogo', () => {
         ],
       })
 
-      const { container } = render(
+      render(
         <FichaJogo
           fixtureId="3001"
           timeA="Palmeiras"
@@ -408,6 +408,78 @@ describe('Componente FichaJogo', () => {
       const arrascaetaAwayContainer = arrascaetaEl.closest('.w-1\\/2')
       expect(arrascaetaAwayContainer?.className).toContain('text-left')
       expect(arrascaetaAwayContainer?.className).toContain('opacity-100')
+    })
+
+    it('alinha seleções com FlagCDN e eventos em inglês (ex: Bélgica 3x0 Turquia / Turkey)', async () => {
+      // Cenário exato do bug reportado:
+      // Banco tem timeA="Bélgica", timeB="Turquia", escudos com FlagCDN (sem /teams/{id} na URL)
+      // data.teams não tem id ou é string em português, mas eventos chegam com time em inglês da API ("Turkey" / "Belgium") ou IDs 1 e 777
+      vi.mocked(eventosService.fetchEventosJogo).mockResolvedValueOnce({
+        success: true,
+        teams: {
+          home: { name: 'Bélgica' },
+          away: { name: 'Turquia' },
+        },
+        events: [
+          {
+            type: 'Card',
+            detail: 'Yellow Card',
+            time: { elapsed: 26 },
+            team: { name: 'Belgium', id: 1 },
+            player: { name: 'Dodi Lukebakio' },
+          },
+          {
+            type: 'Card',
+            detail: 'Yellow Card',
+            time: { elapsed: 56 },
+            team: { name: 'Turkey', id: 777 },
+            player: { name: 'Abdulkerim Bardakçı' },
+          },
+          {
+            type: 'subst',
+            detail: 'Substitution',
+            time: { elapsed: 71 },
+            team: { name: 'Turkey' }, // sem ID, somente nome em inglês
+            player: { name: 'Merih Demiral' },
+          },
+        ],
+      })
+
+      render(
+        <FichaJogo
+          fixtureId="4001"
+          timeA="Bélgica"
+          timeB="Turquia"
+          url_escudo_mandante="https://flagcdn.com/w80/be.png"
+          url_escudo_visitante="https://flagcdn.com/w80/tr.png"
+          isConcluido={true}
+          defaultOpen={true}
+        />,
+      )
+
+      await waitFor(() => {
+        expect(screen.getByText('Dodi Lukebakio')).toBeDefined()
+        expect(screen.getByText('Abdulkerim Bardakçı')).toBeDefined()
+        expect(screen.getByText('Merih Demiral')).toBeDefined()
+      })
+
+      // Lukebakio (Bélgica / Belgium): Mandante -> Esquerda (text-right, opacity-100)
+      const lukeEl = screen.getByText('Dodi Lukebakio')
+      const lukeContainer = lukeEl.closest('.w-1\\/2')
+      expect(lukeContainer?.className).toContain('text-right')
+      expect(lukeContainer?.className).toContain('opacity-100')
+
+      // Bardakçı (Turquia / Turkey via ID 777): Visitante -> Direita (text-left, opacity-100)
+      const bardakEl = screen.getByText('Abdulkerim Bardakçı')
+      const bardakContainer = bardakEl.closest('.w-1\\/2')
+      expect(bardakContainer?.className).toContain('text-left')
+      expect(bardakContainer?.className).toContain('opacity-100')
+
+      // Demiral (Turquia / Turkey via nome multilíngue): Visitante -> Direita (text-left, opacity-100)
+      const demiEl = screen.getByText('Merih Demiral')
+      const demiContainer = demiEl.closest('.w-1\\/2')
+      expect(demiContainer?.className).toContain('text-left')
+      expect(demiContainer?.className).toContain('opacity-100')
     })
   })
 })
