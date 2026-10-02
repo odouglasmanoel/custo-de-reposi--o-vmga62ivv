@@ -1081,6 +1081,23 @@ onRecordUpdate(
       return null
     }
 
+    // Checagem de override do Admin: se o admin informou explicitamente admin_override_escudos,
+    // pula a resolução automática de escudos para respeitar a edição manual (inclusive limpar campo ou URL própria)
+    var reqBody = {}
+    try {
+      if (e.requestInfo) {
+        reqBody = e.requestInfo().body || e.requestInfo().data || {}
+      }
+    } catch (_) {
+      reqBody = {}
+    }
+    var adminOverrideEscudos =
+      reqBody &&
+      (reqBody.admin_override_escudos === true ||
+        reqBody.admin_override_escudos === 'true' ||
+        reqBody.admin_override_escudos === 1 ||
+        reqBody.admin_override_escudos === '1')
+
     var collectionName = e.record.collection().name
 
     if (collectionName === 'jogos') {
@@ -1090,20 +1107,22 @@ onRecordUpdate(
       var escudoB = e.record.get('url_escudo_visitante')
       var competicao = e.record.get('competicao')
 
-      var canonA = obterCanonicoSeisClubes(timeA)
-      if (canonA) {
-        if (escudoA !== canonA) e.record.set('url_escudo_mandante', canonA)
-      } else if (!escudoA && timeA) {
-        var resolvedA = resolverEscudoUrl(timeA)
-        if (resolvedA) e.record.set('url_escudo_mandante', resolvedA)
-      }
+      if (!adminOverrideEscudos) {
+        var canonA = obterCanonicoSeisClubes(timeA)
+        if (canonA) {
+          if (escudoA !== canonA) e.record.set('url_escudo_mandante', canonA)
+        } else if (!escudoA && timeA) {
+          var resolvedA = resolverEscudoUrl(timeA)
+          if (resolvedA) e.record.set('url_escudo_mandante', resolvedA)
+        }
 
-      var canonB = obterCanonicoSeisClubes(timeB)
-      if (canonB) {
-        if (escudoB !== canonB) e.record.set('url_escudo_visitante', canonB)
-      } else if (!escudoB && timeB) {
-        var resolvedB = resolverEscudoUrl(timeB)
-        if (resolvedB) e.record.set('url_escudo_visitante', resolvedB)
+        var canonB = obterCanonicoSeisClubes(timeB)
+        if (canonB) {
+          if (escudoB !== canonB) e.record.set('url_escudo_visitante', canonB)
+        } else if (!escudoB && timeB) {
+          var resolvedB = resolverEscudoUrl(timeB)
+          if (resolvedB) e.record.set('url_escudo_visitante', resolvedB)
+        }
       }
 
       if (competicao) {
@@ -1119,20 +1138,22 @@ onRecordUpdate(
       var logoVisitante = e.record.get('logo_visitante')
       var campEnq = e.record.get('campeonato')
 
-      var canonCasa = obterCanonicoSeisClubes(timeAEnq)
-      if (canonCasa) {
-        if (logoCasa !== canonCasa) e.record.set('logo_casa', canonCasa)
-      } else if (!logoCasa && timeAEnq) {
-        var resCasa = resolverEscudoUrl(timeAEnq)
-        if (resCasa) e.record.set('logo_casa', resCasa)
-      }
+      if (!adminOverrideEscudos) {
+        var canonCasa = obterCanonicoSeisClubes(timeAEnq)
+        if (canonCasa) {
+          if (logoCasa !== canonCasa) e.record.set('logo_casa', canonCasa)
+        } else if (!logoCasa && timeAEnq) {
+          var resCasa = resolverEscudoUrl(timeAEnq)
+          if (resCasa) e.record.set('logo_casa', resCasa)
+        }
 
-      var canonVis = obterCanonicoSeisClubes(timeBEnq)
-      if (canonVis) {
-        if (logoVisitante !== canonVis) e.record.set('logo_visitante', canonVis)
-      } else if (!logoVisitante && timeBEnq) {
-        var resVis = resolverEscudoUrl(timeBEnq)
-        if (resVis) e.record.set('logo_visitante', resVis)
+        var canonVis = obterCanonicoSeisClubes(timeBEnq)
+        if (canonVis) {
+          if (logoVisitante !== canonVis) e.record.set('logo_visitante', canonVis)
+        } else if (!logoVisitante && timeBEnq) {
+          var resVis = resolverEscudoUrl(timeBEnq)
+          if (resVis) e.record.set('logo_visitante', resVis)
+        }
       }
 
       if (campEnq) {

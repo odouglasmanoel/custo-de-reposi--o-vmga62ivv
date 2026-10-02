@@ -1970,7 +1970,9 @@ export default function Enquetes() {
         })
       }
 
-      // Atualiza o estado React imediatamente mantendo os votos já computados
+      // Atualiza o estado React imediatamente mantendo os votos já computados.
+      // IMPORTANTE: se o admin limpou o escudo, o valor salvo é string vazia.
+      // Não fazer fallback com `||` que recuperaria a URL antiga se for string vazia!
       setJogosEnquete((prev) =>
         prev.map((j) => {
           if (j.id === jogoEmEdicao.id) {
@@ -1978,9 +1980,13 @@ export default function Enquetes() {
               ...j,
               time_a: atualizado.time_a,
               time_b: atualizado.time_b,
-              fixture_id: atualizado.fixture_id || cleanEditFixtureId || j.fixture_id,
-              logo_casa: atualizado.logo_casa || logoAFinal,
-              logo_visitante: atualizado.logo_visitante || logoBFinal,
+              fixture_id:
+                atualizado.fixture_id !== undefined
+                  ? atualizado.fixture_id
+                  : cleanEditFixtureId || j.fixture_id,
+              logo_casa: atualizado.logo_casa !== undefined ? atualizado.logo_casa : logoAFinal,
+              logo_visitante:
+                atualizado.logo_visitante !== undefined ? atualizado.logo_visitante : logoBFinal,
               campeonato: atualizado.campeonato,
               regiao: atualizado.regiao,
               data: dataFinal,

@@ -34,6 +34,14 @@ routerAdd('POST', '/backend/v1/admin/editar-jogo', (e) => {
     const competicaoVal = (body.competicao || '').trim()
     const manualFixtureId = body.fixture_id !== undefined ? String(body.fixture_id).trim() : null
 
+    const adminOverrideEscudos =
+      body.admin_override_escudos === true ||
+      body.admin_override_escudos === 'true' ||
+      body.admin_override_escudos === 1 ||
+      body.admin_override_escudos === '1' ||
+      body.url_escudo_mandante !== undefined ||
+      body.url_escudo_visitante !== undefined
+
     if (!jogoId) {
       return e.badRequestError('ID do jogo é obrigatório (jogo_id).')
     }
@@ -77,6 +85,12 @@ routerAdd('POST', '/backend/v1/admin/editar-jogo', (e) => {
     }
     if (body.competicao !== undefined) {
       jogoRec.set('competicao', competicaoVal)
+    }
+    if (body.url_escudo_mandante !== undefined) {
+      jogoRec.set('url_escudo_mandante', String(body.url_escudo_mandante).trim())
+    }
+    if (body.url_escudo_visitante !== undefined) {
+      jogoRec.set('url_escudo_visitante', String(body.url_escudo_visitante).trim())
     }
     $app.save(jogoRec)
 
@@ -596,7 +610,8 @@ routerAdd('POST', '/backend/v1/admin/editar-jogo', (e) => {
       jogoRec.set('url_escudo_visitante', '')
     }
 
-    if (!curLogoCasa || !curLogoVis) {
+    // Se o admin solicitou override ou forneceu os campos diretamente, pula a busca cascata automática
+    if (!adminOverrideEscudos && (!curLogoCasa || !curLogoVis)) {
       const buscarEscudoCascata = (teamName) => {
         if (!teamName) return ''
         const cleanKey = normalizarNome(teamName)

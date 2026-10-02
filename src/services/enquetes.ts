@@ -1274,8 +1274,12 @@ export async function editarJogoEnquete(
   }
 
   // Se o usuário passou explicitamente params.logo_casa/params.logo_visitante, respeita o valor
-  // (mesmo que vazio — NUNCA restaura o valor antigo do banco quando o usuário enviou vazio).
+  // (mesmo que vazio — NUNCA restaura o valor antigo do banco nem re-injeta URL quando o admin limpou).
   // Além disso, se o logo existente for do TheSportsDB, ele é descartado imediatamente.
+  const adminLimpouLogoCasa = params.logo_casa !== undefined && params.logo_casa.trim() === ''
+  const adminLimpouLogoVisitante =
+    params.logo_visitante !== undefined && params.logo_visitante.trim() === ''
+
   let logoCasaFinal =
     params.logo_casa !== undefined
       ? params.logo_casa.trim()
@@ -1298,29 +1302,32 @@ export async function editarJogoEnquete(
     logoVisitanteFinal = ''
   }
 
-  // Se logoCasaFinal ou logoVisitanteFinal estiverem vazios, tenta resolver pela tabela canônica antes de persistir
-  const staticCasaEdit =
-    getClubLogoUrl(params.time_a) ||
-    (isNationalTeam(params.time_a) ? getFlagCdnUrl(params.time_a) : '')
-  const staticVisitanteEdit =
-    getClubLogoUrl(params.time_b) ||
-    (isNationalTeam(params.time_b) ? getFlagCdnUrl(params.time_b) : '')
-
-  if (staticCasaEdit) {
-    logoCasaFinal = staticCasaEdit
-  } else if (!logoCasaFinal && params.time_a) {
-    const canonicalCasa = readEscudoCache(params.time_a) || getClubLogoUrl(params.time_a)
-    if (canonicalCasa) {
-      logoCasaFinal = canonicalCasa
+  // Se o admin NÃO limpou deliberadamente o campo, tenta resolver pela tabela canônica quando vazio
+  if (!adminLimpouLogoCasa) {
+    const staticCasaEdit =
+      getClubLogoUrl(params.time_a) ||
+      (isNationalTeam(params.time_a) ? getFlagCdnUrl(params.time_a) : '')
+    if (staticCasaEdit) {
+      logoCasaFinal = staticCasaEdit
+    } else if (!logoCasaFinal && params.time_a) {
+      const canonicalCasa = readEscudoCache(params.time_a) || getClubLogoUrl(params.time_a)
+      if (canonicalCasa) {
+        logoCasaFinal = canonicalCasa
+      }
     }
   }
 
-  if (staticVisitanteEdit) {
-    logoVisitanteFinal = staticVisitanteEdit
-  } else if (!logoVisitanteFinal && params.time_b) {
-    const canonicalVisitante = readEscudoCache(params.time_b) || getClubLogoUrl(params.time_b)
-    if (canonicalVisitante) {
-      logoVisitanteFinal = canonicalVisitante
+  if (!adminLimpouLogoVisitante) {
+    const staticVisitanteEdit =
+      getClubLogoUrl(params.time_b) ||
+      (isNationalTeam(params.time_b) ? getFlagCdnUrl(params.time_b) : '')
+    if (staticVisitanteEdit) {
+      logoVisitanteFinal = staticVisitanteEdit
+    } else if (!logoVisitanteFinal && params.time_b) {
+      const canonicalVisitante = readEscudoCache(params.time_b) || getClubLogoUrl(params.time_b)
+      if (canonicalVisitante) {
+        logoVisitanteFinal = canonicalVisitante
+      }
     }
   }
 
@@ -1330,9 +1337,15 @@ export async function editarJogoEnquete(
   let rateLimited = false
   let aviso = ''
 
-  // 1. Se NÃO tem fixture_id (nem no banco nem no param) E algum escudo precisa ser resolvido:
+  // 1. Se NÃO tem fixture_id (nem no banco nem no param) E algum escudo precisa ser resolvido (e não foi limpo pelo admin):
   // Faz busca automática por confronto na API-Football (endpoint /fixtures por data + times tolerantes)
-  if (!fixtureIdFinal && params.time_a && params.time_b && params.data) {
+  if (
+    !fixtureIdFinal &&
+    params.time_a &&
+    params.time_b &&
+    params.data &&
+    (!adminLimpouLogoCasa || !adminLimpouLogoVisitante)
+  ) {
     try {
       const lookupRes = await buscarFixtureAutoLookup({
         mandante: params.time_a,
@@ -1344,12 +1357,17 @@ export async function editarJogoEnquete(
         fixtureIdEncontrado = fixtureIdFinal
         autoLookupSucesso = true
 
-        // Substitui escudos pelos oficiais retornados pela API se estavam vazios ou não-oficiais
-        if (lookupRes.fixture.homeTeamLogo && (!logoCasaFinal || !isApiSportsLogo(logoCasaFinal))) {
+        // Substitui escudos pelos oficiais retornados pela API se não foram limpos deliberadamente pelo admin
+        if (
+          !adminLimpouLogoCasa &&
+          lookupRes.fixture.homeTeamLogo &&
+          (!logoCasaFinal || !isApiSportsLogo(logoCasaFinal))
+        ) {
           logoCasaFinal = lookupRes.fixture.homeTeamLogo
           escudosAtualizados = true
         }
         if (
+          !adminLimpouLogoVisitante &&
           lookupRes.fixture.awayTeamLogo &&
           (!logoVisitanteFinal || !isApiSportsLogo(logoVisitanteFinal))
         ) {
@@ -1367,17 +1385,25 @@ export async function editarJogoEnquete(
 
   // 2. Se o ID já estiver preenchido (manualmente ou preservado do banco):
   // Consulta diretamente a API-Football (/fixtures?id={api_fixture_id}) e atualiza/sobrescreve
-  // as URLs dos escudos/bandeiras com as imagens oficiais retornadas pela API (substituindo TheSportsDB/vazios).
-  // URLs que já sejam media.api-sports.io não precisam de nova requisição se ambas forem oficiais.
-  if (fixtureIdFinal && (!isApiSportsLogo(logoCasaFinal) || !isApiSportsLogo(logoVisitanteFinal))) {
+  // as URLs dos escudos/bandeiras com as imagens oficiais retornadas pela API (substituindo TheSportsDB/vazios),
+  // EXCETO quando o admin deliberadamente limpou o campo.
+  if (
+    fixtureIdFinal &&
+    ((!adminLimpouLogoCasa && !isApiSportsLogo(logoCasaFinal)) ||
+      (!adminLimpouLogoVisitante && !isApiSportsLogo(logoVisitanteFinal)))
+  ) {
     try {
       const res = await buscarFixtureDetalhes(fixtureIdFinal)
       if (res.success && res.fixture) {
-        if (res.fixture.homeTeamLogo && !isApiSportsLogo(logoCasaFinal)) {
+        if (!adminLimpouLogoCasa && res.fixture.homeTeamLogo && !isApiSportsLogo(logoCasaFinal)) {
           logoCasaFinal = res.fixture.homeTeamLogo
           escudosAtualizados = true
         }
-        if (res.fixture.awayTeamLogo && !isApiSportsLogo(logoVisitanteFinal)) {
+        if (
+          !adminLimpouLogoVisitante &&
+          res.fixture.awayTeamLogo &&
+          !isApiSportsLogo(logoVisitanteFinal)
+        ) {
           logoVisitanteFinal = res.fixture.awayTeamLogo
           escudosAtualizados = true
         }
@@ -1398,8 +1424,9 @@ export async function editarJogoEnquete(
     regiao: params.regiao?.trim() || 'Brasileirão & Copas',
     data: params.data,
     horario: params.horario || '16:00',
-    logo_casa: staticCasaEdit || logoCasaFinal,
-    logo_visitante: staticVisitanteEdit || logoVisitanteFinal,
+    logo_casa: logoCasaFinal,
+    logo_visitante: logoVisitanteFinal,
+    admin_override_escudos: true,
   }
 
   if (fixtureIdFinal) {
@@ -1421,12 +1448,9 @@ export async function editarJogoEnquete(
     const jogoUpdatePayload: Record<string, unknown> = {
       time_a: params.time_a.trim(),
       time_b: params.time_b.trim(),
-    }
-    if (logoCasaFinal) {
-      jogoUpdatePayload.url_escudo_mandante = logoCasaFinal
-    }
-    if (logoVisitanteFinal) {
-      jogoUpdatePayload.url_escudo_visitante = logoVisitanteFinal
+      url_escudo_mandante: logoCasaFinal,
+      url_escudo_visitante: logoVisitanteFinal,
+      admin_override_escudos: true,
     }
     if (params.campeonato !== undefined) {
       jogoUpdatePayload.competicao = params.campeonato.trim()

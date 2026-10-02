@@ -127,6 +127,8 @@ export default function AdminJogos() {
   const [editHora, setEditHora] = useState('')
   const [editCompeticao, setEditCompeticao] = useState('')
   const [editFixtureId, setEditFixtureId] = useState('')
+  const [editEscudoA, setEditEscudoA] = useState('')
+  const [editEscudoB, setEditEscudoB] = useState('')
   const [savingEditJogo, setSavingEditJogo] = useState(false)
   const [editJogoError, setEditJogoError] = useState<string | null>(null)
 
@@ -679,6 +681,8 @@ export default function AdminJogos() {
     setEditHora(jogo.hora || '')
     setEditCompeticao(jogo.competicao || '')
     setEditFixtureId(jogo.fixture_id || '')
+    setEditEscudoA((jogo as any).url_escudo_mandante || '')
+    setEditEscudoB((jogo as any).url_escudo_visitante || '')
     setEditJogoError(null)
   }
 
@@ -719,6 +723,9 @@ export default function AdminJogos() {
             hora: editHora.trim() || undefined,
             competicao: editCompeticao.trim() || undefined,
             fixture_id: editFixtureId.trim() || undefined,
+            url_escudo_mandante: editEscudoA.trim(),
+            url_escudo_visitante: editEscudoB.trim(),
+            admin_override_escudos: true,
           }),
         },
       )
@@ -1425,7 +1432,7 @@ export default function AdminJogos() {
                 <div className="ml-auto flex items-center gap-1.5">
                   <TeamShield
                     teamName={editTimeA || editingJogo.time_a}
-                    escudo={(editingJogo as any).url_escudo_mandante}
+                    escudo={editEscudoA}
                     fixtureId={
                       editFixtureId || editingJogo.fixture_id || (editingJogo as any).api_fixture_id
                     }
@@ -1436,7 +1443,7 @@ export default function AdminJogos() {
                   <span className="text-slate-400 text-xs font-black">x</span>
                   <TeamShield
                     teamName={editTimeB || editingJogo.time_b}
-                    escudo={(editingJogo as any).url_escudo_visitante}
+                    escudo={editEscudoB}
                     fixtureId={
                       editFixtureId || editingJogo.fixture_id || (editingJogo as any).api_fixture_id
                     }
@@ -1559,6 +1566,35 @@ export default function AdminJogos() {
                 Uma vez preenchido ou vinculado, o ID fica fixo no banco e não é apagado ao renomear
                 os times. Preencha manualmente caso a busca automática falhe por grafia/fuso.
               </p>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <Label htmlFor="edit-escudo-a" className="text-xs font-bold text-slate-700">
+                  URL Escudo Mandante (opcional)
+                </Label>
+                <Input
+                  id="edit-escudo-a"
+                  type="text"
+                  placeholder="https://... (se vazio, usa sigla)"
+                  value={editEscudoA}
+                  onChange={(e) => setEditEscudoA(e.target.value)}
+                  className="mt-1 h-9 border-[#CBD5E1] text-xs focus-visible:border-amber-500 focus-visible:ring-amber-500"
+                />
+              </div>
+              <div>
+                <Label htmlFor="edit-escudo-b" className="text-xs font-bold text-slate-700">
+                  URL Escudo Visitante (opcional)
+                </Label>
+                <Input
+                  id="edit-escudo-b"
+                  type="text"
+                  placeholder="https://... (se vazio, usa sigla)"
+                  value={editEscudoB}
+                  onChange={(e) => setEditEscudoB(e.target.value)}
+                  className="mt-1 h-9 border-[#CBD5E1] text-xs focus-visible:border-amber-500 focus-visible:ring-amber-500"
+                />
+              </div>
             </div>
 
             <div className="rounded-lg bg-amber-50/70 border border-amber-200 p-2.5 text-[11px] text-amber-900 leading-relaxed">

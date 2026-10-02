@@ -33,6 +33,10 @@ export interface TeamShieldProps {
    * Se true, força o componente a buscar a fixture na API se não houver escudo resolvido
    */
   lazyFetch?: boolean
+  /**
+   * Quando true, permite que o escudo permaneça vazio sem tentar buscar URLs alternativas
+   */
+  allowEmpty?: boolean
 }
 
 /**
@@ -60,6 +64,7 @@ export function TeamShield({
   textClass = 'text-xs font-bold text-slate-700',
   className = '',
   lazyFetch = true,
+  allowEmpty = false,
 }: TeamShieldProps) {
   // Lista de candidatos em cascata para fallback seguro no onError
   const [candidates, setCandidates] = useState<string[]>([])
@@ -69,6 +74,14 @@ export function TeamShield({
 
   // Função síncrona que constrói a lista ordenada de URLs candidatas segundo a hierarquia estrita
   const computeCandidateUrls = useCallback((): string[] => {
+    // Se o admin explicitamente limpou o escudo (escudo === '' ou allowEmpty === true com escudo vazio)
+    // e não há fixture_id nem fichaDetalhes, respeita a decisão do admin de exibir o monograma (sem re-injetar URL)
+    const adminLimpouCampo =
+      (escudo === '' || (allowEmpty && !escudo)) && !fixtureId && !fichaDetalhes
+    if (adminLimpouCampo) {
+      return []
+    }
+
     if (!cleanTeam && !escudo) return []
     const list: string[] = []
     const seen = new Set<string>()
@@ -86,7 +99,9 @@ export function TeamShield({
     // PRIORIDADE 0: Blindagem Canônica Absoluta para os 6 clubes nacionais
     // Se o nome do time for um dos 6 clubes, exibe DIRETAMENTE a URL canônica do dicionário em flags.ts,
     // descartando qualquer URL divergente vinda do banco ou de caches (prioridade acima de ficha_detalhes e escudo).
-    if (cleanTeam) {
+    // EXCEÇÃO: se o admin informou uma URL manual própria válida em `escudo`, ela é respeitada como override explícito.
+    const hasManualEscudo = Boolean(escudo && escudo.trim())
+    if (cleanTeam && !hasManualEscudo) {
       const canonicalClubUrl = getClubLogoUrl(cleanTeam)
       if (canonicalClubUrl) {
         addCandidate(canonicalClubUrl)
@@ -117,22 +132,22 @@ export function TeamShield({
       }
     }
 
-    // PRIORIDADE 2: Busca por NOME EXATO na tabela canônica (OFFICIAL_CLUB_TEAM_IDS / FlagCDN para seleções)
+    // PRIORIDADE 2: URL manual do cadastro (escudo prop) quando fornecida pelo admin (autonomia total)
+    if (escudo && escudo.trim()) {
+      addCandidate(escudo.trim())
+    }
+
+    // PRIORIDADE 2.b: Busca por NOME EXATO na tabela canônica (OFFICIAL_CLUB_TEAM_IDS / FlagCDN para seleções)
     if (cleanTeam) {
-      // 2.a: Clube exato (Botafogo -> 120, Vasco -> 133, Coritiba -> 132, Chapecoense -> 147...)
+      // Clube exato (Botafogo -> 120, Vasco -> 133, Coritiba -> 132, Chapecoense -> 147...)
       const clubLogo = getClubLogoUrl(cleanTeam)
       addCandidate(clubLogo)
 
-      // 2.b: Seleção nacional exata via FlagCDN
+      // Seleção nacional exata via FlagCDN
       if (isNationalTeam(cleanTeam)) {
         const flagUrl = getFlagCdnUrl(cleanTeam, { cacheBust: true })
         addCandidate(flagUrl)
       }
-    }
-
-    // PRIORIDADE 3: URL manual do cadastro (escudo prop)
-    if (escudo && escudo.trim()) {
-      addCandidate(escudo.trim())
     }
 
     // PRIORIDADE 3 (cont): Cache local readEscudoCache
@@ -160,7 +175,7 @@ export function TeamShield({
     }
 
     return list
-  }, [cleanTeam, escudo, fichaDetalhes, fixtureId, isSide])
+  }, [cleanTeam, escudo, fichaDetalhes, fixtureId, isSide, allowEmpty])
 
   // Recalcula candidatos ao mudar as propriedades
   useEffect(() => {
