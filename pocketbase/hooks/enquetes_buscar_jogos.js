@@ -999,7 +999,27 @@ routerAdd(
           }
           seenConfrontations[confrontationKey] = true
 
-          var displayedCampeonato = (f.league && f.league.name) || tEval.categoria || 'Futebol'
+          var rawCamp = (f.league && f.league.name) || tEval.categoria || 'Futebol'
+          var displayedCampeonato = rawCamp
+          var lowCamp = String(rawCamp).toLowerCase().trim()
+          try {
+            lowCamp = lowCamp.normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+          } catch (_) {}
+          if (
+            lowCamp.indexOf('brazilian serie a') !== -1 ||
+            lowCamp === 'brasileirao' ||
+            lowCamp === 'brasileirao serie a' ||
+            lowCamp === 'serie a brazil' ||
+            lowCamp === 'serie a brasil'
+          ) {
+            displayedCampeonato = 'Brasileirão Série A'
+          } else if (
+            lowCamp.indexOf('brazilian serie b') !== -1 ||
+            lowCamp === 'brasileirao serie b'
+          ) {
+            displayedCampeonato = 'Brasileirão Série B'
+          }
+
           allFixtures.push({
             id: (f.fixture && f.fixture.id) || 'match_' + allFixtures.length,
             fixture_id: f.fixture && f.fixture.id ? String(f.fixture.id) : '',
@@ -1355,6 +1375,45 @@ routerAdd(
         cuiaba: 'https://media.api-sports.io/football/teams/1200.png',
         mirassol: 'https://media.api-sports.io/football/teams/10214.png',
         remo: 'https://media.api-sports.io/football/teams/10213.png',
+        bocajuniors: 'https://media.api-sports.io/football/teams/451.png',
+        boca: 'https://media.api-sports.io/football/teams/451.png',
+        riverplate: 'https://media.api-sports.io/football/teams/435.png',
+        river: 'https://media.api-sports.io/football/teams/435.png',
+        estudiantes: 'https://media.api-sports.io/football/teams/450.png',
+        estudiantesdelaplata: 'https://media.api-sports.io/football/teams/450.png',
+        montevideocitytorque: 'https://media.api-sports.io/football/teams/2365.png',
+        montevideocity: 'https://media.api-sports.io/football/teams/2365.png',
+        torque: 'https://media.api-sports.io/football/teams/2365.png',
+        penarol: 'https://media.api-sports.io/football/teams/2348.png',
+        nacional: 'https://media.api-sports.io/football/teams/2356.png',
+        racingclub: 'https://media.api-sports.io/football/teams/436.png',
+        racing: 'https://media.api-sports.io/football/teams/436.png',
+        independiente: 'https://media.api-sports.io/football/teams/453.png',
+        sanlorenzo: 'https://media.api-sports.io/football/teams/460.png',
+        velez: 'https://media.api-sports.io/football/teams/438.png',
+        lanus: 'https://media.api-sports.io/football/teams/446.png',
+        olimpia: 'https://media.api-sports.io/football/teams/1182.png',
+        cerroporteno: 'https://media.api-sports.io/football/teams/1176.png',
+        libertad: 'https://media.api-sports.io/football/teams/1179.png',
+        ldu: 'https://media.api-sports.io/football/teams/1158.png',
+        universidadcentral: 'https://media.api-sports.io/football/teams/3710.png',
+        independientemedellin: 'https://media.api-sports.io/football/teams/1137.png',
+        independienterivadavia: 'https://media.api-sports.io/football/teams/440.png',
+        independientesantafe: 'https://media.api-sports.io/football/teams/1138.png',
+        macara: 'https://media.api-sports.io/football/teams/1162.png',
+        platense: 'https://media.api-sports.io/football/teams/448.png',
+        cienciano: 'https://media.api-sports.io/football/teams/2548.png',
+        independientedelvalle: 'https://media.api-sports.io/football/teams/1153.png',
+        barcelonasc: 'https://media.api-sports.io/football/teams/1152.png',
+        colocolo: 'https://media.api-sports.io/football/teams/2315.png',
+        bolivar: 'https://media.api-sports.io/football/teams/3702.png',
+        thestrongest: 'https://media.api-sports.io/football/teams/3703.png',
+        sportingcristal: 'https://media.api-sports.io/football/teams/2546.png',
+        alianzalima: 'https://media.api-sports.io/football/teams/2541.png',
+        universitario: 'https://media.api-sports.io/football/teams/2540.png',
+        newcastle: 'https://media.api-sports.io/football/teams/34.png',
+        fulham: 'https://media.api-sports.io/football/teams/36.png',
+        lens: 'https://media.api-sports.io/football/teams/116.png',
         'paris saint germain': 'https://media.api-sports.io/football/teams/85.png',
         psg: 'https://media.api-sports.io/football/teams/85.png',
         dinamarca: 'https://media.api-sports.io/football/teams/21.png',
