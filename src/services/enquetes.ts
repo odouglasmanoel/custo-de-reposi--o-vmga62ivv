@@ -241,7 +241,7 @@ export interface EnqueteCachePayload {
   timestamp: number
 }
 
-const CACHE_ENQUETE_PREFIX = 'cr_enquete_detalhe_v1'
+const CACHE_ENQUETE_PREFIX = 'cr_enquete_detalhe_v2'
 const CACHE_LISTA_ENQUETES_KEY = 'cr_enquetes_lista_v1'
 
 const enqueteMemoryCache = new Map<string, EnqueteCachePayload>()
@@ -854,7 +854,7 @@ export async function adicionarJogoManualNaEnquete(params: {
 // -------------------------------------------------------------
 // Cache de Escudos em Dois Níveis (Memória + LocalStorage)
 // -------------------------------------------------------------
-const ESCUDO_CACHE_PREFIX = 'cr_escudo_cache_v1'
+const ESCUDO_CACHE_PREFIX = 'cr_escudo_cache_v2'
 const escudoMemoryCache = new Map<string, string>()
 
 function normalizeEscudoKey(name: string): string {

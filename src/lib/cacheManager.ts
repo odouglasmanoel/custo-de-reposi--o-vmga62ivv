@@ -8,9 +8,9 @@ export const CURRENT_CACHE_PREFIXES = {
   dashboard: 'cr_dashboard_cache_v3',
   palpites: 'cr_palpites_cache_v1',
   jogosDia: 'cr_jogos_dia_cache_v4',
-  escudo: 'cr_escudo_cache_v1',
+  escudo: 'cr_escudo_cache_v2',
   enquetesLista: 'cr_enquetes_lista_v1',
-  enqueteDetalhe: 'cr_enquete_detalhe_v1',
+  enqueteDetalhe: 'cr_enquete_detalhe_v2',
   estatisticas: 'cr_estatisticas_cache_v2',
   historico: 'cr_historico_cache_v1',
 } as const

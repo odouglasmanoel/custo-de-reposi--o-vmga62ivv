@@ -83,6 +83,16 @@ export function TeamShield({
       }
     }
 
+    // PRIORIDADE 0: Blindagem Canônica Absoluta para os 6 clubes nacionais
+    // Se o nome do time for um dos 6 clubes, exibe DIRETAMENTE a URL canônica do dicionário em flags.ts,
+    // descartando qualquer URL divergente vinda do banco ou de caches (prioridade acima de ficha_detalhes e escudo).
+    if (cleanTeam) {
+      const canonicalClubUrl = getClubLogoUrl(cleanTeam)
+      if (canonicalClubUrl) {
+        addCandidate(canonicalClubUrl)
+      }
+    }
+
     // PRIORIDADE 1: ficha_detalhes do jogo (extração síncrona gratuita)
     if (fichaDetalhes) {
       const extracted = extractLogosFromFichaDetalhes(fichaDetalhes)

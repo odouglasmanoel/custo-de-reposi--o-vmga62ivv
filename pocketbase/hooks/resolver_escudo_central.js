@@ -471,6 +471,45 @@ onRecordCreate(
 
     var collectionName = e.record.collection().name
 
+    // Helper específico dos 6 clubes nacionais para sobrescrita forçada mesmo se URL já existir
+    function obterCanonicoSeisClubes(nome) {
+      if (!nome) return null
+      var k = normalizarChave(nome)
+      if (!k) return null
+      // Protege Boca, River, Estudiantes e seleções
+      if (
+        k.indexOf('boca') !== -1 ||
+        k.indexOf('river') !== -1 ||
+        k.indexOf('estudiantes') !== -1
+      ) {
+        return null
+      }
+      if (k === 'cfc' || k === 'coxa' || k.indexOf('coritiba') !== -1) {
+        return 'https://media.api-sports.io/football/teams/132.png'
+      }
+      if (k === 'acf' || k === 'chape' || k.indexOf('chapecoense') !== -1) {
+        return 'https://media.api-sports.io/football/teams/147.png'
+      }
+      if (k.indexOf('mirassol') !== -1) {
+        return 'https://media.api-sports.io/football/teams/10214.png'
+      }
+      if (k.indexOf('bragantino') !== -1) {
+        return 'https://media.api-sports.io/football/teams/1199.png'
+      }
+      if (k === 'remo' || k === 'clubedoremo') {
+        return 'https://media.api-sports.io/football/teams/10213.png'
+      }
+      if (
+        k === 'vitoria' ||
+        k === 'ecvitoria' ||
+        k === 'esporteclubevitoria' ||
+        (k.indexOf('vitoria') !== -1 && k.indexOf('setubal') === -1)
+      ) {
+        return 'https://media.api-sports.io/football/teams/136.png'
+      }
+      return null
+    }
+
     if (collectionName === 'jogos') {
       var timeA = e.record.get('time_a')
       var timeB = e.record.get('time_b')
@@ -478,14 +517,22 @@ onRecordCreate(
       var escudoB = e.record.get('url_escudo_visitante')
       var competicao = e.record.get('competicao')
 
-      if (!escudoA && timeA) {
+      var canonA = obterCanonicoSeisClubes(timeA)
+      if (canonA) {
+        if (escudoA !== canonA) e.record.set('url_escudo_mandante', canonA)
+      } else if (!escudoA && timeA) {
         var resolvedA = resolverEscudoUrl(timeA)
         if (resolvedA) e.record.set('url_escudo_mandante', resolvedA)
       }
-      if (!escudoB && timeB) {
+
+      var canonB = obterCanonicoSeisClubes(timeB)
+      if (canonB) {
+        if (escudoB !== canonB) e.record.set('url_escudo_visitante', canonB)
+      } else if (!escudoB && timeB) {
         var resolvedB = resolverEscudoUrl(timeB)
         if (resolvedB) e.record.set('url_escudo_visitante', resolvedB)
       }
+
       if (competicao) {
         var normComp = normalizarCompeticao(competicao)
         if (normComp !== competicao) {
@@ -499,14 +546,22 @@ onRecordCreate(
       var logoVisitante = e.record.get('logo_visitante')
       var campEnq = e.record.get('campeonato')
 
-      if (!logoCasa && timeAEnq) {
+      var canonCasa = obterCanonicoSeisClubes(timeAEnq)
+      if (canonCasa) {
+        if (logoCasa !== canonCasa) e.record.set('logo_casa', canonCasa)
+      } else if (!logoCasa && timeAEnq) {
         var resCasa = resolverEscudoUrl(timeAEnq)
         if (resCasa) e.record.set('logo_casa', resCasa)
       }
-      if (!logoVisitante && timeBEnq) {
+
+      var canonVis = obterCanonicoSeisClubes(timeBEnq)
+      if (canonVis) {
+        if (logoVisitante !== canonVis) e.record.set('logo_visitante', canonVis)
+      } else if (!logoVisitante && timeBEnq) {
         var resVis = resolverEscudoUrl(timeBEnq)
         if (resVis) e.record.set('logo_visitante', resVis)
       }
+
       if (campEnq) {
         var normCamp = normalizarCompeticao(campEnq)
         if (normCamp !== campEnq) {
@@ -987,6 +1042,45 @@ onRecordUpdate(
       return clean
     }
 
+    // Helper específico dos 6 clubes nacionais para sobrescrita forçada mesmo se URL já existir
+    function obterCanonicoSeisClubes(nome) {
+      if (!nome) return null
+      var k = normalizarChave(nome)
+      if (!k) return null
+      // Protege Boca, River, Estudiantes e seleções
+      if (
+        k.indexOf('boca') !== -1 ||
+        k.indexOf('river') !== -1 ||
+        k.indexOf('estudiantes') !== -1
+      ) {
+        return null
+      }
+      if (k === 'cfc' || k === 'coxa' || k.indexOf('coritiba') !== -1) {
+        return 'https://media.api-sports.io/football/teams/132.png'
+      }
+      if (k === 'acf' || k === 'chape' || k.indexOf('chapecoense') !== -1) {
+        return 'https://media.api-sports.io/football/teams/147.png'
+      }
+      if (k.indexOf('mirassol') !== -1) {
+        return 'https://media.api-sports.io/football/teams/10214.png'
+      }
+      if (k.indexOf('bragantino') !== -1) {
+        return 'https://media.api-sports.io/football/teams/1199.png'
+      }
+      if (k === 'remo' || k === 'clubedoremo') {
+        return 'https://media.api-sports.io/football/teams/10213.png'
+      }
+      if (
+        k === 'vitoria' ||
+        k === 'ecvitoria' ||
+        k === 'esporteclubevitoria' ||
+        (k.indexOf('vitoria') !== -1 && k.indexOf('setubal') === -1)
+      ) {
+        return 'https://media.api-sports.io/football/teams/136.png'
+      }
+      return null
+    }
+
     var collectionName = e.record.collection().name
 
     if (collectionName === 'jogos') {
@@ -996,14 +1090,22 @@ onRecordUpdate(
       var escudoB = e.record.get('url_escudo_visitante')
       var competicao = e.record.get('competicao')
 
-      if (!escudoA && timeA) {
+      var canonA = obterCanonicoSeisClubes(timeA)
+      if (canonA) {
+        if (escudoA !== canonA) e.record.set('url_escudo_mandante', canonA)
+      } else if (!escudoA && timeA) {
         var resolvedA = resolverEscudoUrl(timeA)
         if (resolvedA) e.record.set('url_escudo_mandante', resolvedA)
       }
-      if (!escudoB && timeB) {
+
+      var canonB = obterCanonicoSeisClubes(timeB)
+      if (canonB) {
+        if (escudoB !== canonB) e.record.set('url_escudo_visitante', canonB)
+      } else if (!escudoB && timeB) {
         var resolvedB = resolverEscudoUrl(timeB)
         if (resolvedB) e.record.set('url_escudo_visitante', resolvedB)
       }
+
       if (competicao) {
         var normComp = normalizarCompeticao(competicao)
         if (normComp !== competicao) {
@@ -1017,14 +1119,22 @@ onRecordUpdate(
       var logoVisitante = e.record.get('logo_visitante')
       var campEnq = e.record.get('campeonato')
 
-      if (!logoCasa && timeAEnq) {
+      var canonCasa = obterCanonicoSeisClubes(timeAEnq)
+      if (canonCasa) {
+        if (logoCasa !== canonCasa) e.record.set('logo_casa', canonCasa)
+      } else if (!logoCasa && timeAEnq) {
         var resCasa = resolverEscudoUrl(timeAEnq)
         if (resCasa) e.record.set('logo_casa', resCasa)
       }
-      if (!logoVisitante && timeBEnq) {
+
+      var canonVis = obterCanonicoSeisClubes(timeBEnq)
+      if (canonVis) {
+        if (logoVisitante !== canonVis) e.record.set('logo_visitante', canonVis)
+      } else if (!logoVisitante && timeBEnq) {
         var resVis = resolverEscudoUrl(timeBEnq)
         if (resVis) e.record.set('logo_visitante', resVis)
       }
+
       if (campEnq) {
         var normCamp = normalizarCompeticao(campEnq)
         if (normCamp !== campEnq) {
