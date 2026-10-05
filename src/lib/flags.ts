@@ -1371,8 +1371,45 @@ export function resolveTeamBadgeUrl(params: {
   }
 
   // --- Caso Clube ---
-  // Prioridade 0: Dicionário Canônico Estático Oficial (RESOLUÇÃO SISTÊMICA INFALÍVEL)
-  // Mapeia diretamente Red Bull Bragantino, Mirassol, Remo, Chapecoense, Coritiba, Grêmio etc.
+  // 1º: URL salva no registro do jogo (savedBadge) ou ficha_detalhes — SE válida e não corrompida.
+  // Protege apenas contra corrupção / lixo / contaminação óbvia.
+  // IMPORTANTE: Se o savedBadge for uma URL válida (customizada, Wikimedia, CDN próprio, API-Sports),
+  // tem precedência sobre o dicionário canônico.
+  // Blindagem anti-inversão: se Coritiba vier com 147 (Chapecoense) ou Chapecoense vier com 132 (Coritiba),
+  // ou Estudiantes vier com 435 / River com 450, tratamos como corrompida e forçamos a blindagem.
+  const normLower = normalizeCountryName(teamName)
+  const normClean = normLower.replace(/[^a-z0-9]/g, '')
+
+  const isCoritibaInvertido =
+    (normClean === 'coritiba' || normClean === 'cfc' || normClean === 'coxa') &&
+    (savedBadge?.includes('/147.') || savedBadge?.includes('/147_'))
+  const isChapecoenseInvertido =
+    (normClean === 'chapecoense' || normClean === 'chape' || normClean === 'acf') &&
+    (savedBadge?.includes('/132.') || savedBadge?.includes('/132_'))
+  const isEstudiantesInvertido =
+    (normClean.includes('estudiantes') || normClean === 'est') &&
+    (savedBadge?.includes('/435.') || savedBadge?.includes('/435_'))
+  const isRiverInvertido =
+    (normClean.includes('riverplate') || normClean === 'river') &&
+    (savedBadge?.includes('/450.') || savedBadge?.includes('/450_'))
+
+  const isBadBadge =
+    isCoritibaInvertido ||
+    isChapecoenseInvertido ||
+    isEstudiantesInvertido ||
+    isRiverInvertido ||
+    (savedBadge ? checkCorrompido(teamName, savedBadge) : false) ||
+    (savedBadge ? isContaminatedBadge(teamName, savedBadge) : false)
+
+  if (savedBadge && !isBadBadge) {
+    return savedBadge
+  }
+
+  if (badgeLevel1) {
+    return badgeLevel1
+  }
+
+  // 2º: Dicionário Canônico Estático Oficial / Blindagens de Clubes (quando NÃO houver URL gravada válida)
   const staticClubBadge = getClubLogoUrl(teamName)
   if (staticClubBadge) {
     return staticClubBadge
@@ -1385,8 +1422,6 @@ export function resolveTeamBadgeUrl(params: {
   // 4. Red Bull Bragantino -> 1199 (e NUNCA 130 Grêmio ou outros)
   // 5. Mirassol -> 10214
   // 6. Remo -> 10213 (e NUNCA 121 Palmeiras ou outros)
-  const normLower = normalizeCountryName(teamName)
-  const normClean = normLower.replace(/[^a-z0-9]/g, '')
 
   // Blindagem Estudiantes (450) x River Plate (435)
   if (

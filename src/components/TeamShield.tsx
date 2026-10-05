@@ -96,16 +96,11 @@ export function TeamShield({
       }
     }
 
-    // PRIORIDADE 0: Blindagem Canônica Absoluta para os 6 clubes nacionais
-    // Se o nome do time for um dos 6 clubes, exibe DIRETAMENTE a URL canônica do dicionário em flags.ts,
-    // descartando qualquer URL divergente vinda do banco ou de caches (prioridade acima de ficha_detalhes e escudo).
-    // EXCEÇÃO: se o admin informou uma URL manual própria válida em `escudo`, ela é respeitada como override explícito.
-    const hasManualEscudo = Boolean(escudo && escudo.trim())
-    if (cleanTeam && !hasManualEscudo) {
-      const canonicalClubUrl = getClubLogoUrl(cleanTeam)
-      if (canonicalClubUrl) {
-        addCandidate(canonicalClubUrl)
-      }
+    // 1º HIERARQUIA: URL gravada no registro do jogo / escudo prop (se preenchida e não for placeholder conhecido)
+    // REGRA DO USUÁRIO (OVERRIDE MANUAL DO USUÁRIO):
+    // Se o escudo estiver preenchido pelo usuário, ele tem PRIORIDADE MÁXIMA sobre qualquer blindagem ou busca automática.
+    if (escudo && escudo.trim()) {
+      addCandidate(escudo.trim())
     }
 
     // PRIORIDADE 1: ficha_detalhes do jogo (extração síncrona gratuita)
@@ -132,9 +127,12 @@ export function TeamShield({
       }
     }
 
-    // PRIORIDADE 2: URL manual do cadastro (escudo prop) quando fornecida pelo admin (autonomia total)
-    if (escudo && escudo.trim()) {
-      addCandidate(escudo.trim())
+    // 2º HIERARQUIA: Blindagem / dicionário canônico (para quando NÃO houver URL gravada ou se ela falhar)
+    if (cleanTeam) {
+      const canonicalClubUrl = getClubLogoUrl(cleanTeam)
+      if (canonicalClubUrl) {
+        addCandidate(canonicalClubUrl)
+      }
     }
 
     // PRIORIDADE 2.b: Busca por NOME EXATO na tabela canônica (OFFICIAL_CLUB_TEAM_IDS / FlagCDN para seleções)

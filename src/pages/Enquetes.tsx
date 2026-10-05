@@ -1310,6 +1310,7 @@ export default function Enquetes() {
   }
 
   // Admin: Função utilitária para buscar escudos pela fixture na edição
+  // REGRA: preenche automaticamente o campo de URL APENAS se ele estiver vazio; nunca apaga valor digitado.
   const handleBuscarEscudosPorFixtureEdit = async (
     fidParam?: string,
     forcedLogos?: { home?: string; away?: string },
@@ -1318,10 +1319,10 @@ export default function Enquetes() {
     const cleanId = rawFid.replace(/\D/g, '').trim()
 
     if (forcedLogos?.home || forcedLogos?.away) {
-      if (forcedLogos.home) {
+      if (forcedLogos.home && !editLogoCasa.trim()) {
         setEditLogoCasa(forcedLogos.home)
       }
-      if (forcedLogos.away) {
+      if (forcedLogos.away && !editLogoVisitante.trim()) {
         setEditLogoVisitante(forcedLogos.away)
       }
       return
@@ -1334,18 +1335,18 @@ export default function Enquetes() {
       const res = await buscarFixtureDetalhes(cleanId)
       if (res.success && res.fixture) {
         let mudou = false
-        if (res.fixture.homeTeamLogo) {
+        if (res.fixture.homeTeamLogo && !editLogoCasa.trim()) {
           setEditLogoCasa(res.fixture.homeTeamLogo)
           mudou = true
         }
-        if (res.fixture.awayTeamLogo) {
+        if (res.fixture.awayTeamLogo && !editLogoVisitante.trim()) {
           setEditLogoVisitante(res.fixture.awayTeamLogo)
           mudou = true
         }
         if (mudou) {
           toast({
             title: 'Escudos atualizados pela API',
-            description: `Escudos oficiais vinculados à fixture ${cleanId} aplicados ao formulário.`,
+            description: `Escudos oficiais vinculados à fixture ${cleanId} aplicados aos campos vazios.`,
           })
         }
       } else if (res.rate_limited) {
@@ -1363,6 +1364,7 @@ export default function Enquetes() {
   }
 
   // Admin: Função utilitária para buscar escudos pela fixture na adição manual
+  // REGRA: preenche automaticamente o campo de URL APENAS se ele estiver vazio; nunca apaga valor digitado.
   const handleBuscarEscudosPorFixtureAtiva = async (
     fidParam?: string,
     forcedLogos?: { home?: string; away?: string },
@@ -1371,10 +1373,10 @@ export default function Enquetes() {
     const cleanId = rawFid.replace(/\D/g, '').trim()
 
     if (forcedLogos?.home || forcedLogos?.away) {
-      if (forcedLogos.home) {
+      if (forcedLogos.home && !ativaManualLogoCasa.trim()) {
         setAtivaManualLogoCasa(forcedLogos.home)
       }
-      if (forcedLogos.away) {
+      if (forcedLogos.away && !ativaManualLogoVisitante.trim()) {
         setAtivaManualLogoVisitante(forcedLogos.away)
       }
       return
@@ -1387,18 +1389,18 @@ export default function Enquetes() {
       const res = await buscarFixtureDetalhes(cleanId)
       if (res.success && res.fixture) {
         let mudou = false
-        if (res.fixture.homeTeamLogo) {
+        if (res.fixture.homeTeamLogo && !ativaManualLogoCasa.trim()) {
           setAtivaManualLogoCasa(res.fixture.homeTeamLogo)
           mudou = true
         }
-        if (res.fixture.awayTeamLogo) {
+        if (res.fixture.awayTeamLogo && !ativaManualLogoVisitante.trim()) {
           setAtivaManualLogoVisitante(res.fixture.awayTeamLogo)
           mudou = true
         }
         if (mudou) {
           toast({
             title: 'Escudos atualizados pela API',
-            description: `Escudos oficiais vinculados à fixture ${cleanId} aplicados ao formulário.`,
+            description: `Escudos oficiais vinculados à fixture ${cleanId} aplicados aos campos vazios.`,
           })
         }
       } else if (res.rate_limited) {
@@ -1435,11 +1437,11 @@ export default function Enquetes() {
           setAlternativasAtiva([])
           setAvisoBuscaAtiva(null)
 
-          // Sempre atualiza os escudos mandante e visitante com o que a API retornar
-          if (f.homeTeamLogo) {
+          // Atualiza os escudos mandante e visitante com o que a API retornar APENAS se estiverem vazios
+          if (f.homeTeamLogo && !ativaManualLogoCasa.trim()) {
             setAtivaManualLogoCasa(f.homeTeamLogo)
           }
-          if (f.awayTeamLogo) {
+          if (f.awayTeamLogo && !ativaManualLogoVisitante.trim()) {
             setAtivaManualLogoVisitante(f.awayTeamLogo)
           }
 
@@ -1519,11 +1521,11 @@ export default function Enquetes() {
         setAlternativasAtiva([])
         setAvisoBuscaAtiva(null)
 
-        // Preenche escudos com os oficiais da API
-        if (res.fixture.homeTeamLogo) {
+        // Preenche escudos com os oficiais da API APENAS se estiverem vazios
+        if (res.fixture.homeTeamLogo && !ativaManualLogoCasa.trim()) {
           setAtivaManualLogoCasa(res.fixture.homeTeamLogo)
         }
-        if (res.fixture.awayTeamLogo) {
+        if (res.fixture.awayTeamLogo && !ativaManualLogoVisitante.trim()) {
           setAtivaManualLogoVisitante(res.fixture.awayTeamLogo)
         }
 
@@ -1576,11 +1578,11 @@ export default function Enquetes() {
           setAlternativasEdit([])
           setAvisoBuscaEdit(null)
 
-          // Sempre atualiza os escudos mandante e visitante com o que a API retornar
-          if (f.homeTeamLogo) {
+          // Atualiza os escudos mandante e visitante com o que a API retornar APENAS se estiverem vazios
+          if (f.homeTeamLogo && !editLogoCasa.trim()) {
             setEditLogoCasa(f.homeTeamLogo)
           }
-          if (f.awayTeamLogo) {
+          if (f.awayTeamLogo && !editLogoVisitante.trim()) {
             setEditLogoVisitante(f.awayTeamLogo)
           }
 
@@ -1660,11 +1662,11 @@ export default function Enquetes() {
         setAlternativasEdit([])
         setAvisoBuscaEdit(null)
 
-        // Preenche escudos com os oficiais da API
-        if (res.fixture.homeTeamLogo) {
+        // Preenche escudos com os oficiais da API APENAS se estiverem vazios
+        if (res.fixture.homeTeamLogo && !editLogoCasa.trim()) {
           setEditLogoCasa(res.fixture.homeTeamLogo)
         }
-        if (res.fixture.awayTeamLogo) {
+        if (res.fixture.awayTeamLogo && !editLogoVisitante.trim()) {
           setEditLogoVisitante(res.fixture.awayTeamLogo)
         }
 
@@ -1703,9 +1705,8 @@ export default function Enquetes() {
     setAutoLookupAtivaFeedback(`ID #${fidStr} selecionado`)
     if (alt.homeTeamName && !ativaManualMandante) setAtivaManualMandante(alt.homeTeamName)
     if (alt.awayTeamName && !ativaManualVisitante) setAtivaManualVisitante(alt.awayTeamName)
-    if (alt.homeTeamLogo && !isApiSportsLogo(ativaManualLogoCasa))
-      setAtivaManualLogoCasa(alt.homeTeamLogo)
-    if (alt.awayTeamLogo && !isApiSportsLogo(ativaManualLogoVisitante))
+    if (alt.homeTeamLogo && !ativaManualLogoCasa.trim()) setAtivaManualLogoCasa(alt.homeTeamLogo)
+    if (alt.awayTeamLogo && !ativaManualLogoVisitante.trim())
       setAtivaManualLogoVisitante(alt.awayTeamLogo)
     if (alt.leagueName && !ativaManualCompeticao) setAtivaManualCompeticao(alt.leagueName)
     setAlternativasAtiva([])
@@ -1723,9 +1724,8 @@ export default function Enquetes() {
     setAutoLookupEditFeedback(`ID #${fidStr} selecionado`)
     if (alt.homeTeamName) setEditMandante(alt.homeTeamName)
     if (alt.awayTeamName) setEditVisitante(alt.awayTeamName)
-    if (alt.homeTeamLogo && !isApiSportsLogo(editLogoCasa)) setEditLogoCasa(alt.homeTeamLogo)
-    if (alt.awayTeamLogo && !isApiSportsLogo(editLogoVisitante))
-      setEditLogoVisitante(alt.awayTeamLogo)
+    if (alt.homeTeamLogo && !editLogoCasa.trim()) setEditLogoCasa(alt.homeTeamLogo)
+    if (alt.awayTeamLogo && !editLogoVisitante.trim()) setEditLogoVisitante(alt.awayTeamLogo)
     if (alt.leagueName && !editCompeticao) setEditCompeticao(alt.leagueName)
     setAlternativasEdit([])
     setAvisoBuscaEdit(null)
@@ -1764,11 +1764,11 @@ export default function Enquetes() {
           setAtivaManualFixtureId(fidStr)
           setAutoLookupAtivaFeedback(`ID #${fidStr} encontrado automaticamente`)
 
-          // Atualiza escudos com os oficiais da API-Sports
-          if (res.fixture.homeTeamLogo && !isApiSportsLogo(ativaManualLogoCasa)) {
+          // Atualiza escudos com os oficiais da API-Sports APENAS se campo estiver vazio
+          if (res.fixture.homeTeamLogo && !ativaManualLogoCasa.trim()) {
             setAtivaManualLogoCasa(res.fixture.homeTeamLogo)
           }
-          if (res.fixture.awayTeamLogo && !isApiSportsLogo(ativaManualLogoVisitante)) {
+          if (res.fixture.awayTeamLogo && !ativaManualLogoVisitante.trim()) {
             setAtivaManualLogoVisitante(res.fixture.awayTeamLogo)
           }
         } else {
@@ -1824,11 +1824,11 @@ export default function Enquetes() {
           setEditFixtureId(fidStr)
           setAutoLookupEditFeedback(`ID #${fidStr} encontrado automaticamente`)
 
-          // Atualiza escudos com os oficiais da API-Sports
-          if (res.fixture.homeTeamLogo && !isApiSportsLogo(editLogoCasa)) {
+          // Atualiza escudos com os oficiais da API-Sports APENAS se campo estiver vazio
+          if (res.fixture.homeTeamLogo && !editLogoCasa.trim()) {
             setEditLogoCasa(res.fixture.homeTeamLogo)
           }
-          if (res.fixture.awayTeamLogo && !isApiSportsLogo(editLogoVisitante)) {
+          if (res.fixture.awayTeamLogo && !editLogoVisitante.trim()) {
             setEditLogoVisitante(res.fixture.awayTeamLogo)
           }
         } else {

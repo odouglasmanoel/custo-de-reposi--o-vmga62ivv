@@ -501,11 +501,21 @@ routerAdd('POST', '/backend/v1/admin/editar-jogo', (e) => {
               jogoId,
           )
 
-          if (fixtureResultado.logo_mandante) {
+          // REGRA: Se o admin informou URL manual de escudo no payload ou se já estiver preenchido,
+          // NUNCA sobrescrever com o logo da fixture! Preenche apenas quando TOTALMENTE VAZIO.
+          const curCasaNoBanco = (jogoRec.getString('url_escudo_mandante') || '').trim()
+          const curVisNoBanco = (jogoRec.getString('url_escudo_visitante') || '').trim()
+          const manualCasaInformada =
+            body.url_escudo_mandante !== undefined && String(body.url_escudo_mandante).trim() !== ''
+          const manualVisInformada =
+            body.url_escudo_visitante !== undefined &&
+            String(body.url_escudo_visitante).trim() !== ''
+
+          if (!manualCasaInformada && !curCasaNoBanco && fixtureResultado.logo_mandante) {
             jogoRec.set('url_escudo_mandante', fixtureResultado.logo_mandante)
             escudosAtualizados = true
           }
-          if (fixtureResultado.logo_visitante) {
+          if (!manualVisInformada && !curVisNoBanco && fixtureResultado.logo_visitante) {
             jogoRec.set('url_escudo_visitante', fixtureResultado.logo_visitante)
             escudosAtualizados = true
           }

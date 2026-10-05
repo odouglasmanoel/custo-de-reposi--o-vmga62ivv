@@ -72,12 +72,22 @@ describe('TeamShield unificado (src/components/TeamShield.tsx)', () => {
     )
 
     const img = screen.getByRole('img') as HTMLImageElement
-    // Dispara erro na primeira URL
+    // Dispara erro na primeira URL (escudo manual que falhou)
     fireEvent.error(img)
 
     // O componente avança para a próxima URL da cascata (tabela canônica do Botafogo: 120)
     expect(img.src).toContain('/teams/120.png')
     expect(screen.queryByText('BO')).toBeNull()
+  })
+
+  it('Prioridade 1: se houver URL manual preenchida no escudo prop, ela tem prioridade sobre a canônica', () => {
+    const customUrl = 'https://upload.wikimedia.org/wikipedia/commons/custom-mirassol.png'
+    render(<TeamShield teamName="Mirassol" escudo={customUrl} />)
+
+    const img = screen.getByRole('img') as HTMLImageElement
+    expect(img).toBeDefined()
+    expect(img.src).toBe(customUrl)
+    expect(screen.queryByText('MI')).toBeNull()
   })
 
   it('Paridade mobile e desktop: preserva dimensões mínimas e não esconde no mobile', () => {
