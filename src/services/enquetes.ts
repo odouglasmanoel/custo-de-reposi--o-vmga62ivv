@@ -863,7 +863,7 @@ export async function adicionarJogoManualNaEnquete(params: {
 // -------------------------------------------------------------
 // Cache de Escudos em Dois Níveis (Memória + LocalStorage)
 // -------------------------------------------------------------
-const ESCUDO_CACHE_PREFIX = 'cr_escudo_cache_v4'
+const ESCUDO_CACHE_PREFIX = 'cr_escudo_cache_v5'
 const escudoMemoryCache = new Map<string, string>()
 
 function normalizeEscudoKey(name: string): string {

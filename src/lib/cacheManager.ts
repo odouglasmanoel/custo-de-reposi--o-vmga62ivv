@@ -8,7 +8,7 @@ export const CURRENT_CACHE_PREFIXES = {
   dashboard: 'cr_dashboard_cache_v3',
   palpites: 'cr_palpites_cache_v1',
   jogosDia: 'cr_jogos_dia_cache_v4',
-  escudo: 'cr_escudo_cache_v4',
+  escudo: 'cr_escudo_cache_v5',
   enquetesLista: 'cr_enquetes_lista_v4',
   enqueteDetalhe: 'cr_enquete_detalhe_v3',
   estatisticas: 'cr_estatisticas_cache_v2',
@@ -101,6 +101,37 @@ export function purgeObsoleteCaches(): void {
             localStorage.setItem(k, psgOfficial)
           }
         }
+      }
+    } catch {
+      /* ignore */
+    }
+
+    // Expurgo seletivo imediato das chaves dos 5 clubes (remo, bragantino, mirassol, chapecoense, coritiba)
+    // para garantir que versões cacheadas antigas/engessadas não permaneçam no navegador
+    try {
+      const clubTargets = [
+        'remo',
+        'bragantino',
+        'mirassol',
+        'chapecoense',
+        'chape',
+        'coritiba',
+        'coxa',
+        'cfc',
+      ]
+      const keysToPurge: string[] = []
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i)
+        if (!k) continue
+        const lowerK = k.toLowerCase()
+        if (lowerK.includes('cr_escudo_cache_') || lowerK.includes('escudo_cache_')) {
+          if (clubTargets.some((target) => lowerK.includes(target))) {
+            keysToPurge.push(k)
+          }
+        }
+      }
+      for (const k of keysToPurge) {
+        localStorage.removeItem(k)
       }
     } catch {
       /* ignore */

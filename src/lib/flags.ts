@@ -1373,36 +1373,58 @@ export function resolveTeamBadgeUrl(params: {
   // --- Caso Clube ---
   // 1º: URL salva no registro do jogo (savedBadge) ou ficha_detalhes — SE válida e não corrompida.
   // Protege apenas contra corrupção / lixo / contaminação óbvia.
-  // IMPORTANTE: Se o savedBadge for uma URL válida (customizada, Wikimedia, CDN próprio, API-Sports),
-  // tem precedência sobre o dicionário canônico.
+  // IMPORTANTE: Se o savedBadge for uma URL válida (customizada, Wikimedia, CDN próprio, TheSportsDB, API-Sports),
+  // tem soberania e precedência absoluta sobre o dicionário canônico.
   // Blindagem anti-inversão: se Coritiba vier com 147 (Chapecoense) ou Chapecoense vier com 132 (Coritiba),
   // ou Estudiantes vier com 435 / River com 450, tratamos como corrompida e forçamos a blindagem.
   const normLower = normalizeCountryName(teamName)
   const normClean = normLower.replace(/[^a-z0-9]/g, '')
 
+  const savedBadgeTrim = savedBadge ? String(savedBadge).trim() : ''
+  const isPlaceholderOrCorrupt = (url: string) => {
+    if (!url) return true
+    const low = url.toLowerCase()
+    return (
+      low.includes('z3v04x') ||
+      low.includes('v6mk4r') ||
+      low.includes('bsc') ||
+      url.length < 8 ||
+      (!url.startsWith('http://') && !url.startsWith('https://'))
+    )
+  }
+
   const isCoritibaInvertido =
     (normClean === 'coritiba' || normClean === 'cfc' || normClean === 'coxa') &&
-    (savedBadge?.includes('/147.') || savedBadge?.includes('/147_'))
+    (savedBadgeTrim.includes('/147.') ||
+      savedBadgeTrim.includes('/147_') ||
+      savedBadgeTrim.includes('147.png'))
   const isChapecoenseInvertido =
     (normClean === 'chapecoense' || normClean === 'chape' || normClean === 'acf') &&
-    (savedBadge?.includes('/132.') || savedBadge?.includes('/132_'))
+    (savedBadgeTrim.includes('/132.') ||
+      savedBadgeTrim.includes('/132_') ||
+      savedBadgeTrim.includes('132.png'))
   const isEstudiantesInvertido =
     (normClean.includes('estudiantes') || normClean === 'est') &&
-    (savedBadge?.includes('/435.') || savedBadge?.includes('/435_'))
+    (savedBadgeTrim.includes('/435.') ||
+      savedBadgeTrim.includes('/435_') ||
+      savedBadgeTrim.includes('435.png'))
   const isRiverInvertido =
     (normClean.includes('riverplate') || normClean === 'river') &&
-    (savedBadge?.includes('/450.') || savedBadge?.includes('/450_'))
+    (savedBadgeTrim.includes('/450.') ||
+      savedBadgeTrim.includes('/450_') ||
+      savedBadgeTrim.includes('450.png'))
 
   const isBadBadge =
+    isPlaceholderOrCorrupt(savedBadgeTrim) ||
     isCoritibaInvertido ||
     isChapecoenseInvertido ||
     isEstudiantesInvertido ||
     isRiverInvertido ||
-    (savedBadge ? checkCorrompido(teamName, savedBadge) : false) ||
-    (savedBadge ? isContaminatedBadge(teamName, savedBadge) : false)
+    (savedBadgeTrim ? checkCorrompido(teamName, savedBadgeTrim) : false) ||
+    (savedBadgeTrim ? isContaminatedBadge(teamName, savedBadgeTrim) : false)
 
-  if (savedBadge && !isBadBadge) {
-    return savedBadge
+  if (savedBadgeTrim && !isBadBadge) {
+    return savedBadgeTrim
   }
 
   if (badgeLevel1) {
