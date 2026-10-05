@@ -1327,17 +1327,107 @@ routerAdd(
       return Math.max(0, 1 - dist / maxLen)
     }
 
-    // Helper unificado de busca de escudo respeitando a ordem e exigindo similaridade >= 0.85:
-    // TheSportsDB ELIMINADO TOTALMENTE por diretriz do usuário Douglas.
-    // Fontes permitidas:
-    // 0) Escudos oficiais conhecidos (Série A, PSG, Dinamarca, etc. na API-Sports)
-    // 1) Cache em memória (validado, descartando TheSportsDB)
-    // 2) Football-Data.org (crest) com similaridade >= 0.85
+    // Helper unificado de busca de escudo respeitando a hierarquia exigida:
+    // Prioridade 0: Escudos oficiais conhecidos blindados (Série A, Coritiba 132, Chapecoense 147, Boca 451, etc.)
+    // Prioridade 1: TheSportsDB (strBadge com matching estrito >= 0.88)
+    // Prioridade 2: Football-Data.org (crest) / API-Football
+    // Prioridade 3: Dicionários estáticos
+    var fetchTheSportsDbBadgeEndpoint = function (teamName) {
+      if (!teamName) return ''
+      var norm = normalizarNomeEscudo(teamName)
+      if (norm.length < 3) return ''
+
+      // Proteção estrita: Boca, River, Estudiantes e os 6 blindados
+      if (
+        norm.indexOf('boca') !== -1 ||
+        norm.indexOf('river') !== -1 ||
+        norm.indexOf('estudiantes') !== -1 ||
+        norm === 'cfc' ||
+        norm === 'coxa' ||
+        norm.indexOf('coritiba') !== -1 ||
+        norm === 'acf' ||
+        norm === 'chape' ||
+        norm.indexOf('chapecoense') !== -1 ||
+        norm.indexOf('mirassol') !== -1 ||
+        norm.indexOf('bragantino') !== -1 ||
+        norm === 'remo' ||
+        norm === 'clubedoremo' ||
+        norm === 'vitoria' ||
+        norm === 'ecvitoria'
+      ) {
+        return ''
+      }
+
+      try {
+        var cleanTerm = String(teamName)
+          .replace(/\b(FC|EC|SC|AC|CR|SE|CF|CD|SD|Futebol|Clube|Club|de|do|da|dos|das)\b/gi, ' ')
+          .replace(/\s+/g, ' ')
+          .trim()
+        if (!cleanTerm || cleanTerm.length < 3) cleanTerm = teamName
+
+        var url =
+          'https://www.thesportsdb.com/api/v1/json/3/searchteams.php?t=' +
+          encodeURIComponent(cleanTerm)
+        var res = $http.send({
+          url: url,
+          method: 'GET',
+          timeout: 4,
+        })
+
+        if (
+          res.statusCode === 200 &&
+          res.json &&
+          Array.isArray(res.json.teams) &&
+          res.json.teams.length > 0
+        ) {
+          for (var i = 0; i < res.json.teams.length; i++) {
+            var tm = res.json.teams[i]
+            if (!tm || !tm.strBadge) continue
+
+            var candidate = String(tm.strBadge).trim()
+            if (!candidate) continue
+            var candidateLow = candidate.toLowerCase()
+            // Descarta placeholders conhecidos
+            if (
+              candidateLow.indexOf('z3v04x') !== -1 ||
+              candidateLow.indexOf('v6mk4r') !== -1 ||
+              candidateLow.indexOf('bsc') !== -1
+            ) {
+              continue
+            }
+
+            var tName = tm.strTeam || ''
+            var tAlt = tm.strTeamAlternate || tm.strAlternate || ''
+            var simA = similaridadeEscudo(teamName, tName)
+            var simB = tAlt ? similaridadeEscudo(teamName, tAlt) : 0
+            var best = Math.max(simA, simB)
+
+            // Matching estrito: similaridade >= 0.88
+            // Trava Coritiba != Chapecoense
+            var normCand = normalizarNomeEscudo(tName)
+            if (
+              (norm.indexOf('coritiba') !== -1 && normCand.indexOf('chapecoense') !== -1) ||
+              (norm.indexOf('chapecoense') !== -1 && normCand.indexOf('coritiba') !== -1)
+            ) {
+              continue
+            }
+
+            if (best >= 0.88) {
+              return candidate
+            }
+          }
+        }
+      } catch (errTsdb) {
+        console.log('[fetchTheSportsDbBadgeEndpoint] Erro ao consultar ' + teamName + ':', errTsdb)
+      }
+      return ''
+    }
+
     var fetchTeamBadgeOrdered = function (teamName) {
       if (!teamName) return ''
       var cleanKey = normalizarNomeEscudo(teamName)
 
-      // 0) Tratamento explícito para escudos oficiais conhecidos da API-Sports
+      // 0) Tratamento explícito para escudos oficiais conhecidos da API-Sports (Prioridade 0)
       var KNOWN_OFFICIAL_BADGES = {
         coritiba: 'https://media.api-sports.io/football/teams/132.png',
         coritibafbc: 'https://media.api-sports.io/football/teams/132.png',
@@ -1433,12 +1523,16 @@ routerAdd(
         globalThis.__officialBadgeCache[cleanKey] !== undefined
       ) {
         var cachedVal = globalThis.__officialBadgeCache[cleanKey] || ''
-        // Elimina qualquer resíduo de TheSportsDB
-        if (cachedVal && cachedVal.indexOf('thesportsdb.com') !== -1) {
-          cachedVal = ''
-          globalThis.__officialBadgeCache[cleanKey] = ''
-        }
         if (cachedVal) return cachedVal
+      }
+
+      // Prioridade 1: TheSportsDB (busca por nome de clube de qualquer time)
+      var tsdbFound = fetchTheSportsDbBadgeEndpoint(teamName)
+      if (tsdbFound) {
+        if (typeof globalThis !== 'undefined' && globalThis.__officialBadgeCache) {
+          globalThis.__officialBadgeCache[cleanKey] = tsdbFound
+        }
+        return tsdbFound
       }
 
       var badgeFound = ''
@@ -1493,8 +1587,13 @@ routerAdd(
         }
       }
 
-      // Se a URL encontrada contiver TheSportsDB, anula para nunca devolver essa fonte
-      if (badgeFound && badgeFound.indexOf('thesportsdb.com') !== -1) {
+      // Se a URL encontrada contiver placeholder corrompido, descarta
+      if (
+        badgeFound &&
+        (badgeFound.indexOf('z3v04x') !== -1 ||
+          badgeFound.indexOf('v6mk4r') !== -1 ||
+          badgeFound.indexOf('bsc') !== -1)
+      ) {
         badgeFound = ''
       }
 
@@ -1544,13 +1643,21 @@ routerAdd(
 onRecordCreate((e) => {
   var rec = e.record
   try {
-    // Purga escudos do TheSportsDB se porventura vierem no payload
+    // Purga apenas escudos corrompidos/placeholders
     var logoCasa = (rec.getString('logo_casa') || '').trim()
     var logoVis = (rec.getString('logo_visitante') || '').trim()
-    if (logoCasa.indexOf('thesportsdb.com') !== -1) {
+    if (
+      logoCasa.indexOf('z3v04x') !== -1 ||
+      logoCasa.indexOf('v6mk4r') !== -1 ||
+      logoCasa.indexOf('bsc') !== -1
+    ) {
       rec.set('logo_casa', '')
     }
-    if (logoVis.indexOf('thesportsdb.com') !== -1) {
+    if (
+      logoVis.indexOf('z3v04x') !== -1 ||
+      logoVis.indexOf('v6mk4r') !== -1 ||
+      logoVis.indexOf('bsc') !== -1
+    ) {
       rec.set('logo_visitante', '')
     }
   } catch (errBadge) {
@@ -1597,13 +1704,21 @@ onRecordCreate((e) => {
 onRecordUpdate((e) => {
   var rec = e.record
   try {
-    // Purga escudos do TheSportsDB se porventura vierem no payload
+    // Purga apenas escudos corrompidos/placeholders
     var logoCasa = (rec.getString('logo_casa') || '').trim()
     var logoVis = (rec.getString('logo_visitante') || '').trim()
-    if (logoCasa.indexOf('thesportsdb.com') !== -1) {
+    if (
+      logoCasa.indexOf('z3v04x') !== -1 ||
+      logoCasa.indexOf('v6mk4r') !== -1 ||
+      logoCasa.indexOf('bsc') !== -1
+    ) {
       rec.set('logo_casa', '')
     }
-    if (logoVis.indexOf('thesportsdb.com') !== -1) {
+    if (
+      logoVis.indexOf('z3v04x') !== -1 ||
+      logoVis.indexOf('v6mk4r') !== -1 ||
+      logoVis.indexOf('bsc') !== -1
+    ) {
       rec.set('logo_visitante', '')
     }
   } catch (errBadge) {

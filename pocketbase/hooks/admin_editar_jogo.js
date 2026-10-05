@@ -600,12 +600,20 @@ routerAdd('POST', '/backend/v1/admin/editar-jogo', (e) => {
     curLogoCasa = (jogoRec.getString('url_escudo_mandante') || '').trim()
     curLogoVis = (jogoRec.getString('url_escudo_visitante') || '').trim()
 
-    // Se tiver TheSportsDB nos campos, limpa
-    if (curLogoCasa.indexOf('thesportsdb.com') !== -1) {
+    // Limpa apenas placeholders/URLs comprovadamente corrompidas
+    if (
+      curLogoCasa.indexOf('z3v04x') !== -1 ||
+      curLogoCasa.indexOf('v6mk4r') !== -1 ||
+      curLogoCasa.indexOf('bsc') !== -1
+    ) {
       curLogoCasa = ''
       jogoRec.set('url_escudo_mandante', '')
     }
-    if (curLogoVis.indexOf('thesportsdb.com') !== -1) {
+    if (
+      curLogoVis.indexOf('z3v04x') !== -1 ||
+      curLogoVis.indexOf('v6mk4r') !== -1 ||
+      curLogoVis.indexOf('bsc') !== -1
+    ) {
       curLogoVis = ''
       jogoRec.set('url_escudo_visitante', '')
     }
@@ -616,12 +624,34 @@ routerAdd('POST', '/backend/v1/admin/editar-jogo', (e) => {
         if (!teamName) return ''
         const cleanKey = normalizarNome(teamName)
 
-        // 0) PSG e Dinamarca oficial API-Sports
-        if (cleanKey === 'paris saint germain' || cleanKey === 'psg') {
-          return 'https://media.api-sports.io/football/teams/85.png'
+        // Prioridade 0: Blindagem clubes conhecidos e Boca/River/Estudiantes
+        const KNOWN_OFFICIAL = {
+          coritiba: 'https://media.api-sports.io/football/teams/132.png',
+          coritibafbc: 'https://media.api-sports.io/football/teams/132.png',
+          coxa: 'https://media.api-sports.io/football/teams/132.png',
+          chapecoense: 'https://media.api-sports.io/football/teams/147.png',
+          chape: 'https://media.api-sports.io/football/teams/147.png',
+          vitoria: 'https://media.api-sports.io/football/teams/136.png',
+          ecvitoria: 'https://media.api-sports.io/football/teams/136.png',
+          redbullbragantino: 'https://media.api-sports.io/football/teams/1199.png',
+          rbbragantino: 'https://media.api-sports.io/football/teams/1199.png',
+          bragantino: 'https://media.api-sports.io/football/teams/1199.png',
+          mirassol: 'https://media.api-sports.io/football/teams/10214.png',
+          remo: 'https://media.api-sports.io/football/teams/10213.png',
+          clubedoremo: 'https://media.api-sports.io/football/teams/10213.png',
+          bocajuniors: 'https://media.api-sports.io/football/teams/451.png',
+          boca: 'https://media.api-sports.io/football/teams/451.png',
+          riverplate: 'https://media.api-sports.io/football/teams/435.png',
+          river: 'https://media.api-sports.io/football/teams/435.png',
+          estudiantes: 'https://media.api-sports.io/football/teams/450.png',
+          estudiantesdelaplata: 'https://media.api-sports.io/football/teams/450.png',
+          'paris saint germain': 'https://media.api-sports.io/football/teams/85.png',
+          psg: 'https://media.api-sports.io/football/teams/85.png',
+          dinamarca: 'https://media.api-sports.io/football/teams/21.png',
+          denmark: 'https://media.api-sports.io/football/teams/21.png',
         }
-        if (cleanKey === 'dinamarca' || cleanKey === 'denmark') {
-          return 'https://media.api-sports.io/football/teams/21.png'
+        if (KNOWN_OFFICIAL[cleanKey]) {
+          return KNOWN_OFFICIAL[cleanKey]
         }
 
         // 1) Cache em memória global
@@ -634,9 +664,63 @@ routerAdd('POST', '/backend/v1/admin/editar-jogo', (e) => {
           globalThis.__officialBadgeCache[cleanKey]
         ) {
           const cVal = globalThis.__officialBadgeCache[cleanKey]
-          if (cVal && cVal.indexOf('thesportsdb.com') === -1) {
-            return cVal
+          if (cVal) return cVal
+        }
+
+        // Prioridade 1: TheSportsDB
+        try {
+          const cleanTerm = String(teamName)
+            .replace(/\b(FC|EC|SC|AC|CR|SE|CF|CD|SD|Futebol|Clube|Club|de|do|da|dos|das)\b/gi, ' ')
+            .replace(/\s+/g, ' ')
+            .trim()
+          const qTerm = cleanTerm && cleanTerm.length >= 3 ? cleanTerm : teamName
+          const resTsdb = $http.send({
+            url:
+              'https://www.thesportsdb.com/api/v1/json/3/searchteams.php?t=' +
+              encodeURIComponent(qTerm),
+            method: 'GET',
+            timeout: 4,
+          })
+          if (
+            resTsdb.statusCode === 200 &&
+            resTsdb.json &&
+            Array.isArray(resTsdb.json.teams) &&
+            resTsdb.json.teams.length > 0
+          ) {
+            for (let t = 0; t < resTsdb.json.teams.length; t++) {
+              const item = resTsdb.json.teams[t]
+              if (!item || !item.strBadge) continue
+              const bStr = String(item.strBadge).trim()
+              if (!bStr) continue
+              const bLow = bStr.toLowerCase()
+              if (bLow.includes('z3v04x') || bLow.includes('v6mk4r') || bLow.includes('bsc'))
+                continue
+
+              const sTeam = item.strTeam || ''
+              const sAlt = item.strTeamAlternate || item.strAlternate || ''
+              const sim1 = calcularSimilaridade(teamName, sTeam)
+              const sim2 = sAlt ? calcularSimilaridade(teamName, sAlt) : 0
+              const bestSim = Math.max(sim1, sim2)
+
+              // Trava Coritiba != Chapecoense
+              const normCand = normalizarNome(sTeam)
+              if (
+                (cleanKey.includes('coritiba') && normCand.includes('chapecoense')) ||
+                (cleanKey.includes('chapecoense') && normCand.includes('coritiba'))
+              ) {
+                continue
+              }
+
+              if (bestSim >= 0.88) {
+                if (typeof globalThis !== 'undefined' && globalThis.__officialBadgeCache) {
+                  globalThis.__officialBadgeCache[cleanKey] = bStr
+                }
+                return bStr
+              }
+            }
           }
+        } catch (errTsdb) {
+          console.log('[admin_editar_jogo] Erro TheSportsDB para ' + teamName + ':', errTsdb)
         }
 
         let badge = ''
@@ -737,8 +821,13 @@ routerAdd('POST', '/backend/v1/admin/editar-jogo', (e) => {
           } catch (_) {}
         }
 
-        // Descarta se for TheSportsDB
-        if (badge && badge.indexOf('thesportsdb.com') !== -1) {
+        // Descarta placeholders conhecidos
+        if (
+          badge &&
+          (badge.indexOf('z3v04x') !== -1 ||
+            badge.indexOf('v6mk4r') !== -1 ||
+            badge.indexOf('bsc') !== -1)
+        ) {
           badge = ''
         }
 

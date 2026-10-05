@@ -413,16 +413,149 @@ onRecordCreate(
       return s.replace(/[^a-z0-9]/g, '')
     }
 
+    function levenshtein(a, b) {
+      var m = a.length
+      var n = b.length
+      if (m === 0) return n
+      if (n === 0) return m
+      var d = []
+      for (var i = 0; i <= m; i++) d[i] = [i]
+      for (var j = 0; j <= n; j++) d[0][j] = j
+      for (var i1 = 1; i1 <= m; i1++) {
+        for (var j1 = 1; j1 <= n; j1++) {
+          var cost = a[i1 - 1] === b[j1 - 1] ? 0 : 1
+          d[i1][j1] = Math.min(d[i1 - 1][j1] + 1, d[i1][j1 - 1] + 1, d[i1 - 1][j1 - 1] + cost)
+        }
+      }
+      return d[m][n]
+    }
+
+    function similaridadeNomes(a, b) {
+      var na = normalizarChave(a)
+      var nb = normalizarChave(b)
+      if (!na || !nb) return 0
+      if (na === nb) return 1
+      if (na.length < 4 || nb.length < 4) return 0
+      // Regra de ouro: Coritiba e Chapecoense nunca dão match
+      if (
+        (na.indexOf('coritiba') !== -1 && nb.indexOf('chapecoense') !== -1) ||
+        (na.indexOf('chapecoense') !== -1 && nb.indexOf('coritiba') !== -1)
+      ) {
+        return 0
+      }
+      if (na.indexOf(nb) !== -1 || nb.indexOf(na) !== -1) {
+        if (Math.min(na.length, nb.length) >= 4) return 0.95
+      }
+      var maxL = Math.max(na.length, nb.length)
+      if (maxL === 0) return 1
+      var dist = levenshtein(na, nb)
+      return Math.max(0, 1 - dist / maxL)
+    }
+
+    function buscarTheSportsDbBadge(nomeTime) {
+      if (!nomeTime) return ''
+      var normClean = normalizarChave(nomeTime)
+      if (normClean.length < 3) return ''
+
+      // Trava Boca, River, Estudiantes e os 6 blindados de usar TheSportsDB
+      if (
+        normClean.indexOf('boca') !== -1 ||
+        normClean.indexOf('river') !== -1 ||
+        normClean.indexOf('estudiantes') !== -1 ||
+        normClean === 'cfc' ||
+        normClean === 'coxa' ||
+        normClean.indexOf('coritiba') !== -1 ||
+        normClean === 'acf' ||
+        normClean === 'chape' ||
+        normClean.indexOf('chapecoense') !== -1 ||
+        normClean.indexOf('mirassol') !== -1 ||
+        normClean.indexOf('bragantino') !== -1 ||
+        normClean === 'remo' ||
+        normClean === 'clubedoremo' ||
+        normClean === 'vitoria' ||
+        normClean === 'ecvitoria'
+      ) {
+        return ''
+      }
+
+      // Se for seleção nacional, não usa TheSportsDB (usa FlagCDN / oficial)
+      if (SELECAO_FLAG_MAP[normClean]) return ''
+
+      try {
+        var cleanTerm = String(nomeTime)
+          .replace(/\b(FC|EC|SC|AC|CR|SE|CF|CD|SD|Futebol|Clube|Club|de|do|da|dos|das)\b/gi, ' ')
+          .replace(/\s+/g, ' ')
+          .trim()
+        if (!cleanTerm || cleanTerm.length < 3) cleanTerm = nomeTime
+
+        var url =
+          'https://www.thesportsdb.com/api/v1/json/3/searchteams.php?t=' +
+          encodeURIComponent(cleanTerm)
+        var res = $http.send({
+          url: url,
+          method: 'GET',
+          timeout: 4,
+        })
+
+        if (
+          res.statusCode === 200 &&
+          res.json &&
+          Array.isArray(res.json.teams) &&
+          res.json.teams.length > 0
+        ) {
+          for (var tIdx = 0; tIdx < res.json.teams.length; tIdx++) {
+            var tm = res.json.teams[tIdx]
+            if (!tm || !tm.strBadge) continue
+
+            var badgeCandidate = String(tm.strBadge).trim()
+            if (!badgeCandidate) continue
+            var badgeLow = badgeCandidate.toLowerCase()
+            // Descarta placeholders conhecidos
+            if (
+              badgeLow.indexOf('z3v04x') !== -1 ||
+              badgeLow.indexOf('v6mk4r') !== -1 ||
+              badgeLow.indexOf('bsc') !== -1
+            ) {
+              continue
+            }
+
+            var teamStr = tm.strTeam || ''
+            var teamAlt = tm.strTeamAlternate || tm.strAlternate || ''
+
+            var simTeam = similaridadeNomes(nomeTime, teamStr)
+            var simAlt = teamAlt ? similaridadeNomes(nomeTime, teamAlt) : 0
+            var bestSim = Math.max(simTeam, simAlt)
+
+            if (bestSim >= 0.88) {
+              return badgeCandidate
+            }
+          }
+        }
+      } catch (errTsdb) {
+        console.log('[resolver_escudo_central TSDB] Erro ao consultar ' + nomeTime + ':', errTsdb)
+      }
+      return ''
+    }
+
     function resolverEscudoUrl(nomeTime) {
       if (!nomeTime) return ''
       var key = normalizarChave(nomeTime)
       if (!key) return ''
 
-      if (CLUB_ID_MAP[key]) {
-        return 'https://media.api-sports.io/football/teams/' + CLUB_ID_MAP[key] + '.png'
-      }
+      // Trava seleção
       if (SELECAO_FLAG_MAP[key]) {
         return 'https://flagcdn.com/w80/' + SELECAO_FLAG_MAP[key] + '.png'
+      }
+
+      // Prioridade 1: TheSportsDB (para buscas por nome de clubes)
+      var tsdbBadge = buscarTheSportsDbBadge(nomeTime)
+      if (tsdbBadge) {
+        return tsdbBadge
+      }
+
+      // Prioridade 2 e 3: CLUB_ID_MAP / API-Football e SELECAO_FLAG_MAP
+      if (CLUB_ID_MAP[key]) {
+        return 'https://media.api-sports.io/football/teams/' + CLUB_ID_MAP[key] + '.png'
       }
 
       var keys = Object.keys(CLUB_ID_MAP)

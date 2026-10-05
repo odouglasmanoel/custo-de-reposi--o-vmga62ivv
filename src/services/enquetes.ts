@@ -585,7 +585,12 @@ export function isApiSportsLogo(url?: string | null): boolean {
 
 export function isTheSportsDbLogo(url?: string | null): boolean {
   if (!url) return false
-  return url.includes('thesportsdb.com')
+  const lower = url.toLowerCase()
+  // Retorna true somente se for um placeholder/link corrompido do TheSportsDB
+  return (
+    lower.includes('thesportsdb.com') &&
+    (lower.includes('z3v04x') || lower.includes('v6mk4r') || lower.includes('bsc'))
+  )
 }
 
 export interface SalvarJogoEnqueteResult {
@@ -854,7 +859,7 @@ export async function adicionarJogoManualNaEnquete(params: {
 // -------------------------------------------------------------
 // Cache de Escudos em Dois Níveis (Memória + LocalStorage)
 // -------------------------------------------------------------
-const ESCUDO_CACHE_PREFIX = 'cr_escudo_cache_v2'
+const ESCUDO_CACHE_PREFIX = 'cr_escudo_cache_v3'
 const escudoMemoryCache = new Map<string, string>()
 
 function normalizeEscudoKey(name: string): string {

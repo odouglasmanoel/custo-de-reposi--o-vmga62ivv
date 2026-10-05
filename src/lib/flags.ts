@@ -1074,9 +1074,6 @@ export function isContaminatedBadge(teamName: string, url?: string | null): bool
   if (!url) return false
   const lowerUrl = url.toLowerCase()
 
-  // TheSportsDB é estritamente proibido
-  if (lowerUrl.includes('thesportsdb.com')) return true
-
   // Köln / Cologne (192.png) nunca deve aparecer para seleções como Turquia, Bélgica, PSG etc.
   if (
     lowerUrl.includes('/192.') ||
@@ -1087,8 +1084,18 @@ export function isContaminatedBadge(teamName: string, url?: string | null): bool
     return true
   }
 
-  // B.S.C. corrompido (ex.: z3v04x)
-  if (lowerUrl.includes('z3v04x') || lowerUrl.includes('bsc') || lowerUrl.includes('b.s.c')) {
+  // B.S.C. corrompido ou placeholders conhecidos (ex.: z3v04x, v6mk4r, bsc de seleções)
+  if (
+    lowerUrl.includes('z3v04x') ||
+    lowerUrl.includes('v6mk4r') ||
+    lowerUrl.includes('bsc') ||
+    lowerUrl.includes('b.s.c')
+  ) {
+    return true
+  }
+
+  // Se for seleção nacional e a URL for do TheSportsDB, rejeita (seleção usa FlagCDN ou oficial)
+  if (isNationalTeam(teamName) && lowerUrl.includes('thesportsdb.com')) {
     return true
   }
 
