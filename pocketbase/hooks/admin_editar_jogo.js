@@ -34,13 +34,22 @@ routerAdd('POST', '/backend/v1/admin/editar-jogo', (e) => {
     const competicaoVal = (body.competicao || '').trim()
     const manualFixtureId = body.fixture_id !== undefined ? String(body.fixture_id).trim() : null
 
+    const permitirReResolucao =
+      body.permitir_re_resolucao === true ||
+      body.permitir_re_resolucao === 'true' ||
+      body.permitir_re_resolucao === 1 ||
+      body.permitir_re_resolucao === '1'
+
     const adminOverrideEscudos =
-      body.admin_override_escudos === true ||
-      body.admin_override_escudos === 'true' ||
-      body.admin_override_escudos === 1 ||
-      body.admin_override_escudos === '1' ||
-      body.url_escudo_mandante !== undefined ||
-      body.url_escudo_visitante !== undefined
+      !permitirReResolucao &&
+      (body.admin_override_escudos === true ||
+        body.admin_override_escudos === 'true' ||
+        body.admin_override_escudos === 1 ||
+        body.admin_override_escudos === '1' ||
+        (body.url_escudo_mandante !== undefined &&
+          String(body.url_escudo_mandante).trim() !== '') ||
+        (body.url_escudo_visitante !== undefined &&
+          String(body.url_escudo_visitante).trim() !== ''))
 
     if (!jogoId) {
       return e.badRequestError('ID do jogo é obrigatório (jogo_id).')
@@ -55,6 +64,11 @@ routerAdd('POST', '/backend/v1/admin/editar-jogo', (e) => {
     } catch (_) {
       return e.notFoundError('Jogo não encontrado.')
     }
+
+    const prevTimeA = (jogoRec.getString('time_a') || '').trim()
+    const prevTimeB = (jogoRec.getString('time_b') || '').trim()
+    const nomeAMudou = prevTimeA.toLowerCase() !== timeA.toLowerCase()
+    const nomeBMudou = prevTimeB.toLowerCase() !== timeB.toLowerCase()
 
     // REGRA IMPORTANTE: Persistência e trava de fixture_id
     // 1) Se o admin enviou fixture_id manualmente preenchido (numérico), atribui e persiste diretamente.
@@ -618,8 +632,13 @@ routerAdd('POST', '/backend/v1/admin/editar-jogo', (e) => {
       jogoRec.set('url_escudo_visitante', '')
     }
 
-    // Se o admin solicitou override ou forneceu os campos diretamente, pula a busca cascata automática
-    if (!adminOverrideEscudos && (!curLogoCasa || !curLogoVis)) {
+    // Resolução individual de escudos: se a URL do time está vazia E
+    // (!adminOverrideEscudos || nomeDoTimeMudou || permitirReResolucao),
+    // executa a cascata de busca automática para aquele time específico.
+    const resolverA = (!adminOverrideEscudos || nomeAMudou || permitirReResolucao) && !curLogoCasa
+    const resolverB = (!adminOverrideEscudos || nomeBMudou || permitirReResolucao) && !curLogoVis
+
+    if (resolverA || resolverB) {
       const buscarEscudoCascata = (teamName) => {
         if (!teamName) return ''
         const cleanKey = normalizarNome(teamName)
@@ -839,7 +858,7 @@ routerAdd('POST', '/backend/v1/admin/editar-jogo', (e) => {
       }
 
       let alterouEscudo = false
-      if (!curLogoCasa) {
+      if (resolverA) {
         const foundA = buscarEscudoCascata(timeA)
         if (foundA) {
           jogoRec.set('url_escudo_mandante', foundA)
@@ -848,7 +867,7 @@ routerAdd('POST', '/backend/v1/admin/editar-jogo', (e) => {
         }
       }
 
-      if (!curLogoVis) {
+      if (resolverB) {
         const foundB = buscarEscudoCascata(timeB)
         if (foundB) {
           jogoRec.set('url_escudo_visitante', foundB)

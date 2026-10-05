@@ -242,7 +242,7 @@ export interface EnqueteCachePayload {
 }
 
 const CACHE_ENQUETE_PREFIX = 'cr_enquete_detalhe_v2'
-const CACHE_LISTA_ENQUETES_KEY = 'cr_enquetes_lista_v1'
+const CACHE_LISTA_ENQUETES_KEY = 'cr_enquetes_lista_v3'
 
 const enqueteMemoryCache = new Map<string, EnqueteCachePayload>()
 let listaEnquetesMemoryCache: { lista: EnqueteModel[]; timestamp: number } | null = null

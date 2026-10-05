@@ -229,6 +229,10 @@ export default function Enquetes() {
   const [manualTimeB, setManualTimeB] = useState('')
   const [manualLogoCasa, setManualLogoCasa] = useState('')
   const [manualLogoVisitante, setManualLogoVisitante] = useState('')
+  const [origemManualLogoCasa, setOrigemManualLogoCasa] = useState<'auto' | 'manual'>('auto')
+  const [origemManualLogoVisitante, setOrigemManualLogoVisitante] = useState<'auto' | 'manual'>(
+    'auto',
+  )
   const [manualCompeticao, setManualCompeticao] = useState('')
   const [manualData, setManualData] = useState(datasPadrao.dataInicio)
   const [manualHorario, setManualHorario] = useState('16:00')
@@ -273,6 +277,10 @@ export default function Enquetes() {
   const [ativaManualFixtureId, setAtivaManualFixtureId] = useState('')
   const [ativaManualLogoCasa, setAtivaManualLogoCasa] = useState('')
   const [ativaManualLogoVisitante, setAtivaManualLogoVisitante] = useState('')
+  const [origemAtivaLogoCasa, setOrigemAtivaLogoCasa] = useState<'auto' | 'manual'>('auto')
+  const [origemAtivaLogoVisitante, setOrigemAtivaLogoVisitante] = useState<'auto' | 'manual'>(
+    'auto',
+  )
   const [ativaManualCompeticao, setAtivaManualCompeticao] = useState('')
   const [ativaManualData, setAtivaManualData] = useState('')
   const [ativaManualHorario, setAtivaManualHorario] = useState('16:00')
@@ -359,6 +367,8 @@ export default function Enquetes() {
   const [editFixtureId, setEditFixtureId] = useState('')
   const [editLogoCasa, setEditLogoCasa] = useState('')
   const [editLogoVisitante, setEditLogoVisitante] = useState('')
+  const [origemEditLogoCasa, setOrigemEditLogoCasa] = useState<'auto' | 'manual'>('auto')
+  const [origemEditLogoVisitante, setOrigemEditLogoVisitante] = useState<'auto' | 'manual'>('auto')
   const [editCompeticao, setEditCompeticao] = useState('')
   const [editData, setEditData] = useState('')
   const [editHorario, setEditHorario] = useState('16:00')
@@ -1122,6 +1132,8 @@ export default function Enquetes() {
     setAtivaManualFixtureId('')
     setAtivaManualLogoCasa('')
     setAtivaManualLogoVisitante('')
+    setOrigemAtivaLogoCasa('auto')
+    setOrigemAtivaLogoVisitante('auto')
     setAtivaManualCompeticao('')
     setAtivaManualData(activePoll?.data_inicio || datasPadrao.dataInicio)
     setAtivaManualHorario('16:00')
@@ -1852,8 +1864,16 @@ export default function Enquetes() {
     setEditMandante(jogo.time_a)
     setEditVisitante(jogo.time_b)
     setEditFixtureId(jogo.fixture_id ? String(jogo.fixture_id).replace(/\D/g, '').trim() : '')
-    setEditLogoCasa(jogo.logo_casa || '')
-    setEditLogoVisitante(jogo.logo_visitante || '')
+    const lCasa = jogo.logo_casa || ''
+    const lVis = jogo.logo_visitante || ''
+    setEditLogoCasa(lCasa)
+    setEditLogoVisitante(lVis)
+    const isAutoLogo = (u: string) =>
+      u.includes('thesportsdb.com') ||
+      u.includes('media.api-sports.io') ||
+      u.includes('flagcdn.com')
+    setOrigemEditLogoCasa(!lCasa || isAutoLogo(lCasa) ? 'auto' : 'manual')
+    setOrigemEditLogoVisitante(!lVis || isAutoLogo(lVis) ? 'auto' : 'manual')
     setEditCompeticao(jogo.campeonato || '')
     setEditData(jogo.data)
     setEditHorario(jogo.horario || '16:00')
@@ -1918,10 +1938,40 @@ export default function Enquetes() {
     }
 
     // Resolução de escudos:
-    // Se o usuário limpou o campo de escudo (enviando string vazia), respeitar e enviar vazio.
-    // A busca oficial será feita EXCLUSIVAMENTE via API-Football no editarJogoEnquete.
+    // REGRA 1: URL vazia + nome alterado → re-busca automática do escudo pelo NOVO nome via cascata (buscarEscudoTime)
+    // REGRA 2: URL preenchida → prioridade absoluta, mantida
+    // REGRA 3: URL vazia e nome NÃO alterado → preserva o vazio
     let logoAFinal = customLogoA
     let logoBFinal = customLogoB
+
+    const origTimeA = (jogoEmEdicao.time_a || '').trim().toLowerCase()
+    const origTimeB = (jogoEmEdicao.time_b || '').trim().toLowerCase()
+    const mudouNomeA = origTimeA !== timeA.toLowerCase()
+    const mudouNomeB = origTimeB !== timeB.toLowerCase()
+
+    const buscaPromessas: Promise<void>[] = []
+    if (!logoAFinal && mudouNomeA) {
+      buscaPromessas.push(
+        buscarEscudoTime(timeA)
+          .then((badge) => {
+            if (badge) logoAFinal = badge
+          })
+          .catch(() => {}),
+      )
+    }
+    if (!logoBFinal && mudouNomeB) {
+      buscaPromessas.push(
+        buscarEscudoTime(timeB)
+          .then((badge) => {
+            if (badge) logoBFinal = badge
+          })
+          .catch(() => {}),
+      )
+    }
+
+    if (buscaPromessas.length > 0) {
+      await Promise.all(buscaPromessas)
+    }
 
     const regiaoCalculada =
       competicao.toLowerCase().includes('brasileir') || competicao.toLowerCase().includes('copa')
@@ -3577,13 +3627,18 @@ export default function Enquetes() {
                       </Label>
                       <Input
                         id="manual-time-a"
-                        placeholder="Ex.: Flamengo"
+                        placeholder="Ex.: Corinthians"
                         value={manualTimeA}
-                        onChange={(e) => setManualTimeA(e.target.value)}
+                        onChange={(e) => {
+                          const novo = e.target.value
+                          setManualTimeA(novo)
+                          if (origemManualLogoCasa === 'auto' && manualLogoCasa) {
+                            setManualLogoCasa('')
+                          }
+                        }}
                         className="h-8 bg-white text-xs"
                       />
                     </div>
-
                     {/* Visitante */}
                     <div className="space-y-1">
                       <Label htmlFor="manual-time-b" className="text-xs font-bold text-slate-700">
@@ -3593,10 +3648,16 @@ export default function Enquetes() {
                         id="manual-time-b"
                         placeholder="Ex.: Palmeiras"
                         value={manualTimeB}
-                        onChange={(e) => setManualTimeB(e.target.value)}
+                        onChange={(e) => {
+                          const novo = e.target.value
+                          setManualTimeB(novo)
+                          if (origemManualLogoVisitante === 'auto' && manualLogoVisitante) {
+                            setManualLogoVisitante('')
+                          }
+                        }}
                         className="h-8 bg-white text-xs"
                       />
-                    </div>
+                    </div>{' '}
                   </div>
 
                   {/* Escudos Opcionais (Mandante e Visitante) */}
@@ -3616,7 +3677,10 @@ export default function Enquetes() {
                         type="url"
                         placeholder="https://... (se vazio, busca automática)"
                         value={manualLogoCasa}
-                        onChange={(e) => setManualLogoCasa(e.target.value)}
+                        onChange={(e) => {
+                          setManualLogoCasa(e.target.value)
+                          setOrigemManualLogoCasa('manual')
+                        }}
                         className="h-8 bg-white text-xs"
                       />
                     </div>
@@ -3636,7 +3700,10 @@ export default function Enquetes() {
                         type="url"
                         placeholder="https://... (se vazio, busca automática)"
                         value={manualLogoVisitante}
-                        onChange={(e) => setManualLogoVisitante(e.target.value)}
+                        onChange={(e) => {
+                          setManualLogoVisitante(e.target.value)
+                          setOrigemManualLogoVisitante('manual')
+                        }}
                         className="h-8 bg-white text-xs"
                       />
                     </div>
@@ -4043,7 +4110,13 @@ export default function Enquetes() {
                   id="ativa-manual-time-a"
                   placeholder="Ex.: Corinthians"
                   value={ativaManualMandante}
-                  onChange={(e) => setAtivaManualMandante(e.target.value)}
+                  onChange={(e) => {
+                    const novo = e.target.value
+                    setAtivaManualMandante(novo)
+                    if (origemAtivaLogoCasa === 'auto' && ativaManualLogoCasa) {
+                      setAtivaManualLogoCasa('')
+                    }
+                  }}
                   className="h-9 bg-white text-xs"
                 />
               </div>
@@ -4057,7 +4130,13 @@ export default function Enquetes() {
                   id="ativa-manual-time-b"
                   placeholder="Ex.: Palmeiras"
                   value={ativaManualVisitante}
-                  onChange={(e) => setAtivaManualVisitante(e.target.value)}
+                  onChange={(e) => {
+                    const novo = e.target.value
+                    setAtivaManualVisitante(novo)
+                    if (origemAtivaLogoVisitante === 'auto' && ativaManualLogoVisitante) {
+                      setAtivaManualLogoVisitante('')
+                    }
+                  }}
                   className="h-9 bg-white text-xs"
                 />
               </div>
@@ -4188,7 +4267,10 @@ export default function Enquetes() {
                   type="url"
                   placeholder="https://... (se vazio, busca automática)"
                   value={ativaManualLogoCasa}
-                  onChange={(e) => setAtivaManualLogoCasa(e.target.value)}
+                  onChange={(e) => {
+                    setAtivaManualLogoCasa(e.target.value)
+                    setOrigemAtivaLogoCasa('manual')
+                  }}
                   className="h-9 bg-white text-xs"
                 />
               </div>
@@ -4206,7 +4288,10 @@ export default function Enquetes() {
                   type="url"
                   placeholder="https://... (se vazio, busca automática)"
                   value={ativaManualLogoVisitante}
-                  onChange={(e) => setAtivaManualLogoVisitante(e.target.value)}
+                  onChange={(e) => {
+                    setAtivaManualLogoVisitante(e.target.value)
+                    setOrigemAtivaLogoVisitante('manual')
+                  }}
                   className="h-9 bg-white text-xs"
                 />
               </div>
@@ -4342,7 +4427,13 @@ export default function Enquetes() {
                   id="edit-mandante"
                   placeholder="Ex.: Corinthians"
                   value={editMandante}
-                  onChange={(e) => setEditMandante(e.target.value)}
+                  onChange={(e) => {
+                    const novo = e.target.value
+                    setEditMandante(novo)
+                    if (origemEditLogoCasa === 'auto' && editLogoCasa) {
+                      setEditLogoCasa('')
+                    }
+                  }}
                   className="h-9 bg-white text-xs"
                 />
               </div>
@@ -4356,7 +4447,13 @@ export default function Enquetes() {
                   id="edit-visitante"
                   placeholder="Ex.: Palmeiras"
                   value={editVisitante}
-                  onChange={(e) => setEditVisitante(e.target.value)}
+                  onChange={(e) => {
+                    const novo = e.target.value
+                    setEditVisitante(novo)
+                    if (origemEditLogoVisitante === 'auto' && editLogoVisitante) {
+                      setEditLogoVisitante('')
+                    }
+                  }}
                   className="h-9 bg-white text-xs"
                 />
               </div>
@@ -4487,7 +4584,10 @@ export default function Enquetes() {
                   type="url"
                   placeholder="https://... (se vazio, busca automática)"
                   value={editLogoCasa}
-                  onChange={(e) => setEditLogoCasa(e.target.value)}
+                  onChange={(e) => {
+                    setEditLogoCasa(e.target.value)
+                    setOrigemEditLogoCasa('manual')
+                  }}
                   className="h-9 bg-white text-xs"
                 />
               </div>
@@ -4505,7 +4605,10 @@ export default function Enquetes() {
                   type="url"
                   placeholder="https://... (se vazio, busca automática)"
                   value={editLogoVisitante}
-                  onChange={(e) => setEditLogoVisitante(e.target.value)}
+                  onChange={(e) => {
+                    setEditLogoVisitante(e.target.value)
+                    setOrigemEditLogoVisitante('manual')
+                  }}
                   className="h-9 bg-white text-xs"
                 />
               </div>

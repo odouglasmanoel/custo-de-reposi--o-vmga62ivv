@@ -129,6 +129,8 @@ export default function AdminJogos() {
   const [editFixtureId, setEditFixtureId] = useState('')
   const [editEscudoA, setEditEscudoA] = useState('')
   const [editEscudoB, setEditEscudoB] = useState('')
+  const [origemEscudoA, setOrigemEscudoA] = useState<'auto' | 'manual'>('auto')
+  const [origemEscudoB, setOrigemEscudoB] = useState<'auto' | 'manual'>('auto')
   const [savingEditJogo, setSavingEditJogo] = useState(false)
   const [editJogoError, setEditJogoError] = useState<string | null>(null)
 
@@ -681,8 +683,16 @@ export default function AdminJogos() {
     setEditHora(jogo.hora || '')
     setEditCompeticao(jogo.competicao || '')
     setEditFixtureId(jogo.fixture_id || '')
-    setEditEscudoA((jogo as any).url_escudo_mandante || '')
-    setEditEscudoB((jogo as any).url_escudo_visitante || '')
+    const urlA = ((jogo as any).url_escudo_mandante || '').trim()
+    const urlB = ((jogo as any).url_escudo_visitante || '').trim()
+    setEditEscudoA(urlA)
+    setEditEscudoB(urlB)
+    const isAutoUrl = (u: string) =>
+      u.includes('thesportsdb.com') ||
+      u.includes('media.api-sports.io') ||
+      u.includes('flagcdn.com')
+    setOrigemEscudoA(!urlA || isAutoUrl(urlA) ? 'auto' : 'manual')
+    setOrigemEscudoB(!urlB || isAutoUrl(urlB) ? 'auto' : 'manual')
     setEditJogoError(null)
   }
 
@@ -710,6 +720,25 @@ export default function AdminJogos() {
         dataIsoFormatada = `${dataIsoFormatada}T00:00:00.000Z`
       }
 
+      const origA = (editingJogo.time_a || '').trim().toLowerCase()
+      const origB = (editingJogo.time_b || '').trim().toLowerCase()
+      const currA = editTimeA.trim().toLowerCase()
+      const currB = editTimeB.trim().toLowerCase()
+      const nomeAMudou = origA !== currA
+      const nomeBMudou = origB !== currB
+
+      const escudoAVazio = !editEscudoA.trim()
+      const escudoBVazio = !editEscudoB.trim()
+
+      // Regras:
+      // Se URL vazia E nome alterado (em A ou B) → permitir_re_resolucao: true e admin_override_escudos: false
+      // Se URL preenchida → admin_override_escudos: true (regra 2)
+      // Se URL vazia e nome NÃO alterado → manter admin_override_escudos: true (respeita limpeza intencional)
+      const reResolverA = escudoAVazio && nomeAMudou
+      const reResolverB = escudoBVazio && nomeBMudou
+      const permitirReResolucao = reResolverA || reResolverB
+      const adminOverride = !permitirReResolucao
+
       const res = await fetch(
         `${import.meta.env.VITE_POCKETBASE_URL}/backend/v1/admin/editar-jogo`,
         {
@@ -725,7 +754,8 @@ export default function AdminJogos() {
             fixture_id: editFixtureId.trim() || undefined,
             url_escudo_mandante: editEscudoA.trim(),
             url_escudo_visitante: editEscudoB.trim(),
-            admin_override_escudos: true,
+            admin_override_escudos: adminOverride,
+            permitir_re_resolucao: permitirReResolucao,
           }),
         },
       )
@@ -1477,27 +1507,38 @@ export default function AdminJogos() {
                 </Label>
                 <Input
                   id="edit-time-a"
-                  placeholder="Ex: Japan"
+                  placeholder="Ex: Flamengo"
                   value={editTimeA}
-                  onChange={(e) => setEditTimeA(e.target.value)}
+                  onChange={(e) => {
+                    const novoNome = e.target.value
+                    setEditTimeA(novoNome)
+                    if (origemEscudoA === 'auto' && editEscudoA) {
+                      setEditEscudoA('')
+                    }
+                  }}
                   className="mt-1 h-9 border-[#CBD5E1] text-xs focus-visible:border-amber-500 focus-visible:ring-amber-500"
                   required
                 />
               </div>
-
               <div>
                 <Label htmlFor="edit-time-b" className="text-xs font-bold text-slate-700">
-                  Time B (Visitante)
+                  Time B (Visitante) *
                 </Label>
                 <Input
                   id="edit-time-b"
-                  placeholder="Ex: South Korea"
+                  placeholder="Ex: Palmeiras"
                   value={editTimeB}
-                  onChange={(e) => setEditTimeB(e.target.value)}
+                  onChange={(e) => {
+                    const novoNome = e.target.value
+                    setEditTimeB(novoNome)
+                    if (origemEscudoB === 'auto' && editEscudoB) {
+                      setEditEscudoB('')
+                    }
+                  }}
                   className="mt-1 h-9 border-[#CBD5E1] text-xs focus-visible:border-amber-500 focus-visible:ring-amber-500"
                   required
                 />
-              </div>
+              </div>{' '}
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -1576,9 +1617,12 @@ export default function AdminJogos() {
                 <Input
                   id="edit-escudo-a"
                   type="text"
-                  placeholder="https://... (se vazio, usa sigla)"
+                  placeholder="https://... (se vazio, busca automática)"
                   value={editEscudoA}
-                  onChange={(e) => setEditEscudoA(e.target.value)}
+                  onChange={(e) => {
+                    setEditEscudoA(e.target.value)
+                    setOrigemEscudoA('manual')
+                  }}
                   className="mt-1 h-9 border-[#CBD5E1] text-xs focus-visible:border-amber-500 focus-visible:ring-amber-500"
                 />
               </div>
@@ -1589,9 +1633,12 @@ export default function AdminJogos() {
                 <Input
                   id="edit-escudo-b"
                   type="text"
-                  placeholder="https://... (se vazio, usa sigla)"
+                  placeholder="https://... (se vazio, busca automática)"
                   value={editEscudoB}
-                  onChange={(e) => setEditEscudoB(e.target.value)}
+                  onChange={(e) => {
+                    setEditEscudoB(e.target.value)
+                    setOrigemEscudoB('manual')
+                  }}
                   className="mt-1 h-9 border-[#CBD5E1] text-xs focus-visible:border-amber-500 focus-visible:ring-amber-500"
                 />
               </div>
