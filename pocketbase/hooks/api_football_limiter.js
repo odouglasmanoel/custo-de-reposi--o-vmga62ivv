@@ -29,14 +29,50 @@ function obterChavesConfiguradas() {
   let primaryKey = ''
   let backupKey = ''
 
-  // 1. Chave principal lida dinamicamente da tabela config_integracoes do banco de dados antes de cada chamada.
-  // Prioridade absoluta para as configurações persistidas no banco.
+  // 1. Resolução prioritária de segredos no cofre de secrets ($secrets):
   try {
-    const recPlacar = $app.findFirstRecordByData('config_integracoes', 'chave', 'placar_ao_vivo')
-    if (recPlacar && recPlacar.getBool('ativo')) {
-      primaryKey = (recPlacar.getString('api_key') || '').trim()
+    if (
+      typeof $secrets !== 'undefined' &&
+      $secrets &&
+      $secrets.has &&
+      $secrets.has('API_FOOTBALL_KEY')
+    ) {
+      primaryKey = ($secrets.get('API_FOOTBALL_KEY') || '').trim()
+    } else if (
+      typeof $secrets !== 'undefined' &&
+      $secrets &&
+      $secrets.has &&
+      $secrets.has('RAPIDAPI_KEY')
+    ) {
+      primaryKey = ($secrets.get('RAPIDAPI_KEY') || '').trim()
+    } else if (typeof $os !== 'undefined' && $os && $os.getenv) {
+      primaryKey = ($os.getenv('API_FOOTBALL_KEY') || $os.getenv('RAPIDAPI_KEY') || '').trim()
     }
   } catch (_) {}
+
+  // 2. Chave secundária via secrets se disponível
+  try {
+    if (
+      typeof $secrets !== 'undefined' &&
+      $secrets &&
+      $secrets.has &&
+      $secrets.has('API_FOOTBALL_KEY_BACKUP')
+    ) {
+      backupKey = ($secrets.get('API_FOOTBALL_KEY_BACKUP') || '').trim()
+    } else if (typeof $os !== 'undefined' && $os && $os.getenv) {
+      backupKey = ($os.getenv('API_FOOTBALL_KEY_BACKUP') || '').trim()
+    }
+  } catch (_) {}
+
+  // 3. Fallback em config_integracoes se não obtido do cofre/ambiente
+  if (!primaryKey) {
+    try {
+      const recPlacar = $app.findFirstRecordByData('config_integracoes', 'chave', 'placar_ao_vivo')
+      if (recPlacar && recPlacar.getBool('ativo')) {
+        primaryKey = (recPlacar.getString('api_key') || '').trim()
+      }
+    } catch (_) {}
+  }
   if (!primaryKey) {
     try {
       const recApiFoot = $app.findFirstRecordByData('config_integracoes', 'chave', 'api_football')
@@ -46,43 +82,16 @@ function obterChavesConfiguradas() {
     } catch (_) {}
   }
 
-  // 2. Chave secundária via config_integracoes (placar_ao_vivo_backup)
-  try {
-    const recBackup = $app.findFirstRecordByData(
-      'config_integracoes',
-      'chave',
-      'placar_ao_vivo_backup',
-    )
-    if (recBackup && recBackup.getBool('ativo')) {
-      backupKey = (recBackup.getString('api_key') || '').trim()
-    }
-  } catch (_) {}
-
-  // 3. Fallbacks de ambiente apenas se NENHUMA chave ativa estiver cadastrada no banco de dados
-  if (!primaryKey && !backupKey) {
+  // Chave secundária via config_integracoes (placar_ao_vivo_backup)
+  if (!backupKey) {
     try {
-      if (
-        typeof $secrets !== 'undefined' &&
-        $secrets &&
-        $secrets.has &&
-        $secrets.has('API_FOOTBALL_KEY')
-      ) {
-        primaryKey = ($secrets.get('API_FOOTBALL_KEY') || '').trim()
-      } else if (typeof $os !== 'undefined' && $os && $os.getenv) {
-        primaryKey = ($os.getenv('API_FOOTBALL_KEY') || $os.getenv('RAPIDAPI_KEY') || '').trim()
-      }
-    } catch (_) {}
-
-    try {
-      if (
-        typeof $secrets !== 'undefined' &&
-        $secrets &&
-        $secrets.has &&
-        $secrets.has('API_FOOTBALL_KEY_BACKUP')
-      ) {
-        backupKey = ($secrets.get('API_FOOTBALL_KEY_BACKUP') || '').trim()
-      } else if (typeof $os !== 'undefined' && $os && $os.getenv) {
-        backupKey = ($os.getenv('API_FOOTBALL_KEY_BACKUP') || '').trim()
+      const recBackup = $app.findFirstRecordByData(
+        'config_integracoes',
+        'chave',
+        'placar_ao_vivo_backup',
+      )
+      if (recBackup && recBackup.getBool('ativo')) {
+        backupKey = (recBackup.getString('api_key') || '').trim()
       }
     } catch (_) {}
   }
@@ -374,11 +383,28 @@ function buildHeadersForKey(apiKey, customHeaders) {
   delete headers['x-rapidapi-key']
   delete headers['x-rapidapi-host']
 
-  // Injetar estritamente apenas a chave ativa do banco em x-apisports-key
-  // Se customHeaders trouxer uma chave ativa válida, respeita-a com prioridade
-  const keyToInject = (customHeaders && customHeaders['x-apisports-key']) || apiKey
+  // Se customHeaders já trouxer cabeçalhos explícitos válidos para RapidAPI ou API-Sports, respeita-os com prioridade
+  if (customHeaders && (customHeaders['x-rapidapi-key'] || customHeaders['x-apisports-key'])) {
+    if (customHeaders['x-rapidapi-key']) {
+      headers['x-rapidapi-key'] = customHeaders['x-rapidapi-key']
+      headers['x-rapidapi-host'] =
+        customHeaders['x-rapidapi-host'] || 'api-football-v1.p.rapidapi.com'
+      return headers
+    }
+    if (customHeaders['x-apisports-key']) {
+      headers['x-apisports-key'] = customHeaders['x-apisports-key']
+      return headers
+    }
+  }
+
+  const keyToInject = apiKey || ''
   if (keyToInject) {
-    headers['x-apisports-key'] = keyToInject
+    if (keyToInject.length > 40) {
+      headers['x-rapidapi-key'] = keyToInject
+      headers['x-rapidapi-host'] = 'api-football-v1.p.rapidapi.com'
+    } else {
+      headers['x-apisports-key'] = keyToInject
+    }
   }
   return headers
 }

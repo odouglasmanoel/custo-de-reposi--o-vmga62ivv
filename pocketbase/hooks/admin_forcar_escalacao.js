@@ -44,17 +44,40 @@ routerAdd(
       }
 
       // 1. Obter chave ativa da API-Football de config_integracoes (sem leitura de .env)
+      // 1. Obter chave ativa da API-Football (cofre de secrets -> env -> config_integracoes)
       let chaveAtiva = ''
       try {
-        const configRec = $app.findFirstRecordByData(
-          'config_integracoes',
-          'chave',
-          'placar_ao_vivo',
-        )
-        if (configRec && configRec.getBool('ativo')) {
-          chaveAtiva = (configRec.getString('api_key') || '').trim()
+        if (
+          typeof $secrets !== 'undefined' &&
+          $secrets &&
+          $secrets.has &&
+          $secrets.has('API_FOOTBALL_KEY')
+        ) {
+          chaveAtiva = ($secrets.get('API_FOOTBALL_KEY') || '').trim()
+        } else if (
+          typeof $secrets !== 'undefined' &&
+          $secrets &&
+          $secrets.has &&
+          $secrets.has('RAPIDAPI_KEY')
+        ) {
+          chaveAtiva = ($secrets.get('RAPIDAPI_KEY') || '').trim()
+        } else if (typeof $os !== 'undefined' && $os && $os.getenv) {
+          chaveAtiva = ($os.getenv('API_FOOTBALL_KEY') || $os.getenv('RAPIDAPI_KEY') || '').trim()
         }
       } catch (_) {}
+
+      if (!chaveAtiva) {
+        try {
+          const configRec = $app.findFirstRecordByData(
+            'config_integracoes',
+            'chave',
+            'placar_ao_vivo',
+          )
+          if (configRec && configRec.getBool('ativo')) {
+            chaveAtiva = (configRec.getString('api_key') || '').trim()
+          }
+        } catch (_) {}
+      }
 
       if (!chaveAtiva) {
         try {
@@ -73,9 +96,22 @@ routerAdd(
         return e.json(400, {
           success: false,
           error:
-            'Chave ativa da API-Football não configurada na tabela config_integracoes (placar_ao_vivo/api_football).',
+            'Chave ativa da API-Football não configurada no cofre de secrets ou na tabela config_integracoes.',
         })
       }
+
+      const isRapidAdm = chaveAtiva.length > 40
+      const apiHostAdm = isRapidAdm
+        ? 'https://api-football-v1.p.rapidapi.com/v3'
+        : 'https://v3.football.api-sports.io'
+      const headersAdm = isRapidAdm
+        ? {
+            'x-rapidapi-key': chaveAtiva,
+            'x-rapidapi-host': 'api-football-v1.p.rapidapi.com',
+          }
+        : {
+            'x-apisports-key': chaveAtiva,
+          }
 
       // Verificação centralizada via api_football_limiter
       const limiterStatusAdm = (function () {
@@ -225,7 +261,8 @@ routerAdd(
             $app.store().set(storeKeyDate, '1')
             try {
               const urlDate =
-                'https://v3.football.api-sports.io/fixtures?date=' +
+                apiHostAdm +
+                '/fixtures?date=' +
                 encodeURIComponent(dataIso) +
                 '&timezone=America%2FSao_Paulo'
 
@@ -252,7 +289,7 @@ routerAdd(
                   {
                     timeout: 10,
                     isAdminManual: true,
-                    headers: { 'x-apisports-key': chaveAtiva },
+                    headers: headersAdm,
                   },
                   2,
                 )
@@ -323,9 +360,7 @@ routerAdd(
         }
       })()
 
-      const urlLineups =
-        'https://v3.football.api-sports.io/fixtures/lineups?fixture=' +
-        encodeURIComponent(fixtureId)
+      const urlLineups = apiHostAdm + '/fixtures/lineups?fixture=' + encodeURIComponent(fixtureId)
       console.log(
         '[Admin Forçar Escalação] Buscando lineups para fixture ' +
           fixtureId +
@@ -341,7 +376,7 @@ routerAdd(
           {
             timeout: 15,
             isAdminManual: true,
-            headers: { 'x-apisports-key': chaveAtiva },
+            headers: headersAdm,
           },
           2,
         )
@@ -349,7 +384,7 @@ routerAdd(
         const sRes = $http.send({
           url: urlLineups,
           method: 'GET',
-          headers: { 'x-apisports-key': chaveAtiva },
+          headers: headersAdm,
           timeout: 15,
         })
         let j = null

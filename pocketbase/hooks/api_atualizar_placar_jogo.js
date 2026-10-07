@@ -140,22 +140,31 @@ routerAdd(
       })
     }
 
-    // Buscar chave da API-Sports
-    // 1) Registro principal: chave = "placar_ao_vivo" && provedor = "api_football" && ativo = true
+    // Resolução padronizada da chave da API-Football (idêntica ao admin_forcar_escalacao / limiter):
+    // 1º $secrets.get('API_FOOTBALL_KEY') / 'RAPIDAPI_KEY'
+    // 2º $os.getenv('API_FOOTBALL_KEY') / $os.getenv('RAPIDAPI_KEY')
+    // 3º Fallback em config_integracoes (placar_ao_vivo / api_football)
     let apiKey = ''
     try {
-      const recPlacar = $app.findFirstRecordByFilter(
-        'config_integracoes',
-        "chave = 'placar_ao_vivo' && provedor = 'api_football' && ativo = true",
-      )
-      if (recPlacar) {
-        apiKey = (recPlacar.getString('api_key') || recPlacar.get('api_key') || '')
-          .toString()
-          .trim()
+      if (
+        typeof $secrets !== 'undefined' &&
+        $secrets &&
+        $secrets.has &&
+        $secrets.has('API_FOOTBALL_KEY')
+      ) {
+        apiKey = ($secrets.get('API_FOOTBALL_KEY') || '').trim()
+      } else if (
+        typeof $secrets !== 'undefined' &&
+        $secrets &&
+        $secrets.has &&
+        $secrets.has('RAPIDAPI_KEY')
+      ) {
+        apiKey = ($secrets.get('RAPIDAPI_KEY') || '').trim()
+      } else if (typeof $os !== 'undefined' && $os && $os.getenv) {
+        apiKey = ($os.getenv('API_FOOTBALL_KEY') || $os.getenv('RAPIDAPI_KEY') || '').trim()
       }
     } catch (_) {}
 
-    // Fallback caso não encontre por filtro ou api_key esteja em branco:
     if (!apiKey) {
       try {
         const recPlacarDirect = $app.findFirstRecordByData(
@@ -170,6 +179,31 @@ routerAdd(
         }
       } catch (_) {}
     }
+
+    if (!apiKey) {
+      try {
+        const recApiFoot = $app.findFirstRecordByData('config_integracoes', 'chave', 'api_football')
+        if (recApiFoot && recApiFoot.getBool('ativo')) {
+          apiKey = (recApiFoot.getString('api_key') || recApiFoot.get('api_key') || '')
+            .toString()
+            .trim()
+        }
+      } catch (_) {}
+    }
+
+    // Configuração dinâmica de host e headers conforme formato da chave
+    const isRapidApi = apiKey.length > 40
+    const apiHost = isRapidApi
+      ? 'https://api-football-v1.p.rapidapi.com/v3'
+      : 'https://v3.football.api-sports.io'
+    const defaultHeaders = isRapidApi
+      ? {
+          'x-rapidapi-key': apiKey,
+          'x-rapidapi-host': 'api-football-v1.p.rapidapi.com',
+        }
+      : {
+          'x-apisports-key': apiKey,
+        }
 
     // Consulta fixture por ID via limiter central com rotação e fallback
     const limiterMod = (function () {
@@ -187,18 +221,18 @@ routerAdd(
 
     let fixtureData = null
     try {
-      const url = `https://v3.football.api-sports.io/fixtures?id=${encodeURIComponent(fixtureIdParaUso)}`
+      const url = `${apiHost}/fixtures?id=${encodeURIComponent(fixtureIdParaUso)}`
       console.log(`[atualizar-jogo] [API-Sports] URL: ${url} | Fixture ID: ${fixtureIdParaUso}`)
 
       let respCall = null
       if (limiterMod && typeof limiterMod.enviarRequisicaoApiFootball === 'function') {
         respCall = limiterMod.enviarRequisicaoApiFootball(
           url,
-          { timeout: 15, isAdminManual: true },
+          { timeout: 15, isAdminManual: true, headers: defaultHeaders },
           2,
         )
       } else {
-        const sendRes = $http.send({ url, method: 'GET', timeout: 15 })
+        const sendRes = $http.send({ url, method: 'GET', headers: defaultHeaders, timeout: 15 })
         let j = null
         try {
           j =
@@ -459,7 +493,7 @@ routerAdd(
     // Para garantir a extração fiel de eventos mesmo em planos/endpoints que omitem events do objeto fixture
     let dedicatedEventsRaw = []
     try {
-      const urlEvents = `https://v3.football.api-sports.io/fixtures/events?fixture=${encodeURIComponent(fixtureIdParaUso)}`
+      const urlEvents = `${apiHost}/fixtures/events?fixture=${encodeURIComponent(fixtureIdParaUso)}`
       console.log(
         `[atualizar-jogo] Buscando eventos dedicados (/fixtures/events) para fixture ${fixtureIdParaUso}...`,
       )
@@ -467,7 +501,7 @@ routerAdd(
         limiterMod && typeof limiterMod.enviarRequisicaoApiFootball === 'function'
           ? limiterMod.enviarRequisicaoApiFootball(
               urlEvents,
-              { timeout: 15, isAdminManual: true },
+              { timeout: 15, isAdminManual: true, headers: defaultHeaders },
               2,
             )
           : null
@@ -710,12 +744,12 @@ routerAdd(
 
     if (apiLineupsIndiv.length === 0 && (isLive || isFinished)) {
       try {
-        const urlLineupsIndiv = `https://v3.football.api-sports.io/fixtures/lineups?fixture=${encodeURIComponent(fixtureIdParaUso)}`
+        const urlLineupsIndiv = `${apiHost}/fixtures/lineups?fixture=${encodeURIComponent(fixtureIdParaUso)}`
         const callLineupIndiv =
           limiterMod && typeof limiterMod.enviarRequisicaoApiFootball === 'function'
             ? limiterMod.enviarRequisicaoApiFootball(
                 urlLineupsIndiv,
-                { timeout: 15, isAdminManual: true },
+                { timeout: 15, isAdminManual: true, headers: defaultHeaders },
                 2,
               )
             : null

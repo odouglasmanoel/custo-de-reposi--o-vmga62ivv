@@ -216,7 +216,72 @@ routerAdd(
       })
     }
 
-    // 2. Centralizador de requisições com rotação e fallback automático (api_football_limiter.js)
+    // 2. Resolução padronizada da chave da API-Football (idêntica ao admin_forcar_escalacao / limiter):
+    // 1º $secrets.get('API_FOOTBALL_KEY') / 'RAPIDAPI_KEY'
+    // 2º $os.getenv('API_FOOTBALL_KEY') / $os.getenv('RAPIDAPI_KEY')
+    // 3º Fallback em config_integracoes (placar_ao_vivo / api_football)
+    let apiKey = ''
+    try {
+      if (
+        typeof $secrets !== 'undefined' &&
+        $secrets &&
+        $secrets.has &&
+        $secrets.has('API_FOOTBALL_KEY')
+      ) {
+        apiKey = ($secrets.get('API_FOOTBALL_KEY') || '').trim()
+      } else if (
+        typeof $secrets !== 'undefined' &&
+        $secrets &&
+        $secrets.has &&
+        $secrets.has('RAPIDAPI_KEY')
+      ) {
+        apiKey = ($secrets.get('RAPIDAPI_KEY') || '').trim()
+      } else if (typeof $os !== 'undefined' && $os && $os.getenv) {
+        apiKey = ($os.getenv('API_FOOTBALL_KEY') || $os.getenv('RAPIDAPI_KEY') || '').trim()
+      }
+    } catch (_) {}
+
+    if (!apiKey) {
+      try {
+        const recPlacarDirect = $app.findFirstRecordByData(
+          'config_integracoes',
+          'chave',
+          'placar_ao_vivo',
+        )
+        if (recPlacarDirect && recPlacarDirect.getBool('ativo')) {
+          apiKey = (recPlacarDirect.getString('api_key') || recPlacarDirect.get('api_key') || '')
+            .toString()
+            .trim()
+        }
+      } catch (_) {}
+    }
+
+    if (!apiKey) {
+      try {
+        const recApiFoot = $app.findFirstRecordByData('config_integracoes', 'chave', 'api_football')
+        if (recApiFoot && recApiFoot.getBool('ativo')) {
+          apiKey = (recApiFoot.getString('api_key') || recApiFoot.get('api_key') || '')
+            .toString()
+            .trim()
+        }
+      } catch (_) {}
+    }
+
+    // Configuração dinâmica de host e headers conforme formato da chave
+    const isRapidApi = apiKey.length > 40
+    const apiHost = isRapidApi
+      ? 'https://api-football-v1.p.rapidapi.com/v3'
+      : 'https://v3.football.api-sports.io'
+    const defaultHeaders = isRapidApi
+      ? {
+          'x-rapidapi-key': apiKey,
+          'x-rapidapi-host': 'api-football-v1.p.rapidapi.com',
+        }
+      : {
+          'x-apisports-key': apiKey,
+        }
+
+    // Centralizador de requisições com rotação e fallback automático (api_football_limiter.js)
     const limiterMod = (function () {
       try {
         if (typeof __hooks !== 'undefined') {
@@ -241,17 +306,22 @@ routerAdd(
 
     for (let fIdx = 0; fIdx < uniqueFixtureIds.length; fIdx++) {
       const singleId = uniqueFixtureIds[fIdx]
-      const singleUrl = `https://v3.football.api-sports.io/fixtures?id=${encodeURIComponent(singleId)}`
+      const singleUrl = `${apiHost}/fixtures?id=${encodeURIComponent(singleId)}`
 
       let singleCall = null
       if (limiterMod && typeof limiterMod.enviarRequisicaoApiFootball === 'function') {
         singleCall = limiterMod.enviarRequisicaoApiFootball(
           singleUrl,
-          { timeout: 15, isAdminManual: true },
+          { timeout: 15, isAdminManual: true, headers: defaultHeaders },
           2,
         )
       } else {
-        const sendRes = $http.send({ url: singleUrl, method: 'GET', timeout: 15 })
+        const sendRes = $http.send({
+          url: singleUrl,
+          method: 'GET',
+          headers: defaultHeaders,
+          timeout: 15,
+        })
         let j = null
         try {
           j =
@@ -439,7 +509,7 @@ routerAdd(
       // garantimos a leitura exata chamando o endpoint dedicado com fallback seguro.
       let dedicatedEventsRaw = []
       try {
-        const urlEvents = `https://v3.football.api-sports.io/fixtures/events?fixture=${encodeURIComponent(fid)}`
+        const urlEvents = `${apiHost}/fixtures/events?fixture=${encodeURIComponent(fid)}`
         console.log(
           `[atualizar-todos] Buscando eventos dedicados (/fixtures/events) para fixture ${fid}...`,
         )
@@ -447,36 +517,14 @@ routerAdd(
         if (limiterMod && typeof limiterMod.enviarRequisicaoApiFootball === 'function') {
           callEvents = limiterMod.enviarRequisicaoApiFootball(
             urlEvents,
-            { timeout: 15, isAdminManual: true },
+            { timeout: 15, isAdminManual: true, headers: defaultHeaders },
             2,
           )
         } else {
-          // Fallback com leitura dinâmica da chave ativa do banco
-          let chvAtiva = ''
-          try {
-            const rPlac = $app.findFirstRecordByData(
-              'config_integracoes',
-              'chave',
-              'placar_ao_vivo',
-            )
-            if (rPlac && rPlac.getBool('ativo'))
-              chvAtiva = (rPlac.getString('api_key') || '').trim()
-          } catch (_) {}
-          if (!chvAtiva) {
-            try {
-              const rFoot = $app.findFirstRecordByData(
-                'config_integracoes',
-                'chave',
-                'api_football',
-              )
-              if (rFoot && rFoot.getBool('ativo'))
-                chvAtiva = (rFoot.getString('api_key') || '').trim()
-            } catch (_) {}
-          }
           const sRes = $http.send({
             url: urlEvents,
             method: 'GET',
-            headers: { 'x-apisports-key': chvAtiva },
+            headers: defaultHeaders,
             timeout: 15,
           })
           let jData = null
@@ -820,13 +868,13 @@ routerAdd(
 
       if (apiLineupsRaw.length === 0 && (isLive || isFinished)) {
         try {
-          const urlLineups = `https://v3.football.api-sports.io/fixtures/lineups?fixture=${encodeURIComponent(fid)}`
+          const urlLineups = `${apiHost}/fixtures/lineups?fixture=${encodeURIComponent(fid)}`
           console.log(`[atualizar-todos] Buscando lineups para fixture ${fid}...`)
           const callLineup =
             limiterMod && typeof limiterMod.enviarRequisicaoApiFootball === 'function'
               ? limiterMod.enviarRequisicaoApiFootball(
                   urlLineups,
-                  { timeout: 15, isAdminManual: true },
+                  { timeout: 15, isAdminManual: true, headers: defaultHeaders },
                   2,
                 )
               : null
