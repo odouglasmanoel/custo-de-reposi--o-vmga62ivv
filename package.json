@@ -2,7 +2,7 @@
   "name": "custo-reposicao-bolao",
   "description": "Custo de Reposição - Bolão",
   "private": true,
-  "version": "0.0.315",
+  "version": "0.0.316",
   "type": "module",
   "scripts": {
     "start": "vite dev",
